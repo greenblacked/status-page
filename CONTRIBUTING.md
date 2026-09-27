@@ -267,6 +267,7 @@ Do not scrape unofficial aggregators.
 ## Code style
 
 - TypeScript strict, no `any`
+- No unused locals, imports or parameters: `tsconfig.json` sets `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` fails on them. Prefix a parameter that a signature requires but the body ignores with `_`
 - Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX
 - Status color is for badges only, not entire panels
 - Keep fetch timeouts short and failures isolated (`Promise.all` of per-service collectors)
