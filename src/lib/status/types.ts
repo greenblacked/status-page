@@ -6,6 +6,7 @@ export type ServiceId =
   | "epic"
   | "fortnite"
   | "spotify"
+  | "github"
   | "apple"
   | "android"
   | "grok"

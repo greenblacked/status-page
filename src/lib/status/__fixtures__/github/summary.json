@@ -1,0 +1,47 @@
+{
+  "page": {
+    "id": "kctbh9vrtdwd",
+    "name": "GitHub",
+    "url": "https://www.githubstatus.com",
+    "time_zone": "Etc/UTC",
+    "updated_at": "2026-09-27T17:14:06.291Z"
+  },
+  "status": {
+    "indicator": "none",
+    "description": "All Systems Operational"
+  },
+  "components": [
+    {
+      "id": "8l4ygp009s5s",
+      "name": "Git Operations",
+      "status": "operational",
+      "group": false
+    },
+    {
+      "id": "brv1bkgrwx7q",
+      "name": "API Requests",
+      "status": "operational",
+      "group": false
+    },
+    {
+      "id": "br0l2tvcx85d",
+      "name": "Actions",
+      "status": "operational",
+      "group": false
+    },
+    {
+      "id": "st3j38cctv9l",
+      "name": "Packages",
+      "status": "operational",
+      "group": false
+    },
+    {
+      "id": "pjmpxvq2cmr2",
+      "name": "Copilot",
+      "status": "operational",
+      "group": false
+    }
+  ],
+  "incidents": [],
+  "scheduled_maintenances": []
+}
