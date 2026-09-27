@@ -190,6 +190,7 @@ export function BoardView({
     // animates the board that comes back.
     setFilters(next);
   }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `visible` is the trigger, not an input: the card to focus exists only once the cleared filters have rendered it.
   useEffect(() => {
     if (!revealing) return;
     if (filters !== revealing.filters) {
@@ -283,6 +284,7 @@ export function BoardView({
           controls. Focusing <main> in script keeps the address free of a
           #services fragment; without script the plain link still works.
         */}
+        {/* biome-ignore lint/a11y/useValidAnchor: a real link, so the skip works without script; script only keeps #services out of the address. */}
         <a
           href="#services"
           onClick={(event) => {
@@ -357,6 +359,7 @@ export function BoardView({
               ) : null}
             </label>
             {/* One scrolling row on phones instead of three wrapped ones. */}
+            {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
             <div
               className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
               role="group"
@@ -421,6 +424,7 @@ export function BoardView({
               {fetching && !board.services.length ? (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {Array.from({ length: 6 }).map((_, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
                     <Skeleton key={index} className="h-56" />
                   ))}
                 </div>

@@ -30,6 +30,7 @@ export function ShortcutsDialog({
   }, [open]);
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: the click only catches the backdrop; Esc closes a modal <dialog> natively.
     <dialog
       ref={ref}
       onClose={onClose}

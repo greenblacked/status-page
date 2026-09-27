@@ -114,6 +114,7 @@ export function ServiceCard({
         <ul className="mt-4 flex flex-col gap-1.5">
           {rows.map((component, componentIndex) => (
             <ComponentRow
+              // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
               key={`${component.name}-${componentIndex}`}
               component={component}
               changelog={changelog}
@@ -129,6 +130,7 @@ export function ServiceCard({
       {incidents.length > 0 ? (
         <ul className="mt-3 space-y-2">
           {incidents.map((incident, incidentIndex) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
             <li key={`${incident.id}-${incidentIndex}`} className="text-sm text-fg [overflow-wrap:anywhere]">
               <span className={ICON_TONE[incident.health]}>{healthLabel(incident.health)}</span>
               <span className="text-subtle"> · </span>

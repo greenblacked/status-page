@@ -709,12 +709,10 @@ const CDATA_START = "<![CDATA[";
 export function decodeXmlField(raw: string): string {
   let result = "";
   let lastIndex = 0;
-  CDATA_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = CDATA_RE.exec(raw))) {
+  for (const match of raw.matchAll(CDATA_RE)) {
     result += decodeXmlEntities(raw.slice(lastIndex, match.index));
     result += match[1];
-    lastIndex = CDATA_RE.lastIndex;
+    lastIndex = match.index + match[0].length;
   }
   // Any `<![CDATA[` left in the tail has no closing `]]>` anywhere later in
   // the string, or the loop above would already have consumed it. Treat

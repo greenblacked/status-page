@@ -28,11 +28,11 @@ function code(text) {
   const safe = String(text)
     .replace(/[`\r\n]+/g, " ")
     .slice(0, 120)
-    .replace(/[\\|]/g, (ch) => "\\" + ch);
-  return "`" + safe + "`";
+    .replace(/[\\|]/g, (ch) => `\\${ch}`);
+  return `\`${safe}\``;
 }
 
-function categorize(workflow, jobName, stepName) {
+function categorize(workflow, _jobName, stepName) {
   const step = (stepName || "").toLowerCase();
   if (!stepName) return "infrastructure: the job failed without a failing step (timeout, cancellation or runner loss)";
   if (workflow === "CodeQL") return "code scanning";
@@ -114,7 +114,7 @@ async function describeFailure(github, owner, repo, run) {
       job: job.name,
       step: step ? step.name : undefined,
       url: step ? `${job.html_url}#step:${step.number}:1` : job.html_url,
-      category: categorize(run.name, job.name, step && step.name),
+      category: categorize(run.name, job.name, step?.name),
     });
   }
   return failures;
