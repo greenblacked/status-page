@@ -123,7 +123,7 @@ When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 3. Commits `chore(release): X.Y.Z` to `main`, authored by the account that merged. The commit updates `package.json`, `package-lock.json` and the changelog, and turns `## [Unreleased]` into the dated `## [X.Y.Z]` section. If the pull request added nothing under Unreleased, the section is written from the merged commits' subjects instead.
 4. Tags that commit `vX.Y.Z`.
 5. Publishes the GitHub Release with that section as its notes.
-6. Merges `main` back into `dev`, released or not, so `dev` carries the release commit and any fix merged into `main` directly. A release on `main` while `dev` has lines under Unreleased (an urgent fix, usually) conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts `dev`'s lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, and you resolve it on a branch from `dev`:
+6. Merges `main` back into `dev`, released or not, so `dev` carries the release commit and any fix merged into `main` directly. When that merge actually moves `dev`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `dev` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, staging would keep running the pre-release code until an unrelated push to `dev` redeployed it. A release on `main` while `dev` has lines under Unreleased (an urgent fix, usually) conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts `dev`'s lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, and you resolve it on a branch from `dev`:
 
    ```bash
    git fetch origin
@@ -161,7 +161,13 @@ Never move or reuse a tag that has a published release; release a new patch vers
 | `dev` | `staging` | `status-bar-staging` |
 | `main` | `production` | `status-bar` |
 
-Every push to `dev` or `main` deploys. A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. The Worker has no bindings and no secrets of its own: it only reads the public vendor feeds.
+Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace.
+
+### How the board stays fresh on Workers
+
+Cloudflare runs many isolates across many locations, so a Worker cannot keep the Node build's in-memory cache: each isolate would sweep every vendor itself, and a "Refresh" click would only throttle that one isolate. Instead, a [Cron Trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/) (`wrangler.jsonc`'s `triggers.crons`, every 2 minutes) is the only thing that reads the vendors: it collects the board and writes it to a KV namespace (binding `STATUS_SNAPSHOT`), and every request - the page, `/api/status.json`, `/feed.xml`, the badges, `/metrics` - only ever reads that snapshot (`src/lib/status/board.cloudflare.ts`, `src/lib/status/cron-sweep.ts`). The **Refresh** button reads the same snapshot rather than forcing a sweep: a synchronous sweep of every vendor on the request path risks the CPU-time limit a single request gets, and the cron already runs every two minutes from everywhere the board is opened. The only time a request collects anything itself is a cold KV namespace right after a fresh deploy, before the first cron tick; that one collection is stored through `ctx.waitUntil` so it is not lost if the Worker is torn down right after the response.
+
+This needs its own server entry (`src/server.cloudflare.ts`, named directly in `wrangler.jsonc`'s `main`): Workers module syntax wants a `scheduled` export next to `fetch`, and both need the KV binding and `ExecutionContext.waitUntil` that only workerd's own call to them provides. The Node build (`npm run build` without `DEPLOY_TARGET`) is unaffected: it keeps TanStack Start's default entry and `src/lib/status/board.ts`'s in-memory cache, and never resolves the Workers-only files - `vite.config.ts`'s `resolve.alias` for `@/lib/status/board` is what picks between them, keyed on `DEPLOY_TARGET`.
 
 ### How the token is kept safe
 
@@ -175,15 +181,23 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 ### One-time setup
 
-1. **Create the token.** In the Cloudflare dashboard, go to **My Profile → API Tokens → Create Token** and start from **Edit Cloudflare Workers**. Trim it to what `wrangler deploy` needs:
+1. **Create the token.** In the Cloudflare dashboard, go to **My Profile → API Tokens → Create Token** and start from **Edit Cloudflare Workers**. Trim it to what `wrangler deploy` and `wrangler rollback` need:
    - **Account resources:** only this account.
-   - **Permissions:** Account · Workers Scripts · Edit, and Account · Account Settings · Read.
+   - **Permissions:** Account · Workers Scripts · Edit, Account · Account Settings · Read, and Account · Workers KV Storage · Edit (the KV namespace the Worker reads and writes its own snapshot in).
    - **Custom domain:** add Zone · Workers Routes · Edit for that zone only, and nothing else.
    - **TTL:** set an end date, and rotate the token before it.
 
    Cloudflare renames these permissions from time to time, so check the list against [Cloudflare's token docs](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) when you create it.
-2. **Create the two environments.** In **Settings → Environments**, add `staging` and `production`. For each, set **Deployment branches and tags** to **Selected branches**, and add only `dev` or only `main`. Optionally, add yourself as a **Required reviewer** on `production`, so every production deploy waits for your approval.
-3. **Give each environment its credentials.** Add the secret `CLOUDFLARE_API_TOKEN`, and the variables `CLOUDFLARE_ACCOUNT_ID` and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it).
+2. **Create a KV namespace for each Worker**, then put its id in `wrangler.jsonc` in place of the matching `REPLACE_WITH_..._KV_NAMESPACE_ID` placeholder (not a secret, just not knowable ahead of time):
+
+   ```bash
+   npx wrangler kv namespace create STATUS_SNAPSHOT               # production: the top-level kv_namespaces entry
+   npx wrangler kv namespace create STATUS_SNAPSHOT --env staging # staging: the one under env.staging
+   ```
+
+   Automatic resource provisioning (a binding with no `id`, created on first deploy) is experimental in this wrangler version and needs a flag `deploy.yml` does not pass, so this is a one-time step rather than something the workflow does for you.
+3. **Create the two environments.** In **Settings → Environments**, add `staging` and `production`. For each, set **Deployment branches and tags** to **Selected branches**, and add only `dev` or only `main`. Optionally, add yourself as a **Required reviewer** on `production`, so every production deploy waits for your approval.
+4. **Give each environment its credentials.** Add the secret `CLOUDFLARE_API_TOKEN`, and the variables `CLOUDFLARE_ACCOUNT_ID` and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it and rolls back automatically if it fails). Without `DEPLOY_URL`, the job logs a warning and skips both.
 
 The same with the GitHub CLI:
 
@@ -204,22 +218,29 @@ done
 
 ```bash
 DEPLOY_TARGET=cloudflare npm run build            # the production Worker in dist/
-DEPLOY_TARGET=cloudflare npx vite preview         # runs it in workerd, Cloudflare's runtime
+DEPLOY_TARGET=cloudflare npx vite preview         # runs it in workerd, Cloudflare's runtime, with a local, simulated KV namespace
 npx wrangler deploy --dry-run --config dist/server/wrangler.json   # what would upload
 DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging npm run build      # the staging Worker
 ```
 
 Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
 
+`vite preview`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API `vite preview` prints on start:
+
+```bash
+curl -X POST "http://127.0.0.1:4173/cdn-cgi/local/explorer/api/local/scheduled?worker=status-bar" \
+  -H 'Content-Type: application/json' -d '{"cron":"*/2 * * * *"}'
+```
+
 ### Rolling back
 
-Every deploy is a Worker version. To go back to the previous one:
+`deploy.yml` already does this by itself when a deploy fails its smoke test (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` reach only that one rollback step, same as the deploy step). To go back to the previous version by hand:
 
 ```bash
 npx wrangler rollback --name status-bar          # or status-bar-staging
 ```
 
-You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`.
+You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back only changes which Worker version answers requests: it does not touch the KV namespace, so the board keeps whatever the Cron Trigger last wrote regardless of which version is live.
 
 ## Dependencies
 
