@@ -12,6 +12,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - A **Skip to services** link, the first stop when you press Tab, jumps past the header straight to the cards.
 - Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown", when the headline changes, and when a refresh fails.
 - A card with an incident shows when the vendor says it began and how long it has run, such as "since 14:05 UTC · 2h 10m".
+- The headline says when the snapshot on screen was taken, such as "as of 14:05 UTC".
 
 ### Changed
 
@@ -20,6 +21,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- The board no longer says **Live** over a snapshot that has stopped updating: after six minutes without a fresh one it shows **Stale** and how long ago the last check was.
 - **Refresh** no longer greys out during every background check, which dropped keyboard focus back to the top of the page. It stays usable and says when a check is running.
 - Buttons, links and the search box show their keyboard focus ring in Windows High Contrast and other forced-colours modes, where it used to disappear.
 - When the browser blocks notifications, the bell stays reachable from the keyboard and tells screen readers why alerts are unavailable, instead of silently dropping out of the Tab order.

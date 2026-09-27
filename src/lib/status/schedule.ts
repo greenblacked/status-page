@@ -40,6 +40,27 @@ export function formatAge(ms: number): string {
   return `${hours}h ago`;
 }
 
+// The board refetches every slot, so a snapshot older than three of them
+// has stopped moving: the server, its collector or this tab's network is
+// stuck, and "Live" would be a claim the board cannot back.
+export const STALE_AFTER_MS = 3 * LIVE_REFETCH_MS;
+
+/** False until mounted (`now` 0). A timestamp that cannot be read cannot be vouched for. */
+export function isStale(generatedAt: string, now: number): boolean {
+  if (now <= 0) return false;
+  const at = parseTimestamp(generatedAt);
+  return at === null || now - at > STALE_AFTER_MS;
+}
+
+/** An age in words a screen reader reads well: "7 min ago", "2 hours ago". */
+export function formatStaleAge(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  return `${Math.floor(hours / 24)} days ago`;
+}
+
 export function formatSlotTime(slot: number): string {
   return new Intl.DateTimeFormat("en", {
     hour: "2-digit",

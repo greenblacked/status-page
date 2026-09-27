@@ -124,7 +124,7 @@ Open the local URL that Vite prints. The first load reads all fourteen sources, 
 - Star the services you care about: they sort first, and **Starred** shows only them
 - Drive it from the keyboard: `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` lists them all. If the letter and number keys get in the way, for example with speech input, switch **Single-key shortcuts** off in that list; `/`, `?` and `Esc` keep working. The first Tab stop is **Skip to services**, past the header
 - Share a filtered view: the search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered
-- Watch the countdown: the board pulls a new snapshot every two minutes
+- Watch the countdown: the board pulls a new snapshot every two minutes, and the headline says when the one on screen was taken ("as of 14:05 UTC"). If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last check
 - Read the **Board log** to see what changed between two-minute slots
 - Press **Refresh** to skip the cache and ask every vendor right now. Presses within 15 seconds of the last check reuse it
 - See how long an incident has run: a card shows when the vendor says it began, such as "since 14:05 UTC · 2h 10m"

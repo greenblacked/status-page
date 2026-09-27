@@ -4,12 +4,16 @@ import {
   formatAge,
   formatCountdown,
   formatDuration,
+  formatStaleAge,
   formatUtcTime,
+  isStale,
   lastPulseAt,
+  LIVE_REFETCH_MS,
   nextPulseAt,
   parseTimestamp,
   PULSE_INTERVAL_MS,
   pulseProgress,
+  STALE_AFTER_MS,
 } from "./schedule.ts";
 
 describe("pulse schedule", () => {
@@ -34,6 +38,30 @@ describe("pulse schedule", () => {
     assert.equal(formatAge(4_000), "just now");
     assert.equal(formatAge(23_000), "23s ago");
     assert.equal(formatAge(3 * 60 * 1000), "3m ago");
+  });
+});
+
+describe("stale snapshots", () => {
+  const generatedAt = "2026-09-22T12:00:00.000Z";
+  const at = Date.parse(generatedAt);
+
+  it("turns stale after three missed refetches", () => {
+    assert.equal(STALE_AFTER_MS, 3 * LIVE_REFETCH_MS);
+    assert.equal(isStale(generatedAt, at + 90_000), false);
+    assert.equal(isStale(generatedAt, at + STALE_AFTER_MS), false);
+    assert.equal(isStale(generatedAt, at + STALE_AFTER_MS + 1), true);
+  });
+
+  it("claims nothing before mount and distrusts an unreadable time", () => {
+    assert.equal(isStale(generatedAt, 0), false);
+    assert.equal(isStale("garbage", at), true);
+  });
+
+  it("says the age in words", () => {
+    assert.equal(formatStaleAge(7 * 60_000 + 30_000), "7 min ago");
+    assert.equal(formatStaleAge(60 * 60_000), "1 hour ago");
+    assert.equal(formatStaleAge(5 * 60 * 60_000), "5 hours ago");
+    assert.equal(formatStaleAge(72 * 60 * 60_000), "3 days ago");
   });
 });
 

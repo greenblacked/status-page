@@ -1,5 +1,13 @@
 import { Radio } from "lucide-react";
-import { formatAge, formatCountdown, nextPulseAt, pulseProgress } from "@/lib/status/schedule";
+import { Badge } from "@/components/ui/badge";
+import {
+  formatAge,
+  formatCountdown,
+  formatStaleAge,
+  isStale,
+  nextPulseAt,
+  pulseProgress,
+} from "@/lib/status/schedule";
 import { cn } from "@/lib/utils";
 
 /** The freshness strip at the foot of the summary panel. */
@@ -17,22 +25,37 @@ export function LiveBar({
   const mounted = now > 0;
   const remaining = mounted ? Math.max(0, nextPulseAt(now) - now) : 0;
   const progress = mounted ? pulseProgress(now) : 0;
-  const age = mounted ? formatAge(now - new Date(checkedAt).getTime()) : "…";
+  const ageMs = now - Date.parse(checkedAt);
+  const age = mounted ? formatAge(ageMs) : "…";
+  // A check in flight may yet bring it back, so it is not called stale while one runs.
+  const stale = !isFetching && isStale(checkedAt, now);
 
   return (
     <div className={className}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 font-mono text-[11px] tabular-nums text-subtle">
         <p className="flex items-center gap-2">
-          <Radio className={cn("size-3.5", isFetching ? "text-muted" : "live-dot text-ok")} aria-hidden />
+          <Radio className={cn("size-3.5", isFetching || stale ? "text-muted" : "live-dot text-ok")} aria-hidden />
           {/*
             The live region is scoped to this word alone. The age and the
             countdown tick every second, and a wider region made a screen
-            reader re-announce them every second.
+            reader re-announce them every second. A stale board's age joins
+            it: it moves once a minute, and it is the news.
           */}
-          <span className="text-fg" aria-live="polite">
-            {isFetching ? "Checking official sources" : "Live"}
+          <span className="flex items-center gap-2 text-fg" aria-live="polite">
+            {isFetching ? (
+              "Checking official sources"
+            ) : stale ? (
+              <>
+                <Badge tone="mute">Stale</Badge>
+                <span className="text-subtle">
+                  last check {Number.isFinite(ageMs) ? formatStaleAge(ageMs) : "unknown"}
+                </span>
+              </>
+            ) : (
+              "Live"
+            )}
           </span>
-          <span>· last check {age}</span>
+          {stale ? null : <span>· last check {age}</span>}
         </p>
         <p>
           Next update <span className="text-fg">{mounted ? formatCountdown(remaining) : "—"}</span>

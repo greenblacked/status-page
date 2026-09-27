@@ -26,7 +26,7 @@ import {
   syncPulse,
   type PulseStore,
 } from "@/lib/status/pulse";
-import { CACHE_TTL_MS, lastPulseAt, LIVE_REFETCH_MS } from "@/lib/status/schedule";
+import { CACHE_TTL_MS, formatUtcTime, lastPulseAt, LIVE_REFETCH_MS, parseTimestamp } from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
@@ -489,6 +489,7 @@ function SummaryPanel({
   const total = board.services.length;
   const attention = total - board.counts.operational;
   const affected = groupServices(board.services).attention;
+  const generatedAt = parseTimestamp(board.generatedAt);
 
   return (
     <section aria-labelledby="board-headline" className="glass rounded-3xl p-5 sm:p-6">
@@ -504,6 +505,13 @@ function SummaryPanel({
           </h2>
           <p className="mt-1.5 font-mono text-[11px] tabular-nums text-subtle">
             {attention ? attentionBreakdown(board.counts) : `All ${total} official sources report normal operation`}
+            {/* UTC, so the server and the browser agree on the text. */}
+            {generatedAt === null ? null : (
+              <>
+                {" · as of "}
+                <time dateTime={board.generatedAt}>{formatUtcTime(generatedAt)}</time>
+              </>
+            )}
           </p>
           {affected.length ? (
             <ul className="mt-4 flex flex-wrap gap-1.5" aria-label="Services that need attention">
