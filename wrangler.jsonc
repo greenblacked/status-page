@@ -1,10 +1,10 @@
 {
   // Cloudflare Workers config for `DEPLOY_TARGET=cloudflare npm run build`.
   // There is no account_id here: deploy.yml passes CLOUDFLARE_ACCOUNT_ID, so
-  // this public file names no account. The Worker has one binding, a KV
-  // namespace it reads and writes itself (no external secret reaches it):
-  // requests read the board from KV, and the Cron Trigger below is the only
-  // thing that reads the vendor feeds.
+  // this public file names no account. The Worker has two bindings, a KV
+  // namespace it reads and writes itself and its own version's metadata
+  // (no external secret reaches it): requests read the board from KV, and
+  // the Cron Trigger below is the only thing that reads the vendor feeds.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "status-bar",
   // Not TanStack Start's own default entry: @cloudflare/vite-plugin resolves
@@ -20,6 +20,11 @@
   "observability": { "enabled": true },
   // Versions uploaded for review get no public preview URL.
   "preview_urls": false,
+  // The answering version's id, which src/server.cloudflare.ts sends as
+  // X-Worker-Version so deploy.yml's smoke test can tell the version it
+  // just deployed from the one before. Not inherited by named environments
+  // (wrangler's config validation), so env.staging repeats it.
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   // Sweeps every vendor and writes the board snapshot to KV
   // (src/lib/status/cron-sweep.ts). `triggers` is inherited, so this also
   // runs on env.staging below without repeating it. CONTRIBUTING.md#deploying
@@ -36,7 +41,13 @@
       "name": "status-bar-staging",
       "observability": { "enabled": true },
       "preview_urls": false,
-      "kv_namespaces": [{ "binding": "STATUS_SNAPSHOT", "id": "set-by-deploy-workflow" }]
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "kv_namespaces": [{ "binding": "STATUS_SNAPSHOT", "id": "set-by-deploy-workflow" }],
+      // Keeps the public staging board out of search results: every Worker
+      // response gets X-Robots-Tag and /robots.txt disallows everything
+      // (src/server.cloudflare.ts, src/routes/robots[.]txt.ts). `vars` are
+      // not inherited, so production, which sets none, stays indexable.
+      "vars": { "ROBOTS": "noindex" }
     }
   }
 }
