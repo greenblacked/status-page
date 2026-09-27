@@ -11,6 +11,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
 - A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically.
 
+### Fixed
+
+- **Refresh** no longer greys out during every background check, which dropped keyboard focus back to the top of the page. It stays usable and says when a check is running.
+
 ### Security
 
 - Every page and API response now carries security headers: a Content-Security-Policy that allows only the board's own origin and forbids framing, HSTS, `nosniff`, a referrer policy and a permissions policy.

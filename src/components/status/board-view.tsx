@@ -205,7 +205,10 @@ export function BoardView({
                 size="sm"
                 className="shrink-0"
                 onClick={() => void handleRefresh()}
-                disabled={fetching}
+                // Not `disabled`: every background refetch would drop keyboard
+                // focus to <body>. handleRefresh ignores a press while its own
+                // refresh is in flight, and aria-busy says one is running.
+                aria-busy={fetching}
                 aria-label="Refresh status now"
               >
                 <RefreshCw className={cn("size-3.5", fetching && "animate-spin")} />
