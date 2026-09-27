@@ -6,6 +6,29 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Added
+
+- `/readyz` answers `503` when the board is more than ten minutes old or no source could be read, and `200` otherwise, with the snapshot's age and how many services are Unknown. Uptime monitors can watch it; `/healthz` stays the liveness probe.
+- On the hosted Cloudflare deployment, every response names the Worker version that served it in an `X-Worker-Version` header.
+
+### Changed
+
+- On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
+- A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place, and gives a deploy that lands on an out-of-date board five minutes for its first scheduled refresh before calling it stale.
+
+### Fixed
+
+- One AWS or Apple event with an unreadable timestamp no longer turns the whole card Unknown; that event just shows without a start time.
+- The staging deployment no longer shows up in search results: it sends `X-Robots-Tag: noindex` and a `/robots.txt` that disallows crawling. Production, and any self-hosted build, now serves a `/robots.txt` that allows it.
+- On Cloudflare, an outage of the KV store that holds the board no longer turns every page into an error: a server keeps showing the board it already has while it is under ten minutes old, and only one with no board, or an older one, collects it straight from the vendors, at most once a minute.
+- When no board can be produced at all, `/api/status.json`, `/feed.xml`, the badges and `/metrics` answer `503` with `Retry-After`, so feed readers, Shields.io and scrapers treat it as temporary instead of as a server error.
+
+### Security
+
+- Incident links from vendor feeds are used only when they are https addresses on that vendor's own status site; any other link, such as a plain `http:` or `javascript:` address or another site, is replaced by the vendor's status page on the card, in the API and in the feed.
+- A vendor response larger than 4 MiB is refused as it streams in, and its card shows Unknown with the reason, so one broken or hostile source cannot exhaust the server's memory.
+- Every page and API response now carries security headers: a Content-Security-Policy that allows only the board's own origin and forbids framing, HSTS, `nosniff`, a referrer policy and a permissions policy.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added

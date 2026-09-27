@@ -9,6 +9,11 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # Propose a release only once it has been public for a week. Most
+    # hijacked npm releases are found and pulled within days; waiting
+    # keeps them out of the lockfile. Security updates are not delayed.
+    cooldown:
+      default-days: 7
     groups:
       development-dependencies:
         dependency-type: development
@@ -25,6 +30,10 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # The same, shorter: Actions are pinned by SHA and reviewed, but a
+    # retagged or compromised release still deserves a few days to surface.
+    cooldown:
+      default-days: 3
     groups:
       github-actions:
         patterns:

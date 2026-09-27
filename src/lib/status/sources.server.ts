@@ -5,10 +5,12 @@ import {
   isFreshRelease,
   latestAppleOsByFamily,
   MIKROTIK_CHANNELS,
+  mikrotikChangelogUrl,
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
-import { fetchJson, fetchText, PayloadError, SourceError } from "./http.ts";
+import { fetchJson, fetchText, meteredBytes, meterBytes, PayloadError, SourceError } from "./http.ts";
+import { hostOf, vendorUrl } from "./vendor-url.ts";
 import {
   googleImpact,
   overallSummary,
@@ -145,9 +147,18 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
   const latencyMs = Date.now() - started;
   // One JSON line per failed collector, so a host's log shows which vendor
   // broke and how without anyone watching the board. No payloads, no URLs
-  // beyond the vendor host already in the message.
+  // beyond the vendor host already in the message. `bytes` is what it read
+  // before failing (collectAllServices meters each collector).
   console.warn(
-    JSON.stringify({ event: "collector_failed", service: id, kind: failure.kind, status: failure.status, message: failure.message, latencyMs }),
+    JSON.stringify({
+      event: "collector_failed",
+      service: id,
+      kind: failure.kind,
+      status: failure.status,
+      message: failure.message,
+      latencyMs,
+      bytes: meteredBytes(),
+    }),
   );
   return {
     ...base(id, new Date().toISOString(), latencyMs),
@@ -164,7 +175,8 @@ function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }> {
   return fn().then((value) => ({ value, ms: Date.now() - started }));
 }
 
-function googleIncidents(incidents: GoogleIncident[], sourceRoot: string) {
+function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
+  const { sourceUrl } = CATALOG_BY_ID[id];
   const open = incidents.filter((incident) => !incident.end);
   let health: Health = "operational";
   const components: ComponentHealth[] = [];
@@ -186,10 +198,11 @@ function googleIncidents(incidents: GoogleIncident[], sourceRoot: string) {
       health: itemHealth,
       startedAt: incident.begin,
       updatedAt: incident.modified,
-      // Resolved against the root rather than concatenated: the feed's
-      // "incidents/<id>" form has no leading slash, and concatenation
-      // produced "https://status.cloud.google.comincidents/<id>".
-      url: incident.uri ? new URL(incident.uri, `${sourceRoot.replace(/\/$/, "")}/`).href : sourceRoot,
+      // Resolved rather than concatenated: the feed's "incidents/<id>" form
+      // has no leading slash, and concatenation produced
+      // "https://status.cloud.google.comincidents/<id>". vendorUrl keeps it
+      // on Google's own status host, whatever the feed says.
+      url: vendorUrl(incident.uri, sourceUrl, [hostOf(sourceUrl)]),
     };
   });
   return { health, incidents: mapped, components };
@@ -202,6 +215,8 @@ function fromStatuspage(
   componentFilter?: (name: string, group?: boolean) => boolean,
 ): ServiceSnapshot {
   const checkedAt = new Date().toISOString();
+  const { sourceUrl } = CATALOG_BY_ID[id];
+  const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
   const components = (data.components ?? [])
     .filter((component) => (componentFilter ? componentFilter(component.name, component.group) : !component.group))
     .map((component) => ({
@@ -236,7 +251,9 @@ function fromStatuspage(
       health: statuspageIndicator(incident.impact),
       startedAt: incident.started_at,
       updatedAt: incident.updated_at,
-      url: incident.shortlink,
+      // Statuspage writes incident shortlinks on stspg.io; the vendor's own
+      // status host is allowed too. No shortlink stays no link, as before.
+      url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
     }));
 
   const maintenances = (data.scheduled_maintenances ?? []).filter((item) => {
@@ -269,7 +286,7 @@ async function collectGcp(): Promise<ServiceSnapshot> {
     const { value, ms } = await timed(() =>
       fetchJson<GoogleIncident[]>("https://status.cloud.google.com/incidents.json"),
     );
-    const parsed = googleIncidents(value, "https://status.cloud.google.com");
+    const parsed = googleIncidents(value, "gcp");
     return {
       ...base("gcp", new Date().toISOString(), ms),
       health: parsed.health,
@@ -323,6 +340,22 @@ function awsHealthFromEvent(event: AwsEvent): Health {
   return "degraded";
 }
 
+/**
+ * An epoch timestamp from a vendor payload as an ISO string, or undefined
+ * when it is missing, not a number ("n/a", ""), or outside the range a Date
+ * can hold. `new Date(NaN).toISOString()` throws a RangeError, and one bad
+ * timestamp on one event used to fail the whole collector and blank its
+ * card; a missing start time only loses one line of detail.
+ * `unitMs` is 1000 for seconds (AWS), 1 for milliseconds (Apple).
+ */
+export function epochToIso(value: unknown, unitMs: number): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const epoch = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
+  if (!Number.isFinite(epoch) || epoch === 0) return undefined;
+  const date = new Date(epoch * unitMs);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 async function collectAws(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -340,8 +373,8 @@ async function collectAws(): Promise<ServiceSnapshot> {
         id: event.arn ?? event.summary ?? crypto.randomUUID(),
         title: `${event.service_name ?? event.service ?? "AWS"} — ${event.summary ?? last?.summary ?? "Event"}`,
         health: itemHealth,
-        startedAt: event.date ? new Date(Number(event.date) * 1000).toISOString() : undefined,
-        updatedAt: last?.timestamp ? new Date(last.timestamp * 1000).toISOString() : undefined,
+        startedAt: epochToIso(event.date, 1000),
+        updatedAt: epochToIso(last?.timestamp, 1000),
         url: "https://health.aws.amazon.com/health/status",
       };
     });
@@ -488,24 +521,38 @@ async function collectCs2Europe(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectEpic(): Promise<ServiceSnapshot> {
+// State shared by the collectors of one collectAllServices() call, and
+// only that call: the next sweep starts empty, so nothing here can serve a
+// stale payload.
+type Sweep = {
+  epicSummary: () => Promise<{ value: StatuspageSummary; ms: number }>;
+};
+
+function createSweep(): Sweep {
+  let epic: Promise<{ value: StatuspageSummary; ms: number }> | undefined;
+  return {
+    // Epic and Fortnite are two cards cut from one Statuspage summary, so
+    // one sweep fetches it once and both read the same answer (or the same
+    // failure). The bytes count toward whichever collector asked first.
+    epicSummary: () =>
+      (epic ??= timed(() => fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"))),
+  };
+}
+
+async function collectEpic(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"),
-    );
+    const { value, ms } = await sweep.epicSummary();
     return fromStatuspage("epic", value, ms, (name) => !/fortnite/i.test(name));
   } catch (error) {
     return failed("epic", started, error);
   }
 }
 
-async function collectFortnite(): Promise<ServiceSnapshot> {
+async function collectFortnite(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"),
-    );
+    const { value, ms } = await sweep.epicSummary();
     return fromStatuspage("fortnite", value, ms, (name) => /fortnite/i.test(name));
   } catch (error) {
     return failed("fortnite", started, error);
@@ -560,7 +607,7 @@ async function collectApple(): Promise<ServiceSnapshot> {
           id: `${service.serviceName}-${event.epochStartDate ?? event.datePosted ?? event.message}`,
           title: `${service.serviceName}: ${event.message ?? event.statusType ?? "Issue"}`,
           health: itemHealth,
-          startedAt: event.epochStartDate ? new Date(event.epochStartDate).toISOString() : undefined,
+          startedAt: epochToIso(event.epochStartDate, 1),
           url: "https://www.apple.com/support/systemstatus/",
         });
       }
@@ -584,7 +631,7 @@ async function collectAndroid(): Promise<ServiceSnapshot> {
     const { value, ms } = await timed(() =>
       fetchJson<GoogleIncident[]>("https://status.play.google.com/incidents.json"),
     );
-    const parsed = googleIncidents(value, "https://status.play.google.com");
+    const parsed = googleIncidents(value, "android");
     return {
       ...base("android", new Date().toISOString(), ms),
       health: parsed.health,
@@ -741,7 +788,7 @@ async function collectGrok(): Promise<ServiceSnapshot> {
         title: item.title,
         health: itemHealth,
         startedAt: item.pubDate ? new Date(item.pubDate).toISOString() : undefined,
-        url: item.link ?? "https://status.x.ai/",
+        url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
       };
     });
     return {
@@ -816,9 +863,12 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
       }, channels[0]);
       let notes = "";
       const notesVersion = newest?.version ?? stable?.version;
-      if (notesVersion) {
+      // parseMikrotikNewest already refuses a malformed version; building
+      // the URL through the same check keeps it that way if that changes.
+      const notesUrl = notesVersion ? mikrotikChangelogUrl(notesVersion) : null;
+      if (notesUrl) {
         try {
-          const changelog = await fetchText(`https://download.mikrotik.com/routeros/${notesVersion}/CHANGELOG`);
+          const changelog = await fetchText(notesUrl);
           notes = summarizeMikrotikChangelog(changelog.body);
         } catch {
           notes = "";
@@ -894,21 +944,45 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
   }
 }
 
+// Runs one collector with its own byte meter, and logs the success line
+// that pairs with failed()'s collector_failed, so the log shows every
+// source's latency and download size per sweep, not only the broken ones.
+function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
+  return meterBytes(async (meter) => {
+    const snapshot = await collect();
+    if (!snapshot.failure) {
+      console.log(
+        JSON.stringify({
+          event: "collector_completed",
+          service: snapshot.id,
+          health: snapshot.health,
+          latencyMs: snapshot.latencyMs,
+          bytes: meter.bytes,
+        }),
+      );
+    }
+    return snapshot;
+  });
+}
+
 export async function collectAllServices(): Promise<ServiceSnapshot[]> {
-  return Promise.all([
-    collectGcp(),
-    collectAws(),
-    collectSteam(),
-    collectCs2Europe(),
-    collectEpic(),
-    collectFortnite(),
-    collectSpotify(),
-    collectApple(),
-    collectAndroid(),
-    collectGrok(),
-    collectChatGpt(),
-    collectClaude(),
-    collectMikrotik(),
-    collectAppleOs(),
-  ]);
+  const sweep = createSweep();
+  return Promise.all(
+    [
+      collectGcp,
+      collectAws,
+      collectSteam,
+      collectCs2Europe,
+      () => collectEpic(sweep),
+      () => collectFortnite(sweep),
+      collectSpotify,
+      collectApple,
+      collectAndroid,
+      collectGrok,
+      collectChatGpt,
+      collectClaude,
+      collectMikrotik,
+      collectAppleOs,
+    ].map(metered),
+  );
 }

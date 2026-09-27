@@ -123,7 +123,7 @@ When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 3. Commits `chore(release): X.Y.Z` to `main`, authored by the account that merged. The commit updates `package.json`, `package-lock.json` and the changelog, and turns `## [Unreleased]` into the dated `## [X.Y.Z]` section. If the pull request added nothing under Unreleased, the section is written from the merged commits' subjects instead.
 4. Tags that commit `vX.Y.Z`.
 5. Publishes the GitHub Release with that section as its notes.
-6. Merges `main` back into `dev`, released or not, so `dev` carries the release commit and any fix merged into `main` directly. A release on `main` while `dev` has lines under Unreleased (an urgent fix, usually) conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts `dev`'s lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, and you resolve it on a branch from `dev`:
+6. Merges `main` back into `dev`, released or not, so `dev` carries the release commit and any fix merged into `main` directly. When that merge actually moves `dev`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `dev` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, staging would keep running the pre-release code until an unrelated push to `dev` redeployed it. A release on `main` while `dev` has lines under Unreleased (an urgent fix, usually) conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts `dev`'s lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, and you resolve it on a branch from `dev`:
 
    ```bash
    git fetch origin
@@ -152,11 +152,120 @@ If `main` or `dev` later gets a ruleset that requires pull requests or status ch
 
 Never move or reuse a tag that has a published release; release a new patch version instead.
 
+## Deploying
+
+[`deploy.yml`](.github/workflows/deploy.yml) builds the board for [Cloudflare Workers](https://developers.cloudflare.com/workers/) and deploys it with wrangler:
+
+| Branch | Environment | Worker |
+| --- | --- | --- |
+| `dev` | `staging` | `status-bar-staging` |
+| `main` | `production` | `status-bar` |
+
+Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. Every build, pull request or push, also runs the built Worker in workerd with an empty local KV namespace, fires its Cron Trigger once and checks that the snapshot moves forward (`scripts/ci/smoke.sh --cron`), so a Worker whose scheduled handler throws never reaches a deploy. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The smoke test first waits until `/healthz` carries the `X-Worker-Version` that `wrangler deploy` reported, so it tests the new version rather than the old one still answering somewhere, and after a rollback the job waits until `/healthz` no longer names the failed version. The page, API and feed checks fail within about half a minute, but `/readyz` gets five minutes to turn `200`: a deploy can be the fix for a board that is already stale (the previous version's cron was broken, say), and it only turns ready once the new version's first cron tick (up to 2 minutes away), its sweep, KV's propagation to other locations (up to about a minute) and the isolate's 5-second memo are behind it, about 3.5 minutes in all. Rolling that deploy back as stale would put the broken version back for good. `deploy.yml`'s smoke-test step has the numbers. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace. The staging Worker is public but kept out of search engines: `wrangler.jsonc`'s `env.staging.vars` sets `ROBOTS=noindex`, so every response it makes carries `X-Robots-Tag: noindex, nofollow` and its `/robots.txt` disallows everything; production and the Node build serve `Allow: /`. Every response the Worker makes, on either environment, carries `X-Worker-Version: <version id>` from the `version_metadata` binding (`CF_VERSION_METADATA`, repeated under `env.staging` because bindings are not inherited), so you can see which deployed version answered: `curl -sI https://<your-host>/healthz | grep -i x-worker-version`, against `npx wrangler deployments list`. The Node build sends no such header.
+
+### How the board stays fresh on Workers
+
+Cloudflare runs many isolates across many locations, so a Worker cannot keep the Node build's in-memory cache: each isolate would sweep every vendor itself, and a "Refresh" click would only throttle that one isolate. Instead, a [Cron Trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/) (`wrangler.jsonc`'s `triggers.crons`, every 2 minutes) is the only thing that reads the vendors: it collects the board and writes it to a KV namespace (binding `STATUS_SNAPSHOT`), and every request - the page, `/api/status.json`, `/feed.xml`, the badges, `/metrics` - only ever reads that snapshot (`src/lib/status/board.cloudflare.ts`, `src/lib/status/cron-sweep.ts`). The **Refresh** button reads the same snapshot rather than forcing a sweep: a synchronous sweep of every vendor on the request path risks the CPU-time limit a single request gets, and the cron already runs every two minutes from everywhere the board is opened. A request collects anything itself only in two cases. One is a cold KV namespace right after a fresh deploy, before the first cron tick; that one collection is stored through `ctx.waitUntil` so it is not lost if the Worker is torn down right after the response. The other is KV itself failing (an error, not an empty or unreadable value): the isolate logs `{"event":"kv_read_failed"}` and keeps serving the board it already has for a minute before asking KV again, as long as that board stays under `/readyz`'s ten-minute limit meanwhile. Only an isolate with no board, or one about to go stale, collects the board itself, once for all the requests waiting on it, and never writes it to KV, which the cron owns. If that collect fails too, an isolate that has shown a board keeps showing it, and one that has not answers `503` with `Retry-After` on `/api/status.json`, `/feed.xml`, the badges and `/metrics` (`src/lib/status/board-response.ts`, the same on the Node build).
+
+Every cron run ends in one JSON log line in Workers Logs: `{"event":"sweep_completed","durationMs":…,"services":14,"unknown":…,"bytes":…,"skipped":false}`, or `{"event":"sweep_failed","message":…}` (the run then also shows as failed under the Worker's cron events). `skipped: true` is a run that landed within 15 seconds of the last snapshot and reused it. A stream of `sweep_failed`, or `unknown` equal to `services`, is a board that has stopped updating while every request still answers.
+
+This needs its own server entry (`src/server.cloudflare.ts`, named directly in `wrangler.jsonc`'s `main`): Workers module syntax wants a `scheduled` export next to `fetch`, and both need the KV binding and `ExecutionContext.waitUntil` that only workerd's own call to them provides. The Node build (`npm run build` without `DEPLOY_TARGET`) is unaffected: it keeps TanStack Start's default entry and `src/lib/status/board.ts`'s in-memory cache, and never resolves the Workers-only files - `vite.config.ts`'s `resolve.alias` for `@/lib/status/board` is what picks between them, keyed on `DEPLOY_TARGET`.
+
+### How the token is kept safe
+
+The repository is public, so anyone can read the workflow and open a pull request. The Cloudflare API token is still reachable only by the deploy job for `dev` and `main`:
+
+- **It is an environment secret, not a repository secret.** GitHub hands it only to a job that names the `staging` or `production` environment, and each environment admits one branch.
+- **Pull requests never get it,** from forks or not. The workflow has no `pull_request_target`, so pull request code never runs with secrets or a write token.
+- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there, and checks that install with `npm audit signatures`, so the wrangler that runs beside the token is the one the registry signed. It also runs no build, no npm script and no project JavaScript: it only uploads what the build job made (`no_bundle`), and only its deploy and rollback steps see the token. The one repository file it runs is the post-deploy smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh) (bash, curl and jq, from the same protected branch as the deploy), in a step without the token.
+- **It can do one thing.** The token is scoped to Workers on one account and expires.
+- **Nothing in the repository names the account.** `wrangler.jsonc` has no `account_id`; the workflow passes `CLOUDFLARE_ACCOUNT_ID` from the environment. Local secrets (`.dev.vars*`) and wrangler's state (`.wrangler`) are git-ignored.
+
+### One-time setup
+
+1. **Create the token.** In the Cloudflare dashboard, go to **My Profile → API Tokens → Create Token** and start from **Edit Cloudflare Workers**. Trim it to what `wrangler deploy` and `wrangler rollback` need:
+   - **Account resources:** only this account.
+   - **Permissions:** Account · Workers Scripts · Edit, and Account · Account Settings · Read. The Worker's KV binding needs no token permission: `wrangler deploy` only records which namespace to bind. If a deploy is ever refused with a KV authorization error, add Account · Workers KV Storage · Edit.
+   - **Custom domain:** add Zone · Workers Routes · Edit for that zone only, and nothing else.
+   - **TTL:** set an end date, and rotate the token before it.
+
+   Cloudflare renames these permissions from time to time, so check the list against [Cloudflare's token docs](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) when you create it.
+2. **Create a KV namespace for each Worker**, signed in as yourself rather than with the CI token, and keep the two ids for step 4:
+
+   ```bash
+   npx wrangler login
+   npx wrangler kv namespace create status-bar-snapshot           # production
+   npx wrangler kv namespace create status-bar-snapshot-staging   # staging
+   ```
+
+   The ids are not secrets, but they are per environment, so they live in GitHub next to the account id rather than in `wrangler.jsonc`, whose placeholder only local previews use. Automatic provisioning (a binding with no `id`, created on first deploy) is experimental in this wrangler version, so this is a one-time step.
+3. **Create the two environments.** In **Settings → Environments**, add `staging` and `production`. For each, set **Deployment branches and tags** to **Selected branches**, and add only `dev` or only `main`. Optionally, add yourself as a **Required reviewer** on `production`, so every production deploy waits for your approval.
+4. **Give each environment its settings.** Add the secret `CLOUDFLARE_API_TOKEN`, the variables `CLOUDFLARE_ACCOUNT_ID` and `KV_NAMESPACE_ID` (that environment's namespace from step 2), and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it with `scripts/ci/smoke.sh --require-ready` and rolls back automatically if it fails, including when `/readyz` still says the board is stale or every source is unreadable five minutes after the new version answers). Without `KV_NAMESPACE_ID` the deploy stops before touching Cloudflare; without `DEPLOY_URL` it logs a warning and skips the smoke test and rollback.
+5. **Watch production between deploys.** Set the *repository* variable `PRODUCTION_URL` (**Settings → Secrets and variables → Actions → Variables**, not an environment's) to the production board's `https://` address. `source-health.yml` then checks its `/readyz` every hour and keeps one issue labelled `deploy-health` open while it is not `200`, closing it on recovery: that catches a Cron Trigger that stopped, or a Worker that cannot reach the vendors, which no deploy-time check sees. Without it the job only logs a notice. `gh variable set PRODUCTION_URL --repo greenblacked/status-page --body "https://<your-host>"` does the same.
+
+The same with the GitHub CLI:
+
+```bash
+repo=greenblacked/status-page
+for pair in staging:dev production:main; do
+  env="${pair%%:*}" branch="${pair##*:}"
+  gh api -X PUT "repos/$repo/environments/$env" \
+    -F 'deployment_branch_policy[protected_branches]=false' \
+    -F 'deployment_branch_policy[custom_branch_policies]=true'
+  gh api -X POST "repos/$repo/environments/$env/deployment-branch-policies" -f name="$branch" -f type=branch
+  gh secret set CLOUDFLARE_API_TOKEN --repo "$repo" --env "$env"   # paste the token when asked
+  gh variable set CLOUDFLARE_ACCOUNT_ID --repo "$repo" --env "$env" --body "<your account id>"
+  gh variable set KV_NAMESPACE_ID --repo "$repo" --env "$env" --body "<this environment's namespace id>"
+done
+```
+
+### Locally
+
+```bash
+DEPLOY_TARGET=cloudflare npm run build            # the production Worker in dist/
+DEPLOY_TARGET=cloudflare npx vite preview --host 127.0.0.1   # runs it in workerd, Cloudflare's runtime, with a local, simulated KV namespace
+npx wrangler deploy --dry-run --config dist/server/wrangler.json   # what would upload
+DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging npm run build      # the staging Worker
+```
+
+Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
+
+CI and the deploy share one smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh): `/healthz`, the page and its security headers, `/api/status.json` with every service, `/feed.xml`, `/metrics` and `/readyz`. Run it against any running board:
+
+```bash
+./scripts/ci/smoke.sh http://127.0.0.1:4173                    # /readyz may be 503 when the vendors are unreachable
+./scripts/ci/smoke.sh https://<your-host> --require-ready      # /readyz must be 200 right now
+./scripts/ci/smoke.sh https://<your-host> --expect-version <id> --wait 120 --attempts 3 --require-ready --ready-wait 300   # what the deploy checks
+```
+
+`--expect-version` takes a Worker version id (`npx wrangler deployments list`, or the `Current Version ID:` line `wrangler deploy` prints) and fails if `/healthz` still comes from another version when `--wait` runs out, then requires the same `X-Worker-Version` on every response it checks. `--attempts` retries the page, API and feed checks 10 seconds apart; `--ready-wait` separately gives `/readyz` that many seconds, checked every 10, to turn `200` under `--require-ready`. The deploy job reads the id from the `deploy` line wrangler writes to `WRANGLER_OUTPUT_FILE_PATH`, and stops with an error, before the smoke test, if there is none.
+
+`vite preview`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API `vite preview` prints on start:
+
+```bash
+curl -X POST "http://127.0.0.1:4173/cdn-cgi/local/explorer/api/local/scheduled?worker=status-bar" \
+  -H 'Content-Type: application/json' -d '{"cron":"*/2 * * * *"}'
+```
+
+For a `CLOUDFLARE_ENV=staging` build, the Worker is `status-bar-staging`. Run `vite preview` without `CLOUDFLARE_ENV` either way: the built `dist/server/wrangler.json` already is that environment's config, and naming it again registers the Worker as `status-bar-staging-staging`. `./scripts/ci/smoke.sh http://127.0.0.1:4173 --cron status-bar` does all of this and checks the result, as the deploy workflow's build job does. The build also leaves `.wrangler/deploy/config.json`, which `vite preview` needs; delete only `.wrangler/state` to start again from an empty KV namespace.
+
+### Rolling back
+
+`deploy.yml` already does this by itself when a deploy fails its smoke test (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` reach only that one rollback step, same as the deploy step). To go back to the previous version by hand:
+
+```bash
+npx wrangler rollback --name status-bar          # or status-bar-staging
+```
+
+You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back only changes which Worker version answers requests: it does not touch the KV namespace, so the board keeps whatever the Cron Trigger last wrote regardless of which version is live. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
+
 ## Dependencies
 
 Dependabot proposes npm and GitHub Actions updates weekly, grouped into production dependencies, development dependencies and Actions.
 
 - Actions stay pinned to a full commit SHA with the version in a trailing comment
+- A new release is proposed only after a cooldown, 7 days for npm and 3 for Actions, so a hijacked release that is pulled within days never reaches the lockfile. Security updates are not held back
+- Every install in CI and in the deploy workflow (its build, its dry run and the deploy job that holds the token) runs `npm audit signatures` right after `npm ci`, so a tarball that does not match the registry's signature fails the run
 - `@types/node` must match the oldest supported Node (`engines` and `.nvmrc`), so Dependabot skips its major versions. Raise it by hand in the same PR that raises `engines`
 
 ## Adding a service

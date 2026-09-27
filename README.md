@@ -143,6 +143,8 @@ The board publishes what it shows in four open formats. All four come from the s
 
 `/healthz` answers `ok` for load balancer and Kubernetes liveness probes. It never reads the board, so a slow vendor cannot fail the probe.
 
+`/readyz` says whether the board itself is fit to serve: `200` when the snapshot is under ten minutes old and at least one source answered, `503` when it is older (`"status":"stale"`) or every service is Unknown (`"status":"blind"`), with `{ status, generatedAt, ageSeconds, services, unknown }` either way and nothing cached. When no board can be produced at all, it answers `503` with just `{"status":"error"}`. Point an uptime monitor or a deploy check at it, **not** a liveness probe: it turns red when the vendors are unreachable, which restarting the server cannot fix.
+
 **Alerts without code.** Subscribe a chat tool to the feed:
 
 - Slack: `/feed subscribe https://<your-host>/feed.xml`
@@ -216,6 +218,7 @@ curl -s http://localhost:3000/feed.xml | head -20
 curl -s http://localhost:3000/api/badge/gcp
 curl -s http://localhost:3000/metrics | grep 'status="outage"'
 curl -s http://localhost:3000/healthz
+curl -s http://localhost:3000/readyz
 ```
 
 ## FAQ
@@ -234,7 +237,7 @@ The server cannot reach the vendors. The collectors run on the machine that serv
 
 <br>
 
-Not necessarily. Unknown means Status Bar could not read that vendor's source: it timed out, returned an error, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure and the vendor host. An hourly job in this repository calls every source and opens an issue when one stays unreadable.
+Not necessarily. Unknown means Status Bar could not read that vendor's source: it timed out, returned an error, sent more than 4 MiB, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure, the vendor host and how many bytes it read (a source that reads cleanly logs `collector_completed` with its latency and size instead). An hourly job in this repository calls every source and opens an issue when one stays unreadable.
 
 </details>
 
@@ -243,9 +246,11 @@ Not necessarily. Unknown means Status Bar could not read that vendor's source: i
 
 <br>
 
-Usually under three minutes old. Each board asks the server every two minutes, and the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago.
+Usually under three minutes old. Each board asks the server every two minutes.
 
-Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
+Running on Node (`npm run build`/`npm run preview`, or any other Node host), the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago. Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
+
+Running on Cloudflare Workers, a scheduled job collects every vendor every two minutes and every request just reads that result, so it never waits on a vendor either. **Refresh** there shows the newest scheduled snapshot rather than forcing a new sweep. Allowing for the schedule, Cloudflare's own read caching and each board's two-minute check, what you see is usually a few minutes old at most.
 
 </details>
 
@@ -272,7 +277,7 @@ The status page's JSON API sits behind a Cloudflare challenge, so the official R
 
 <br>
 
-The server holds only the latest snapshot, in memory, and reuses it for up to 45 seconds. Nothing is written to disk or a database. The Board log lives in your browser's local storage and keeps the last two hours, next to your alerts on/off choice and your starred services. Private windows or blocked site data leave it empty.
+On Node, the server holds only the latest snapshot, in memory, and reuses it for up to 45 seconds. On Cloudflare Workers, the scheduled job writes the latest snapshot to a Workers KV namespace, which every request reads; nothing else is stored there, and it holds no personal data. Neither build writes to a disk or a database of its own. The Board log lives in your browser's local storage and keeps the last two hours, next to your alerts on/off choice and your starred services. Private windows or blocked site data leave it empty.
 
 </details>
 
@@ -281,7 +286,7 @@ The server holds only the latest snapshot, in memory, and reuses it for up to 45
 
 <br>
 
-Not yet. `npm run build` produces a Fetch-style server handler in `dist/server/server.js`, and the repository deliberately does not pick a hosting adapter. `npm run preview` is a smoke test of that build, not a production host.
+Status Bar deploys to Cloudflare Workers: `dev` to a staging Worker and `main` to production, through [`deploy.yml`](.github/workflows/deploy.yml). [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the setup and how the deploy token is kept out of reach of pull requests. To run it elsewhere, `npm run build` still produces a plain Fetch-style handler in `dist/server/server.js`. `npm run preview` is a smoke test of that build, not a production host. The staging Worker answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
 
 </details>
 

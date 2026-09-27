@@ -15,9 +15,24 @@ export type OsRelease = {
 
 const OS_FAMILIES = ["iOS", "iPadOS", "macOS", "watchOS", "tvOS", "visionOS"] as const;
 
+// A RouterOS version as the NEWEST* files write it ("7.16.2", "7.17beta4",
+// "7.17rc1"). It becomes a path segment of the changelog URL below and
+// appears on the card, so anything else (a slash, "..", a query, markup)
+// is treated as an unreadable file rather than trusted.
+const MIKROTIK_VERSION = /^\d[\w.-]*$/;
+
+export function isMikrotikVersion(version: string): boolean {
+  return MIKROTIK_VERSION.test(version) && !version.includes("..");
+}
+
+/** The official changelog for a version, or null for one that fails isMikrotikVersion. */
+export function mikrotikChangelogUrl(version: string): string | null {
+  return isMikrotikVersion(version) ? `https://download.mikrotik.com/routeros/${version}/CHANGELOG` : null;
+}
+
 export function parseMikrotikNewest(body: string): { version: string; releasedAt?: string } | null {
   const match = body.trim().match(/^(\S+)(?:\s+(\d{9,}))?/);
-  if (!match?.[1]) return null;
+  if (!match?.[1] || !isMikrotikVersion(match[1])) return null;
   const timestamp = match[2] ? Number(match[2]) * 1000 : NaN;
   return {
     version: match[1],

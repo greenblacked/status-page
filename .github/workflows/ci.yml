@@ -32,6 +32,8 @@ jobs:
             node-version: '24'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: ${{ matrix.node-version-file }}
@@ -50,10 +52,20 @@ jobs:
           fi
           test "$(npm --version)" = "11.9.0"
       - run: npm ci
+      # Checks every installed tarball against the registry's signature
+      # (and provenance attestation, where one is published), so a package
+      # altered in a cache or on the way in fails the run before it is
+      # tested or built. Install scripts have run by now; this catches
+      # tampering, not a malicious release the registry signed.
+      - name: Verify npm registry signatures
+        run: npm audit signatures
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - name: Smoke-test built preview
+        # scripts/ci/smoke.sh holds the checks, shared with deploy.yml.
+        # /readyz may be 503 here: a runner that cannot reach a vendor
+        # still serves a correct, all-Unknown board.
         shell: bash
         run: |
           set -uo pipefail
@@ -65,24 +77,7 @@ jobs:
             wait "$preview_pid" 2>/dev/null || true
           }
           trap cleanup EXIT
-          response_file="${RUNNER_TEMP}/status-bar-preview.html"
-          status_file="${RUNNER_TEMP}/status-bar-preview.status"
-          ready=false
-          deadline=$((SECONDS + 30))
-          while (( SECONDS < deadline )); do
-            if ! kill -0 "$preview_pid" 2>/dev/null; then
-              cat "$log_file"
-              exit 1
-            fi
-            if curl --silent --show-error --fail --max-time 10 --write-out '%{http_code}' http://127.0.0.1:4173/ -o "$response_file" >"$status_file"; then
-              if [ "$(cat "$status_file")" = "200" ]; then
-                ready=true
-                break
-              fi
-            fi
-            sleep 2
-          done
-          if [ "$ready" != true ] || ! grep -aq '<title>Status Bar</title>' "$response_file" || ! grep -aq 'Cached server snapshots update every two minutes from official vendor feeds.' "$response_file"; then
+          if ! ./scripts/ci/smoke.sh http://127.0.0.1:4173; then
             cat "$log_file"
             exit 1
           fi
@@ -93,6 +88,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Repository hygiene
         run: ./scripts/ci/hygiene.sh
@@ -117,6 +114,9 @@ jobs:
         with:
           # Need both sides of the range to list the commits this PR adds.
           fetch-depth: 0
+          # The base branch below is fetched anonymously: this repository is
+          # public, and no later step needs a token in .git/config.
+          persist-credentials: false
 
       - name: Check Conventional Commits
         # Branch names are attacker-controlled on a fork PR, so the ref goes
@@ -152,6 +152,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Pinned by digest: Dependabot does not see images used in `run:`, so
       # bump this by hand from https://hub.docker.com/r/rhysd/actionlint/tags.
