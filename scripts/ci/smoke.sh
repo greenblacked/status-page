@@ -167,6 +167,14 @@ run_checks() {
     fail "/api/status.json: not JSON with $SERVICES services and a generatedAt"
   fi
 
+  get /api/history.json
+  check_version /api/history.json
+  if [ "$status" != 200 ]; then
+    fail "/api/history.json: $status, expected 200"
+  elif ! jq -e '.schema == 1 and .timezone == "UTC" and .retentionDays == 30 and (.services | type) == "object"' "$work/body" >/dev/null 2>&1; then
+    fail "/api/history.json: not JSON with schema 1, UTC, retentionDays 30 and services"
+  fi
+
   get /feed.xml
   check_version /feed.xml
   if [ "$status" != 200 ]; then
@@ -268,7 +276,7 @@ until run_checks; do
   attempt=$((attempt + 1))
   sleep 10
 done
-echo "ok  /healthz, /, /api/status.json, /feed.xml, /metrics and /readyz answer on $base"
+echo "ok  /healthz, /, /api/status.json, /api/history.json, /feed.xml, /metrics and /readyz answer on $base"
 
 if [ "$require_ready" = true ]; then
   wait_for_ready || { echo "smoke: FAILED against $base" >&2; exit 1; }

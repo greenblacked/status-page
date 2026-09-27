@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { service } from "../../test/fixtures";
 import { runScheduledSweep } from "./cron-sweep";
+import { HISTORY_KEY } from "./history";
 import type { SnapshotKv } from "./kv-snapshot-store";
-import { readSnapshot } from "./kv-snapshot-store";
+import { readHistory, readSnapshot } from "./kv-snapshot-store";
 import type { BoardSnapshot } from "./types";
 
 vi.mock("./collect-board", () => ({
@@ -24,12 +26,14 @@ function fakeKv(): SnapshotKv & { store: Map<string, string> } {
   };
 }
 
-function board(generatedAt: string): BoardSnapshot {
+function board(generatedAt: string, services: BoardSnapshot["services"] = []): BoardSnapshot {
+  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const item of services) counts[item.health] += 1;
   return {
     generatedAt,
     durationMs: 10,
-    services: [],
-    counts: { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
+    services,
+    counts,
   };
 }
 
@@ -60,6 +64,22 @@ describe("runScheduledSweep", () => {
     await expect(readSnapshot(kv)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
   });
 
+  it("merges history:v1 after a successful board write", async () => {
+    const kv = fakeKv();
+    const collected = board("2026-09-27T00:02:00.000Z", [
+      service("gcp", { health: "operational" }),
+      service("aws", { health: "degraded", failure: { kind: "parser", message: "secret-ish" } }),
+    ]);
+    vi.mocked(collectBoard).mockResolvedValue(collected);
+
+    await runScheduledSweep(kv, () => Date.parse("2026-09-27T00:02:00.000Z"));
+
+    const history = await readHistory(kv);
+    expect(history?.services.gcp.days).toEqual([{ date: "2026-09-27", worst: "operational", samples: 1, up: 1 }]);
+    expect(history?.services.aws.days).toEqual([{ date: "2026-09-27", worst: "degraded", samples: 1, up: 0 }]);
+    expect(kv.store.get(HISTORY_KEY)).not.toMatch(/secret-ish|failure|parser/);
+  });
+
   it("skips the sweep when the last snapshot is younger than the throttle window", async () => {
     const kv = fakeKv();
     await kv.put("board", JSON.stringify(board("2026-09-27T00:02:00.000Z")));
@@ -68,6 +88,7 @@ describe("runScheduledSweep", () => {
     await runScheduledSweep(kv, () => Date.parse("2026-09-27T00:02:10.000Z"));
 
     expect(collectBoard).not.toHaveBeenCalled();
+    expect(kv.store.has(HISTORY_KEY)).toBe(false);
   });
 
   it("sweeps again once the throttle window has passed", async () => {
@@ -104,16 +125,20 @@ describe("runScheduledSweep", () => {
 
     await runScheduledSweep(kv, () => Date.parse("2026-09-27T00:02:00.000Z"));
 
-    expect(loggedEvents(vi.mocked(console.log))).toEqual([
-      {
-        event: "sweep_completed",
-        durationMs: 0,
-        services: 2,
-        unknown: 1,
-        bytes: new TextEncoder().encode(JSON.stringify(collected)).byteLength,
-        skipped: false,
-      },
-    ]);
+    const events = loggedEvents(vi.mocked(console.log));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      event: "sweep_completed",
+      durationMs: 0,
+      services: 2,
+      unknown: 1,
+      bytes: new TextEncoder().encode(JSON.stringify(collected)).byteLength,
+      skipped: false,
+    });
+    expect(typeof events[0].historyBytes).toBe("number");
+    expect(events[0].historyBytes).toBeGreaterThan(0);
+    // skip/bytes stay in the console log, never in the history document.
+    expect(kv.store.get(HISTORY_KEY)).not.toMatch(/skipped|historyBytes|"bytes"/);
   });
 
   it("logs a skipped sweep as completed with skipped: true", async () => {
@@ -123,7 +148,15 @@ describe("runScheduledSweep", () => {
     await runScheduledSweep(kv, () => Date.parse("2026-09-27T00:02:10.000Z"));
 
     expect(loggedEvents(vi.mocked(console.log))).toEqual([
-      { event: "sweep_completed", durationMs: 0, services: 0, unknown: 0, bytes: 0, skipped: true },
+      {
+        event: "sweep_completed",
+        durationMs: 0,
+        services: 0,
+        unknown: 0,
+        bytes: 0,
+        historyBytes: 0,
+        skipped: true,
+      },
     ]);
   });
 

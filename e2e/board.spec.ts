@@ -255,3 +255,66 @@ for (const colorScheme of ["light", "dark"] as const) {
     });
   }
 }
+
+function historyDocument(
+  services: Record<string, { days: Array<{ date: string; worst: string; samples: number; up: number }> }>,
+) {
+  return {
+    schema: 1,
+    updatedAt: "2026-09-27T12:00:00.000Z",
+    timezone: "UTC",
+    retentionDays: 30,
+    services,
+  };
+}
+
+function day(date: string, worst: string, samples = 1, up = worst === "operational" ? 1 : 0) {
+  return { date, worst, samples, up };
+}
+
+test("shows a 30-day history strip on a card with history and none without", async ({ page }) => {
+  // aws always has a card; gcp is omitted from the document so its strip stays empty.
+  // Dates are relative to "today" so the strip stays inside the 30-day retention window.
+  const today = new Date();
+  const days = Array.from({ length: 10 }, (_, index) => {
+    const stamp = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (9 - index)));
+    const date = stamp.toISOString().slice(0, 10);
+    return day(date, index === 5 ? "degraded" : "operational", 2, index === 5 ? 0.5 : 1);
+  });
+  await page.route("**/api/history.json", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(historyDocument({ aws: { days } })),
+    });
+  });
+
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+
+  const aws = page.locator("#service-aws");
+  await expect(aws).toBeVisible();
+  await expect(aws.getByRole("img", { name: /uptime history/i })).toBeVisible();
+  await expect(aws.getByText(/uptime/i).first()).toBeVisible();
+
+  const gcp = page.locator("#service-gcp");
+  await expect(gcp).toBeVisible();
+  await expect(gcp.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
+});
+
+test("loads the board when history is cold or empty", async ({ page }) => {
+  await page.route("**/api/history.json", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(historyDocument({})),
+    });
+  });
+
+  const problems = watchConsole(page);
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
+  await page.waitForLoadState("networkidle");
+  expect(problems).toEqual([]);
+});
