@@ -55,4 +55,4 @@ runs:
     - name: Verify npm registry signatures
       if: inputs.install == 'true'
       shell: bash
-      run: npm audit signatures
+      run: ./scripts/ci/audit-signatures.sh

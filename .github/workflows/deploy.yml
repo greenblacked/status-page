@@ -16,10 +16,11 @@ name: Deploy
 #     every installed package against the registry's signature (npm audit
 #     signatures), runs no build, no npm script and no project JavaScript,
 #     and only uploads what the build job made, so a compromised
-#     dependency's install script never runs beside it. The one repository
-#     file it runs is the smoke test (scripts/ci/smoke.sh: bash, curl and
-#     jq, from the same protected branch as the deploy), in a step without
-#     the token.
+#     dependency's install script never runs beside it. The repository
+#     files it runs are two shell scripts from the same protected branch
+#     as the deploy, each in a step without the token: the signature check
+#     (scripts/ci/audit-signatures.sh) and the smoke test
+#     (scripts/ci/smoke.sh: bash, curl and jq).
 #   - Every job reads the repository and nothing more.
 
 on:
@@ -80,7 +81,7 @@ jobs:
       # Every installed tarball against the registry's signature, before
       # any of it is built into the Worker (see ci.yml).
       - name: Verify npm registry signatures
-        run: npm audit signatures
+        run: ./scripts/ci/audit-signatures.sh
       - run: npm run typecheck
       - run: npm test
       - name: Build for Cloudflare Workers
@@ -164,7 +165,7 @@ jobs:
       # This install's wrangler is what checks the Worker below, so it is
       # verified too, not only the build job's.
       - name: Verify npm registry signatures
-        run: npm audit signatures
+        run: ./scripts/ci/audit-signatures.sh
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: worker
@@ -199,7 +200,7 @@ jobs:
       # And that wrangler is the registry's: this install, not the build
       # job's, is the one that runs beside the token. No token in this step.
       - name: Verify npm registry signatures
-        run: npm audit signatures
+        run: ./scripts/ci/audit-signatures.sh
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: worker
