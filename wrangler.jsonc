@@ -1,0 +1,23 @@
+{
+  // Cloudflare Workers config for `DEPLOY_TARGET=cloudflare npm run build`.
+  // There is no account_id here: deploy.yml passes CLOUDFLARE_ACCOUNT_ID, so
+  // this public file names no account. The Worker has no bindings and no
+  // secrets; it only reads public vendor status feeds.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "status-bar",
+  "main": "@tanstack/react-start/server-entry",
+  "compatibility_date": "2026-09-20",
+  // TanStack Start keeps request context in AsyncLocalStorage.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // Versions uploaded for review get no public preview URL.
+  "preview_urls": false,
+  "env": {
+    // Built with CLOUDFLARE_ENV=staging from dev; a separate Worker.
+    "staging": {
+      "name": "status-bar-staging",
+      "observability": { "enabled": true },
+      "preview_urls": false
+    }
+  }
+}
