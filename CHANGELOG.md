@@ -49,7 +49,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Prometheus metrics at `/metrics`: each service's state, incidents and source reachability, ready for Grafana dashboards and Alertmanager rules. `/healthz` answers liveness probes without touching the vendors.
 - Star the services you care about: starred services sort first, and the **Starred** filter shows only them. Stars are kept in this browser.
 - Keyboard shortcuts: `/` to search, `1`–`6` for the filters, `I` for Issues only, `S` for Starred, `R` to refresh and `Esc` to clear. Press `?` for the list.
-- Search and filters are kept in the page address, so a filtered board can be bookmarked or pasted into a chat, such as `/?category=cloud&#x26;issues=true`.
+- Search and filters are kept in the page address, so a filtered board can be bookmarked or pasted into a chat, such as `/?category=cloud&issues=true`.
 
 ## [0.3.0] - 2026-09-25
 
@@ -84,7 +84,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
-- Grok incidents and Apple OS release names read as the vendor wrote them: codes such as `&#x26;amp;` in the RSS feeds are decoded, and an update that mentions something like "latency < 500ms" no longer loses the rest of its text.
+- Grok incidents and Apple OS release names read as the vendor wrote them: codes such as `&amp;` in the RSS feeds are decoded, and an update that mentions something like "latency < 500ms" no longer loses the rest of its text.
 - Steam turns Degraded, and names the source that failed, when only one of its two sources answers. When neither answers, the card is Unknown with the real error instead of Outage.
 - A failed player-count request no longer blanks the CS2 Europe card; the count is left out.
 - CS2 Europe's "fewer than 40% of relay points" rule is exact for every number of points.
