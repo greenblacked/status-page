@@ -1,6 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
 import { useServiceHistoryDays } from "@/components/status/board-history-provider";
-import { HealthDot } from "@/components/status/health-dot";
 import { HistoryStrip } from "@/components/status/history-strip";
 import {
   CATEGORY_ICON,
@@ -95,10 +94,7 @@ export function ServiceCard({
           </div>
         </div>
         <div className="flex shrink-0 items-center">
-          <Badge tone={service.health} className="gap-1.5 pr-2.5 pl-2">
-            <HealthDot health={service.health} />
-            {healthLabel(service.health)}
-          </Badge>
+          <Badge tone={service.health}>{healthLabel(service.health)}</Badge>
           <StarButton
             name={service.name}
             starred={starred}
