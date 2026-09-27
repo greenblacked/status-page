@@ -1,8 +1,10 @@
 import { ArrowUpRight, Cloud, Cpu, Gamepad2, History, Smartphone, Star } from "lucide-react";
 import { HealthDot } from "@/components/status/health-dot";
+import { HistoryStrip } from "@/components/status/history-strip";
 import { Badge } from "@/components/ui/badge";
 import { CATEGORIES } from "@/lib/status/catalog";
 import { ALL_CLEAR_SUMMARY, healthLabel } from "@/lib/status/health";
+import type { HistoryDay } from "@/lib/status/history";
 import { serviceAnchor } from "@/lib/status/layout";
 import { formatUtcTime, incidentStart, parseTimestamp } from "@/lib/status/schedule";
 import type { CategoryId, ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
@@ -39,6 +41,7 @@ export function ServiceCard({
   starred,
   onToggleStar,
   now,
+  historyDays = [],
 }: {
   service: ServiceSnapshot;
   index: number;
@@ -47,6 +50,8 @@ export function ServiceCard({
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
   /** The client clock (0 until mounted), for how long an incident has run. */
   now: number;
+  /** Public history days for this service; empty when cold or missing. */
+  historyDays?: HistoryDay[];
 }) {
   const Icon = CATEGORY_ICON[service.category];
   const changelog = service.category === "updates";
@@ -151,6 +156,8 @@ export function ServiceCard({
         </ul>
       ) : null}
 
+      {historyDays.length > 0 ? <HistoryStrip days={historyDays} nowMs={now} className="mt-4" /> : null}
+
       <div className="mt-auto flex items-center justify-between gap-3 pt-4">
         <p className="font-mono text-[11px] tabular-nums text-subtle" title="Time the official source took to answer">
           {service.latencyMs} ms
@@ -250,12 +257,18 @@ export function ServiceTile({
   emphasized = false,
   starred,
   onToggleStar,
+  historyDays = [],
+  now = 0,
 }: {
   service: ServiceSnapshot;
   index: number;
   emphasized?: boolean;
   starred: boolean;
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
+  /** Public history days for this service; empty when cold or missing. */
+  historyDays?: HistoryDay[];
+  /** Client clock for the strip's UTC day window. */
+  now?: number;
 }) {
   const Icon = CATEGORY_ICON[service.category];
   const detail = service.summary && service.summary !== ALL_CLEAR_SUMMARY ? service.summary : null;
@@ -265,35 +278,38 @@ export function ServiceTile({
       id={serviceAnchor(service.id)}
       tabIndex={-1}
       className={cn(
-        "focus-ring spotlight flex scroll-mt-6 items-center gap-3 rounded-2xl glass py-2 pr-1.5 pl-3 stagger-in",
+        "focus-ring spotlight flex scroll-mt-6 flex-col gap-2 rounded-2xl glass py-2 pr-1.5 pl-3 stagger-in",
         emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 30}ms`, viewTransitionName: `vt-${service.id}` }}
     >
-      <span className="grid size-9 shrink-0 place-items-center rounded-xl glass-inset text-ok" aria-hidden>
-        <Icon className="size-4" strokeWidth={1.75} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <h3 className="flex items-center gap-2 text-sm font-medium tracking-[-0.01em]">
-          <span className="truncate">{service.name}</span>
-          <HealthDot health="operational" />
-          <span className="sr-only">Operational</span>
-        </h3>
-        <p className="line-clamp-2 font-mono text-[11px] text-subtle [overflow-wrap:anywhere]">
-          {detail ?? CATEGORIES.find((category) => category.id === service.category)?.label}
-        </p>
+      <div className="flex items-center gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl glass-inset text-ok" aria-hidden>
+          <Icon className="size-4" strokeWidth={1.75} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="flex items-center gap-2 text-sm font-medium tracking-[-0.01em]">
+            <span className="truncate">{service.name}</span>
+            <HealthDot health="operational" />
+            <span className="sr-only">Operational</span>
+          </h3>
+          <p className="line-clamp-2 font-mono text-[11px] text-subtle [overflow-wrap:anywhere]">
+            {detail ?? CATEGORIES.find((category) => category.id === service.category)?.label}
+          </p>
+        </div>
+        <StarButton name={service.name} starred={starred} onToggle={() => onToggleStar(service.id)} />
+        <a
+          href={service.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`${service.sourceName}, official status for ${service.name}`}
+          title={service.sourceName}
+          className="focus-ring grid size-11 shrink-0 place-items-center rounded-full text-subtle transition-colors duration-[var(--motion-quick)] hover:text-fg"
+        >
+          <ArrowUpRight className="size-4" />
+        </a>
       </div>
-      <StarButton name={service.name} starred={starred} onToggle={() => onToggleStar(service.id)} />
-      <a
-        href={service.sourceUrl}
-        target="_blank"
-        rel="noreferrer"
-        aria-label={`${service.sourceName}, official status for ${service.name}`}
-        title={service.sourceName}
-        className="focus-ring grid size-11 shrink-0 place-items-center rounded-full text-subtle transition-colors duration-[var(--motion-quick)] hover:text-fg"
-      >
-        <ArrowUpRight className="size-4" />
-      </a>
+      {historyDays.length > 0 ? <HistoryStrip days={historyDays} nowMs={now} compact className="pr-1.5" /> : null}
     </article>
   );
 }
