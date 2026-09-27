@@ -74,26 +74,30 @@ describe("shortcutFor", () => {
 describe("single-key shortcuts switched off", () => {
   const off = { singleKey: false };
 
-  it("drops the letter and number keys", () => {
+  it("drops every printable key", () => {
     expect(shortcutFor(press("r", "KeyR"), off)).toBeNull();
     expect(shortcutFor(press("i", "KeyI"), off)).toBeNull();
     expect(shortcutFor(press("s", "KeyS"), off)).toBeNull();
     expect(shortcutFor(press("1", "Digit1"), off)).toBeNull();
     expect(shortcutFor(press("6", "Numpad6"), off)).toBeNull();
+    expect(shortcutFor(press("/", "Slash"), off)).toBeNull();
+    expect(shortcutFor(press("?", "Slash", { shiftKey: true }), off)).toBeNull();
     // By physical key on a non-Latin layout, too.
     expect(shortcutFor(press("к", "KeyR"), off)).toBeNull();
+    expect(shortcutFor(press(".", "Slash"), off)).toBeNull();
+    expect(shortcutFor(press(",", "Slash", { shiftKey: true }), off)).toBeNull();
   });
 
-  it("keeps search, help and Escape", () => {
-    expect(shortcutFor(press("/", "Slash"), off)).toEqual({ type: "focus-search" });
-    expect(shortcutFor(press("?", "Slash", { shiftKey: true }), off)).toEqual({ type: "help" });
+  it("keeps Escape, which types nothing", () => {
     expect(shortcutFor(press("Escape", "Escape"), off)).toEqual({ type: "reset" });
     expect(shortcutFor(press("Escape", "Escape", { editable: true }), off)).toEqual({ type: "leave-search" });
   });
 
   it("marks exactly the keys the switch turns off", () => {
     const switchable = SHORTCUT_HELP.filter((item) => item.singleKey).flatMap((item) => item.keys);
-    expect(switchable).toEqual(["1–6", "I", "S", "R"]);
+    expect(switchable).toEqual(["/", "1–6", "I", "S", "R", "?"]);
+    const kept = SHORTCUT_HELP.filter((item) => !item.singleKey).flatMap((item) => item.keys);
+    expect(kept).toEqual(["Esc"]);
   });
 });
 

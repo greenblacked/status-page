@@ -55,7 +55,8 @@ export function ShortcutsDialog({
               Single-key shortcuts
             </p>
             <p id="single-key-hint" className="mt-0.5 text-xs text-muted text-pretty">
-              The letter and number keys. Switch them off for speech input, or if they get in the way.
+              Every key here but Esc. Switch them off for speech input, or if they get in the way. The search box
+              and this list stay a Tab away.
             </p>
           </div>
           <button

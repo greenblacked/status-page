@@ -122,7 +122,7 @@ Open the local URL that Vite prints. The first load reads all fourteen sources, 
 
 - Filter by Cloud, Gaming, Platforms, AI or Updates, search by name, or switch on **Issues only**
 - Star the services you care about: they sort first, and **Starred** shows only them
-- Drive it from the keyboard: `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` lists them all. If the letter and number keys get in the way, for example with speech input, switch **Single-key shortcuts** off in that list; `/`, `?` and `Esc` keep working. The first Tab stop is **Skip to services**, past the header
+- Drive it from the keyboard: `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` lists them all. If single keys get in the way, for example with speech input, switch **Single-key shortcuts** off in that list to turn off every shortcut but `Esc`; the search box stays a Tab away, and the **Keyboard shortcuts** button at the foot of the page opens the list again. The first Tab stop is **Skip to services**, past the header
 - Share a filtered view: the search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered
 - Watch the countdown: the board pulls a new snapshot every two minutes, a few seconds after each two-minute mark so the server has renewed it, and the countdown ends when it does. The headline says when the snapshot on screen was taken ("as of 14:05 UTC"). If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did
 - Read the **Board log** to see what changed between two-minute slots

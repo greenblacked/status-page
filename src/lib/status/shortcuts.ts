@@ -41,10 +41,11 @@ function digit(input: KeyInput): number | null {
 
 export type ShortcutOptions = {
   /**
-   * The letter and number keys (R, I, S, 1–6). A speech-input user who says
-   * a word types its letters, each of which would fire one (WCAG 2.1.4), so
-   * they can be switched off. `/`, `?` and Esc stay: they are how to reach
-   * the search box and the switch itself.
+   * Every shortcut that is one printable key: `/`, `?`, R, I, S and 1–6. A
+   * speech-input user who dictates types characters, each of which would
+   * fire one (WCAG 2.1.4), so they can be switched off together. Esc stays:
+   * it types nothing. The search box and the footer's keyboard shortcuts
+   * button, which holds the switch, stay a Tab away.
    */
   singleKey: boolean;
 };
@@ -57,13 +58,15 @@ export function shortcutFor(input: KeyInput, options: ShortcutOptions = DEFAULT_
   if (input.editable) return input.key === "Escape" ? { type: "leave-search" } : null;
   if (input.repeat) return null;
 
+  if (input.key === "Escape") return { type: "reset" };
+  if (!options.singleKey) return null;
+
   // The slash key types "." on a Ukrainian layout but a letter on Dvorak,
   // where the letter's own shortcut, if any, wins.
   const slashKey = input.code === "Slash" && !/^[a-z]$/i.test(input.key);
   if (input.key === "?" || (slashKey && input.shiftKey)) return { type: "help" };
   if (input.key === "/" || slashKey) return { type: "focus-search" };
-  if (input.key === "Escape") return { type: "reset" };
-  if (input.shiftKey || !options.singleKey) return null;
+  if (input.shiftKey) return null;
   if (letter(input, "r")) return { type: "refresh" };
   if (letter(input, "i")) return { type: "toggle-issues" };
   if (letter(input, "s")) return { type: "toggle-starred" };
@@ -78,7 +81,7 @@ export function shortcutFor(input: KeyInput, options: ShortcutOptions = DEFAULT_
  * the keys the single-key switch turns off.
  */
 export const SHORTCUT_HELP: Array<{ keys: string[]; label: string; singleKey: boolean }> = [
-  { keys: ["/"], label: "Search services", singleKey: false },
+  { keys: ["/"], label: "Search services", singleKey: true },
   {
     keys: [`1–${NUMBERED.length}`],
     label: `All, ${CATEGORIES.map((category) => category.label).join(", ")}`,
@@ -88,7 +91,7 @@ export const SHORTCUT_HELP: Array<{ keys: string[]; label: string; singleKey: bo
   { keys: ["S"], label: "Starred only", singleKey: true },
   { keys: ["R"], label: "Refresh now", singleKey: true },
   { keys: ["Esc"], label: "Clear search and filters", singleKey: false },
-  { keys: ["?"], label: "Show these shortcuts", singleKey: false },
+  { keys: ["?"], label: "Show these shortcuts", singleKey: true },
 ];
 
 export const SINGLE_KEY_STORAGE_KEY = "status-bar:single-key-shortcuts";

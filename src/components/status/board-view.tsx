@@ -327,12 +327,14 @@ export function BoardView({
                 placeholder="Search GCP, CS2 Europe, RouterOS…"
                 className="pl-10 sm:pr-10"
               />
-              <kbd
-                aria-hidden
-                className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-md glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
-              >
-                /
-              </kbd>
+              {singleKey.enabled ? (
+                <kbd
+                  aria-hidden
+                  className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-md glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
+                >
+                  /
+                </kbd>
+              ) : null}
             </label>
             {/* One scrolling row on phones instead of three wrapped ones. */}
             <div
@@ -485,17 +487,25 @@ export function BoardView({
               </a>
               .
             </p>
-            <p className="hidden sm:block">
-              Press{" "}
-              <kbd className="rounded-md glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd> for{" "}
+            {/*
+              On every screen width: with the single-key shortcuts off, ? no
+              longer opens the list, and this button is the way back to the
+              switch, including on a desktop zoomed to a phone's width.
+            */}
+            <p>
               <button
                 type="button"
                 className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
                 onClick={() => setShortcutsOpen(true)}
               >
-                keyboard shortcuts
+                Keyboard shortcuts
               </button>
-              .
+              {singleKey.enabled ? (
+                <span className="hidden sm:inline">
+                  {" "}
+                  (press <kbd className="rounded-md glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
+                </span>
+              ) : null}
             </p>
           </footer>
           <ShortcutsDialog
