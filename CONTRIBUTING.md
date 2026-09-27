@@ -183,21 +183,22 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 1. **Create the token.** In the Cloudflare dashboard, go to **My Profile → API Tokens → Create Token** and start from **Edit Cloudflare Workers**. Trim it to what `wrangler deploy` and `wrangler rollback` need:
    - **Account resources:** only this account.
-   - **Permissions:** Account · Workers Scripts · Edit, Account · Account Settings · Read, and Account · Workers KV Storage · Edit (the KV namespace the Worker reads and writes its own snapshot in).
+   - **Permissions:** Account · Workers Scripts · Edit, and Account · Account Settings · Read. The Worker's KV binding needs no token permission: `wrangler deploy` only records which namespace to bind. If a deploy is ever refused with a KV authorization error, add Account · Workers KV Storage · Edit.
    - **Custom domain:** add Zone · Workers Routes · Edit for that zone only, and nothing else.
    - **TTL:** set an end date, and rotate the token before it.
 
    Cloudflare renames these permissions from time to time, so check the list against [Cloudflare's token docs](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) when you create it.
-2. **Create a KV namespace for each Worker**, then put its id in `wrangler.jsonc` in place of the matching `REPLACE_WITH_..._KV_NAMESPACE_ID` placeholder (not a secret, just not knowable ahead of time):
+2. **Create a KV namespace for each Worker**, signed in as yourself rather than with the CI token, and keep the two ids for step 4:
 
    ```bash
-   npx wrangler kv namespace create STATUS_SNAPSHOT               # production: the top-level kv_namespaces entry
-   npx wrangler kv namespace create STATUS_SNAPSHOT --env staging # staging: the one under env.staging
+   npx wrangler login
+   npx wrangler kv namespace create status-bar-snapshot           # production
+   npx wrangler kv namespace create status-bar-snapshot-staging   # staging
    ```
 
-   Automatic resource provisioning (a binding with no `id`, created on first deploy) is experimental in this wrangler version and needs a flag `deploy.yml` does not pass, so this is a one-time step rather than something the workflow does for you.
+   The ids are not secrets, but they are per environment, so they live in GitHub next to the account id rather than in `wrangler.jsonc`, whose placeholder only local previews use. Automatic provisioning (a binding with no `id`, created on first deploy) is experimental in this wrangler version, so this is a one-time step.
 3. **Create the two environments.** In **Settings → Environments**, add `staging` and `production`. For each, set **Deployment branches and tags** to **Selected branches**, and add only `dev` or only `main`. Optionally, add yourself as a **Required reviewer** on `production`, so every production deploy waits for your approval.
-4. **Give each environment its credentials.** Add the secret `CLOUDFLARE_API_TOKEN`, and the variables `CLOUDFLARE_ACCOUNT_ID` and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it and rolls back automatically if it fails). Without `DEPLOY_URL`, the job logs a warning and skips both.
+4. **Give each environment its settings.** Add the secret `CLOUDFLARE_API_TOKEN`, the variables `CLOUDFLARE_ACCOUNT_ID` and `KV_NAMESPACE_ID` (that environment's namespace from step 2), and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it and rolls back automatically if it fails). Without `KV_NAMESPACE_ID` the deploy stops before touching Cloudflare; without `DEPLOY_URL` it logs a warning and skips the smoke test and rollback.
 
 The same with the GitHub CLI:
 
@@ -211,6 +212,7 @@ for pair in staging:dev production:main; do
   gh api -X POST "repos/$repo/environments/$env/deployment-branch-policies" -f name="$branch" -f type=branch
   gh secret set CLOUDFLARE_API_TOKEN --repo "$repo" --env "$env"   # paste the token when asked
   gh variable set CLOUDFLARE_ACCOUNT_ID --repo "$repo" --env "$env" --body "<your account id>"
+  gh variable set KV_NAMESPACE_ID --repo "$repo" --env "$env" --body "<this environment's namespace id>"
 done
 ```
 
@@ -231,6 +233,8 @@ Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm r
 curl -X POST "http://127.0.0.1:4173/cdn-cgi/local/explorer/api/local/scheduled?worker=status-bar" \
   -H 'Content-Type: application/json' -d '{"cron":"*/2 * * * *"}'
 ```
+
+For a `CLOUDFLARE_ENV=staging` build, the Worker is `status-bar-staging`.
 
 ### Rolling back
 

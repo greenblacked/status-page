@@ -139,8 +139,28 @@ jobs:
           name: worker
           path: dist/
 
+      - name: Use this environment's KV namespace
+        # The namespace id is a per-environment variable, not code:
+        # wrangler.jsonc carries a placeholder that only local previews use.
+        # No token here, and jq edits the built config without running any
+        # project code.
+        env:
+          KV_NAMESPACE_ID: ${{ vars.KV_NAMESPACE_ID }}
+        run: |
+          if ! [[ "$KV_NAMESPACE_ID" =~ ^[0-9a-f]{32}$ ]]; then
+            echo "::error::set the KV_NAMESPACE_ID variable on this environment to the id from 'wrangler kv namespace create' (CONTRIBUTING.md#deploying)"
+            exit 1
+          fi
+          config=dist/server/wrangler.json
+          jq --arg id "$KV_NAMESPACE_ID" \
+            '.kv_namespaces |= map(if .binding == "STATUS_SNAPSHOT" then .id = $id else . end)' \
+            "$config" >"$config.tmp"
+          mv "$config.tmp" "$config"
+          jq -e --arg id "$KV_NAMESPACE_ID" \
+            'any(.kv_namespaces[]; .binding == "STATUS_SNAPSHOT" and .id == $id)' "$config" >/dev/null
+
       - name: Deploy with wrangler
-        # Only this step sees the token.
+        # Only this step and the rollback step see the token.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -183,4 +203,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           echo "::warning::the deploy did not answer the smoke test; rolling back to the previous version"
-          npx --no-install wrangler rollback --yes --message "Automatic rollback: failed smoke test in run $GITHUB_RUN_ID" --config dist/server/wrangler.json
+          # The first deploy to an environment has nothing to roll back to;
+          # the job has failed already either way.
+          npx --no-install wrangler rollback --yes --message "Automatic rollback: failed smoke test in run $GITHUB_RUN_ID" --config dist/server/wrangler.json ||
+            echo "::warning::rollback failed; with no earlier version (a first deploy), there is nothing to go back to"
+          exit 1
