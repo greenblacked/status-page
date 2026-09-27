@@ -1,35 +1,21 @@
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { emptyPulseStore, syncPulse } from "./pulse.ts";
-import type { BoardSnapshot, ServiceSnapshot } from "./types.ts";
+import type { BoardSnapshot, Health } from "./types.ts";
+import { board, service } from "../../test/fixtures.ts";
 
-function snapshot(at: string, health: ServiceSnapshot["health"]): BoardSnapshot {
-  const service: ServiceSnapshot = {
-    id: "aws",
-    name: "Amazon Web Services",
-    shortName: "AWS",
-    category: "cloud",
-    health,
-    summary: health === "operational" ? "clear" : "impact",
-    sourceName: "AWS Health",
-    sourceUrl: "https://health.aws.amazon.com/health/status",
-    checkedAt: at,
-    latencyMs: 12,
-    components: [],
-    incidents: [],
-  };
-  return {
-    generatedAt: at,
-    durationMs: 80,
-    services: [service],
-    counts: {
-      operational: health === "operational" ? 1 : 0,
-      degraded: health === "degraded" ? 1 : 0,
-      outage: 0,
-      maintenance: 0,
-      unknown: 0,
-    },
-  };
+function snapshot(at: string, health: Health): BoardSnapshot {
+  return board(
+    [
+      service("aws", {
+        name: "Amazon Web Services",
+        health,
+        summary: health === "operational" ? "clear" : "impact",
+        checkedAt: at,
+      }),
+    ],
+    { generatedAt: at },
+  );
 }
 
 describe("syncPulse", () => {
@@ -62,28 +48,17 @@ describe("syncPulse", () => {
 
   it("posts a new release even inside the current 2-minute slot", () => {
     const noon = Date.parse("2026-09-22T12:00:00.000Z");
-    const mikrotik = (version: string): BoardSnapshot => ({
-      generatedAt: `2026-09-22T12:00:00.000Z`,
-      durationMs: 40,
-      services: [
-        {
-          id: "mikrotik",
-          name: "MikroTik RouterOS",
-          shortName: "RouterOS",
-          category: "updates",
-          health: "operational",
-          summary: `Latest RouterOS ${version}`,
-          sourceName: "MikroTik changelogs",
-          sourceUrl: "https://mikrotik.com/download/changelogs",
-          checkedAt: "2026-09-22T12:00:00.000Z",
-          latencyMs: 20,
-          components: [],
-          incidents: [],
-          meta: { latest: version, versions: `RouterOS 7 stable=${version}` },
-        },
-      ],
-      counts: { operational: 1, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
-    });
+    const mikrotik = (version: string): BoardSnapshot =>
+      board(
+        [
+          service("mikrotik", {
+            name: "MikroTik RouterOS",
+            summary: `Latest RouterOS ${version}`,
+            meta: { latest: version, versions: `RouterOS 7 stable=${version}` },
+          }),
+        ],
+        { generatedAt: "2026-09-22T12:00:00.000Z" },
+      );
     const opened = syncPulse(mikrotik("7.24.4"), noon + 1_000, emptyPulseStore());
     const posted = syncPulse(mikrotik("7.24.5"), noon + 20_000, opened);
     assert.equal(posted.pulses.length, 1);

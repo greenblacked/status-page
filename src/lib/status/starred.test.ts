@@ -1,23 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseStarred, serializeStarred, starredFirst, toggleStarred } from "./starred";
-import type { ServiceId, ServiceSnapshot } from "./types";
-
-function service(id: ServiceId): ServiceSnapshot {
-  return {
-    id,
-    name: id,
-    shortName: id,
-    category: "cloud",
-    health: "operational",
-    summary: "",
-    sourceName: "Source",
-    sourceUrl: `https://status.example.com/${id}`,
-    checkedAt: "2026-09-25T00:00:00Z",
-    latencyMs: 1,
-    components: [],
-    incidents: [],
-  };
-}
+import type { ServiceId } from "./types";
+import { service } from "../../test/fixtures.ts";
 
 describe("parseStarred", () => {
   it("keeps known service ids", () => {
