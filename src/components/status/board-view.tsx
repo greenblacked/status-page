@@ -200,7 +200,13 @@ export function BoardView({
     manualRefreshInFlight.current = true;
     setRefreshing(true);
     try {
+      // A slot refetch still in flight would land after the forced snapshot
+      // and put the older one back on screen. The press asked for the newer
+      // one, so any refetch running now, or started while this waits, is
+      // cancelled before it can.
+      await queryClient.cancelQueries({ queryKey: ["status-board"] });
       const next = await refreshStatusBoard();
+      await queryClient.cancelQueries({ queryKey: ["status-board"] });
       withViewTransition(() => queryClient.setQueryData(["status-board"], next));
     } catch {
       await boardQuery.refetch();
@@ -290,7 +296,8 @@ export function BoardView({
                 onClick={() => void handleRefresh()}
                 // Not `disabled`: every background refetch would drop keyboard
                 // focus to <body>. handleRefresh ignores a press while its own
-                // refresh is in flight, and aria-busy says one is running.
+                // refresh is in flight, cancels a background one, and aria-busy
+                // says a check is running.
                 aria-busy={fetching}
                 aria-label="Refresh status now"
               >
