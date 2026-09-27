@@ -237,7 +237,7 @@ The server cannot reach the vendors. The collectors run on the machine that serv
 
 <br>
 
-Not necessarily. Unknown means Status Bar could not read that vendor's source: it timed out, returned an error, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure and the vendor host. An hourly job in this repository calls every source and opens an issue when one stays unreadable.
+Not necessarily. Unknown means Status Bar could not read that vendor's source: it timed out, returned an error, sent more than 4 MiB, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure, the vendor host and how many bytes it read (a source that reads cleanly logs `collector_completed` with its latency and size instead). An hourly job in this repository calls every source and opens an issue when one stays unreadable.
 
 </details>
 

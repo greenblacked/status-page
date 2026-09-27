@@ -8,7 +8,7 @@ import {
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
-import { fetchJson, fetchText, PayloadError, SourceError } from "./http.ts";
+import { fetchJson, fetchText, meteredBytes, meterBytes, PayloadError, SourceError } from "./http.ts";
 import {
   googleImpact,
   overallSummary,
@@ -145,9 +145,18 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
   const latencyMs = Date.now() - started;
   // One JSON line per failed collector, so a host's log shows which vendor
   // broke and how without anyone watching the board. No payloads, no URLs
-  // beyond the vendor host already in the message.
+  // beyond the vendor host already in the message. `bytes` is what it read
+  // before failing (collectAllServices meters each collector).
   console.warn(
-    JSON.stringify({ event: "collector_failed", service: id, kind: failure.kind, status: failure.status, message: failure.message, latencyMs }),
+    JSON.stringify({
+      event: "collector_failed",
+      service: id,
+      kind: failure.kind,
+      status: failure.status,
+      message: failure.message,
+      latencyMs,
+      bytes: meteredBytes(),
+    }),
   );
   return {
     ...base(id, new Date().toISOString(), latencyMs),
@@ -894,21 +903,44 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
   }
 }
 
+// Runs one collector with its own byte meter, and logs the success line
+// that pairs with failed()'s collector_failed, so the log shows every
+// source's latency and download size per sweep, not only the broken ones.
+function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
+  return meterBytes(async (meter) => {
+    const snapshot = await collect();
+    if (!snapshot.failure) {
+      console.log(
+        JSON.stringify({
+          event: "collector_completed",
+          service: snapshot.id,
+          health: snapshot.health,
+          latencyMs: snapshot.latencyMs,
+          bytes: meter.bytes,
+        }),
+      );
+    }
+    return snapshot;
+  });
+}
+
 export async function collectAllServices(): Promise<ServiceSnapshot[]> {
-  return Promise.all([
-    collectGcp(),
-    collectAws(),
-    collectSteam(),
-    collectCs2Europe(),
-    collectEpic(),
-    collectFortnite(),
-    collectSpotify(),
-    collectApple(),
-    collectAndroid(),
-    collectGrok(),
-    collectChatGpt(),
-    collectClaude(),
-    collectMikrotik(),
-    collectAppleOs(),
-  ]);
+  return Promise.all(
+    [
+      collectGcp,
+      collectAws,
+      collectSteam,
+      collectCs2Europe,
+      collectEpic,
+      collectFortnite,
+      collectSpotify,
+      collectApple,
+      collectAndroid,
+      collectGrok,
+      collectChatGpt,
+      collectClaude,
+      collectMikrotik,
+      collectAppleOs,
+    ].map(metered),
+  );
 }

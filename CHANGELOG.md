@@ -22,6 +22,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Security
 
+- A vendor response larger than 4 MiB is refused as it streams in, and its card shows Unknown with the reason, so one broken or hostile source cannot exhaust the server's memory.
 - Every page and API response now carries security headers: a Content-Security-Policy that allows only the board's own origin and forbids framing, HSTS, `nosniff`, a referrer policy and a permissions policy.
 
 ## [0.4.0] - 2026-09-26
