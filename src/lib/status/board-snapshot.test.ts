@@ -115,6 +115,21 @@ describe("createBoardSnapshotReader", () => {
     expect(collectBoard).not.toHaveBeenCalled();
   });
 
+  it("refresh() skips the five-second memo to show the newest KV snapshot", async () => {
+    const kv = fakeKv(board("2026-09-27T00:02:00.000Z"));
+    const getSpy = vi.spyOn(kv, "get");
+    const reader = createBoardSnapshotReader(kv);
+    const { waitUntil } = waitUntilSpy();
+    await reader.read(waitUntil);
+
+    kv.store.set("board", JSON.stringify(board("2026-09-27T00:04:00.000Z")));
+    await expect(reader.refresh(waitUntil)).resolves.toEqual(board("2026-09-27T00:04:00.000Z"));
+    expect(getSpy).toHaveBeenCalledTimes(2);
+    // And memoises what it read for the requests after it.
+    await expect(reader.read(waitUntil)).resolves.toEqual(board("2026-09-27T00:04:00.000Z"));
+    expect(getSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("refresh() falls back to a cold-start collect when KV is still empty", async () => {
     const kv = fakeKv();
     vi.mocked(collectBoard).mockResolvedValue(board("2026-09-27T00:02:00.000Z"));
@@ -282,15 +297,19 @@ describe("createBoardSnapshotReader", () => {
       await expect(reader.read(waitUntilSpy().waitUntil)).rejects.toThrow("collect failed");
     });
 
-    it("refresh() serves the outage board instead of failing the click", async () => {
+    it("refresh() serves the outage board instead of failing the click, reading KV once", async () => {
       const kv = fakeKv();
-      kv.get = () => Promise.reject(new Error("KV unavailable"));
+      const getSpy = vi.fn(() => Promise.reject(new Error("KV unavailable")));
+      kv.get = getSpy;
       vi.mocked(collectBoard).mockResolvedValue(board("2026-09-27T00:02:00.000Z"));
       const reader = createBoardSnapshotReader(kv);
       const { waitUntil } = waitUntilSpy();
 
       await expect(reader.refresh(waitUntil)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
+      expect(getSpy).toHaveBeenCalledTimes(1);
+      // A second click within the outage memo neither reads KV nor sweeps.
       await expect(reader.refresh(waitUntil)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
+      expect(getSpy).toHaveBeenCalledTimes(1);
       expect(collectBoard).toHaveBeenCalledTimes(1);
       expect(waitUntil).not.toHaveBeenCalled();
     });

@@ -87,8 +87,13 @@ export function createBoardSnapshotReader(kv: SnapshotKv): BoardSnapshotReader {
     return collectBoard();
   }
 
-  function read(waitUntil: WaitUntil): Promise<BoardSnapshot> {
-    if (cached && Date.now() - cached.at < cached.ttlMs) return Promise.resolve(cached.value);
+  // `skipIsolateMemo` skips only the five-second memo of a KV read: an
+  // outage memo still stands, so nothing gets to turn an outage back into a
+  // KV read and a possible sweep per request.
+  function serve(waitUntil: WaitUntil, skipIsolateMemo: boolean): Promise<BoardSnapshot> {
+    if (cached && Date.now() - cached.at < cached.ttlMs && !(skipIsolateMemo && cached.ttlMs === ISOLATE_MEMO_MS)) {
+      return Promise.resolve(cached.value);
+    }
     // Each collector turns its own failure into an Unknown card, so
     // collectBoard() does not reject in practice; should it throw anyway, an
     // isolate that has shown a board keeps showing it rather than turning
@@ -100,9 +105,11 @@ export function createBoardSnapshotReader(kv: SnapshotKv): BoardSnapshotReader {
   }
 
   return {
-    read,
+    read(waitUntil: WaitUntil): Promise<BoardSnapshot> {
+      return serve(waitUntil, false);
+    },
 
-    async refresh(waitUntil: WaitUntil): Promise<BoardSnapshot> {
+    refresh(waitUntil: WaitUntil): Promise<BoardSnapshot> {
       // The Refresh button never sweeps vendors itself on Workers: doing so
       // synchronously on the request path risks the CPU-time limit a single
       // request gets (warm SSR alone measures 14-30ms locally, close to the
@@ -111,20 +118,12 @@ export function createBoardSnapshotReader(kv: SnapshotKv): BoardSnapshotReader {
       // snapshot also doubles as the global throttle the button needs: every
       // isolate reads the one value the cron wrote, instead of each starting
       // its own sweep and its own 15-second timer.
-      let stored: BoardSnapshot | null = null;
-      try {
-        stored = await readSnapshot(kv);
-      } catch {
-        // KV is failing: read() below serves this isolate's outage board,
-        // collected at most once a minute, instead of failing the click.
-      }
-      if (stored) {
-        cached = { at: Date.now(), ttlMs: ISOLATE_MEMO_MS, value: stored };
-        return stored;
-      }
-      // KV empty or failing: the same path as a normal read, so Refresh
-      // works before the first cron tick has landed and during an outage.
-      return read(waitUntil);
+      //
+      // So a click is a normal read that skips the five-second memo: one KV
+      // read, or, with KV empty or failing, the same cold-start collect or
+      // outage board as any request, so Refresh works before the first cron
+      // tick has landed and during an outage without reading KV twice.
+      return serve(waitUntil, true);
     },
   };
 }
