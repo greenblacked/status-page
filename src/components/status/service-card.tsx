@@ -132,7 +132,7 @@ export function ServiceCard({
           href={incidentUrl ?? service.sourceUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex min-h-11 min-w-0 items-center gap-1 rounded-full px-2 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
+          className="focus-ring inline-flex min-h-11 min-w-0 items-center gap-1 rounded-full px-2 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
         >
           <span className="truncate">{incidentUrl ? "View incident" : service.sourceName}</span>
           <ArrowUpRight className="size-3.5 shrink-0" />
@@ -221,7 +221,7 @@ export function ServiceTile({
         rel="noreferrer"
         aria-label={`${service.sourceName}, official status for ${service.name}`}
         title={service.sourceName}
-        className="grid size-11 shrink-0 place-items-center rounded-full text-subtle transition-colors duration-[var(--motion-quick)] hover:text-fg"
+        className="focus-ring grid size-11 shrink-0 place-items-center rounded-full text-subtle transition-colors duration-[var(--motion-quick)] hover:text-fg"
       >
         <ArrowUpRight className="size-4" />
       </a>
@@ -253,7 +253,7 @@ function StarButton({
       aria-label={`Star ${name}`}
       title={starred ? `Unstar ${name}` : `Star ${name} to keep it first`}
       className={cn(
-        "grid size-11 shrink-0 place-items-center rounded-full transition-colors duration-[var(--motion-quick)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+        "grid size-11 shrink-0 place-items-center rounded-full transition-colors duration-[var(--motion-quick)] focus-ring",
         starred ? "text-fg" : "text-subtle hover:text-fg",
         className,
       )}

@@ -364,15 +364,15 @@ export function BoardView({
             <p>Cached server snapshots update every two minutes from official vendor feeds.</p>
             <p>
               Use the board elsewhere:{" "}
-              <a className="underline decoration-border underline-offset-4 hover:text-fg" href="/api/status.json">
+              <a className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg" href="/api/status.json">
                 JSON API
               </a>
               {" · "}
-              <a className="underline decoration-border underline-offset-4 hover:text-fg" href="/feed.xml">
+              <a className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg" href="/feed.xml">
                 Atom feed
               </a>{" "}
               for Slack, Teams and feed readers ·{" "}
-              <a className="underline decoration-border underline-offset-4 hover:text-fg" href="/api/badge/board">
+              <a className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg" href="/api/badge/board">
                 status badges
               </a>
               .
@@ -382,7 +382,7 @@ export function BoardView({
               <kbd className="rounded-md glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd> for{" "}
               <button
                 type="button"
-                className="underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
                 onClick={() => setShortcutsOpen(true)}
               >
                 keyboard shortcuts
@@ -458,7 +458,7 @@ function SummaryPanel({
                 <li key={service.id}>
                   <a
                     href={`#${serviceAnchor(service.id)}`}
-                    className="inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
+                    className="focus-ring inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
                   >
                     <HealthDot health={service.health} />
                     {service.name}
