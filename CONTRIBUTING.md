@@ -152,6 +152,75 @@ If `main` or `dev` later gets a ruleset that requires pull requests or status ch
 
 Never move or reuse a tag that has a published release; release a new patch version instead.
 
+## Deploying
+
+[`deploy.yml`](.github/workflows/deploy.yml) builds the board for [Cloudflare Workers](https://developers.cloudflare.com/workers/) and deploys it with wrangler:
+
+| Branch | Environment | Worker |
+| --- | --- | --- |
+| `dev` | `staging` | `status-bar-staging` |
+| `main` | `production` | `status-bar` |
+
+Every push to `dev` or `main` deploys. A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. The Worker has no bindings and no secrets of its own: it only reads the public vendor feeds.
+
+### How the token is kept safe
+
+The repository is public, so anyone can read the workflow and open a pull request. The Cloudflare API token is still reachable only by the deploy job for `dev` and `main`:
+
+- **It is an environment secret, not a repository secret.** GitHub hands it only to a job that names the `staging` or `production` environment, and each environment admits one branch.
+- **Pull requests never get it,** from forks or not. The workflow has no `pull_request_target`, so pull request code never runs with secrets or a write token.
+- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there. It also runs no project code and no build: it only uploads what the build job made (`no_bundle`), and only its deploy step sees the token.
+- **It can do one thing.** The token is scoped to Workers on one account and expires.
+- **Nothing in the repository names the account.** `wrangler.jsonc` has no `account_id`; the workflow passes `CLOUDFLARE_ACCOUNT_ID` from the environment. Local secrets (`.dev.vars*`) and wrangler's state (`.wrangler`) are git-ignored.
+
+### One-time setup
+
+1. **Create the token.** In the Cloudflare dashboard, go to **My Profile → API Tokens → Create Token** and start from **Edit Cloudflare Workers**. Trim it to what `wrangler deploy` needs:
+   - **Account resources:** only this account.
+   - **Permissions:** Account · Workers Scripts · Edit, and Account · Account Settings · Read.
+   - **Custom domain:** add Zone · Workers Routes · Edit for that zone only, and nothing else.
+   - **TTL:** set an end date, and rotate the token before it.
+
+   Cloudflare renames these permissions from time to time, so check the list against [Cloudflare's token docs](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) when you create it.
+2. **Create the two environments.** In **Settings → Environments**, add `staging` and `production`. For each, set **Deployment branches and tags** to **Selected branches**, and add only `dev` or only `main`. Optionally, add yourself as a **Required reviewer** on `production`, so every production deploy waits for your approval.
+3. **Give each environment its credentials.** Add the secret `CLOUDFLARE_API_TOKEN`, and the variables `CLOUDFLARE_ACCOUNT_ID` and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it).
+
+The same with the GitHub CLI:
+
+```bash
+repo=greenblacked/status-page
+for pair in staging:dev production:main; do
+  env="${pair%%:*}" branch="${pair##*:}"
+  gh api -X PUT "repos/$repo/environments/$env" \
+    -F 'deployment_branch_policy[protected_branches]=false' \
+    -F 'deployment_branch_policy[custom_branch_policies]=true'
+  gh api -X POST "repos/$repo/environments/$env/deployment-branch-policies" -f name="$branch" -f type=branch
+  gh secret set CLOUDFLARE_API_TOKEN --repo "$repo" --env "$env"   # paste the token when asked
+  gh variable set CLOUDFLARE_ACCOUNT_ID --repo "$repo" --env "$env" --body "<your account id>"
+done
+```
+
+### Locally
+
+```bash
+DEPLOY_TARGET=cloudflare npm run build            # the production Worker in dist/
+DEPLOY_TARGET=cloudflare npx vite preview         # runs it in workerd, Cloudflare's runtime
+npx wrangler deploy --dry-run --config dist/server/wrangler.json   # what would upload
+DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging npm run build      # the staging Worker
+```
+
+Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
+
+### Rolling back
+
+Every deploy is a Worker version. To go back to the previous one:
+
+```bash
+npx wrangler rollback --name status-bar          # or status-bar-staging
+```
+
+You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`.
+
 ## Dependencies
 
 Dependabot proposes npm and GitHub Actions updates weekly, grouped into production dependencies, development dependencies and Actions.

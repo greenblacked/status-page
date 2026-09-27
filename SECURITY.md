@@ -26,17 +26,21 @@ In scope:
 
 - The application: the server functions in `src/lib/status/`, the vendor collectors and their parsing of untrusted vendor payloads, and the rendered board
 - The CI and automation in `.github/workflows/` and `scripts/ci/`, including anything that could let a pull request from a fork gain write access. `ci-triage.yml` runs with a write token by design and must never execute pull request code.
+- The deployment: anything that could expose the Cloudflare API token that `deploy.yml` uses, or let code other than `dev` or `main` reach the deployed Workers
+- The response headers the board sends (`src/lib/security-headers.ts`)
 - Dependency vulnerabilities that are actually reachable from Status Bar's code
 
 Out of scope:
 
 - The vendors' own status pages and APIs. Report problems with those to the vendor.
 - Findings that need an already-compromised maintainer account or machine
-- Missing hardening headers on a deployment Status Bar does not operate. The repository does not yet ship a production deployment.
+- Missing hardening headers on someone else's deployment of Status Bar
 
 ## How the repository defends itself
 
 - Every third-party Action is pinned to a full commit SHA, and the actionlint image is pinned by digest.
 - Workflows default to read-only tokens. Jobs that write request only the scopes they need.
-- CodeQL and dependency review run on every pull request into `main`.
+- CodeQL and dependency review run on every pull request into `main` or `dev`.
+- The Cloudflare API token is an environment secret, limited to the `staging` and `production` environments, which admit only `dev` and `main`. Pull requests never receive it. The job that holds it installs with `--ignore-scripts` and runs no project code ([CONTRIBUTING.md#deploying](CONTRIBUTING.md#deploying)).
+- Every page and API response carries a Content-Security-Policy that allows only this origin and forbids framing, plus `nosniff`, HSTS, a referrer policy and a permissions policy.
 - The live vendor checks in `source-health.yml` do not install npm dependencies, so no third-party package code runs in a job that can write issues.

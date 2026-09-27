@@ -1,0 +1,168 @@
+name: Deploy
+
+# Builds the board for Cloudflare Workers and deploys it with wrangler: dev
+# to the staging Worker, main to production. Pull requests build and dry-run
+# the deploy with no credentials. CONTRIBUTING.md#deploying has the setup.
+#
+# This repository is public, so the Cloudflare API token is guarded in layers:
+#   - It is an environment secret. GitHub gives it only to the deploy job,
+#     only in the staging or production environment, whose branch rules
+#     admit only dev and main. Pull requests, forks included, never get it.
+#   - There is no pull_request_target here: pull request code never runs
+#     with secrets or a write token.
+#   - The job that holds the token installs with --ignore-scripts, runs no
+#     project code and no build, and only uploads what the build job made,
+#     so a compromised dependency's install script never runs beside it.
+#   - Every job reads the repository and nothing more.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy per branch at a time, never cancelled half way; pull request
+  # runs cancel their older runs.
+  group: deploy-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  build:
+    name: build worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      environment: ${{ steps.target.outputs.environment }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Pin npm
+        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+
+      - name: Pick the environment
+        id: target
+        # Branch names are attacker-controlled on a fork PR, so they go
+        # through the environment instead of being interpolated.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          branch="$REF_NAME"
+          [ "$EVENT" = pull_request ] && branch="$BASE_REF"
+          case "$branch" in
+            main) echo "environment=production" >>"$GITHUB_OUTPUT"; echo "cloudflare_env=" >>"$GITHUB_OUTPUT" ;;
+            dev) echo "environment=staging" >>"$GITHUB_OUTPUT"; echo "cloudflare_env=staging" >>"$GITHUB_OUTPUT" ;;
+            *) echo "::error::only main (production) and dev (staging) deploy, not $branch"; exit 1 ;;
+          esac
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build for Cloudflare Workers
+        env:
+          DEPLOY_TARGET: cloudflare
+          CLOUDFLARE_ENV: ${{ steps.target.outputs.cloudflare_env }}
+        run: npm run build
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: worker
+          path: dist/
+          # dist/client/.assetsignore keeps wrangler.json out of the assets.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  dry-run:
+    name: dry-run deploy
+    needs: build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Pin npm
+        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: worker
+          path: dist/
+      - name: Check the Worker without deploying it
+        run: npx --no-install wrangler deploy --dry-run --config dist/server/wrangler.json
+
+  deploy:
+    name: deploy to ${{ needs.build.outputs.environment }}
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ needs.build.outputs.environment }}
+      url: ${{ vars.DEPLOY_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Pin npm
+        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+      # No install scripts: nothing but wrangler runs while the token exists.
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: worker
+          path: dist/
+
+      - name: Deploy with wrangler
+        # Only this step sees the token.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::set the CLOUDFLARE_API_TOKEN secret and the CLOUDFLARE_ACCOUNT_ID variable on this environment (CONTRIBUTING.md#deploying)"
+            exit 1
+          fi
+          npx --no-install wrangler deploy --config dist/server/wrangler.json
+
+      - name: Smoke-test the deployment
+        if: vars.DEPLOY_URL != ''
+        env:
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+        run: |
+          base="${DEPLOY_URL%/}"
+          # A new version can take a few seconds to reach every location.
+          for _ in 1 2 3 4 5 6; do
+            if curl --silent --fail --max-time 10 "$base/healthz" >/dev/null &&
+              curl --silent --fail --max-time 30 "$base/" | grep -aq '<title>Status Bar</title>'; then
+              echo "$base answers"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$base did not answer /healthz and / after the deploy"
+          exit 1
