@@ -296,8 +296,14 @@ React 19 on TanStack Start, Tailwind v4, Vitest, TypeScript in strict mode.
 | `npm run dev` | Development server with hot reload |
 | `npm run typecheck` | Type-check without emitting |
 | `npm test` | Unit tests, fully offline |
+| `npm run check` | Typecheck, tests, and the hygiene and link checks below, in one go before you push |
 | `npm run build` | Production build into `dist/` |
 | `npm run preview` | Serve the build for a smoke test |
+| `npm run build:cf`, `npm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
+| `npm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
+| `npm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
+
+The scripts that set variables inline (`build:cf`, `preview:cf`) and `check` need a POSIX shell: on Windows, use WSL or [point npm at Git Bash](CONTRIBUTING.md#locally).
 
 ```text
 src/lib/status/           # catalog, health model, collectors, cache and schedule
@@ -316,7 +322,7 @@ The repository checks need no install, and CI runs the same commands:
 ./scripts/ci/links.sh                     # relative links in the Markdown docs
 ./scripts/ci/commits.sh origin/dev..HEAD  # Conventional Commits
 ./scripts/ci/release-notes.sh             # the CHANGELOG.md section the next release publishes
-node --experimental-strip-types scripts/ci/source-health.ts   # the one check that calls real vendors
+npm run source-health                     # the one check that calls real vendors
 ```
 
 **In the shared CI images.** [`compose.yaml`](compose.yaml) runs the same checks inside the public images from [greenblacked/github-base-images](https://github.com/greenblacked/github-base-images), so a failure can be reproduced with the exact toolchain a container job uses. Only Docker is needed, no local Node:

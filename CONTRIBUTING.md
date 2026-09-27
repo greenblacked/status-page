@@ -218,16 +218,18 @@ done
 
 ### Locally
 
-```bash
-DEPLOY_TARGET=cloudflare npm run build            # the production Worker in dist/
-DEPLOY_TARGET=cloudflare npx vite preview         # runs it in workerd, Cloudflare's runtime, with a local, simulated KV namespace
-npx wrangler deploy --dry-run --config dist/server/wrangler.json   # what would upload
-DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging npm run build      # the staging Worker
-```
+| Command | Runs | What it does |
+| --- | --- | --- |
+| `npm run build:cf` | `DEPLOY_TARGET=cloudflare vite build` | The production Worker in `dist/` |
+| `npm run preview:cf` | `DEPLOY_TARGET=cloudflare vite preview` | Runs that build in workerd, Cloudflare's runtime, with a local, simulated KV namespace |
+| `npm run deploy:dry-run` | `wrangler deploy --dry-run --config dist/server/wrangler.json` | Shows what would upload, as a pull request's CI does |
+| `npm run build:cf:staging` | `DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging vite build` | The staging Worker |
 
 Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
 
-`vite preview`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API `vite preview` prints on start:
+These scripts set their variables inline (`VAR=value command`), and `npm run check` calls the `scripts/ci/*.sh` checks, so they assume a POSIX shell. On Windows, npm runs scripts with `cmd.exe` even from a Git Bash window, and that syntax fails there: work in WSL, or point npm at Git Bash once with `npm config set script-shell "C:\Program Files\Git\bin\bash.exe"`.
+
+`npm run preview:cf`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API it prints on start:
 
 ```bash
 curl -X POST "http://127.0.0.1:4173/cdn-cgi/local/explorer/api/local/scheduled?worker=status-bar" \
