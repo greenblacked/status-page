@@ -19,6 +19,7 @@ import { APP_NAME, CATEGORIES } from "@/lib/status/catalog";
 import {
   type BoardFilters,
   DEFAULT_FILTERS,
+  emptyBoardMessage,
   filtersToReveal,
   matchesFilters,
   resultsAnnouncement,
@@ -154,16 +155,18 @@ export function BoardView({
   // A screen reader hears what a filter or search left on the board once
   // the typing stops, not after every key and not on the first load.
   const [announcement, setAnnouncement] = useState("");
-  const shownCount = useRef({ shown: visible.length, total: board.services.length });
+  const emptyMessage = emptyBoardMessage(filters, starred.size);
+  const shownCount = useRef({ shown: visible.length, total: board.services.length, emptyMessage });
   useEffect(() => {
-    shownCount.current = { shown: visible.length, total: board.services.length };
+    shownCount.current = { shown: visible.length, total: board.services.length, emptyMessage };
   });
   const announcedFilters = useRef(filters);
   useEffect(() => {
     if (filters === announcedFilters.current) return;
     announcedFilters.current = filters;
     const timer = window.setTimeout(() => {
-      setAnnouncement(resultsAnnouncement(shownCount.current.shown, shownCount.current.total));
+      const { shown, total, emptyMessage: why } = shownCount.current;
+      setAnnouncement(resultsAnnouncement(shown, total, why));
     }, ANNOUNCE_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, [filters]);
@@ -406,12 +409,9 @@ export function BoardView({
                 </div>
               ) : visible.length === 0 ? (
                 // Stars load after hydration; until then an empty Starred view proves nothing.
+                // Not a live region: the results announcement already says this.
                 starredOnly && !starsReady ? null : (
-                  <p role="status" className="rounded-3xl glass px-5 py-10 text-center text-muted">
-                    {starredOnly && starred.size === 0
-                      ? "No starred services yet. Star a card to keep it here and at the top of the board."
-                      : "No services match that filter."}
-                  </p>
+                  <p className="rounded-3xl glass px-5 py-10 text-center text-muted">{emptyMessage}</p>
                 )
               ) : (
                 <>

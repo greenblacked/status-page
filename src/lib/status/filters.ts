@@ -77,12 +77,22 @@ export function matchesFilters(
   return hay.includes(needle);
 }
 
+/** What the board says in place of cards when the filters leave none. */
+export function emptyBoardMessage(filters: BoardFilters, starredCount: number): string {
+  return filters.starredOnly && starredCount === 0
+    ? "No starred services yet. Star a card to keep it here and at the top of the board."
+    : "No services match that filter.";
+}
+
 /**
  * What the board's polite live region says once the filters settle, so a
- * screen reader user hears what a filter or search left on the board.
+ * screen reader user hears what a filter or search left on the board. An
+ * empty board adds why in the same sentence: the empty-state paragraph is
+ * not a live region of its own, which made two announcements race.
  */
-export function resultsAnnouncement(shown: number, total: number): string {
-  return `${shown} of ${total} ${total === 1 ? "service" : "services"} shown`;
+export function resultsAnnouncement(shown: number, total: number, emptyMessage: string): string {
+  const count = `${shown} of ${total} ${total === 1 ? "service" : "services"} shown`;
+  return shown === 0 ? `${count}. ${emptyMessage}` : count;
 }
 
 /**

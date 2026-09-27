@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FILTERS,
+  emptyBoardMessage,
   filtersFromSearch,
   filtersToReveal,
   matchesFilters,
@@ -107,9 +108,26 @@ describe("filtersToReveal", () => {
 });
 
 describe("resultsAnnouncement", () => {
+  const empty = "No services match that filter.";
+
   it("says how many services the filters leave", () => {
-    expect(resultsAnnouncement(3, 14)).toBe("3 of 14 services shown");
-    expect(resultsAnnouncement(0, 14)).toBe("0 of 14 services shown");
-    expect(resultsAnnouncement(1, 1)).toBe("1 of 1 service shown");
+    expect(resultsAnnouncement(3, 14, empty)).toBe("3 of 14 services shown");
+    expect(resultsAnnouncement(1, 1, empty)).toBe("1 of 1 service shown");
+  });
+
+  it("says why in the same sentence when none are left", () => {
+    expect(resultsAnnouncement(0, 14, empty)).toBe("0 of 14 services shown. No services match that filter.");
+    const noStars = emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true }, 0);
+    expect(resultsAnnouncement(0, 14, noStars)).toBe(`0 of 14 services shown. ${noStars}`);
+  });
+});
+
+describe("emptyBoardMessage", () => {
+  it("tells an empty Starred view how to fill it, and anything else that nothing matches", () => {
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true }, 0)).toMatch(/^No starred services yet\./);
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true, query: "zzz" }, 2)).toBe(
+      "No services match that filter.",
+    );
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, query: "zzz" }, 0)).toBe("No services match that filter.");
   });
 });
