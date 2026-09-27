@@ -161,7 +161,7 @@ Never move or reuse a tag that has a published release; release a new patch vers
 | `dev` | `staging` | `status-bar-staging` |
 | `main` | `production` | `status-bar` |
 
-Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. Every build, pull request or push, also runs the built Worker in workerd with an empty local KV namespace, fires its Cron Trigger once and checks that the snapshot moves forward (`scripts/ci/smoke.sh --cron`), so a Worker whose scheduled handler throws never reaches a deploy. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace. The staging Worker is public but kept out of search engines: `wrangler.jsonc`'s `env.staging.vars` sets `ROBOTS=noindex`, so every response it makes carries `X-Robots-Tag: noindex, nofollow` and its `/robots.txt` disallows everything; production and the Node build serve `Allow: /`. Every response the Worker makes, on either environment, carries `X-Worker-Version: <version id>` from the `version_metadata` binding (`CF_VERSION_METADATA`, repeated under `env.staging` because bindings are not inherited), so you can see which deployed version answered: `curl -sI https://<your-host>/healthz | grep -i x-worker-version`, against `npx wrangler deployments list`. The Node build sends no such header.
+Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. Every build, pull request or push, also runs the built Worker in workerd with an empty local KV namespace, fires its Cron Trigger once and checks that the snapshot moves forward (`scripts/ci/smoke.sh --cron`), so a Worker whose scheduled handler throws never reaches a deploy. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The smoke test first waits until `/healthz` carries the `X-Worker-Version` that `wrangler deploy` reported, so it tests the new version rather than the old one still answering somewhere, and after a rollback the job waits until `/healthz` no longer names the failed version. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace. The staging Worker is public but kept out of search engines: `wrangler.jsonc`'s `env.staging.vars` sets `ROBOTS=noindex`, so every response it makes carries `X-Robots-Tag: noindex, nofollow` and its `/robots.txt` disallows everything; production and the Node build serve `Allow: /`. Every response the Worker makes, on either environment, carries `X-Worker-Version: <version id>` from the `version_metadata` binding (`CF_VERSION_METADATA`, repeated under `env.staging` because bindings are not inherited), so you can see which deployed version answered: `curl -sI https://<your-host>/healthz | grep -i x-worker-version`, against `npx wrangler deployments list`. The Node build sends no such header.
 
 ### How the board stays fresh on Workers
 
@@ -234,8 +234,11 @@ CI and the deploy share one smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke
 
 ```bash
 ./scripts/ci/smoke.sh http://127.0.0.1:4173                    # /readyz may be 503 when the vendors are unreachable
-./scripts/ci/smoke.sh https://<your-host> --require-ready      # what the deploy checks
+./scripts/ci/smoke.sh https://<your-host> --require-ready      # what the deploy checks, less the version wait
+./scripts/ci/smoke.sh https://<your-host> --expect-version <id> --wait 120   # waits until that version answers
 ```
+
+`--expect-version` takes a Worker version id (`npx wrangler deployments list`, or the `Current Version ID:` line `wrangler deploy` prints) and fails if `/healthz` still comes from another version when `--wait` runs out, then requires the same `X-Worker-Version` on every response it checks. The deploy job reads the id from the `deploy` line wrangler writes to `WRANGLER_OUTPUT_FILE_PATH`, and stops with an error, before the smoke test, if there is none.
 
 `vite preview`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API `vite preview` prints on start:
 
@@ -254,7 +257,7 @@ For a `CLOUDFLARE_ENV=staging` build, the Worker is `status-bar-staging`. Run `v
 npx wrangler rollback --name status-bar          # or status-bar-staging
 ```
 
-You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back only changes which Worker version answers requests: it does not touch the KV namespace, so the board keeps whatever the Cron Trigger last wrote regardless of which version is live.
+You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back only changes which Worker version answers requests: it does not touch the KV namespace, so the board keeps whatever the Cron Trigger last wrote regardless of which version is live. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
 
 ## Dependencies
 
