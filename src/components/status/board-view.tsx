@@ -52,6 +52,9 @@ const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [
 
 // Long enough for a search to settle between keystrokes.
 const ANNOUNCE_DELAY_MS = 700;
+// A chip's card renders in the commit after its filters clear; one that has
+// not turned up by now is not coming.
+const REVEAL_TIMEOUT_MS = 1_000;
 
 export function BoardView({
   initial,
@@ -172,14 +175,16 @@ export function BoardView({
   }, [filters]);
 
   // An attention chip whose card the filters hide clears them first, then
-  // lands on the card once it has rendered.
-  const [revealing, setRevealing] = useState<ServiceId | null>(null);
+  // lands on the card once it has rendered. The pending jump is dropped as
+  // soon as the filters move on or it has had its moment, so a card that
+  // turns up later, with a refetch, never pulls the page to it unasked.
+  const [revealing, setRevealing] = useState<{ id: ServiceId; filters: BoardFilters } | null>(null);
   function revealService(service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) {
     const next = filtersToReveal(service, filters, starred);
     // On the board already: the plain anchor scrolls to it.
     if (!next) return;
     event.preventDefault();
-    setRevealing(service.id);
+    setRevealing({ id: service.id, filters: next });
     // Plainly, not in a View Transition: a filter change has to feel
     // instant (see withViewTransition), and the cards' stagger already
     // animates the board that comes back.
@@ -187,12 +192,21 @@ export function BoardView({
   }
   useEffect(() => {
     if (!revealing) return;
-    const card = document.getElementById(serviceAnchor(revealing));
+    if (filters !== revealing.filters) {
+      setRevealing(null);
+      return;
+    }
+    const card = document.getElementById(serviceAnchor(revealing.id));
     if (!card) return;
     setRevealing(null);
     card.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
     card.focus({ preventScroll: true });
-  }, [revealing, visible]);
+  }, [revealing, filters, visible]);
+  useEffect(() => {
+    if (!revealing) return;
+    const timer = window.setTimeout(() => setRevealing(null), REVEAL_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [revealing]);
 
   const issueCount = board.services.length - board.counts.operational;
   // Starring moves a card, so it glides there like a refresh does.
