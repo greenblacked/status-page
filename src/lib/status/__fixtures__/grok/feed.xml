@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>xAI Status</title>
+    <link>https://status.x.ai/</link>
+    <atom:link href="https://status.x.ai/feed.xml" rel="self" type="application/rss+xml"/>
+    <description>Incident history for xAI services</description>
+    <language>en</language>
+    <lastBuildDate>Sun, 20 Sep 2026 11:45:00 GMT</lastBuildDate>
+    <item>
+      <title>Elevated error rates on Grok &amp; the xAI API</title>
+      <link>https://status.x.ai/incidents/01K5R8Q2V7M3</link>
+      <guid isPermaLink="true">https://status.x.ai/incidents/01K5R8Q2V7M3</guid>
+      <pubDate>Sun, 20 Sep 2026 09:30:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Severity:</strong> Degraded performance</p><p><strong>Status:</strong> Identified</p><p>Some requests to grok.com and the API return errors. We have identified the cause and are rolling out a fix.</p>]]></description>
+    </item>
+    <item>
+      <title>Image generation unavailable</title>
+      <link>https://status.x.ai/incidents/01K5N4D9T1C8</link>
+      <guid isPermaLink="true">https://status.x.ai/incidents/01K5N4D9T1C8</guid>
+      <pubDate>Sat, 19 Sep 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Severity:</strong> Partial outage</p><p><strong>Status:</strong> Resolved</p><p>Image generation is working again for all users.</p>]]></description>
+    </item>
+    <item>
+      <title>Voice mode unavailable</title>
+      <link>https://status.x.ai/incidents/01K3B7W5H6F2</link>
+      <guid isPermaLink="true">https://status.x.ai/incidents/01K3B7W5H6F2</guid>
+      <pubDate>Fri, 21 Aug 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Severity:</strong> Major outage</p><p><strong>Status:</strong> Monitoring</p><p>A fix has been deployed and we are monitoring the results.</p>]]></description>
+    </item>
+  </channel>
+</rss>

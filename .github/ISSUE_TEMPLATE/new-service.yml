@@ -1,0 +1,44 @@
+name: Request a service
+description: Suggest a service for the board. It needs an official, machine-readable status source.
+title: "[service] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every card reads one official source: the vendor's own status page, feed or public API, with no API key and no crowd reports. A service without one cannot be added.
+  - type: input
+    id: service
+    attributes:
+      label: Service
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Official source
+      description: The status page, feed or API URL the vendor publishes, for example a Statuspage `api/v2/summary.json`, an RSS or Atom feed, or a public JSON endpoint.
+    validations:
+      required: true
+  - type: dropdown
+    id: group
+    attributes:
+      label: Group
+      options: [Cloud, Gaming, Platforms, AI, Updates, Something new]
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it belongs on the board
+    validations:
+      required: true
+  - type: checkboxes
+    id: contract
+    attributes:
+      label: Source contract
+      options:
+        - label: The source is published by the vendor itself
+          required: true
+        - label: It needs no API key, account or scraping of a page meant for people
+          required: true

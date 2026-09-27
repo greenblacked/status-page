@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FILTERS,
+  emptyBoardMessage,
   filtersFromSearch,
+  filtersToReveal,
   matchesFilters,
   parseBoardSearch,
+  resultsAnnouncement,
   searchFromFilters,
 } from "./filters";
 import type { Health, ServiceId, ServiceSnapshot } from "./types";
@@ -36,11 +39,17 @@ describe("parseBoardSearch", () => {
   });
 
   it("accepts flags as strings and a numeric query as text", () => {
-    expect(parseBoardSearch({ q: 730, issues: "true", starred: "true" })).toEqual({ q: "730", issues: true, starred: true });
+    expect(parseBoardSearch({ q: 730, issues: "true", starred: "true" })).toEqual({
+      q: "730",
+      issues: true,
+      starred: true,
+    });
   });
 
   it("drops unknown categories, blank queries, false flags and other params", () => {
-    expect(parseBoardSearch({ q: "  ", category: "weather", issues: "false", starred: 0, utm_source: "slack" })).toEqual({});
+    expect(
+      parseBoardSearch({ q: "  ", category: "weather", issues: "false", starred: 0, utm_source: "slack" }),
+    ).toEqual({});
     expect(parseBoardSearch({ q: ["a"], category: 3, issues: 1 })).toEqual({});
   });
 
@@ -84,5 +93,47 @@ describe("matchesFilters", () => {
     expect(matchesFilters(gcp, starredOnly, new Set(["gcp"]))).toBe(true);
     expect(matchesFilters(steam, starredOnly, new Set(["gcp"]))).toBe(false);
     expect(matchesFilters(gcp, starredOnly)).toBe(false);
+  });
+});
+
+describe("filtersToReveal", () => {
+  const gcp = service("gcp", "outage");
+  const starred = new Set<ServiceId>(["steam"]);
+
+  it("keeps the filters when the card is already on the board", () => {
+    expect(filtersToReveal(gcp, DEFAULT_FILTERS)).toBeNull();
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, category: "cloud", issuesOnly: true })).toBeNull();
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, starredOnly: true }, new Set(["gcp"]))).toBeNull();
+  });
+
+  it("clears the filters when they hide the card", () => {
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, category: "gaming" })).toEqual(DEFAULT_FILTERS);
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, query: "steam" })).toEqual(DEFAULT_FILTERS);
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, starredOnly: true }, starred)).toEqual(DEFAULT_FILTERS);
+  });
+});
+
+describe("resultsAnnouncement", () => {
+  const empty = "No services match that filter.";
+
+  it("says how many services the filters leave", () => {
+    expect(resultsAnnouncement(3, 14, empty)).toBe("3 of 14 services shown");
+    expect(resultsAnnouncement(1, 1, empty)).toBe("1 of 1 service shown");
+  });
+
+  it("says why in the same sentence when none are left", () => {
+    expect(resultsAnnouncement(0, 14, empty)).toBe("0 of 14 services shown. No services match that filter.");
+    const noStars = emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true }, 0);
+    expect(resultsAnnouncement(0, 14, noStars)).toBe(`0 of 14 services shown. ${noStars}`);
+  });
+});
+
+describe("emptyBoardMessage", () => {
+  it("tells an empty Starred view how to fill it, and anything else that nothing matches", () => {
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true }, 0)).toMatch(/^No starred services yet\./);
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true, query: "zzz" }, 2)).toBe(
+      "No services match that filter.",
+    );
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, query: "zzz" }, 0)).toBe("No services match that filter.");
   });
 });

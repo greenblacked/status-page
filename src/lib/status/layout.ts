@@ -73,9 +73,7 @@ export function boardHeadline(board: BoardSnapshot): { tone: Health; title: stri
     return {
       tone: "unknown",
       title:
-        unknown.length === 1
-          ? `${unknown[0].name} could not be read`
-          : `${unknown.length} sources could not be read`,
+        unknown.length === 1 ? `${unknown[0].name} could not be read` : `${unknown.length} sources could not be read`,
     };
   }
   if (maintenance.length) {

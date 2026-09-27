@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,8 +8,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const SCRIPT = fileURLToPath(new URL("./next.sh", import.meta.url));
 let repo: string;
 
+// execFileSync copies a child's stderr to ours unless stdio is set, so pipe it:
+// a failure's message is then asserted on, not leaked into the test output.
+const PIPE = { stdio: "pipe" } as const;
+
 function git(...args: string[]): string {
-  return execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+  return execFileSync("git", args, { cwd: repo, encoding: "utf8", ...PIPE });
 }
 
 function commit(subject: string, body?: string): void {
@@ -17,7 +21,7 @@ function commit(subject: string, body?: string): void {
 }
 
 function next(mode: "level" | "notes", range = "v0.1.0..HEAD"): string {
-  return execFileSync(SCRIPT, [mode, range], { cwd: repo, encoding: "utf8" });
+  return execFileSync(SCRIPT, [mode, range], { cwd: repo, encoding: "utf8", ...PIPE });
 }
 
 beforeEach(() => {
@@ -63,7 +67,10 @@ describe("next.sh level", () => {
   });
 
   it("fails on a range it cannot resolve instead of reporting none", () => {
-    expect(() => next("level", "v9.9.9..HEAD")).toThrow();
+    const result = spawnSync(SCRIPT, ["level", "v9.9.9..HEAD"], { cwd: repo, encoding: "utf8" });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("next: cannot resolve commit range: v9.9.9..HEAD\n");
   });
 });
 

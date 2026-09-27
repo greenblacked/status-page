@@ -1,4 +1,3 @@
-export const LIVE_REFETCH_MS = 2 * 60 * 1000;
 export const CACHE_TTL_MS = 45_000;
 // A page load may be served a snapshot up to this long past the TTL while a
 // fresh one is collected behind it, so the first visitor after a quiet spell
@@ -16,6 +15,29 @@ export function lastPulseAt(now = Date.now()): number {
 
 export function nextPulseAt(now = Date.now()): number {
   return lastPulseAt(now) + PULSE_INTERVAL_MS;
+}
+
+// The board refetches this long after each two-minute slot rather than on
+// it: on Workers the cron's sweep takes nine seconds or more before its KV
+// write, and a spread keeps every open tab from asking in the same second.
+// A slow sweep can still miss a tab's moment; that tab then shows the
+// slot's snapshot one refetch later. Each page load picks one value and
+// keeps it.
+export const REFETCH_JITTER_MIN_MS = 15_000;
+export const REFETCH_JITTER_MAX_MS = 30_000;
+
+export function pickRefetchJitter(random: () => number = Math.random): number {
+  return REFETCH_JITTER_MIN_MS + Math.floor(random() * (REFETCH_JITTER_MAX_MS - REFETCH_JITTER_MIN_MS));
+}
+
+/**
+ * When the board next refetches: `jitterMs` past a slot, strictly after
+ * `now`. The query schedules itself by this and the countdown counts down
+ * to it, so "Next update 0:00" is the moment a fetch starts.
+ */
+export function nextRefetchAt(now: number, jitterMs: number): number {
+  const candidate = lastPulseAt(now) + jitterMs;
+  return candidate > now ? candidate : candidate + PULSE_INTERVAL_MS;
 }
 
 export function pulseProgress(now = Date.now()): number {
@@ -40,9 +62,149 @@ export function formatAge(ms: number): string {
   return `${hours}h ago`;
 }
 
+// The board refetches every slot, so a snapshot that has not moved for
+// three of them has stopped: the server, its collector or this tab's
+// network is stuck, and "Live" would be a claim the board cannot back.
+export const STALE_AFTER_MS = 3 * PULSE_INTERVAL_MS;
+
+/**
+ * The snapshot on screen and when, by this browser's clock, the board first
+ * showed it. Staleness is timed from here rather than from `generatedAt`:
+ * that is the server's clock, and a browser whose clock ran seven minutes
+ * ahead called every snapshot stale the moment it arrived.
+ */
+export type SnapshotSeen = { generatedAt: string; seenAt: number };
+
+/**
+ * A snapshot this old by the server's own timestamp, on the page's first
+ * sight of it, is stale whatever the browser's clock says: no real clock
+ * skew comes near half an hour, and without this a board that stopped
+ * hours ago would read "Live" for its first six minutes on screen.
+ */
+export const STALE_ON_ARRIVAL_MS = 30 * 60_000;
+
+/**
+ * `previous`, or a new record when `generatedAt` has moved on. Only a newer
+ * snapshot counts: an older one, from a cache that lags, is no sign of life.
+ * Nothing is recorded before mount (`now` 0).
+ */
+export function noteSnapshot(previous: SnapshotSeen | null, generatedAt: string, now: number): SnapshotSeen | null {
+  if (now <= 0) return previous;
+  if (!previous) {
+    const at = parseTimestamp(generatedAt);
+    // Timed from the server's clock only when the gap dwarfs any skew.
+    const arrivedStale = at !== null && now - at > STALE_ON_ARRIVAL_MS;
+    return { generatedAt, seenAt: arrivedStale ? at : now };
+  }
+  if (previous.generatedAt === generatedAt) return previous;
+  // Both timestamps come from the server, so comparing them is safe.
+  const before = parseTimestamp(previous.generatedAt);
+  const after = parseTimestamp(generatedAt);
+  if (before !== null && after !== null && after <= before) return previous;
+  return { generatedAt, seenAt: now };
+}
+
+/** Whether the snapshot first seen at `seenAt` has sat unchanged too long. False until mounted. */
+export function isStale(seenAt: number, now: number): boolean {
+  if (now <= 0 || seenAt <= 0) return false;
+  return now - seenAt > STALE_AFTER_MS;
+}
+
+/** An age in words a screen reader reads well: "7 min ago", "2 hours ago". */
+export function formatStaleAge(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+  return `${Math.floor(hours / 24)} days ago`;
+}
+
 export function formatSlotTime(slot: number): string {
   return new Intl.DateTimeFormat("en", {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(slot));
+}
+
+/** A vendor timestamp in ms, or null when it is missing or unreadable. */
+export function parseTimestamp(value: string | undefined): number | null {
+  if (!value) return null;
+  // Vendor timestamps are not always parseable (see integrations.ts).
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : null;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const pad = (n: number) => n.toString().padStart(2, "0");
+
+/**
+ * A moment as UTC clock time, "14:05 UTC", with the date first when it is
+ * not on the same UTC day as `reference`: "26 Sep 14:05 UTC", and the year
+ * too when that differs. Neither the browser's clock nor its locale enters
+ * into it, so the server and the client render the same text.
+ */
+export function formatUtcTime(at: number, reference: number = at): string {
+  const date = new Date(at);
+  const ref = new Date(reference);
+  const clock = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
+  const sameDay =
+    date.getUTCFullYear() === ref.getUTCFullYear() &&
+    date.getUTCMonth() === ref.getUTCMonth() &&
+    date.getUTCDate() === ref.getUTCDate();
+  if (sameDay) return clock;
+  const day = `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}`;
+  return date.getUTCFullYear() === ref.getUTCFullYear()
+    ? `${day} ${clock}`
+    : `${day} ${date.getUTCFullYear()} ${clock}`;
+}
+
+export type Duration = {
+  /** "2h 10m", for the eye. */
+  short: string;
+  /** "2 hours 10 minutes", for a screen reader. */
+  long: string;
+  /** "PT2H10M", for a <time dateTime>. */
+  iso: string;
+};
+
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+/**
+ * How long something has lasted, to the minute. Null for a negative span:
+ * something that has not started has lasted no time at all, not "under 1m".
+ */
+export function formatDuration(ms: number): Duration | null {
+  if (!(ms >= 0)) return null;
+  const minutes = Math.floor(ms / 60_000);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const iso = `PT${hours}H${minutes % 60}M`;
+  if (minutes < 1) return { short: "under 1m", long: "under a minute", iso };
+  if (hours < 1) return { short: `${minutes}m`, long: plural(minutes, "minute"), iso };
+  if (days < 1) {
+    const rest = minutes % 60;
+    return rest
+      ? { short: `${hours}h ${rest}m`, long: `${plural(hours, "hour")} ${plural(rest, "minute")}`, iso }
+      : { short: `${hours}h`, long: plural(hours, "hour"), iso };
+  }
+  const rest = hours % 24;
+  return rest
+    ? { short: `${days}d ${rest}h`, long: `${plural(days, "day")} ${plural(rest, "hour")}`, iso }
+    : { short: `${days}d`, long: plural(days, "day"), iso };
+}
+
+export type IncidentStart = { upcoming: boolean; duration: Duration | null };
+
+/**
+ * How a card words an incident's start. Vendors list planned maintenance
+ * with a start still ahead (Apple's upcoming events), which read as "since
+ * 22:00 UTC · under 1m" at 14:00. A start after now is `upcoming` and has
+ * no duration. Before mount (`now` 0) the snapshot's check time stands in
+ * for now and there is no duration, so the server and the first client
+ * render agree.
+ */
+export function incidentStart(at: number, now: number, checkedAt: number): IncidentStart {
+  if (now <= 0) return { upcoming: at > checkedAt, duration: null };
+  return at > now ? { upcoming: true, duration: null } : { upcoming: false, duration: formatDuration(now - at) };
 }

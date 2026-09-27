@@ -1,98 +1,47 @@
 name: CI
 
+# One workflow, one job per concern, so a red check names its cause: lint,
+# typecheck, unit tests, build and SSR smoke, browser tests, commit and
+# branch conventions, and the workflows themselves. `CI OK` at the end
+# passes only when every job above it passed or was skipped on purpose; it
+# is the one check branch protection needs to require (CONTRIBUTING.md#ci).
+
 on:
   pull_request:
     branches: [main, dev]
   push:
     branches: [main, dev]
+  # A merge queue tests the exact commit it is about to merge.
+  merge_group:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}
+  # A new push to a pull request replaces the run for the old one. Runs on
+  # dev and main always finish, so every commit there keeps its result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  verify:
-    name: verify (node ${{ matrix.label }})
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        # package.json declares ">=22.13.0 <25". The pinned leg proves the
-        # exact toolchain in .nvmrc; the 24 leg covers the top of that range,
-        # which nothing exercised before.
-        include:
-          - label: pinned
-            node-version-file: .nvmrc
-          - label: '24'
-            node-version: '24'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version-file: ${{ matrix.node-version-file }}
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-      - name: Pin npm
-        run: npm install --global npm@11.9.0
-      - name: Verify declared toolchain
-        env:
-          LABEL: ${{ matrix.label }}
-        run: |
-          if [ "$LABEL" = pinned ]; then
-            test "$(node --version)" = "v$(cat .nvmrc)"
-          else
-            case "$(node --version)" in "v$LABEL".*) ;; *) echo "::error::expected Node $LABEL, got $(node --version)"; exit 1 ;; esac
-          fi
-          test "$(npm --version)" = "11.9.0"
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - name: Smoke-test built preview
-        shell: bash
-        run: |
-          set -uo pipefail
-          log_file="${RUNNER_TEMP}/status-bar-preview.log"
-          setsid npm run preview -- --port 4173 --strictPort >"$log_file" 2>&1 &
-          preview_pid=$!
-          cleanup() {
-            kill -- -"$preview_pid" 2>/dev/null || true
-            wait "$preview_pid" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-          response_file="${RUNNER_TEMP}/status-bar-preview.html"
-          status_file="${RUNNER_TEMP}/status-bar-preview.status"
-          ready=false
-          deadline=$((SECONDS + 30))
-          while (( SECONDS < deadline )); do
-            if ! kill -0 "$preview_pid" 2>/dev/null; then
-              cat "$log_file"
-              exit 1
-            fi
-            if curl --silent --show-error --fail --max-time 10 --write-out '%{http_code}' http://127.0.0.1:4173/ -o "$response_file" >"$status_file"; then
-              if [ "$(cat "$status_file")" = "200" ]; then
-                ready=true
-                break
-              fi
-            fi
-            sleep 2
-          done
-          if [ "$ready" != true ] || ! grep -aq '<title>Status Bar</title>' "$response_file" || ! grep -aq 'Cached server snapshots update every two minutes from official vendor feeds.' "$response_file"; then
-            cat "$log_file"
-            exit 1
-          fi
+          persist-credentials: false
+      - name: Set up the toolchain (npm ci)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
 
-  quality:
-    name: quality
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Lint and format (Biome)
+        run: npx --no-install biome ci --reporter=github .
 
       - name: Repository hygiene
         run: ./scripts/ci/hygiene.sh
@@ -107,6 +56,139 @@ jobs:
       - name: Shell scripts
         run: shellcheck scripts/ci/*.sh scripts/release/*.sh
 
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain (npm ci)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
+      - name: Typecheck
+        run: npm run typecheck
+
+  test:
+    name: test (node ${{ matrix.node || 'pinned' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json declares ">=22.13.0 <25". The pinned leg is the exact
+        # toolchain in .nvmrc; the 24 leg covers the top of that range.
+        node: ['', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain (npm ci)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Unit tests with coverage (npm run test:coverage)
+        if: matrix.node == ''
+        run: npm run test:coverage
+      - name: Unit tests (npm test)
+        if: matrix.node != ''
+        run: npm test
+
+      - name: Coverage summary
+        if: matrix.node == '' && !cancelled()
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/job-summary.ts coverage
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.node == '' && !cancelled()
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+  build:
+    name: build (node ${{ matrix.node || 'pinned' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['', '24']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain (npm ci)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Build (npm run build)
+        run: npm run build
+
+      - name: Smoke-test built preview
+        # scripts/ci/smoke.sh holds the checks, shared with deploy.yml.
+        # /readyz may be 503 here: a runner that cannot reach a vendor
+        # still serves a correct, all-Unknown board.
+        run: |
+          set -uo pipefail
+          log_file="${RUNNER_TEMP}/status-bar-preview.log"
+          setsid npm run preview -- --port 4173 --strictPort >"$log_file" 2>&1 &
+          preview_pid=$!
+          cleanup() {
+            kill -- -"$preview_pid" 2>/dev/null || true
+            wait "$preview_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          if ! ./scripts/ci/smoke.sh http://127.0.0.1:4173; then
+            cat "$log_file"
+            exit 1
+          fi
+
+      - name: Bundle size summary
+        if: matrix.node == ''
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/job-summary.ts bundle
+
+      # The browser tests run against exactly this build.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: matrix.node == ''
+        with:
+          name: node-build
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  e2e:
+    name: browser tests
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain (npm ci)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: node-build
+          path: dist/
+
+      # The browser matching the @playwright/test version in the lockfile.
+      - name: Install Playwright's Chromium
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Browser tests (Playwright)
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
   commits:
     name: commit messages
     runs-on: ubuntu-latest
@@ -117,6 +199,9 @@ jobs:
         with:
           # Need both sides of the range to list the commits this PR adds.
           fetch-depth: 0
+          # The base branch below is fetched anonymously: this repository is
+          # public, and no later step needs a token in .git/config.
+          persist-credentials: false
 
       - name: Check Conventional Commits
         # Branch names are attacker-controlled on a fork PR, so the ref goes
@@ -134,7 +219,6 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
         with:
           persist-credentials: false
 
@@ -152,6 +236,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Pinned by digest: Dependabot does not see images used in `run:`, so
       # bump this by hand from https://hub.docker.com/r/rhysd/actionlint/tags.
@@ -161,3 +247,36 @@ jobs:
             --volume "$PWD:/repo" \
             --workdir /repo \
             rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
+
+      # Security audit of the workflows: template injection, over-broad
+      # permissions, credential persistence, cache poisoning, impostor or
+      # known-vulnerable action commits. Findings annotate the pull request
+      # and fail the job; a deliberate exception carries a
+      # `# zizmor: ignore[...]` comment with its reason next to it.
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: 1.30.1
+          advanced-security: false
+          annotations: true
+
+  ci-ok:
+    # The single required check. `always()` makes it run, and report, even
+    # when a job it needs failed, so a red job can never leave the pull
+    # request waiting on a check that was skipped.
+    name: CI OK
+    if: always()
+    needs: [lint, typecheck, test, build, e2e, commits, branch, workflows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check every job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<<"$RESULTS"
+          # `skipped` is fine: commit and branch checks run on pull requests only.
+          if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<<"$RESULTS" >/dev/null; then
+            echo "::error::a required job failed or was cancelled"
+            exit 1
+          fi

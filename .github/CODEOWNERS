@@ -1,0 +1,9 @@
+# Reviewers GitHub requests automatically for each path. With "Require
+# review from Code Owners" on in branch protection, their approval is needed.
+
+*                   @greenblacked
+
+# The paths that decide what runs with a token or reaches production.
+/.github/           @greenblacked
+/scripts/           @greenblacked
+/wrangler.jsonc     @greenblacked

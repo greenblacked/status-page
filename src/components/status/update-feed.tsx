@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { healthLabel } from "@/lib/status/health";
-import { formatSlotTime } from "@/lib/status/schedule";
 import type { Pulse } from "@/lib/status/pulse";
+import { formatSlotTime } from "@/lib/status/schedule";
 import { cn } from "@/lib/utils";
 
 export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?: string }) {
@@ -11,14 +11,10 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
     <section className={cn("glass rounded-3xl p-4", className)}>
       <div className="flex items-end justify-between gap-3">
         <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">
-            Checks and new releases
-          </p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">Checks and new releases</p>
           <h2 className="mt-1 font-display text-xl tracking-[-0.03em]">Board log</h2>
         </div>
-        {latest ? (
-          <Badge tone={latest.overall}>{healthLabel(latest.overall)}</Badge>
-        ) : null}
+        {latest ? <Badge tone={latest.overall}>{healthLabel(latest.overall)}</Badge> : null}
       </div>
 
       {pulses.length === 0 ? (
@@ -52,8 +48,7 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
                         : `${pulse.changes.length} services changed`}
                 </p>
                 <p className="mt-0.5 font-mono text-[11px] tabular-nums text-subtle">
-                  {pulse.counts.operational}/{Object.values(pulse.counts).reduce((sum, n) => sum + n, 0)}{" "}
-                  clear
+                  {pulse.counts.operational}/{Object.values(pulse.counts).reduce((sum, n) => sum + n, 0)} clear
                   {pulse.changes.length > 1
                     ? ` · ${pulse.changes.map((change) => change.name).join(", ")}`
                     : pulse.changes[0]?.summary

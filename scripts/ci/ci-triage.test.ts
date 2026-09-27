@@ -9,8 +9,20 @@ type Triage = {
 };
 const { triage, categorize, MARKER } = createRequire(import.meta.url)("./ci-triage.cjs") as Triage;
 
-type Run = { id: number; name: string; run_number: number; status: string; conclusion: string | null; html_url: string };
-type Job = { name: string; conclusion: string; html_url: string; steps: { name: string; number: number; conclusion: string }[] };
+type Run = {
+  id: number;
+  name: string;
+  run_number: number;
+  status: string;
+  conclusion: string | null;
+  html_url: string;
+};
+type Job = {
+  name: string;
+  conclusion: string;
+  html_url: string;
+  steps: { name: string; number: number; conclusion: string }[];
+};
 type Comment = { id: number; body: string; user: { type: string } };
 
 const HEAD = "abc1234def";
@@ -27,7 +39,9 @@ function fakeGithub() {
       repos: { listPullRequestsAssociatedWithCommit: async () => ({ data: [{ number: 7, state: "open" }] }) },
       pulls: {
         list: async () => ({ data: [] }),
-        get: async () => ({ data: { number: 7, state: "open", head: { sha: prHead }, labels: labels.map((name) => ({ name })) } }),
+        get: async () => ({
+          data: { number: 7, state: "open", head: { sha: prHead }, labels: labels.map((name) => ({ name })) },
+        }),
       },
       actions: {
         listWorkflowRunsForRepo: async () => ({ data: { workflow_runs: runs } }),
@@ -60,7 +74,14 @@ const context = {
 const core = { info: () => {} };
 const run = () => triage({ github: fakeGithub(), context, core });
 
-const green = (id: number, name: string, n = 1): Run => ({ id, name, run_number: n, status: "completed", conclusion: "success", html_url: `u/${id}` });
+const green = (id: number, name: string, n = 1): Run => ({
+  id,
+  name,
+  run_number: n,
+  status: "completed",
+  conclusion: "success",
+  html_url: `u/${id}`,
+});
 
 beforeEach(() => {
   runs = [];
@@ -94,14 +115,23 @@ describe("ci triage", () => {
     await run();
     expect(comments).toHaveLength(1);
     expect(comments[0].body.startsWith(MARKER)).toBe(true);
-    expect(comments[0].body).toContain("`verify (node 24)` → `Run npm test`: test failure");
+    expect(comments[0].body).toContain(
+      "`verify (node 24)` → `Run npm test`: unit test failure, or coverage under its threshold",
+    );
     expect(comments[0].body).toContain("https://gh/job/9#step:7:1");
     expect(labels).toEqual(["ci-failed"]);
   });
 
   it("edits the same comment on recovery and removes the label", async () => {
     runs = [{ ...green(1, "CI"), conclusion: "failure" }];
-    jobs[1] = [{ name: "quality", conclusion: "failure", html_url: "j", steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }] }];
+    jobs[1] = [
+      {
+        name: "quality",
+        conclusion: "failure",
+        html_url: "j",
+        steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }],
+      },
+    ];
     await run();
     runs = [green(4, "CI", 2)];
     await run();
@@ -112,7 +142,14 @@ describe("ci triage", () => {
 
   it("keeps the red report while a recovery run is still in flight", async () => {
     runs = [{ ...green(1, "CI"), conclusion: "failure" }];
-    jobs[1] = [{ name: "quality", conclusion: "failure", html_url: "j", steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }] }];
+    jobs[1] = [
+      {
+        name: "quality",
+        conclusion: "failure",
+        html_url: "j",
+        steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }],
+      },
+    ];
     await run();
     runs = [{ ...green(4, "CI", 2), status: "in_progress", conclusion: null }];
     await run();
@@ -160,7 +197,14 @@ describe("ci triage", () => {
 
   it("does not declare recovery when the re-run was cancelled", async () => {
     runs = [{ ...green(1, "CI"), conclusion: "failure" }];
-    jobs[1] = [{ name: "quality", conclusion: "failure", html_url: "j", steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }] }];
+    jobs[1] = [
+      {
+        name: "quality",
+        conclusion: "failure",
+        html_url: "j",
+        steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }],
+      },
+    ];
     await run();
     runs = [{ ...green(4, "CI", 2), conclusion: "cancelled" }];
     await run();
@@ -180,5 +224,19 @@ describe("ci triage", () => {
     expect(categorize("CI", "commit messages", "Check Conventional Commits")).toBe("commit message format");
     expect(categorize("Dependency review", "dependency-review", "Review dependency changes")).toMatch(/vulnerability/);
     expect(categorize("CI", "verify", undefined)).toMatch(/^infrastructure/);
+    // The step names ci.yml uses.
+    expect(categorize("CI", "lint", "Set up the toolchain (npm ci)")).toMatch(/^dependency install/);
+    expect(categorize("CI", "lint", "Lint and format (Biome)")).toMatch(/^lint or formatting/);
+    expect(categorize("CI", "typecheck", "Typecheck")).toBe("type error");
+    expect(categorize("CI", "test (node pinned)", "Unit tests with coverage (npm run test:coverage)")).toMatch(
+      /^unit test failure/,
+    );
+    expect(categorize("CI", "test (node 24)", "Unit tests (npm test)")).toMatch(/^unit test failure/);
+    expect(categorize("CI", "build (node pinned)", "Build (npm run build)")).toBe("build");
+    expect(categorize("CI", "browser tests", "Browser tests (Playwright)")).toMatch(/^browser test failure/);
+    expect(categorize("CI", "lint", "Changelog covers package.json version")).toMatch(/^CHANGELOG/);
+    expect(categorize("CI", "branch name", "Check the branch naming convention")).toBe("branch name");
+    expect(categorize("CI", "workflow lint", "zizmor")).toBe("workflow security");
+    expect(categorize("CI", "CI OK", "Check every job passed")).toMatch(/required job/);
   });
 });

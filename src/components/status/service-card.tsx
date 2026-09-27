@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { CATEGORIES } from "@/lib/status/catalog";
 import { ALL_CLEAR_SUMMARY, healthLabel } from "@/lib/status/health";
 import { serviceAnchor } from "@/lib/status/layout";
+import { formatUtcTime, incidentStart, parseTimestamp } from "@/lib/status/schedule";
 import type { CategoryId, ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
@@ -37,12 +38,15 @@ export function ServiceCard({
   emphasized = false,
   starred,
   onToggleStar,
+  now,
 }: {
   service: ServiceSnapshot;
   index: number;
   emphasized?: boolean;
   starred: boolean;
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
+  /** The client clock (0 until mounted), for how long an incident has run. */
+  now: number;
 }) {
   const Icon = CATEGORY_ICON[service.category];
   const changelog = service.category === "updates";
@@ -56,13 +60,22 @@ export function ServiceCard({
       : service.components.filter((component) => component.health !== "operational")
   ).slice(0, 6);
   const incidents = service.incidents.filter((incident) => norm(incident.title) !== summary).slice(0, 2);
+  // An incident whose title is the summary has no row of its own, so its
+  // start goes under the summary instead.
+  const summaryIncident = changelog
+    ? undefined
+    : service.incidents.find((incident) => norm(incident.title) === summary);
   const incidentUrl = changelog ? undefined : service.incidents.find((incident) => incident.url)?.url;
+  const checkedAt = Date.parse(service.checkedAt);
 
   return (
     <article
       id={serviceAnchor(service.id)}
+      // Focusable by script and by its #service-<id> link, never by Tab, so
+      // an attention chip leaves the keyboard on the card it jumped to.
+      tabIndex={-1}
       className={cn(
-        "spotlight group relative flex scroll-mt-6 flex-col rounded-3xl glass p-4 transition-[box-shadow,transform] duration-[var(--motion-fast)] ease-[var(--ease-smooth-out)] hover:shadow-[var(--shadow-border-hover)] stagger-in",
+        "focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-3xl glass p-4 transition-[box-shadow,transform] duration-[var(--motion-fast)] ease-[var(--ease-smooth-out)] hover:shadow-[var(--shadow-border-hover)] stagger-in",
         emphasized && (service.health === "outage" ? "service-card-changed is-down" : "service-card-changed"),
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, viewTransitionName: `vt-${service.id}` }}
@@ -70,7 +83,10 @@ export function ServiceCard({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span
-            className={cn("grid size-10 shrink-0 place-items-center rounded-2xl glass-inset", ICON_TONE[service.health])}
+            className={cn(
+              "grid size-10 shrink-0 place-items-center rounded-2xl glass-inset",
+              ICON_TONE[service.health],
+            )}
             aria-hidden
           >
             <Icon className="size-4" strokeWidth={1.75} />
@@ -90,16 +106,25 @@ export function ServiceCard({
             <HealthDot health={service.health} />
             {healthLabel(service.health)}
           </Badge>
-          <StarButton name={service.name} starred={starred} onToggle={() => onToggleStar(service.id)} className="-my-2 -mr-2" />
+          <StarButton
+            name={service.name}
+            starred={starred}
+            onToggle={() => onToggleStar(service.id)}
+            className="-my-2 -mr-2"
+          />
         </div>
       </div>
 
       <p className="mt-4 text-sm leading-relaxed text-muted text-pretty [overflow-wrap:anywhere]">{service.summary}</p>
+      {summaryIncident ? (
+        <IncidentSince startedAt={summaryIncident.startedAt} reference={checkedAt} now={now} className="mt-1" />
+      ) : null}
 
       {rows.length > 0 ? (
         <ul className="mt-4 flex flex-col gap-1.5">
           {rows.map((component, componentIndex) => (
             <ComponentRow
+              // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
               key={`${component.name}-${componentIndex}`}
               component={component}
               changelog={changelog}
@@ -115,10 +140,12 @@ export function ServiceCard({
       {incidents.length > 0 ? (
         <ul className="mt-3 space-y-2">
           {incidents.map((incident, incidentIndex) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
             <li key={`${incident.id}-${incidentIndex}`} className="text-sm text-fg [overflow-wrap:anywhere]">
               <span className={ICON_TONE[incident.health]}>{healthLabel(incident.health)}</span>
               <span className="text-subtle"> · </span>
               {incident.title}
+              <IncidentSince startedAt={incident.startedAt} reference={checkedAt} now={now} />
             </li>
           ))}
         </ul>
@@ -132,13 +159,54 @@ export function ServiceCard({
           href={incidentUrl ?? service.sourceUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex min-h-11 min-w-0 items-center gap-1 rounded-full px-2 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
+          className="focus-ring inline-flex min-h-11 min-w-0 items-center gap-1 rounded-full px-2 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
         >
           <span className="truncate">{incidentUrl ? "View incident" : service.sourceName}</span>
           <ArrowUpRight className="size-3.5 shrink-0" />
         </a>
       </div>
     </article>
+  );
+}
+
+/**
+ * When an incident began, as "since 14:05 UTC", and after hydration how long
+ * it has run. A start still ahead, such as planned maintenance, reads
+ * "scheduled for 22:00 UTC" instead. The start is the same text on the
+ * server and the client; the duration needs the visitor's clock, so it
+ * waits for `now`.
+ */
+function IncidentSince({
+  startedAt,
+  reference,
+  now,
+  className,
+}: {
+  startedAt: string | undefined;
+  /** When the card was checked; a start on another day shows its date. */
+  reference: number;
+  now: number;
+  className?: string;
+}) {
+  const at = parseTimestamp(startedAt);
+  if (at === null) return null;
+  const { upcoming, duration } = incidentStart(at, now, reference);
+  return (
+    <span className={cn("block font-mono text-[11px] tabular-nums text-subtle", className)}>
+      {upcoming ? "scheduled for " : "since "}
+      <time dateTime={new Date(at).toISOString()}>
+        {formatUtcTime(at, Number.isFinite(reference) ? reference : at)}
+      </time>
+      {duration ? (
+        <>
+          {" · "}
+          <time dateTime={duration.iso}>
+            <span aria-hidden>{duration.short}</span>
+            <span className="sr-only">{duration.long}</span>
+          </time>
+        </>
+      ) : null}
+    </span>
   );
 }
 
@@ -195,8 +263,9 @@ export function ServiceTile({
   return (
     <article
       id={serviceAnchor(service.id)}
+      tabIndex={-1}
       className={cn(
-        "spotlight flex scroll-mt-6 items-center gap-3 rounded-2xl glass py-2 pr-1.5 pl-3 stagger-in",
+        "focus-ring spotlight flex scroll-mt-6 items-center gap-3 rounded-2xl glass py-2 pr-1.5 pl-3 stagger-in",
         emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 30}ms`, viewTransitionName: `vt-${service.id}` }}
@@ -221,7 +290,7 @@ export function ServiceTile({
         rel="noreferrer"
         aria-label={`${service.sourceName}, official status for ${service.name}`}
         title={service.sourceName}
-        className="grid size-11 shrink-0 place-items-center rounded-full text-subtle transition-colors duration-[var(--motion-quick)] hover:text-fg"
+        className="focus-ring grid size-11 shrink-0 place-items-center rounded-full text-subtle transition-colors duration-[var(--motion-quick)] hover:text-fg"
       >
         <ArrowUpRight className="size-4" />
       </a>
@@ -253,7 +322,7 @@ function StarButton({
       aria-label={`Star ${name}`}
       title={starred ? `Unstar ${name}` : `Star ${name} to keep it first`}
       className={cn(
-        "grid size-11 shrink-0 place-items-center rounded-full transition-colors duration-[var(--motion-quick)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60",
+        "grid size-11 shrink-0 place-items-center rounded-full transition-colors duration-[var(--motion-quick)] focus-ring",
         starred ? "text-fg" : "text-subtle hover:text-fg",
         className,
       )}

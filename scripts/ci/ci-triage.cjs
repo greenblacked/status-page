@@ -28,11 +28,11 @@ function code(text) {
   const safe = String(text)
     .replace(/[`\r\n]+/g, " ")
     .slice(0, 120)
-    .replace(/[\\|]/g, (ch) => "\\" + ch);
-  return "`" + safe + "`";
+    .replace(/[\\|]/g, (ch) => `\\${ch}`);
+  return `\`${safe}\``;
 }
 
-function categorize(workflow, jobName, stepName) {
+function categorize(workflow, _jobName, stepName) {
   const step = (stepName || "").toLowerCase();
   if (!stepName) return "infrastructure: the job failed without a failing step (timeout, cancellation or runner loss)";
   if (workflow === "CodeQL") return "code scanning";
@@ -41,19 +41,27 @@ function categorize(workflow, jobName, stepName) {
       ? "dependency graph API: token or API problem"
       : "dependency review: a high or critical vulnerability, or a disallowed change";
   }
+  // Step names from ci.yml. A failure inside .github/actions/setup shows
+  // as its step in the job, "Set up the toolchain (npm ci)".
   const rules = [
-    [/set up job|checkout|setup-node|post /, "infrastructure"],
+    [/set up job|checkout|setup-node|download-artifact|upload-artifact|post /, "infrastructure"],
     [/pin npm|declared toolchain/, "toolchain version"],
-    [/npm ci/, "dependency install"],
+    [/npm ci/, "dependency install, toolchain version or npm signature check"],
+    [/biome/, "lint or formatting: run `npm run lint:fix`"],
     [/typecheck/, "type error"],
-    [/npm test/, "test failure"],
+    [/npm (run )?test/, "unit test failure, or coverage under its threshold"],
+    [/playwright/, "browser test failure: the playwright-report artifact has traces"],
     [/npm run build/, "build"],
     [/smoke/, "SSR smoke test: the built app did not serve"],
     [/hygiene/, "repository hygiene"],
     [/documentation links/, "broken documentation link"],
+    [/changelog/, "CHANGELOG.md has no section for the package.json version"],
     [/shell scripts/, "shellcheck"],
     [/conventional commits/, "commit message format"],
+    [/branch naming/, "branch name"],
     [/actionlint/, "workflow syntax"],
+    [/zizmor/, "workflow security"],
+    [/every job passed/, "a required job above failed"],
   ];
   for (const [pattern, label] of rules) if (pattern.test(step)) return label;
   return "unclassified";
@@ -114,7 +122,7 @@ async function describeFailure(github, owner, repo, run) {
       job: job.name,
       step: step ? step.name : undefined,
       url: step ? `${job.html_url}#step:${step.number}:1` : job.html_url,
-      category: categorize(run.name, job.name, step && step.name),
+      category: categorize(run.name, job.name, step?.name),
     });
   }
   return failures;
@@ -123,7 +131,9 @@ async function describeFailure(github, owner, repo, run) {
 function render(headSha, rows, failing) {
   const short = headSha.slice(0, 7);
   const lines = [MARKER];
-  lines.push(failing ? `### ❌ CI failing on \`${short}\`` : `### ✅ Recovered: all watched workflows pass on \`${short}\``);
+  lines.push(
+    failing ? `### ❌ CI failing on \`${short}\`` : `### ✅ Recovered: all watched workflows pass on \`${short}\``,
+  );
   lines.push("", "| Workflow | Result |", "| --- | --- |");
   for (const row of rows) lines.push(`| ${row.workflow} | ${row.result} |`);
   lines.push(

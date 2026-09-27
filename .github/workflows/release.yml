@@ -22,7 +22,10 @@ name: Release
 # checks as CI. If any check fails, nothing is committed, tagged or
 # published. After every run for main, released or not, main is merged back
 # into dev, so dev carries the release commit and any fix merged into main
-# directly. CONTRIBUTING.md#releases has the details.
+# directly. That merge is pushed with GITHUB_TOKEN, which starts no workflow
+# of its own, so when it actually moved dev this also starts deploy.yml on
+# dev by hand, or staging would keep running the pre-release code until an
+# unrelated push redeployed it. CONTRIBUTING.md#releases has the details.
 
 on:
   push:
@@ -174,12 +177,14 @@ jobs:
           # The code being released: before any bump commit, which changes
           # only the version and the changelog.
           ref: ${{ needs.plan.outputs.sha }}
+      # No package cache: a cache entry saved by any other run could reach
+      # the code that gets tagged. A release is rare; a cold install is fine.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          cache: npm
+          package-manager-cache: false
       - name: Pin npm
-        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")" # zizmor: ignore[adhoc-packages] exact version from packageManager
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -297,19 +302,27 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+    outputs:
+      pushed: ${{ steps.merge.outputs.pushed }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keeps the token: this job pushes the merge to dev.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked]
         with:
           fetch-depth: 0
           ref: main
 
       - name: Merge main into dev
+        id: merge
         env:
           ACTOR: ${{ github.actor }}
           ACTOR_ID: ${{ github.actor_id }}
         run: |
+          # GITHUB_TOKEN pushes below start no workflow (deploy.yml included),
+          # so this output tells the redeploy-staging job whether dev's tip
+          # actually moved and staging needs waking up by hand.
           if ! git ls-remote --exit-code --heads origin dev >/dev/null; then
             echo "::notice::no dev branch; nothing to sync"
+            echo "pushed=false" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "$ACTOR"
@@ -324,6 +337,7 @@ jobs:
             git fetch --quiet origin dev
             if git merge-base --is-ancestor origin/main origin/dev; then
               echo "::notice::dev already has everything on main"
+              echo "pushed=false" >>"$GITHUB_OUTPUT"
               exit 0
             fi
             git checkout --quiet -B dev origin/dev
@@ -345,6 +359,7 @@ jobs:
               fi
             fi
             if git push origin HEAD:refs/heads/dev; then
+              echo "pushed=true" >>"$GITHUB_OUTPUT"
               exit 0
             fi
             echo "::warning::dev moved during the merge (attempt $attempt); trying again"
@@ -352,3 +367,26 @@ jobs:
           done
           echo "::error::dev kept moving; re-run this job"
           exit 1
+
+  redeploy-staging:
+    name: redeploy staging
+    needs: sync-dev
+    # sync-dev pushes the merge with GITHUB_TOKEN, which starts no workflow
+    # (GitHub's own loop guard), so deploy.yml never sees dev move and
+    # staging is left running the pre-release code until something else
+    # deploys. Only start it when dev's tip actually changed.
+    if: needs.sync-dev.outputs.pushed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Only scope beyond the workflow default (contents: read): to start
+      # deploy.yml by hand, the same way `gh workflow run` would from a
+      # maintainer's machine.
+      actions: write
+    steps:
+      - name: Start deploy.yml on dev
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run deploy.yml --ref dev

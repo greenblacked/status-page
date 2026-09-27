@@ -9,7 +9,6 @@ export type CatalogEntry = {
   category: CategoryId;
   sourceName: string;
   sourceUrl: string;
-  blurb: string;
 };
 
 export const CATEGORIES: { id: CategoryId; label: string }[] = [
@@ -28,7 +27,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "cloud",
     sourceName: "Google Cloud Service Health",
     sourceUrl: "https://status.cloud.google.com/",
-    blurb: "Compute, storage, networking, and Google Cloud APIs.",
   },
   {
     id: "aws",
@@ -37,7 +35,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "cloud",
     sourceName: "AWS Health Dashboard",
     sourceUrl: "https://health.aws.amazon.com/health/status",
-    blurb: "Public AWS Health current events across regions.",
   },
   {
     id: "steam",
@@ -46,7 +43,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "gaming",
     sourceName: "Steam Web API",
     sourceUrl: "https://store.steampowered.com/",
-    blurb: "Store, Web API clock, and platform reachability.",
   },
   {
     id: "cs2-europe",
@@ -55,7 +51,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "gaming",
     sourceName: "Valve SDR config (app 730)",
     sourceUrl: "https://store.steampowered.com/app/730/",
-    blurb: "Counter-Strike 2 Steam Datagram relays in Europe.",
   },
   {
     id: "epic",
@@ -64,7 +59,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "gaming",
     sourceName: "Epic Games Status",
     sourceUrl: "https://status.epicgames.com/",
-    blurb: "Accounts, store, online services, and Unreal.",
   },
   {
     id: "fortnite",
@@ -73,7 +67,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "gaming",
     sourceName: "Epic Games Status",
     sourceUrl: "https://status.epicgames.com/",
-    blurb: "Fortnite and related Epic game modes.",
   },
   {
     id: "spotify",
@@ -82,7 +75,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "platforms",
     sourceName: "Spotify Status",
     sourceUrl: "https://spotify.statuspage.io/",
-    blurb: "Streaming, accounts, and Spotify APIs.",
   },
   {
     id: "apple",
@@ -91,7 +83,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "platforms",
     sourceName: "Apple System Status",
     sourceUrl: "https://www.apple.com/support/systemstatus/",
-    blurb: "iCloud, App Store, Apple Account, Media, and Pay.",
   },
   {
     id: "android",
@@ -100,7 +91,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "platforms",
     sourceName: "Google Play Status",
     sourceUrl: "https://status.play.google.com/summary",
-    blurb: "Google Play, billing, publishing, and Android services.",
   },
   {
     id: "grok",
@@ -109,7 +99,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "ai",
     sourceName: "xAI System Status",
     sourceUrl: "https://status.x.ai/",
-    blurb: "Grok, xAI API, and related SpaceXAI surfaces.",
   },
   {
     id: "chatgpt",
@@ -118,7 +107,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "ai",
     sourceName: "OpenAI Status",
     sourceUrl: "https://status.openai.com/",
-    blurb: "ChatGPT, OpenAI API, and platform components.",
   },
   {
     id: "claude",
@@ -127,7 +115,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "ai",
     sourceName: "Claude Status",
     sourceUrl: "https://status.claude.com/",
-    blurb: "Claude apps, API, and Anthropic platform.",
   },
   {
     id: "mikrotik",
@@ -136,7 +123,6 @@ export const CATALOG: CatalogEntry[] = [
     category: "updates",
     sourceName: "MikroTik changelogs",
     sourceUrl: "https://mikrotik.com/download/changelogs",
-    blurb: "Official RouterOS channel versions and changelogs.",
   },
   {
     id: "apple-os",
@@ -145,10 +131,10 @@ export const CATALOG: CatalogEntry[] = [
     category: "updates",
     sourceName: "Apple Developer Releases",
     sourceUrl: "https://developer.apple.com/news/releases/",
-    blurb: "iOS, iPadOS, macOS, watchOS, tvOS, and visionOS releases.",
   },
 ];
 
-export const CATALOG_BY_ID = Object.fromEntries(
-  CATALOG.map((entry) => [entry.id, entry]),
-) as Record<ServiceId, CatalogEntry>;
+export const CATALOG_BY_ID = Object.fromEntries(CATALOG.map((entry) => [entry.id, entry])) as Record<
+  ServiceId,
+  CatalogEntry
+>;

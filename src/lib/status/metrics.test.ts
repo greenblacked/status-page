@@ -1,37 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { board, service } from "../../test/fixtures.ts";
 import { prometheusMetrics } from "./metrics";
-import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "./types";
-
-function service(id: ServiceId, health: Health, extra: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
-  return {
-    id,
-    name: id,
-    shortName: id.toUpperCase(),
-    category: "cloud",
-    health,
-    summary: "All reported systems operational.",
-    sourceName: "Source",
-    sourceUrl: `https://status.example.com/${id}`,
-    checkedAt: "2026-09-25T00:00:00Z",
-    latencyMs: 250,
-    components: [],
-    incidents: [],
-    ...extra,
-  };
-}
-
-function board(services: ServiceSnapshot[]): BoardSnapshot {
-  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
-  for (const item of services) counts[item.health] += 1;
-  return { generatedAt: "2026-09-25T00:00:00.000Z", durationMs: 1500, services, counts };
-}
 
 describe("prometheusMetrics", () => {
   const text = prometheusMetrics(
-    board([
-      service("gcp", "outage", { incidents: [{ id: "1", title: "Down", health: "outage" }] }),
-      service("aws", "unknown", { failure: { kind: "timeout", message: "timed out" } }),
-    ]),
+    board(
+      [
+        service("gcp", { health: "outage", incidents: [{ id: "1", title: "Down", health: "outage" }] }),
+        service("aws", { health: "unknown", latencyMs: 250, failure: { kind: "timeout", message: "timed out" } }),
+      ],
+      { durationMs: 1500 },
+    ),
   );
   const lines = text.split("\n");
 
@@ -67,7 +46,9 @@ describe("prometheusMetrics", () => {
   });
 
   it("does not export summaries or other free text", () => {
-    const withText = prometheusMetrics(board([service("gcp", "degraded", { summary: 'Errors in "us-east1"\n' })]));
+    const withText = prometheusMetrics(
+      board([service("gcp", { health: "degraded", summary: 'Errors in "us-east1"\n' })]),
+    );
     expect(withText).not.toContain("us-east1");
   });
 });

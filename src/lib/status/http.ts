@@ -1,5 +1,33 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 const USER_AGENT = "StatusBar/1.0 (status board; official sources only)";
 const DEFAULT_TIMEOUT_MS = 9000;
+
+/**
+ * The most a single vendor response may be. The largest official payload
+ * the collectors read (AWS's current events, Steam's SDR config) is a few
+ * hundred KiB; 4 MiB leaves an order of magnitude of headroom while keeping
+ * a runaway or hostile response from holding a Worker isolate's 128 MB, or
+ * the CPU to decode and parse it, for the rest of a sweep.
+ */
+export const MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+// Bytes read by every fetch made inside meterBytes(), so each collector's
+// log line can say how much it downloaded without threading a counter
+// through every collector and helper. AsyncLocalStorage is the same
+// mechanism cloudflare-context.ts relies on (nodejs_compat on Workers).
+const byteMeter = new AsyncLocalStorage<{ bytes: number }>();
+
+/** Runs `fn`, counting the response bytes of every fetchText it makes. */
+export function meterBytes<T>(fn: (meter: { readonly bytes: number }) => Promise<T>): Promise<T> {
+  const meter = { bytes: 0 };
+  return byteMeter.run(meter, () => fn(meter));
+}
+
+/** Bytes read so far inside the current meterBytes() call, or 0 outside one. */
+export function meteredBytes(): number {
+  return byteMeter.getStore()?.bytes ?? 0;
+}
 
 export class SourceError extends Error {
   // Declared as a field rather than a constructor parameter property:
@@ -35,6 +63,54 @@ function sourceHost(url: string): string {
   }
 }
 
+function tooLarge(url: string, maxBytes: number): PayloadError {
+  return new PayloadError(`Response from ${sourceHost(url)} is larger than ${Math.round(maxBytes / 1024 / 1024)} MiB`);
+}
+
+/**
+ * The body, read chunk by chunk so an oversized response is dropped as soon
+ * as it crosses `maxBytes` instead of after it has all been buffered. A
+ * declared Content-Length over the cap is refused before reading anything;
+ * a missing or false one is caught by the running count. PayloadError, not
+ * a plain SourceError: the vendor answered, just not with something a
+ * collector can use, which is what "parser" failures mean on the card.
+ */
+export async function readBodyCapped(
+  response: Response,
+  url: string,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<ArrayBuffer> {
+  const meter = byteMeter.getStore();
+  const declared = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => {});
+    throw tooLarge(url, maxBytes);
+  }
+  if (!response.body) return new ArrayBuffer(0);
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (meter) meter.bytes += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw tooLarge(url, maxBytes);
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
+}
+
 export async function fetchText(
   url: string,
   init: RequestInit & { timeoutMs?: number; binary?: boolean } = {},
@@ -53,11 +129,15 @@ export async function fetchText(
       },
       cache: "no-store",
     });
-    const bytes = await response.arrayBuffer();
-    const contentType = response.headers.get("content-type") ?? "";
     if (!response.ok) {
+      // Nothing in an error page is used, so it is never downloaded.
+      await response.body?.cancel().catch(() => {});
       throw new SourceError(`${response.status} ${response.statusText} from ${sourceHost(url)}`, response.status);
     }
+    // Still under the timeout above: a vendor trickling a body in slowly
+    // is aborted like one that never answers.
+    const bytes = await readBodyCapped(response, url);
+    const contentType = response.headers.get("content-type") ?? "";
     let body: string;
     if (binary) {
       const bom = new Uint8Array(bytes.slice(0, 2));
@@ -83,7 +163,10 @@ export async function fetchText(
   }
 }
 
-export async function fetchJson<T>(url: string, init?: RequestInit & { timeoutMs?: number; binary?: boolean }): Promise<T> {
+export async function fetchJson<T>(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number; binary?: boolean },
+): Promise<T> {
   const { body } = await fetchText(url, init);
   const trimmed = body.replace(/^\uFEFF/, "").trim();
   const jsonPayload = unwrapJsonp(trimmed);

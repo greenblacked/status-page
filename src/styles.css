@@ -164,6 +164,24 @@
     inset 0 0 0 1px color-mix(in oklab, white 6%, transparent);
 }
 
+/* One focus ring for every control. An outline rather than a box-shadow
+   ring: forced-colors mode (Windows High Contrast) drops box-shadows, so
+   the old ring vanished there, while an outline stays and takes the
+   system's own colour. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+    outline-offset: 0;
+  }
+
+  @media (forced-colors: active) {
+    &:focus-visible {
+      outline-color: Highlight;
+      outline-offset: 2px;
+    }
+  }
+}
+
 .stagger-in {
   animation: rise-in var(--motion-fast) var(--ease-smooth-out) both;
 }

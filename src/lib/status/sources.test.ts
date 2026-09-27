@@ -1,16 +1,17 @@
-import { describe, it } from "vitest";
 import assert from "node:assert/strict";
+import { describe, it } from "vitest";
+import { PayloadError, SourceError } from "./http.ts";
 import {
   awsEventActive,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
+  epochToIso,
   grokItemActive,
   grokItemHealth,
   parseRssItems,
   saysResolved,
 } from "./sources.server.ts";
-import { PayloadError, SourceError } from "./http.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 8, 22, 12, 0, 0);
@@ -67,14 +68,23 @@ describe("aws health events", () => {
     assert.equal(saysResolved("The issue has not been resolved"), false);
     assert.equal(saysResolved("Issue remains unresolved"), false);
     assert.equal(
-      awsEventActive({ event_log: [{ timestamp: recent, message: "We have not yet resolved the errors" }] } as never, NOW),
+      awsEventActive(
+        { event_log: [{ timestamp: recent, message: "We have not yet resolved the errors" }] } as never,
+        NOW,
+      ),
       true,
     );
   });
 
   it("honours a numeric status when one is present", () => {
-    assert.equal(awsEventActive({ status: 1, event_log: [{ timestamp: recent, message: "Investigating" }] } as never, NOW), true);
-    assert.equal(awsEventActive({ status: 0, event_log: [{ timestamp: recent, message: "resolved" }] } as never, NOW), false);
+    assert.equal(
+      awsEventActive({ status: 1, event_log: [{ timestamp: recent, message: "Investigating" }] } as never, NOW),
+      true,
+    );
+    assert.equal(
+      awsEventActive({ status: 0, event_log: [{ timestamp: recent, message: "resolved" }] } as never, NOW),
+      false,
+    );
   });
 
   it("does not read a blank or null status as resolved", () => {
@@ -93,7 +103,13 @@ describe("aws health events", () => {
     assert.equal(awsEventActive({ end_time: "2026-09-21", status: 1 } as never, NOW), false);
     assert.equal(awsEventActive({ summary: "[RESOLVED] Elevated errors", status: 1 } as never, NOW), false);
     assert.equal(
-      awsEventActive({ status: 1, event_log: [{ timestamp: Math.floor((NOW - 30 * DAY) / 1000), message: "Investigating" }] } as never, NOW),
+      awsEventActive(
+        {
+          status: 1,
+          event_log: [{ timestamp: Math.floor((NOW - 30 * DAY) / 1000), message: "Investigating" }],
+        } as never,
+        NOW,
+      ),
       false,
     );
   });
@@ -277,5 +293,32 @@ describe("collector failure classification", () => {
       kind: "parser",
       message: "Grok feed returned no readable items.",
     });
+  });
+});
+
+describe("epochToIso", () => {
+  it("converts epoch seconds and milliseconds, as numbers or numeric strings", () => {
+    assert.equal(epochToIso(1789558341, 1000), "2026-09-16T11:32:21.000Z");
+    assert.equal(epochToIso("1789558341", 1000), "2026-09-16T11:32:21.000Z");
+    assert.equal(epochToIso(1789558341000, 1), "2026-09-16T11:32:21.000Z");
+  });
+
+  it("returns undefined instead of throwing for anything that is not a usable timestamp", () => {
+    for (const value of [
+      undefined,
+      null,
+      "",
+      "n/a",
+      "   ",
+      0,
+      "0",
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1e20,
+      {},
+      true,
+    ]) {
+      assert.equal(epochToIso(value, 1000), undefined, String(value));
+    }
   });
 });
