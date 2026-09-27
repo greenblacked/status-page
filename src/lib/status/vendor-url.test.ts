@@ -4,9 +4,14 @@ import { hostOf, vendorUrl } from "./vendor-url";
 const FALLBACK = "https://status.example.com/";
 
 describe("vendorUrl", () => {
-  it("keeps an http(s) link", () => {
+  it("keeps an https link", () => {
     expect(vendorUrl("https://status.example.com/incidents/1", FALLBACK)).toBe("https://status.example.com/incidents/1");
-    expect(vendorUrl("http://status.example.com/incidents/1", FALLBACK)).toBe("http://status.example.com/incidents/1");
+  });
+
+  it("falls back for a plain http link, even on an allowed host", () => {
+    expect(vendorUrl("http://status.example.com/incidents/1", FALLBACK)).toBe(FALLBACK);
+    expect(vendorUrl("http://status.example.com/incidents/1", FALLBACK, ["example.com"])).toBe(FALLBACK);
+    expect(vendorUrl("HTTP://status.example.com/incidents/1", FALLBACK)).toBe(FALLBACK);
   });
 
   it("resolves a relative link against the fallback, with or without a leading slash", () => {
@@ -15,6 +20,8 @@ describe("vendorUrl", () => {
     expect(vendorUrl("incidents/x", "https://status.play.google.com/summary")).toBe(
       "https://status.play.google.com/incidents/x",
     );
+    // Scheme-relative: takes the fallback's https.
+    expect(vendorUrl("//status.example.com/incidents/y", FALLBACK)).toBe("https://status.example.com/incidents/y");
   });
 
   it.each([
