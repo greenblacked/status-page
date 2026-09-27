@@ -27,6 +27,8 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
@@ -41,3 +43,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/source-health.ts --issues
+
+  deploy-health:
+    # The deployed board's own view of itself: every source above can read
+    # cleanly from a runner while production serves an old snapshot (a
+    # stopped Cron Trigger) or reads nothing from Cloudflare. /readyz says
+    # so, and a single `deploy-health` issue stays open until it answers
+    # 200 again. PRODUCTION_URL is a repository variable, not a deployment
+    # environment's, so this job never enters an environment and never
+    # sees its secrets.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: No PRODUCTION_URL set
+        if: vars.PRODUCTION_URL == ''
+        run: echo "::notice::set the PRODUCTION_URL repository variable to check the production deployment's /readyz (CONTRIBUTING.md#deploying)"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: vars.PRODUCTION_URL != ''
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: vars.PRODUCTION_URL != ''
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      # Same as the probe above: Node built-ins only, no `npm ci`.
+      - name: Check the production deployment
+        if: vars.PRODUCTION_URL != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/source-health.ts --deploy-health

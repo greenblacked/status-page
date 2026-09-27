@@ -144,6 +144,8 @@ The board publishes what it shows in four open formats. All four come from the s
 
 `/healthz` answers `ok` for load balancer and Kubernetes liveness probes. It never reads the board, so a slow vendor cannot fail the probe.
 
+`/readyz` says whether the board itself is fit to serve: `200` when the snapshot is under ten minutes old and at least one source answered, `503` when it is older (`"status":"stale"`) or every service is Unknown (`"status":"blind"`), with `{ status, generatedAt, ageSeconds, services, unknown }` either way and nothing cached. When no board can be produced at all, it answers `503` with just `{"status":"error"}`. Point an uptime monitor or a deploy check at it, **not** a liveness probe: it turns red when the vendors are unreachable, which restarting the server cannot fix.
+
 **Alerts without code.** Subscribe a chat tool to the feed:
 
 - Slack: `/feed subscribe https://<your-host>/feed.xml`
@@ -217,6 +219,7 @@ curl -s http://localhost:3000/feed.xml | head -20
 curl -s http://localhost:3000/api/badge/gcp
 curl -s http://localhost:3000/metrics | grep 'status="outage"'
 curl -s http://localhost:3000/healthz
+curl -s http://localhost:3000/readyz
 ```
 
 ## FAQ
@@ -235,7 +238,7 @@ The server cannot reach the vendors. The collectors run on the machine that serv
 
 <br>
 
-Not necessarily. Unknown means Status Bar could not read that vendor's source: it timed out, returned an error, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure and the vendor host. An hourly job in this repository calls every source and opens an issue when one stays unreadable.
+Not necessarily. Unknown means Status Bar could not read that vendor's source: it timed out, returned an error, sent more than 4 MiB, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure, the vendor host and how many bytes it read (a source that reads cleanly logs `collector_completed` with its latency and size instead). An hourly job in this repository calls every source and opens an issue when one stays unreadable.
 
 </details>
 
@@ -284,7 +287,7 @@ On Node, the server holds only the latest snapshot, in memory, and reuses it for
 
 <br>
 
-Status Bar deploys to Cloudflare Workers: `dev` to a staging Worker and `main` to production, through [`deploy.yml`](.github/workflows/deploy.yml). [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the setup and how the deploy token is kept out of reach of pull requests. To run it elsewhere, `npm run build` still produces a plain Fetch-style handler in `dist/server/server.js`. `npm run preview` is a smoke test of that build, not a production host.
+Status Bar deploys to Cloudflare Workers: `dev` to a staging Worker and `main` to production, through [`deploy.yml`](.github/workflows/deploy.yml). [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the setup and how the deploy token is kept out of reach of pull requests. To run it elsewhere, `npm run build` still produces a plain Fetch-style handler in `dist/server/server.js`. `npm run preview` is a smoke test of that build, not a production host. The staging Worker answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
 
 </details>
 

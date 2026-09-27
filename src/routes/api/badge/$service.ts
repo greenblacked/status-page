@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getStatusBoard } from "@/lib/status/board";
+import { respondWithBoard } from "@/lib/status/board-response";
 import { PUBLIC_HEADERS, shieldsBadge } from "@/lib/status/integrations";
 
 // GET /api/badge/<service-id> or /api/badge/board: a Shields.io endpoint badge.
@@ -7,8 +8,10 @@ import { PUBLIC_HEADERS, shieldsBadge } from "@/lib/status/integrations";
 export const Route = createFileRoute("/api/badge/$service")({
   server: {
     handlers: {
-      GET: async ({ params }) =>
-        Response.json(shieldsBadge(await getStatusBoard(), params.service), { headers: PUBLIC_HEADERS }),
+      GET: ({ params }) =>
+        respondWithBoard(getStatusBoard, (board) =>
+          Response.json(shieldsBadge(board, params.service), { headers: PUBLIC_HEADERS }),
+        ),
     },
   },
 });

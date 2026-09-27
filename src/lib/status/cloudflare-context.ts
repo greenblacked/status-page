@@ -23,6 +23,15 @@ export function runWithCloudflareContext<T>(context: CloudflareRequestContext, f
   return storage.run(context, fn);
 }
 
+/**
+ * The current Workers context, or undefined outside one: on the Node build,
+ * in tests, or before server.cloudflare.ts has set it. For code shared by
+ * both builds that only adjusts its answer on Workers (robots.txt).
+ */
+export function findCloudflareContext(): CloudflareRequestContext | undefined {
+  return storage.getStore();
+}
+
 export function getCloudflareContext(): CloudflareRequestContext {
   const context = storage.getStore();
   if (!context) {

@@ -13,14 +13,20 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown" or "0 of 14 services shown. No services match that filter.", when the headline changes, and when a refresh fails.
 - A card with an incident shows when the vendor says it began and how long it has run, such as "since 14:05 UTC · 2h 10m". Maintenance that has not started yet shows when it is due instead, such as "scheduled for 22:00 UTC".
 - The headline says when the snapshot on screen was taken, such as "as of 14:05 UTC".
+- `/readyz` answers `503` when the board is more than ten minutes old or no source could be read, and `200` otherwise, with the snapshot's age and how many services are Unknown. Uptime monitors can watch it; `/healthz` stays the liveness probe.
+- On the hosted Cloudflare deployment, every response names the Worker version that served it in an `X-Worker-Version` header.
 
 ### Changed
 
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
-- A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically.
+- A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place, and gives a deploy that lands on an out-of-date board five minutes for its first scheduled refresh before calling it stale.
 
 ### Fixed
 
+- One AWS or Apple event with an unreadable timestamp no longer turns the whole card Unknown; that event just shows without a start time.
+- The staging deployment no longer shows up in search results: it sends `X-Robots-Tag: noindex` and a `/robots.txt` that disallows crawling. Production, and any self-hosted build, now serves a `/robots.txt` that allows it.
+- On Cloudflare, an outage of the KV store that holds the board no longer turns every page into an error: a server keeps showing the board it already has while it is under ten minutes old, and only one with no board, or an older one, collects it straight from the vendors, at most once a minute.
+- When no board can be produced at all, `/api/status.json`, `/feed.xml`, the badges and `/metrics` answer `503` with `Retry-After`, so feed readers, Shields.io and scrapers treat it as temporary instead of as a server error.
 - On a device whose clock runs ahead of the server's, the page no longer throws away its server-rendered board and redraws it from scratch as it loads.
 - **Next update** now counts down to the board's actual refetch. It used to reach 0:00 with nothing happening, because the board fetched on its own two-minute timer from whenever the page was opened.
 - A service named under the headline now opens its card even when a search or filter hides it: the filters clear and the card comes into view with keyboard focus on it. It used to do nothing.
@@ -31,6 +37,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Security
 
+- Incident links from vendor feeds are used only when they are https addresses on that vendor's own status site; any other link, such as a plain `http:` or `javascript:` address or another site, is replaced by the vendor's status page on the card, in the API and in the feed.
+- A vendor response larger than 4 MiB is refused as it streams in, and its card shows Unknown with the reason, so one broken or hostile source cannot exhaust the server's memory.
 - Every page and API response now carries security headers: a Content-Security-Policy that allows only the board's own origin and forbids framing, HSTS, `nosniff`, a referrer policy and a permissions policy.
 
 ## [0.4.0] - 2026-09-26
