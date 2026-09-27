@@ -6,6 +6,9 @@ node_modules
 dist
 .cache
 coverage
+# Playwright: the HTML report and each failed test's trace
+playwright-report
+test-results
 *.log
 .env
 .env.*

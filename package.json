@@ -19,6 +19,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
     "source-health": "node --experimental-strip-types scripts/ci/source-health.ts",
     "check": "npm run lint && npm run typecheck && npm test && ./scripts/ci/hygiene.sh && ./scripts/ci/links.sh"
   },
@@ -35,14 +37,17 @@
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@biomejs/biome": "2.5.14",
     "@cloudflare/vite-plugin": "1.60.2",
     "@cloudflare/workers-types": "5.20260927.1",
+    "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "22.20.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "@vitest/coverage-v8": "5.0.1",
     "tailwindcss": "4.3.3",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "8.3.0",

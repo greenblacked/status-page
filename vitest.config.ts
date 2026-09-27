@@ -12,7 +12,17 @@ export default defineConfig({
     environment: "node",
     // Only *.test.ts files are tests. Shared helpers live in src/test/ and
     // payload fixtures in src/lib/status/__fixtures__/, outside this glob.
+    // Browser tests live in e2e/ and run under Playwright, not here.
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
     env: { TZ: "UTC" },
+    // `npm run test:coverage`. The thresholds sit just under the current
+    // numbers, so coverage can only go up: raise them when it does.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,cjs}"],
+      exclude: ["**/*.test.ts", "src/test/**", "**/__fixtures__/**", "src/routeTree.gen.ts"],
+      reporter: ["text-summary", "json-summary", "html"],
+      thresholds: { statements: 63, branches: 58, functions: 60, lines: 64 },
+    },
   },
 });
