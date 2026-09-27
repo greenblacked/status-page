@@ -210,7 +210,12 @@ export function BoardView({
     }
   }
 
-  const fetching = boardQuery.isFetching || refreshing;
+  // Only after mount (`now` is 0 until then). Whether the query fetches on
+  // mount depends on the clock: a browser whose clock runs ahead of the
+  // server's finds the initial data stale and starts fetching during
+  // hydration, and "Checking official sources" then replaced the server's
+  // "Live" in the first client render, a hydration mismatch.
+  const fetching = now > 0 && (boardQuery.isFetching || refreshing);
 
   useShortcuts((action) => {
     switch (action.type) {
