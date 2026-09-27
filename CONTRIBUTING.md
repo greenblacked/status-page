@@ -311,6 +311,14 @@ Do not scrape unofficial aggregators.
 - [Biome](https://biomejs.dev/) formats, lints and sorts imports ([`biome.json`](biome.json)); `npm run lint:fix` applies it. A `biome-ignore` comment must say why
 - TypeScript strict, no `any`
 - No unused locals, imports or parameters: `tsconfig.json` sets `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` fails on them. Prefix a parameter that a signature requires but the body ignores with `_`
-- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX
-- Status color is for badges only, not entire panels
+- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX. Every colour token has a light and a dark value (`light-dark()`), and text tokens must clear 4.5:1 on every material's flat fill: the browser tests strip the blur and check
+- Status color is for badges and dots only, not entire panels
+- Three materials, and nothing else is translucent:
+  - `.glass-chrome` for controls that float above the content (the compact header, the settings dialog), one on screen at a time
+  - `.glass` for content panels (the summary, attention cards, the board log), a handful per screen
+  - `.glass-whisper`, with no blur, for anything dense or repeated: tiles, chips, the search box
+- Never glass on glass: inside a `.glass` or `.glass-chrome`, nest only `.glass-whisper` or `.glass-inset`
+- Performance: no `will-change: backdrop-filter`, never animate a blur or a `filter`, and animate `transform` and `opacity` only. Blur stays at 24px for `.glass` and 28px for `.glass-chrome`
+- Radii are concentric: a nested shape takes its parent's radius minus the inset between them, rounded down to the nearest `--radius-*` step (`rounded-2xs` to `rounded-xl`). Pills stay `rounded-full`, and Tailwind's default radius scale is switched off
+- New motion goes in the `prefers-reduced-motion` block, and new translucency in the Reduce glass block, in `src/styles.css`
 - Keep fetch timeouts short and failures isolated (`Promise.all` of per-service collectors)

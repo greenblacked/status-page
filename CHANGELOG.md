@@ -8,7 +8,12 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- A **Single-key shortcuts** switch in the keyboard shortcuts list (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Keyboard shortcuts** button at the foot of the page, now shown on every screen size, opens the list again, and the choice is kept in this browser.
+- A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
+- A **Reduce glass** switch in **Settings and shortcuts** turns the frosted panels solid and stops the background moving. Safari does not pass the system's Reduce Transparency setting to web pages, so this is the way to get it on an iPhone, iPad or Mac; browsers that do pass it on get the same result automatically. The choice is kept in this browser.
+- A light appearance. The board now follows your system's light or dark setting and switches when it does.
+- Scroll past the top of the board and a compact bar floats in with the live signal, the headline, **Alerts** and **Refresh**, so you never have to scroll back up to refresh.
+- **Add to Home Screen** on an iPhone or iPad opens the board full screen under its own name and icon.
+- With **Increase Contrast** on, panels turn nearly opaque with solid borders and secondary text gets darker (or lighter, on dark).
 - A **Skip to services** link, the first stop when you press Tab, jumps past the header straight to the cards.
 - Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown" or "0 of 14 services shown. No services match that filter.", when the headline changes, and when a refresh fails.
 - A card with an incident shows when the vendor says it began and how long it has run, such as "since 14:05 UTC · 2h 10m". Maintenance that has not started yet shows when it is due instead, such as "scheduled for 22:00 UTC".
@@ -18,6 +23,9 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
+- A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. Colours are richer on wide-gamut (Display P3) screens, and all text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.
+- The operational tiles are lighter on the phone: no blur behind each one, so a long board scrolls smoothly, and on a wide screen they sit two to a row so every name fits.
+- The **Keyboard shortcuts** list is now **Settings and shortcuts**, and switched-off shortcuts in it are dimmed in a colour that stays readable instead of fading to half opacity.
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
 - A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place, and gives a deploy that lands on an out-of-date board five minutes for its first scheduled refresh before calling it stale.
 
