@@ -121,7 +121,7 @@ export function createBoardSnapshotReader(kv: SnapshotKv): BoardSnapshotReader {
       //
       // So a click is a normal read that skips the five-second memo: one KV
       // read, or, with KV empty or failing, the same cold-start collect or
-      // outage board as any request, so Refresh works before the first cron
+      // outage board a request gets, so Refresh works before the first cron
       // tick has landed and during an outage without reading KV twice.
       return serve(waitUntil, true);
     },
