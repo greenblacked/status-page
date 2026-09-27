@@ -1,6 +1,6 @@
 import { collectBoard } from "./collect-board";
-import { readSnapshot, writeSnapshot } from "./kv-snapshot-store";
 import type { SnapshotKv } from "./kv-snapshot-store";
+import { readSnapshot, writeSnapshot } from "./kv-snapshot-store";
 import { READY_MAX_AGE_MS } from "./readiness";
 import type { BoardSnapshot } from "./types";
 

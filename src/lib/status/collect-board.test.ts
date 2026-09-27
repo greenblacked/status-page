@@ -24,7 +24,11 @@ describe("assembleBoard", () => {
   it("counts services by health and stamps a generation time", () => {
     const before = Date.now();
     const board = assembleBoard(
-      [service({ health: "operational" }), service({ id: "aws", health: "outage" }), service({ id: "epic", health: "operational" })],
+      [
+        service({ health: "operational" }),
+        service({ id: "aws", health: "outage" }),
+        service({ id: "epic", health: "operational" }),
+      ],
       250,
     );
     const after = Date.now();

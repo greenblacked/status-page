@@ -1,5 +1,5 @@
-import { describe, it } from "vitest";
 import assert from "node:assert/strict";
+import { describe, it } from "vitest";
 import {
   formatAge,
   formatCountdown,
@@ -12,9 +12,9 @@ import {
   nextPulseAt,
   nextRefetchAt,
   noteSnapshot,
+  PULSE_INTERVAL_MS,
   parseTimestamp,
   pickRefetchJitter,
-  PULSE_INTERVAL_MS,
   pulseProgress,
   REFETCH_JITTER_MAX_MS,
   REFETCH_JITTER_MIN_MS,
@@ -50,7 +50,10 @@ describe("refetch schedule", () => {
   const noon = Date.parse("2026-09-22T12:00:00.000Z");
 
   it("picks a jitter inside the window", () => {
-    assert.equal(pickRefetchJitter(() => 0), REFETCH_JITTER_MIN_MS);
+    assert.equal(
+      pickRefetchJitter(() => 0),
+      REFETCH_JITTER_MIN_MS,
+    );
     assert.ok(pickRefetchJitter(() => 0.999_999) < REFETCH_JITTER_MAX_MS);
     for (let i = 0; i < 100; i += 1) {
       const jitter = pickRefetchJitter();

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { parseStarred, serializeStarred, STARRED_STORAGE_KEY, toggleStarred } from "@/lib/status/starred";
+import { parseStarred, STARRED_STORAGE_KEY, serializeStarred, toggleStarred } from "@/lib/status/starred";
 import type { ServiceId } from "@/lib/status/types";
 
 function read(): ReadonlySet<ServiceId> {

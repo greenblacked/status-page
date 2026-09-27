@@ -1,0 +1,48 @@
+name: Bug report
+description: Something in the board, its API, feed, badges or metrics does not work as documented.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      placeholder: |
+        1. Open /?category=cloud
+        2. Press R
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - The hosted board
+        - My own deployment (Node)
+        - My own deployment (Cloudflare Workers)
+        - Running locally
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The release (see the page footer or CHANGELOG.md) or the commit you run.
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: "Firefox 131 on macOS 15"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console or server logs
+      render: text

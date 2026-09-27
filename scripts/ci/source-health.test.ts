@@ -6,12 +6,12 @@ import { join, relative } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   probeReadyz,
+  type ReadyzResult,
+  type Result,
   recordPath,
   recordResponses,
   syncDeployHealth,
   syncIssues,
-  type ReadyzResult,
-  type Result,
 } from "./source-health.ts";
 
 // A fake of the three GitHub issue endpoints the script uses, so the
@@ -38,11 +38,19 @@ beforeAll(async () => {
     const commentOn = url.pathname.match(/\/issues\/(\d+)\/comments$/);
     if (req.method === "GET" && url.pathname.endsWith("/issues")) {
       const wanted = (url.searchParams.get("labels") ?? "").split(",");
-      return send(200, issues.filter((i) => i.state === url.searchParams.get("state") && wanted.every((l) => i.labels.includes(l))));
+      return send(
+        200,
+        issues.filter((i) => i.state === url.searchParams.get("state") && wanted.every((l) => i.labels.includes(l))),
+      );
     }
     if (req.method === "POST" && url.pathname.endsWith("/issues")) {
       const body = await readJson(req);
-      const issue = { number: issues.length + 1, state: "open", created_at: "2026-09-23T00:00:00Z", ...body } as FakeIssue;
+      const issue = {
+        number: issues.length + 1,
+        state: "open",
+        created_at: "2026-09-23T00:00:00Z",
+        ...body,
+      } as FakeIssue;
       issues.push(issue);
       return send(201, issue);
     }
@@ -172,7 +180,12 @@ describe("probeReadyz", () => {
   });
 
   it("is healthy on a 200, resolving readyz under a base path", async () => {
-    await expect(probeReadyz(base, 3, 0)).resolves.toMatchObject({ ok: true, status: 200, attempts: 1, url: `${base}/readyz` });
+    await expect(probeReadyz(base, 3, 0)).resolves.toMatchObject({
+      ok: true,
+      status: 200,
+      attempts: 1,
+      url: `${base}/readyz`,
+    });
   });
 
   it("retries a 503 and reports the answer that ended it", async () => {
@@ -198,8 +211,12 @@ describe("probeReadyz", () => {
 describe("source-health --record", () => {
   it("files each response under its host and path, keeping queries and trailing slashes apart", () => {
     const at = (url: string) => relative("rec", recordPath("rec", new URL(url)));
-    expect(at("https://upgrade.mikrotik.com/routeros/NEWESTa7.stable")).toBe(join("upgrade.mikrotik.com", "routeros", "NEWESTa7.stable"));
-    expect(at("https://store.steampowered.com/api/featured/")).toBe(join("store.steampowered.com", "api", "featured", "index"));
+    expect(at("https://upgrade.mikrotik.com/routeros/NEWESTa7.stable")).toBe(
+      join("upgrade.mikrotik.com", "routeros", "NEWESTa7.stable"),
+    );
+    expect(at("https://store.steampowered.com/api/featured/")).toBe(
+      join("store.steampowered.com", "api", "featured", "index"),
+    );
     expect(at("https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730")).toBe(
       join("api.steampowered.com", "ISteamApps", "GetSDRConfig", "v1", "index_appid_730"),
     );

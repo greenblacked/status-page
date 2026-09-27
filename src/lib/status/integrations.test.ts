@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { board, service } from "../../test/fixtures.ts";
 import { atomFeed, publicStatus, shieldsBadge } from "./integrations";
 import type { ServiceSnapshot } from "./types";
-import { board, service } from "../../test/fixtures.ts";
 
 // Badges and feed titles read the display name, so Google Cloud carries its
 // real one; every other card keeps the fixture's id-as-name default.
@@ -41,12 +41,21 @@ describe("shieldsBadge", () => {
   const snapshot = board([gcp({ health: "outage" }), service("aws", { health: "operational" })]);
 
   it("describes one service in Shields endpoint format", () => {
-    expect(shieldsBadge(snapshot, "aws")).toEqual({ schemaVersion: 1, label: "aws", message: "operational", color: "brightgreen" });
+    expect(shieldsBadge(snapshot, "aws")).toEqual({
+      schemaVersion: 1,
+      label: "aws",
+      message: "operational",
+      color: "brightgreen",
+    });
     expect(shieldsBadge(snapshot, "gcp")).toMatchObject({ message: "outage", color: "red" });
   });
 
   it("summarises the whole board under the id 'board'", () => {
-    expect(shieldsBadge(snapshot, "board")).toMatchObject({ label: "status", message: "outage: google cloud", color: "red" });
+    expect(shieldsBadge(snapshot, "board")).toMatchObject({
+      label: "status",
+      message: "outage: google cloud",
+      color: "red",
+    });
     expect(shieldsBadge(board([service("aws", { health: "operational" })]), "board")).toMatchObject({
       message: "all operational",
       color: "brightgreen",
@@ -65,7 +74,9 @@ describe("atomFeed", () => {
         gcp({
           health: "degraded",
           summary: 'Errors & "timeouts" <eu>',
-          incidents: [{ id: "1", title: "t", health: "degraded", url: "https://x/1?a=1&b=2", updatedAt: "2026-09-24T23:00:00Z" }],
+          incidents: [
+            { id: "1", title: "t", health: "degraded", url: "https://x/1?a=1&b=2", updatedAt: "2026-09-24T23:00:00Z" },
+          ],
         }),
         service("aws", { health: "operational" }),
       ]),
@@ -88,7 +99,9 @@ describe("atomFeed", () => {
 
   it("falls back to the board time when a vendor timestamp does not parse", () => {
     const xml = atomFeed(
-      board([gcp({ health: "outage", incidents: [{ id: "1", title: "t", health: "outage", updatedAt: "yesterday-ish" }] })]),
+      board([
+        gcp({ health: "outage", incidents: [{ id: "1", title: "t", health: "outage", updatedAt: "yesterday-ish" }] }),
+      ]),
       "https://s",
     );
     expect(xml).toContain("<updated>2026-09-25T00:00:00.000Z</updated>");

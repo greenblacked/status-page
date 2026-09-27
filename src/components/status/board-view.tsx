@@ -8,9 +8,9 @@ import { ServiceCard, ServiceTile } from "@/components/status/service-card";
 import { ShortcutsDialog } from "@/components/status/shortcuts-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
+import { useNow } from "@/components/status/use-now";
 import { useShortcuts, useSingleKeyShortcuts } from "@/components/status/use-shortcuts";
 import { useStarred } from "@/components/status/use-starred";
-import { useNow } from "@/components/status/use-now";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,13 +26,7 @@ import {
 } from "@/lib/status/filters";
 import { attentionBreakdown } from "@/lib/status/health";
 import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
-import {
-  emptyPulseStore,
-  loadPulseStore,
-  savePulseStore,
-  syncPulse,
-  type PulseStore,
-} from "@/lib/status/pulse";
+import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import {
   CACHE_TTL_MS,
   formatUtcTime,
@@ -45,10 +39,7 @@ import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
-const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [
-  { id: "all", label: "All" },
-  ...CATEGORIES,
-];
+const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [{ id: "all", label: "All" }, ...CATEGORIES];
 
 // Long enough for a search to settle between keystrokes.
 const ANNOUNCE_DELAY_MS = 700;
@@ -117,9 +108,7 @@ export function BoardView({
   const { starred, ready: starsReady, toggle: toggleStar } = useStarred();
   const pulseStore = store ?? emptyPulseStore();
   const changedIds = new Set(
-    (pulseStore.pulses[0]?.opening ? [] : pulseStore.pulses[0]?.changes ?? []).map(
-      (change) => change.id,
-    ),
+    (pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? [])).map((change) => change.id),
   );
 
   const slot = now > 0 ? lastPulseAt(now) : null;
@@ -131,7 +120,6 @@ export function BoardView({
     if (next !== existing) savePulseStore(next);
     if (store === null || next !== existing) setStore(next);
   }, [board, slot, store]);
-
 
   const firstFilters = useRef(filters);
   useEffect(() => {
@@ -190,6 +178,7 @@ export function BoardView({
     // animates the board that comes back.
     setFilters(next);
   }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `visible` is the trigger, not an input: the card to focus exists only once the cleared filters have rendered it.
   useEffect(() => {
     if (!revealing) return;
     if (filters !== revealing.filters) {
@@ -243,37 +232,40 @@ export function BoardView({
   // "Live" in the first client render, a hydration mismatch.
   const fetching = now > 0 && (boardQuery.isFetching || refreshing);
 
-  useShortcuts((action) => {
-    switch (action.type) {
-      case "focus-search":
-        searchRef.current?.focus();
-        searchRef.current?.select();
-        return;
-      case "leave-search":
-        // First Escape clears the search, the next one leaves the field.
-        if (query && document.activeElement === searchRef.current) updateFilters({ query: "" });
-        else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-        return;
-      case "refresh":
-        void handleRefresh();
-        return;
-      case "category":
-        updateFilters({ category: action.category });
-        return;
-      case "toggle-issues":
-        updateFilters({ issuesOnly: !issuesOnly });
-        return;
-      case "toggle-starred":
-        updateFilters({ starredOnly: !starredOnly });
-        return;
-      case "reset":
-        setFilters(DEFAULT_FILTERS);
-        return;
-      case "help":
-        setShortcutsOpen(true);
-        return;
-    }
-  }, { singleKey: singleKey.enabled });
+  useShortcuts(
+    (action) => {
+      switch (action.type) {
+        case "focus-search":
+          searchRef.current?.focus();
+          searchRef.current?.select();
+          return;
+        case "leave-search":
+          // First Escape clears the search, the next one leaves the field.
+          if (query && document.activeElement === searchRef.current) updateFilters({ query: "" });
+          else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+          return;
+        case "refresh":
+          void handleRefresh();
+          return;
+        case "category":
+          updateFilters({ category: action.category });
+          return;
+        case "toggle-issues":
+          updateFilters({ issuesOnly: !issuesOnly });
+          return;
+        case "toggle-starred":
+          updateFilters({ starredOnly: !starredOnly });
+          return;
+        case "reset":
+          setFilters(DEFAULT_FILTERS);
+          return;
+        case "help":
+          setShortcutsOpen(true);
+          return;
+      }
+    },
+    { singleKey: singleKey.enabled },
+  );
 
   return (
     <div className="liquid-stage text-fg">
@@ -283,6 +275,7 @@ export function BoardView({
           controls. Focusing <main> in script keeps the address free of a
           #services fragment; without script the plain link still works.
         */}
+        {/* biome-ignore lint/a11y/useValidAnchor: a real link, so the skip works without script; script only keeps #services out of the address. */}
         <a
           href="#services"
           onClick={(event) => {
@@ -357,6 +350,7 @@ export function BoardView({
               ) : null}
             </label>
             {/* One scrolling row on phones instead of three wrapped ones. */}
+            {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
             <div
               className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
               role="group"
@@ -421,6 +415,7 @@ export function BoardView({
               {fetching && !board.services.length ? (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {Array.from({ length: 6 }).map((_, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
                     <Skeleton key={index} className="h-56" />
                   ))}
                 </div>
@@ -485,21 +480,30 @@ export function BoardView({
 
           <footer className="mt-14 flex flex-col gap-2 text-sm text-subtle">
             <p>
-              Status Bar reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
-              Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
+              Status Bar reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic, Spotify,
+              Apple, MikroTik, xAI, OpenAI, or Anthropic.
             </p>
             <p>Cached server snapshots update every two minutes from official vendor feeds.</p>
             <p>
               Use the board elsewhere:{" "}
-              <a className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg" href="/api/status.json">
+              <a
+                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/api/status.json"
+              >
                 JSON API
               </a>
               {" · "}
-              <a className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg" href="/feed.xml">
+              <a
+                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/feed.xml"
+              >
                 Atom feed
               </a>{" "}
               for Slack, Teams and feed readers ·{" "}
-              <a className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg" href="/api/badge/board">
+              <a
+                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/api/badge/board"
+              >
                 status badges
               </a>
               .

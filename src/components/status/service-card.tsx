@@ -62,7 +62,9 @@ export function ServiceCard({
   const incidents = service.incidents.filter((incident) => norm(incident.title) !== summary).slice(0, 2);
   // An incident whose title is the summary has no row of its own, so its
   // start goes under the summary instead.
-  const summaryIncident = changelog ? undefined : service.incidents.find((incident) => norm(incident.title) === summary);
+  const summaryIncident = changelog
+    ? undefined
+    : service.incidents.find((incident) => norm(incident.title) === summary);
   const incidentUrl = changelog ? undefined : service.incidents.find((incident) => incident.url)?.url;
   const checkedAt = Date.parse(service.checkedAt);
 
@@ -81,7 +83,10 @@ export function ServiceCard({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span
-            className={cn("grid size-10 shrink-0 place-items-center rounded-2xl glass-inset", ICON_TONE[service.health])}
+            className={cn(
+              "grid size-10 shrink-0 place-items-center rounded-2xl glass-inset",
+              ICON_TONE[service.health],
+            )}
             aria-hidden
           >
             <Icon className="size-4" strokeWidth={1.75} />
@@ -101,7 +106,12 @@ export function ServiceCard({
             <HealthDot health={service.health} />
             {healthLabel(service.health)}
           </Badge>
-          <StarButton name={service.name} starred={starred} onToggle={() => onToggleStar(service.id)} className="-my-2 -mr-2" />
+          <StarButton
+            name={service.name}
+            starred={starred}
+            onToggle={() => onToggleStar(service.id)}
+            className="-my-2 -mr-2"
+          />
         </div>
       </div>
 
@@ -114,6 +124,7 @@ export function ServiceCard({
         <ul className="mt-4 flex flex-col gap-1.5">
           {rows.map((component, componentIndex) => (
             <ComponentRow
+              // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
               key={`${component.name}-${componentIndex}`}
               component={component}
               changelog={changelog}
@@ -129,6 +140,7 @@ export function ServiceCard({
       {incidents.length > 0 ? (
         <ul className="mt-3 space-y-2">
           {incidents.map((incident, incidentIndex) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
             <li key={`${incident.id}-${incidentIndex}`} className="text-sm text-fg [overflow-wrap:anywhere]">
               <span className={ICON_TONE[incident.health]}>{healthLabel(incident.health)}</span>
               <span className="text-subtle"> · </span>

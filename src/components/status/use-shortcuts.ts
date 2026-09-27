@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   parseSingleKeyPreference,
-  serializeSingleKeyPreference,
   type ShortcutAction,
-  shortcutFor,
   type ShortcutOptions,
   SINGLE_KEY_STORAGE_KEY,
+  serializeSingleKeyPreference,
+  shortcutFor,
 } from "@/lib/status/shortcuts";
 
 function isEditable(target: EventTarget | null): boolean {

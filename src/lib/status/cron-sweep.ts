@@ -1,7 +1,7 @@
 import { collectBoard } from "./collect-board";
+import type { SnapshotKv } from "./kv-snapshot-store";
 import { readSnapshot, writeSnapshot } from "./kv-snapshot-store";
 import { MIN_FORCED_REFRESH_MS } from "./schedule";
-import type { SnapshotKv } from "./kv-snapshot-store";
 
 /**
  * The Cloudflare Cron Trigger handler (wrangler.jsonc's `triggers.crons`,

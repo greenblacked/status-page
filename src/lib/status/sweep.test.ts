@@ -57,7 +57,10 @@ describe("collectAllServices logging", () => {
     });
 
     const chatgpt = services.find((service) => service.id === "chatgpt");
-    expect(chatgpt?.failure).toMatchObject({ kind: "parser", message: "Response from status.openai.com is larger than 4 MiB" });
+    expect(chatgpt?.failure).toMatchObject({
+      kind: "parser",
+      message: "Response from status.openai.com is larger than 4 MiB",
+    });
     const failure = logged(vi.mocked(console.warn)).find((line) => line.service === "chatgpt");
     expect(failure).toMatchObject({ event: "collector_failed", kind: "parser" });
     // What it read before giving up: just past the cap.
@@ -196,13 +199,38 @@ describe("collectAllServices vendor links", () => {
       "</channel></rss>",
     ].join("");
     const google = JSON.stringify([
-      { id: "a", begin: "2026-09-20T00:00:00Z", external_desc: "Errors", status_impact: "SERVICE_DISRUPTION", uri: "incidents/abc" },
-      { id: "b", begin: "2026-09-20T00:00:00Z", external_desc: "Errors", status_impact: "SERVICE_DISRUPTION", uri: "https://evil.test/x" },
-      { id: "c", begin: "2026-09-20T00:00:00Z", external_desc: "Errors", status_impact: "SERVICE_DISRUPTION", uri: "javascript:alert(1)" },
+      {
+        id: "a",
+        begin: "2026-09-20T00:00:00Z",
+        external_desc: "Errors",
+        status_impact: "SERVICE_DISRUPTION",
+        uri: "incidents/abc",
+      },
+      {
+        id: "b",
+        begin: "2026-09-20T00:00:00Z",
+        external_desc: "Errors",
+        status_impact: "SERVICE_DISRUPTION",
+        uri: "https://evil.test/x",
+      },
+      {
+        id: "c",
+        begin: "2026-09-20T00:00:00Z",
+        external_desc: "Errors",
+        status_impact: "SERVICE_DISRUPTION",
+        uri: "javascript:alert(1)",
+      },
     ]);
     stubFetch((url) => {
       if (url === CLAUDE) {
-        return new Response(statuspage(["https://stspg.io/abc", "javascript:alert(1)", "https://evil.test/x", "https://status.claude.com/incidents/9"]));
+        return new Response(
+          statuspage([
+            "https://stspg.io/abc",
+            "javascript:alert(1)",
+            "https://evil.test/x",
+            "https://status.claude.com/incidents/9",
+          ]),
+        );
       }
       if (url === "https://status.x.ai/feed.xml") return new Response(grokFeed);
       if (url === "https://status.cloud.google.com/incidents.json") return new Response(google);

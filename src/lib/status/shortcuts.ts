@@ -52,7 +52,10 @@ export type ShortcutOptions = {
 
 export const DEFAULT_SHORTCUT_OPTIONS: ShortcutOptions = { singleKey: true };
 
-export function shortcutFor(input: KeyInput, options: ShortcutOptions = DEFAULT_SHORTCUT_OPTIONS): ShortcutAction | null {
+export function shortcutFor(
+  input: KeyInput,
+  options: ShortcutOptions = DEFAULT_SHORTCUT_OPTIONS,
+): ShortcutAction | null {
   // Browser and system shortcuts (Ctrl+R, Cmd+1) stay theirs.
   if (input.ctrlKey || input.metaKey || input.altKey) return null;
   if (input.editable) return input.key === "Escape" ? { type: "leave-search" } : null;

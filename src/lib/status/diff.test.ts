@@ -1,14 +1,11 @@
-import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { diffBoards, overallHealth } from "./diff.ts";
+import { describe, it } from "vitest";
 import { board, service } from "../../test/fixtures.ts";
+import { diffBoards, overallHealth } from "./diff.ts";
 
 describe("diffBoards", () => {
   it("reports only health transitions", () => {
-    const previous = board([
-      service("aws", { health: "operational" }),
-      service("gcp", { health: "operational" }),
-    ]);
+    const previous = board([service("aws", { health: "operational" }), service("gcp", { health: "operational" })]);
     const next = board([
       service("aws", { health: "degraded", summary: "eu-west-1 impact" }),
       service("gcp", { health: "operational" }),
@@ -26,12 +23,7 @@ describe("diffBoards", () => {
 
   it("treats the worst service as overall health", () => {
     assert.equal(
-      overallHealth(
-        board([
-          service("aws", { health: "degraded" }),
-          service("gcp", { health: "outage" }),
-        ]),
-      ),
+      overallHealth(board([service("aws", { health: "degraded" }), service("gcp", { health: "outage" })])),
       "outage",
     );
   });

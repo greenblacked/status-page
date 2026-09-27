@@ -11,10 +11,7 @@ export type PulseChange = {
 };
 
 export function overallHealth(board: BoardSnapshot): Health {
-  return board.services.reduce(
-    (acc, service) => worseHealth(acc, service.health),
-    "operational" as Health,
-  );
+  return board.services.reduce((acc, service) => worseHealth(acc, service.health), "operational" as Health);
 }
 
 export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseChange[] {

@@ -8,11 +8,12 @@ describe("alertFor", () => {
       body: "Down",
       tag: "status-bar:gcp",
     });
-    expect(alertFor({ id: "gcp", name: "Google Cloud", from: "degraded", to: "operational", summary: "ok" }).title).toBe(
-      "Google Cloud recovered",
-    );
-    expect(alertFor({ id: "mikrotik", name: "MikroTik RouterOS", from: "operational", to: "operational", summary: "7.21" }).title).toBe(
-      "MikroTik RouterOS: new release",
-    );
+    expect(
+      alertFor({ id: "gcp", name: "Google Cloud", from: "degraded", to: "operational", summary: "ok" }).title,
+    ).toBe("Google Cloud recovered");
+    expect(
+      alertFor({ id: "mikrotik", name: "MikroTik RouterOS", from: "operational", to: "operational", summary: "7.21" })
+        .title,
+    ).toBe("MikroTik RouterOS: new release");
   });
 });

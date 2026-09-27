@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runScheduledSweep } from "./cron-sweep";
-import { readSnapshot } from "./kv-snapshot-store";
 import type { SnapshotKv } from "./kv-snapshot-store";
+import { readSnapshot } from "./kv-snapshot-store";
 import type { BoardSnapshot } from "./types";
 
 vi.mock("./collect-board", () => ({

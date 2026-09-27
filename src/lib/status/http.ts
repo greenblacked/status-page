@@ -75,7 +75,11 @@ function tooLarge(url: string, maxBytes: number): PayloadError {
  * a plain SourceError: the vendor answered, just not with something a
  * collector can use, which is what "parser" failures mean on the card.
  */
-export async function readBodyCapped(response: Response, url: string, maxBytes: number = MAX_BODY_BYTES): Promise<ArrayBuffer> {
+export async function readBodyCapped(
+  response: Response,
+  url: string,
+  maxBytes: number = MAX_BODY_BYTES,
+): Promise<ArrayBuffer> {
   const meter = byteMeter.getStore();
   const declared = Number(response.headers.get("content-length") ?? "");
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -159,7 +163,10 @@ export async function fetchText(
   }
 }
 
-export async function fetchJson<T>(url: string, init?: RequestInit & { timeoutMs?: number; binary?: boolean }): Promise<T> {
+export async function fetchJson<T>(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number; binary?: boolean },
+): Promise<T> {
   const { body } = await fetchText(url, init);
   const trimmed = body.replace(/^\uFEFF/, "").trim();
   const jsonPayload = unwrapJsonp(trimmed);

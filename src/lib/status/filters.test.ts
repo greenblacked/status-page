@@ -39,11 +39,17 @@ describe("parseBoardSearch", () => {
   });
 
   it("accepts flags as strings and a numeric query as text", () => {
-    expect(parseBoardSearch({ q: 730, issues: "true", starred: "true" })).toEqual({ q: "730", issues: true, starred: true });
+    expect(parseBoardSearch({ q: 730, issues: "true", starred: "true" })).toEqual({
+      q: "730",
+      issues: true,
+      starred: true,
+    });
   });
 
   it("drops unknown categories, blank queries, false flags and other params", () => {
-    expect(parseBoardSearch({ q: "  ", category: "weather", issues: "false", starred: 0, utm_source: "slack" })).toEqual({});
+    expect(
+      parseBoardSearch({ q: "  ", category: "weather", issues: "false", starred: 0, utm_source: "slack" }),
+    ).toEqual({});
     expect(parseBoardSearch({ q: ["a"], category: 3, issues: 1 })).toEqual({});
   });
 

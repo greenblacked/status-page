@@ -25,7 +25,7 @@ const MAIN =
 
 function run(base: string, dev: string, main: string): { ok: boolean; out: string; err: string } {
   const paths = ["base", "dev", "main"].map((name) => join(dir, name));
-  [base, dev, main].forEach((text, index) => writeFileSync(paths[index], text));
+  for (const [index, text] of [base, dev, main].entries()) writeFileSync(paths[index], text);
   const result = spawnSync(SCRIPT, paths, { encoding: "utf8" });
   return { ok: result.status === 0, out: result.stdout, err: result.stderr };
 }
@@ -51,7 +51,7 @@ describe("merge-changelog.sh", () => {
 
   it("reads its inputs from pipes, as the workflow passes them", () => {
     const paths = ["base", "dev", "main"].map((name) => join(dir, name));
-    [BASE, DEV, MAIN].forEach((text, index) => writeFileSync(paths[index], text));
+    for (const [index, text] of [BASE, DEV, MAIN].entries()) writeFileSync(paths[index], text);
     const piped = spawnSync("bash", ["-c", `"${SCRIPT}" <(cat "$1") <(cat "$2") <(cat "$3")`, "_", ...paths], {
       encoding: "utf8",
     });

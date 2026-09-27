@@ -2,7 +2,7 @@
 # https://github.com/greenblacked/github-base-images, so a local run uses the
 # same toolchain a container job would.
 #
-#   docker compose run --rm node22        # Node 22 line: install, typecheck, test, build, repo checks
+#   docker compose run --rm node22        # Node 22 line: install, lint, typecheck, test, build, repo checks
 #   docker compose run --rm node24        # the same on the Node 24 line
 #   docker compose up preview             # serve the built board on http://127.0.0.1:4173
 #   docker compose run --rm security      # trivy (HIGH/CRITICAL) and gitleaks over the repository

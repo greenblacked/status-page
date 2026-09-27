@@ -134,6 +134,7 @@ export const CATALOG: CatalogEntry[] = [
   },
 ];
 
-export const CATALOG_BY_ID = Object.fromEntries(
-  CATALOG.map((entry) => [entry.id, entry]),
-) as Record<ServiceId, CatalogEntry>;
+export const CATALOG_BY_ID = Object.fromEntries(CATALOG.map((entry) => [entry.id, entry])) as Record<
+  ServiceId,
+  CatalogEntry
+>;
