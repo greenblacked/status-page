@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
-import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CompactHeader, useScrolledPast } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
 import { type Freshness, LiveBar, useFreshness } from "@/components/status/live-bar";
@@ -70,6 +71,8 @@ export function BoardView({
   const manualRefreshInFlight = useRef(false);
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const heroRef = useRef<HTMLDivElement>(null);
+  const heroGone = useScrolledPast(heroRef);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   useSpotlight(mainRef);
@@ -289,8 +292,12 @@ export function BoardView({
         >
           Skip to services
         </a>
+        <CompactHeader shown={heroGone} name={APP_NAME} live={freshness.state} headline={headline}>
+          <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
+          <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
+        </CompactHeader>
         <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-4 sm:pt-12">
-          <div className="flex items-start justify-between gap-4">
+          <div ref={heroRef} className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
                 <LiveSignal state={freshness.state} />
@@ -305,21 +312,7 @@ export function BoardView({
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0"
-                onClick={() => void handleRefresh()}
-                // Not `disabled`: every background refetch would drop keyboard
-                // focus to <body>. handleRefresh ignores a press while its own
-                // refresh is in flight, cancels a background one, and aria-busy
-                // says a check is running.
-                aria-busy={fetching}
-                aria-label="Refresh status now"
-              >
-                <RefreshCw className={cn("size-3.5", fetching && "animate-spin")} />
-                <span className="hidden sm:inline">Refresh</span>
-              </Button>
+              <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
             </div>
           </div>
 
@@ -447,7 +440,8 @@ export function BoardView({
                     </div>
                   </ServiceSection>
                   <ServiceSection id="operational" title="Operational" services={groups.operational}>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {/* Two columns once the board log takes the right side: three left each name a few letters. */}
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
                       {groups.operational.map((service, index) => (
                         <ServiceTile
                           key={service.id}
@@ -671,7 +665,34 @@ const ALERT_LABEL: Record<AlertsState, string> = {
   blocked: "Alerts are blocked in this browser's site settings",
 };
 
+/**
+ * Rendered twice, in the hero and in the compact header, both driven by
+ * the board's one handleRefresh. It carries no id, so the copies never
+ * collide.
+ */
+function RefreshButton({ fetching, onRefresh }: { fetching: boolean; onRefresh: () => void }) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="shrink-0"
+      onClick={onRefresh}
+      // Not `disabled`: every background refetch would drop keyboard
+      // focus to <body>. handleRefresh ignores a press while its own
+      // refresh is in flight, cancels a background one, and aria-busy
+      // says a check is running.
+      aria-busy={fetching}
+      aria-label="Refresh status now"
+    >
+      <RefreshCw className={cn("size-3.5", fetching && "animate-spin")} />
+      <span className="hidden sm:inline">Refresh</span>
+    </Button>
+  );
+}
+
 function AlertsButton({ state, onToggle }: { state: AlertsState; onToggle: () => void }) {
+  // Two copies render, one in the compact header, so the hint's id is per copy.
+  const hintId = useId();
   if (state === "unsupported") return null;
   const Icon = state === "on" ? BellRing : state === "blocked" ? BellOff : Bell;
   const blocked = state === "blocked";
@@ -685,7 +706,7 @@ function AlertsButton({ state, onToggle }: { state: AlertsState; onToggle: () =>
         // are off. This one stays reachable, does nothing, and says why.
         onClick={blocked ? undefined : onToggle}
         aria-disabled={blocked || undefined}
-        aria-describedby={blocked ? "alerts-blocked-hint" : undefined}
+        aria-describedby={blocked ? hintId : undefined}
         // A toggle keeps one name and lets aria-pressed carry the state; the
         // title explains the current state to pointer users.
         aria-pressed={state === "on"}
@@ -696,7 +717,7 @@ function AlertsButton({ state, onToggle }: { state: AlertsState; onToggle: () =>
         <span className="hidden sm:inline">Alerts</span>
       </Button>
       {blocked ? (
-        <span id="alerts-blocked-hint" className="sr-only">
+        <span id={hintId} className="sr-only">
           Blocked in this browser's site settings
         </span>
       ) : null}

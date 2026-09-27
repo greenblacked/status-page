@@ -177,7 +177,9 @@
   isolation: isolate;
   min-height: 100dvh;
   background-color: var(--color-bg);
-  overflow-x: hidden;
+  /* clip, not hidden: hidden makes this a scroll container, and the
+     compact header would then stick to it instead of to the viewport. */
+  overflow-x: clip;
 }
 
 /*
@@ -252,14 +254,21 @@
   padding-right: max(var(--gutter), env(safe-area-inset-right));
 }
 
+/*
+  Every blurred material names -webkit-backdrop-filter first. The other
+  way round, the build's CSS minifier folded the pair into the prefixed
+  property alone, which Chromium and Firefox ignore, so nothing blurred
+  there. The browser tests check the blur survives (e2e/board.spec.ts).
+*/
+
 /* Level 1, chrome: controls that float above the content. One at a time. */
 .glass-chrome {
   position: relative;
   isolation: isolate;
   background-color: var(--chrome-fill);
   background-image: linear-gradient(180deg, var(--chrome-tint-top), var(--chrome-tint-bottom));
-  backdrop-filter: var(--chrome-filter);
   -webkit-backdrop-filter: var(--chrome-filter);
+  backdrop-filter: var(--chrome-filter);
   box-shadow: var(--shadow-border-hover);
 }
 
@@ -269,8 +278,8 @@
   isolation: isolate;
   background-color: var(--glass-fill);
   background-image: linear-gradient(180deg, var(--glass-tint-top), var(--glass-tint-bottom));
-  backdrop-filter: var(--glass-filter);
   -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
   box-shadow: var(--shadow-border);
 }
 
@@ -559,6 +568,14 @@
   position: sticky;
   top: calc(env(safe-area-inset-top) + 0.5rem);
   z-index: 40;
+  /* Lined up with the page content, inside the safe area on both sides. */
+  width: min(
+    calc(72rem - 2 * var(--gutter)),
+    calc(100% - max(var(--gutter), env(safe-area-inset-left)) - max(var(--gutter), env(safe-area-inset-right)))
+  );
+  margin-inline: auto;
+  /* Its own height: it floats over the hero instead of pushing it down. */
+  margin-bottom: -3rem;
   transition:
     opacity var(--motion-quick) var(--ease-out),
     transform var(--motion-fast) var(--ease-smooth-out),
