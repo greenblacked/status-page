@@ -8,6 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- A public JSON API at `/api/history.json` with each service's UTC-day uptime for the last 30 days (`date`, `worst`, `samples`, `up`), kept by the Cloudflare cron beside the board snapshot.
 - A **Single-key shortcuts** switch in the keyboard shortcuts list (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Keyboard shortcuts** button at the foot of the page, now shown on every screen size, opens the list again, and the choice is kept in this browser.
 - A **Skip to services** link, the first stop when you press Tab, jumps past the header straight to the cards.
 - Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown" or "0 of 14 services shown. No services match that filter.", when the headline changes, and when a refresh fails.
@@ -83,7 +84,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
-- Grok incidents and Apple OS release names read as the vendor wrote them: codes such as `&amp;` in the RSS feeds are decoded, and an update that mentions something like "latency < 500ms" no longer loses the rest of its text.
+- Grok incidents and Apple OS release names read as the vendor wrote them: codes such as `&` in the RSS feeds are decoded, and an update that mentions something like "latency < 500ms" no longer loses the rest of its text.
 - Steam turns Degraded, and names the source that failed, when only one of its two sources answers. When neither answers, the card is Unknown with the real error instead of Outage.
 - A failed player-count request no longer blanks the CS2 Europe card; the count is left out.
 - CS2 Europe's "fewer than 40% of relay points" rule is exact for every number of points.
