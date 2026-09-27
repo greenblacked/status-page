@@ -54,6 +54,9 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Smoke-test built preview
+        # scripts/ci/smoke.sh holds the checks, shared with deploy.yml.
+        # /readyz may be 503 here: a runner that cannot reach a vendor
+        # still serves a correct, all-Unknown board.
         shell: bash
         run: |
           set -uo pipefail
@@ -65,24 +68,7 @@ jobs:
             wait "$preview_pid" 2>/dev/null || true
           }
           trap cleanup EXIT
-          response_file="${RUNNER_TEMP}/status-bar-preview.html"
-          status_file="${RUNNER_TEMP}/status-bar-preview.status"
-          ready=false
-          deadline=$((SECONDS + 30))
-          while (( SECONDS < deadline )); do
-            if ! kill -0 "$preview_pid" 2>/dev/null; then
-              cat "$log_file"
-              exit 1
-            fi
-            if curl --silent --show-error --fail --max-time 10 --write-out '%{http_code}' http://127.0.0.1:4173/ -o "$response_file" >"$status_file"; then
-              if [ "$(cat "$status_file")" = "200" ]; then
-                ready=true
-                break
-              fi
-            fi
-            sleep 2
-          done
-          if [ "$ready" != true ] || ! grep -aq '<title>Status Bar</title>' "$response_file" || ! grep -aq 'Cached server snapshots update every two minutes from official vendor feeds.' "$response_file"; then
+          if ! ./scripts/ci/smoke.sh http://127.0.0.1:4173; then
             cat "$log_file"
             exit 1
           fi

@@ -177,7 +177,7 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 - **It is an environment secret, not a repository secret.** GitHub hands it only to a job that names the `staging` or `production` environment, and each environment admits one branch.
 - **Pull requests never get it,** from forks or not. The workflow has no `pull_request_target`, so pull request code never runs with secrets or a write token.
-- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there. It also runs no project code and no build: it only uploads what the build job made (`no_bundle`), and only its deploy and rollback steps see the token.
+- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there. It also runs no build, no npm script and no project JavaScript: it only uploads what the build job made (`no_bundle`), and only its deploy and rollback steps see the token. The one repository file it runs is the post-deploy smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh) (bash, curl and jq, from the same protected branch as the deploy), in a step without the token.
 - **It can do one thing.** The token is scoped to Workers on one account and expires.
 - **Nothing in the repository names the account.** `wrangler.jsonc` has no `account_id`; the workflow passes `CLOUDFLARE_ACCOUNT_ID` from the environment. Local secrets (`.dev.vars*`) and wrangler's state (`.wrangler`) are git-ignored.
 
@@ -200,7 +200,7 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
    The ids are not secrets, but they are per environment, so they live in GitHub next to the account id rather than in `wrangler.jsonc`, whose placeholder only local previews use. Automatic provisioning (a binding with no `id`, created on first deploy) is experimental in this wrangler version, so this is a one-time step.
 3. **Create the two environments.** In **Settings → Environments**, add `staging` and `production`. For each, set **Deployment branches and tags** to **Selected branches**, and add only `dev` or only `main`. Optionally, add yourself as a **Required reviewer** on `production`, so every production deploy waits for your approval.
-4. **Give each environment its settings.** Add the secret `CLOUDFLARE_API_TOKEN`, the variables `CLOUDFLARE_ACCOUNT_ID` and `KV_NAMESPACE_ID` (that environment's namespace from step 2), and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it and rolls back automatically if it fails). Without `KV_NAMESPACE_ID` the deploy stops before touching Cloudflare; without `DEPLOY_URL` it logs a warning and skips the smoke test and rollback.
+4. **Give each environment its settings.** Add the secret `CLOUDFLARE_API_TOKEN`, the variables `CLOUDFLARE_ACCOUNT_ID` and `KV_NAMESPACE_ID` (that environment's namespace from step 2), and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it with `scripts/ci/smoke.sh --require-ready` and rolls back automatically if it fails, including when `/readyz` says the board is stale or every source is unreadable). Without `KV_NAMESPACE_ID` the deploy stops before touching Cloudflare; without `DEPLOY_URL` it logs a warning and skips the smoke test and rollback.
 
 The same with the GitHub CLI:
 
@@ -228,6 +228,13 @@ DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging npm run build      # the staging
 ```
 
 Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
+
+CI and the deploy share one smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh): `/healthz`, the page and its security headers, `/api/status.json` with every service, `/feed.xml`, `/metrics` and `/readyz`. Run it against any running board:
+
+```bash
+./scripts/ci/smoke.sh http://127.0.0.1:4173                    # /readyz may be 503 when the vendors are unreachable
+./scripts/ci/smoke.sh https://<your-host> --require-ready      # what the deploy checks
+```
 
 `vite preview`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API `vite preview` prints on start:
 

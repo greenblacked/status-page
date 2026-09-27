@@ -13,8 +13,11 @@ name: Deploy
 #   - There is no pull_request_target here: pull request code never runs
 #     with secrets or a write token.
 #   - The job that holds the token installs with --ignore-scripts, runs no
-#     project code and no build, and only uploads what the build job made,
-#     so a compromised dependency's install script never runs beside it.
+#     build, no npm script and no project JavaScript, and only uploads what
+#     the build job made, so a compromised dependency's install script never
+#     runs beside it. The one repository file it runs is the smoke test
+#     (scripts/ci/smoke.sh: bash, curl and jq, from the same protected
+#     branch as the deploy), in a step without the token.
 #   - Every job reads the repository and nothing more.
 
 on:
@@ -178,21 +181,14 @@ jobs:
       - name: Smoke-test the deployment
         id: smoke-test
         if: vars.DEPLOY_URL != ''
+        # The same checks as CI's preview (scripts/ci/smoke.sh: plain bash,
+        # curl and jq, no npm and no token), plus --require-ready: a deploy
+        # whose /readyz is 503 serves a stale or all-Unknown board and is
+        # rolled back. A new version can take a few seconds to reach every
+        # location, hence the attempts.
         env:
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
-        run: |
-          base="${DEPLOY_URL%/}"
-          # A new version can take a few seconds to reach every location.
-          for _ in 1 2 3 4 5 6; do
-            if curl --silent --fail --max-time 10 "$base/healthz" >/dev/null &&
-              curl --silent --fail --max-time 30 "$base/" | grep -aq '<title>Status Bar</title>'; then
-              echo "$base answers"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::$base did not answer /healthz and / after the deploy"
-          exit 1
+        run: ./scripts/ci/smoke.sh "$DEPLOY_URL" --require-ready --attempts 6
 
       - name: Roll back the failed deployment
         # Only after a smoke test that actually ran and failed: a build or
