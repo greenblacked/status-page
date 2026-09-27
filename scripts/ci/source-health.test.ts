@@ -1,7 +1,18 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { probeReadyz, syncDeployHealth, syncIssues, type ReadyzResult, type Result } from "./source-health.ts";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  probeReadyz,
+  recordPath,
+  recordResponses,
+  syncDeployHealth,
+  syncIssues,
+  type ReadyzResult,
+  type Result,
+} from "./source-health.ts";
 
 // A fake of the three GitHub issue endpoints the script uses, so the
 // open/update/close flow is tested before it ever runs against the real API.
@@ -181,5 +192,63 @@ describe("probeReadyz", () => {
     expect(result).toMatchObject({ ok: false, status: 0, attempts: 1 });
     expect(result.detail).not.toBe("");
     expect(requests).toBe(0);
+  });
+});
+
+describe("source-health --record", () => {
+  it("files each response under its host and path, keeping queries and trailing slashes apart", () => {
+    const at = (url: string) => relative("rec", recordPath("rec", new URL(url)));
+    expect(at("https://upgrade.mikrotik.com/routeros/NEWESTa7.stable")).toBe(join("upgrade.mikrotik.com", "routeros", "NEWESTa7.stable"));
+    expect(at("https://store.steampowered.com/api/featured/")).toBe(join("store.steampowered.com", "api", "featured", "index"));
+    expect(at("https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730")).toBe(
+      join("api.steampowered.com", "ISteamApps", "GetSDRConfig", "v1", "index_appid_730"),
+    );
+    expect(at("https://status.x.ai/")).toBe(join("status.x.ai", "index"));
+  });
+
+  it("never writes outside the recording directory", () => {
+    const file = recordPath("rec", new URL("https://example.com/a/%2e%2e/%2E%2E/..%2f..%2fetc/passwd"));
+    expect(relative("rec", file).startsWith("..")).toBe(false);
+  });
+
+  it("saves the exact bytes a collector received and hands it an unread response", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "record-"));
+    const body = new Uint8Array([0xff, 0xfe, 0x5b, 0x00, 0x5d, 0x00]); // "[]" as UTF-16LE with a BOM
+    vi.stubGlobal("fetch", async () => new Response(body, { status: 200 }));
+    const stop = recordResponses(dir);
+    try {
+      const response = await fetch("https://health.aws.amazon.com/public/currentevents");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(body);
+    } finally {
+      stop();
+      vi.unstubAllGlobals();
+    }
+    expect(new Uint8Array(readFileSync(join(dir, "health.aws.amazon.com", "public", "currentevents")))).toEqual(body);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("keeps a file name within file system limits", () => {
+    const file = recordPath("rec", new URL(`https://example.com/${"a".repeat(300)}`));
+    expect(file.split(/[\\/]/).every((segment) => segment.length <= 200)).toBe(true);
+  });
+
+  it("still hands the collector its response when the file cannot be saved", async () => {
+    // A regular file where a directory must go: mkdir fails with ENOTDIR.
+    const dir = mkdtempSync(join(tmpdir(), "record-"));
+    const blocked = join(dir, "not-a-directory");
+    writeFileSync(blocked, "");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async () => new Response("ok", { status: 200 }));
+    const stop = recordResponses(blocked);
+    try {
+      const response = await fetch("https://status.x.ai/feed.xml");
+      expect(await response.text()).toBe("ok");
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("record: could not save"));
+    } finally {
+      stop();
+      vi.unstubAllGlobals();
+      errors.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

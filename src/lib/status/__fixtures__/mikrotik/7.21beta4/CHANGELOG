@@ -1,0 +1,11 @@
+What's new in 7.21beta4 (2026-Sep-19 12:00):
+
+*) bgp - fixed route refresh handling when the peer restarts;
+*) bridge - improved MAC learning performance on CRS3xx series devices;
+*) console - added "export verbose" support for more menus;
+*) wifi - fixed station roaming between access points on the same channel;
+
+What's new in 7.21beta3 (2026-Sep-17 12:00):
+
+*) dhcpv6-server - fixed lease renewal after reboot;
+*) winbox - fixed "Interface" list sorting;

@@ -221,14 +221,16 @@ done
 
 ### Locally
 
-```bash
-DEPLOY_TARGET=cloudflare npm run build            # the production Worker in dist/
-DEPLOY_TARGET=cloudflare npx vite preview --host 127.0.0.1   # runs it in workerd, Cloudflare's runtime, with a local, simulated KV namespace
-npx wrangler deploy --dry-run --config dist/server/wrangler.json   # what would upload
-DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging npm run build      # the staging Worker
-```
+| Command | Runs | What it does |
+| --- | --- | --- |
+| `npm run build:cf` | `DEPLOY_TARGET=cloudflare vite build` | The production Worker in `dist/` |
+| `npm run preview:cf` | `DEPLOY_TARGET=cloudflare vite preview --host 127.0.0.1` | Runs that build in workerd, Cloudflare's runtime, with a local, simulated KV namespace |
+| `npm run deploy:dry-run` | `WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config dist/server/wrangler.json` | Shows what would upload, as a pull request's CI does |
+| `npm run build:cf:staging` | `DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging vite build` | The staging Worker |
 
 Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
+
+These scripts set their variables inline (`VAR=value command`), and `npm run check` calls the `scripts/ci/*.sh` checks, so they assume a POSIX shell. On Windows, npm runs scripts with `cmd.exe` even from a Git Bash window, and that syntax fails there: work in WSL, or point npm at Git Bash once with `npm config set script-shell "C:\Program Files\Git\bin\bash.exe"`.
 
 CI and the deploy share one smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh): `/healthz`, the page and its security headers, `/api/status.json` with every service, `/feed.xml`, `/metrics` and `/readyz`. Run it against any running board:
 
@@ -240,7 +242,7 @@ CI and the deploy share one smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke
 
 `--expect-version` takes a Worker version id (`npx wrangler deployments list`, or the `Current Version ID:` line `wrangler deploy` prints) and fails if `/healthz` still comes from another version when `--wait` runs out, then requires the same `X-Worker-Version` on every response it checks. `--attempts` retries the page, API and feed checks 10 seconds apart; `--ready-wait` separately gives `/readyz` that many seconds, checked every 10, to turn `200` under `--require-ready`. The deploy job reads the id from the `deploy` line wrangler writes to `WRANGLER_OUTPUT_FILE_PATH`, and stops with an error, before the smoke test, if there is none.
 
-`vite preview`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API `vite preview` prints on start:
+`npm run preview:cf`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API it prints on start:
 
 ```bash
 curl -X POST "http://127.0.0.1:4173/cdn-cgi/local/explorer/api/local/scheduled?worker=status-bar" \
@@ -271,16 +273,18 @@ Dependabot proposes npm and GitHub Actions updates weekly, grouped into producti
 ## Adding a service
 
 1. Add a catalog entry in `src/lib/status/catalog.ts`
-2. Add a collector in `src/lib/status/sources.server.ts`
+2. Add a collector in `src/lib/status/sources.server.ts`, and call it from `collectAllServices` at the same position as its catalog entry. A test in `src/lib/status/collectors.test.ts` fails until the two lists match
 3. Use an **official** machine-readable source (Statuspage JSON, vendor incident JSON, RSS, or a documented public API)
 4. Document the source in the README table
 5. Map vendor states onto `operational | degraded | outage | maintenance | unknown`
+6. Test the collector against a trimmed payload in `src/lib/status/__fixtures__` ([how](src/lib/status/__fixtures__/README.md)), with one malformed payload that must read as `unknown`
 
 Do not scrape unofficial aggregators.
 
 ## Code style
 
 - TypeScript strict, no `any`
+- No unused locals, imports or parameters: `tsconfig.json` sets `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` fails on them. Prefix a parameter that a signature requires but the body ignores with `_`
 - Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX
 - Status color is for badges only, not entire panels
 - Keep fetch timeouts short and failures isolated (`Promise.all` of per-service collectors)

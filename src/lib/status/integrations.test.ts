@@ -1,41 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { atomFeed, publicStatus, shieldsBadge } from "./integrations";
-import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "./types";
+import type { ServiceSnapshot } from "./types";
+import { board, service } from "../../test/fixtures.ts";
 
-function service(id: ServiceId, health: Health, extra: Partial<ServiceSnapshot> = {}): ServiceSnapshot {
-  return {
-    id,
-    name: id === "gcp" ? "Google Cloud" : id,
-    shortName: id.toUpperCase(),
-    category: "cloud",
-    health,
-    summary: "All reported systems operational.",
-    sourceName: "Source",
-    sourceUrl: `https://status.example.com/${id}`,
-    checkedAt: "2026-09-25T00:00:00Z",
-    latencyMs: 42,
-    components: [{ name: "internal", health }],
-    incidents: [],
-    meta: { secret: "collector detail" },
-    ...extra,
-  };
-}
-
-function board(services: ServiceSnapshot[]): BoardSnapshot {
-  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
-  for (const item of services) counts[item.health] += 1;
-  return { generatedAt: "2026-09-25T00:00:00.000Z", durationMs: 1, services, counts };
-}
+// Badges and feed titles read the display name, so Google Cloud carries its
+// real one; every other card keeps the fixture's id-as-name default.
+const gcp = (overrides: Partial<ServiceSnapshot>) => service("gcp", { name: "Google Cloud", ...overrides });
 
 describe("publicStatus", () => {
   it("publishes health, headline and incidents, but not collector internals", () => {
     const status = publicStatus(
       board([
-        service("gcp", "degraded", {
+        gcp({
+          health: "degraded",
           summary: "Elevated errors",
           incidents: [{ id: "1", title: "Elevated errors", health: "degraded", url: "https://x/1" }],
+          // Collector internals that must stay off the public API.
+          components: [{ name: "internal", health: "degraded" }],
+          meta: { secret: "collector detail" },
         }),
-        service("aws", "operational"),
+        service("aws", { health: "operational" }),
       ]),
     );
     expect(status.overall).toBe("degraded");
@@ -54,7 +38,7 @@ describe("publicStatus", () => {
 });
 
 describe("shieldsBadge", () => {
-  const snapshot = board([service("gcp", "outage"), service("aws", "operational")]);
+  const snapshot = board([gcp({ health: "outage" }), service("aws", { health: "operational" })]);
 
   it("describes one service in Shields endpoint format", () => {
     expect(shieldsBadge(snapshot, "aws")).toEqual({ schemaVersion: 1, label: "aws", message: "operational", color: "brightgreen" });
@@ -63,7 +47,7 @@ describe("shieldsBadge", () => {
 
   it("summarises the whole board under the id 'board'", () => {
     expect(shieldsBadge(snapshot, "board")).toMatchObject({ label: "status", message: "outage: google cloud", color: "red" });
-    expect(shieldsBadge(board([service("aws", "operational")]), "board")).toMatchObject({
+    expect(shieldsBadge(board([service("aws", { health: "operational" })]), "board")).toMatchObject({
       message: "all operational",
       color: "brightgreen",
     });
@@ -78,11 +62,12 @@ describe("atomFeed", () => {
   it("has one entry per service that needs attention, with escaped text and absolute links", () => {
     const xml = atomFeed(
       board([
-        service("gcp", "degraded", {
+        gcp({
+          health: "degraded",
           summary: 'Errors & "timeouts" <eu>',
           incidents: [{ id: "1", title: "t", health: "degraded", url: "https://x/1?a=1&b=2", updatedAt: "2026-09-24T23:00:00Z" }],
         }),
-        service("aws", "operational"),
+        service("aws", { health: "operational" }),
       ]),
       "https://status.example.org/",
     );
@@ -96,21 +81,21 @@ describe("atomFeed", () => {
 
   it("gives an entry a new id when its message changes, so readers post it again", () => {
     const id = (summary: string) =>
-      atomFeed(board([service("gcp", "degraded", { summary })]), "https://s").match(/<id>(urn:[^<]+)<\/id>/)?.[1];
+      atomFeed(board([gcp({ health: "degraded", summary })]), "https://s").match(/<id>(urn:[^<]+)<\/id>/)?.[1];
     expect(id("Investigating")).not.toBe(id("Mitigated"));
     expect(id("Investigating")).toBe(id("Investigating"));
   });
 
   it("falls back to the board time when a vendor timestamp does not parse", () => {
     const xml = atomFeed(
-      board([service("gcp", "outage", { incidents: [{ id: "1", title: "t", health: "outage", updatedAt: "yesterday-ish" }] })]),
+      board([gcp({ health: "outage", incidents: [{ id: "1", title: "t", health: "outage", updatedAt: "yesterday-ish" }] })]),
       "https://s",
     );
     expect(xml).toContain("<updated>2026-09-25T00:00:00.000Z</updated>");
   });
 
   it("is a valid empty feed when everything is operational", () => {
-    const xml = atomFeed(board([service("aws", "operational")]), "https://s");
+    const xml = atomFeed(board([service("aws", { health: "operational" })]), "https://s");
     expect(xml).not.toContain("<entry>");
     expect(xml.trim().endsWith("</feed>")).toBe(true);
   });

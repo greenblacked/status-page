@@ -1,0 +1,65 @@
+[
+  {
+    "date": "1789898400",
+    "arn": "arn:aws:health:us-east-1::event/EC2/AWS_EC2_OPERATIONAL_ISSUE/AWS_EC2_OPERATIONAL_ISSUE_4E7B1C2D9A0F",
+    "region_name": "N. Virginia",
+    "status": "1",
+    "service": "ec2-us-east-1",
+    "service_name": "Amazon Elastic Compute Cloud",
+    "summary": "Increased API Error Rates",
+    "event_log": [
+      {
+        "summary": "Increased API Error Rates",
+        "message": "We are investigating increased error rates for EC2 APIs in the US-EAST-1 Region.",
+        "status": 1,
+        "timestamp": 1789898400
+      },
+      {
+        "summary": "Increased API Error Rates",
+        "message": "We have identified the cause of the elevated API error rates in a single Availability Zone and are working toward mitigation.",
+        "status": 1,
+        "timestamp": 1789902000
+      }
+    ]
+  },
+  {
+    "date": "1789812000",
+    "arn": "arn:aws:health:eu-west-1::event/LAMBDA/AWS_LAMBDA_OPERATIONAL_ISSUE/AWS_LAMBDA_OPERATIONAL_ISSUE_91C3F0A2B7D4",
+    "region_name": "Ireland",
+    "status": "0",
+    "service": "lambda-eu-west-1",
+    "service_name": "AWS Lambda",
+    "summary": "Increased Invoke Latencies",
+    "event_log": [
+      {
+        "summary": "Increased Invoke Latencies",
+        "message": "We are investigating increased invoke latencies in the EU-WEST-1 Region.",
+        "status": 1,
+        "timestamp": 1789812000
+      },
+      {
+        "summary": "[RESOLVED] Increased Invoke Latencies",
+        "message": "Between 3:10 AM and 4:55 AM PDT we experienced increased invoke latencies in the EU-WEST-1 Region. The issue has been resolved and the service is operating normally.",
+        "status": 0,
+        "timestamp": 1789819200
+      }
+    ]
+  },
+  {
+    "date": "1787313600",
+    "arn": "arn:aws:health:global::event/CLOUDFRONT/AWS_CLOUDFRONT_OPERATIONAL_ISSUE/AWS_CLOUDFRONT_OPERATIONAL_ISSUE_0B5D8E6F2C13",
+    "region_name": "",
+    "status": "1",
+    "service": "cloudfront",
+    "service_name": "Amazon CloudFront",
+    "summary": "Elevated Error Rates",
+    "event_log": [
+      {
+        "summary": "Elevated Error Rates",
+        "message": "We are investigating elevated error rates for some CloudFront edge locations.",
+        "status": 1,
+        "timestamp": 1787313600
+      }
+    ]
+  }
+]
