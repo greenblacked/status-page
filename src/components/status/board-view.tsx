@@ -433,7 +433,7 @@ export function BoardView({
               ) : (
                 <>
                   <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
                       {groups.attention.map((service, index) => (
                         <ServiceCard
                           key={service.id}
@@ -448,8 +448,12 @@ export function BoardView({
                     </div>
                   </ServiceSection>
                   <ServiceSection id="operational" title="Operational" services={groups.operational}>
-                    {/* Two columns once the board log takes the right side: three left each name a few letters. */}
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
+                    {/*
+                      Columns by the room the section has, not the window's: with the
+                      board log beside it on a wide screen, three would leave each name
+                      a few letters, and it drops back to two by itself.
+                    */}
+                    <div className="grid grid-cols-1 gap-2 @xl:grid-cols-2 @4xl:grid-cols-3">
                       {groups.operational.map((service, index) => (
                         <ServiceTile
                           key={service.id}
@@ -463,7 +467,7 @@ export function BoardView({
                     </div>
                   </ServiceSection>
                   <ServiceSection id="releases" title="Releases" services={groups.releases}>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
                       {groups.releases.map((service, index) => (
                         <ServiceCard
                           key={service.id}
@@ -572,7 +576,8 @@ function ServiceSection({
         {title}
         <span className="tabular-nums text-muted">{services.length}</span>
       </h2>
-      {children}
+      {/* A size container: the grid inside, and each card in it, lay out by their own width. */}
+      <div className="@container">{children}</div>
     </section>
   );
 }

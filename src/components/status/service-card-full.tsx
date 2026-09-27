@@ -70,7 +70,7 @@ export function ServiceCard({
       // an attention chip leaves the keyboard on the card it jumped to.
       tabIndex={-1}
       className={cn(
-        "focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-lg glass p-4 stagger-in",
+        "@container focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-lg glass p-4 stagger-in",
         emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, viewTransitionName: `vt-${service.id}` }}
@@ -78,13 +78,16 @@ export function ServiceCard({
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span
-            className={cn("grid size-10 shrink-0 place-items-center rounded-xs glass-inset", ICON_TONE[service.health])}
+            className={cn(
+              "grid size-9 shrink-0 place-items-center rounded-xs glass-inset @xs:size-10",
+              ICON_TONE[service.health],
+            )}
             aria-hidden
           >
             <Icon className="size-4" strokeWidth={1.75} />
           </span>
           <div className="min-w-0">
-            <h3 className="font-display text-lg font-medium leading-tight tracking-[-0.03em] text-balance">
+            <h3 className="font-display text-base font-medium leading-tight @xs:text-lg tracking-[-0.03em] text-balance">
               {service.name}
             </h3>
             <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-subtle">

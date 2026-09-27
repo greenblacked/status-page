@@ -81,6 +81,12 @@
   --motion-stagger: 40ms;
   --motion-quick: 150ms;
   --motion-fast: 250ms;
+  /*
+    A light spring, for a release: past the mark and back, without a
+    library. Transform only, never colour, where an overshoot means nothing.
+  */
+  --ease-spring: linear(0, 0.24 6%, 0.62 13%, 0.9 21%, 1.04 29%, 1.07 35%, 1.05 42%, 1.01 52%, 0.995 62%, 1);
+  --motion-spring: 480ms;
 }
 
 /*
@@ -407,19 +413,40 @@
 */
 @utility pressable {
   transition-property: transform, opacity, color, background-color;
-  transition-duration: var(--motion-quick);
-  transition-timing-function: var(--ease-out);
+  /* Pressed in quickly, released on the spring. */
+  transition-duration: var(--motion-spring), var(--motion-quick), var(--motion-quick), var(--motion-quick);
+  transition-timing-function: var(--ease-spring), var(--ease-out), var(--ease-out), var(--ease-out);
 
-  &:active {
+  &:active:not(:disabled, [aria-disabled="true"]) {
     transform: scale(0.96);
+    transition-duration: var(--motion-quick);
+    transition-timing-function: var(--ease-out);
   }
 
   @media (prefers-reduced-motion: reduce) {
-    &:active {
+    &:active:not(:disabled, [aria-disabled="true"]) {
       transform: none;
       opacity: 0.7;
     }
   }
+}
+
+/*
+  A star turns one point, 72 degrees, when it is toggled, and lands on the
+  spring: the same star at rest, so only the toggle itself moves. Only
+  while the pointer or focus is on it, so stars that load already set do
+  not spin when the page opens.
+*/
+.star-toggle svg {
+  transform-origin: 50% 52%;
+}
+
+.star-toggle[aria-pressed="true"] svg {
+  rotate: 72deg;
+}
+
+.star-toggle:is(:hover, :focus, :active) svg {
+  transition: rotate var(--motion-spring) var(--ease-spring);
 }
 
 /*
@@ -900,6 +927,10 @@
 
   .spotlight::after {
     display: none;
+  }
+
+  .star-toggle:is(:hover, :focus, :active) svg {
+    transition: none;
   }
 
   ::view-transition-group(*),

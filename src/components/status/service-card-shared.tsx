@@ -117,7 +117,7 @@ export function StarButton({
       aria-label={`Star ${name}`}
       title={starred ? `Unstar ${name}` : `Star ${name} to keep it first`}
       className={cn(
-        "grid size-11 shrink-0 place-items-center rounded-full focus-ring pressable",
+        "star-toggle grid size-11 shrink-0 place-items-center rounded-full focus-ring pressable",
         starred ? "text-fg" : "text-subtle hover:text-fg",
         className,
       )}
