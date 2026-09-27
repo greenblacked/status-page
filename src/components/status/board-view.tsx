@@ -308,7 +308,7 @@ export function BoardView({
                 <LiveSignal state={freshness.state} />
                 Live status board
               </p>
-              <h1 className="mt-2 font-display text-4xl font-medium tracking-[-0.04em] text-balance sm:text-6xl">
+              <h1 className="mt-2 font-display text-4xl tracking-[-0.035em] text-balance [font-optical-sizing:auto] [font-weight:350] sm:text-6xl">
                 {APP_NAME}
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted text-pretty sm:text-base">
@@ -425,7 +425,10 @@ export function BoardView({
                 // Stars load after hydration; until then an empty Starred view proves nothing.
                 // Not a live region: the results announcement already says this.
                 starredOnly && !starsReady ? null : (
-                  <p className="rounded-lg glass px-5 py-10 text-center text-muted">{emptyMessage}</p>
+                  // The board's one serif phrase: a caption for the quiet, not a UI label.
+                  <p className="rounded-lg glass px-5 py-10 text-center font-serif text-lg text-muted italic">
+                    {emptyMessage}
+                  </p>
                 )
               ) : (
                 <>
