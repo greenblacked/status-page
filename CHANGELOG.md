@@ -8,6 +8,11 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- A **Single-key shortcuts** switch in the keyboard shortcuts list (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Keyboard shortcuts** button at the foot of the page, now shown on every screen size, opens the list again, and the choice is kept in this browser.
+- A **Skip to services** link, the first stop when you press Tab, jumps past the header straight to the cards.
+- Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown" or "0 of 14 services shown. No services match that filter.", when the headline changes, and when a refresh fails.
+- A card with an incident shows when the vendor says it began and how long it has run, such as "since 14:05 UTC · 2h 10m". Maintenance that has not started yet shows when it is due instead, such as "scheduled for 22:00 UTC".
+- The headline says when the snapshot on screen was taken, such as "as of 14:05 UTC".
 - `/readyz` answers `503` when the board is more than ten minutes old or no source could be read, and `200` otherwise, with the snapshot's age and how many services are Unknown. Uptime monitors can watch it; `/healthz` stays the liveness probe.
 - On the hosted Cloudflare deployment, every response names the Worker version that served it in an `X-Worker-Version` header.
 
@@ -22,6 +27,13 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The staging deployment no longer shows up in search results: it sends `X-Robots-Tag: noindex` and a `/robots.txt` that disallows crawling. Production, and any self-hosted build, now serves a `/robots.txt` that allows it.
 - On Cloudflare, an outage of the KV store that holds the board no longer turns every page into an error: a server keeps showing the board it already has while it is under ten minutes old, and only one with no board, or an older one, collects it straight from the vendors, at most once a minute.
 - When no board can be produced at all, `/api/status.json`, `/feed.xml`, the badges and `/metrics` answer `503` with `Retry-After`, so feed readers, Shields.io and scrapers treat it as temporary instead of as a server error.
+- On a device whose clock runs ahead of the server's, the page no longer throws away its server-rendered board and redraws it from scratch as it loads.
+- **Next update** now counts down to the board's actual refetch. It used to reach 0:00 with nothing happening, because the board fetched on its own two-minute timer from whenever the page was opened.
+- A service named under the headline now opens its card even when a search or filter hides it: the filters clear and the card comes into view with keyboard focus on it. It used to do nothing.
+- The board no longer says **Live** over a snapshot that has stopped updating: after six minutes without a fresh one it shows **Stale** and how long ago the last one arrived. It times this by the device's own clock, so a clock that runs fast or slow does not set it off, and a snapshot already more than half an hour old when the page opens shows **Stale** at once.
+- **Refresh** no longer greys out during every background check, which dropped keyboard focus back to the top of the page. It stays usable and says when a check is running.
+- Buttons, links and the search box show their keyboard focus ring in Windows High Contrast and other forced-colours modes, where it used to disappear.
+- When the browser blocks notifications, the bell stays reachable from the keyboard and tells screen readers why alerts are unavailable, instead of silently dropping out of the Tab order.
 
 ### Security
 
