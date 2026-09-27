@@ -92,8 +92,8 @@ export function ServiceCard({
             </h3>
             <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-subtle">
               {/* The catalog index, like a numbered body on a plate. Decorative. */}
-              <span aria-hidden className="tabular-nums slashed-zero">
-                {serviceIndex(service.id)} ·{" "}
+              <span aria-hidden className="mr-2 tabular-nums slashed-zero">
+                {serviceIndex(service.id)}
               </span>
               {service.shortName}
               {emphasized ? " · changed" : ""}
