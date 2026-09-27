@@ -285,7 +285,7 @@ export function BoardView({
             event.preventDefault();
             mainRef.current?.focus();
           }}
-          className="focus-ring sr-only rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
+          className="focus-ring sr-only rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg focus:not-sr-only focus:fixed focus:top-[calc(env(safe-area-inset-top)+0.75rem)] focus:left-[calc(env(safe-area-inset-left)+0.75rem)] focus:z-50"
         >
           Skip to services
         </a>
@@ -482,7 +482,8 @@ export function BoardView({
             <UpdateFeed pulses={pulseStore.pulses} className="xl:sticky xl:top-6" />
           </div>
 
-          <footer className="mt-14 flex flex-col gap-2 text-sm text-subtle">
+          {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
+          <footer className="mt-14 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] text-sm text-subtle">
             <p>
               Status Bar reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic, Spotify,
               Apple, MikroTik, xAI, OpenAI, or Anthropic.
