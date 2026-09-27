@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   type KeyInput,
   parseSingleKeyPreference,
-  serializeSingleKeyPreference,
   SHORTCUT_HELP,
+  serializeSingleKeyPreference,
   shortcutFor,
 } from "./shortcuts";
 

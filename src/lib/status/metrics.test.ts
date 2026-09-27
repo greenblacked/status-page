@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { prometheusMetrics } from "./metrics";
 import { board, service } from "../../test/fixtures.ts";
+import { prometheusMetrics } from "./metrics";
 
 describe("prometheusMetrics", () => {
   const text = prometheusMetrics(
@@ -46,7 +46,9 @@ describe("prometheusMetrics", () => {
   });
 
   it("does not export summaries or other free text", () => {
-    const withText = prometheusMetrics(board([service("gcp", { health: "degraded", summary: 'Errors in "us-east1"\n' })]));
+    const withText = prometheusMetrics(
+      board([service("gcp", { health: "degraded", summary: 'Errors in "us-east1"\n' })]),
+    );
     expect(withText).not.toContain("us-east1");
   });
 });

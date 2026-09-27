@@ -9,8 +9,20 @@ type Triage = {
 };
 const { triage, categorize, MARKER } = createRequire(import.meta.url)("./ci-triage.cjs") as Triage;
 
-type Run = { id: number; name: string; run_number: number; status: string; conclusion: string | null; html_url: string };
-type Job = { name: string; conclusion: string; html_url: string; steps: { name: string; number: number; conclusion: string }[] };
+type Run = {
+  id: number;
+  name: string;
+  run_number: number;
+  status: string;
+  conclusion: string | null;
+  html_url: string;
+};
+type Job = {
+  name: string;
+  conclusion: string;
+  html_url: string;
+  steps: { name: string; number: number; conclusion: string }[];
+};
 type Comment = { id: number; body: string; user: { type: string } };
 
 const HEAD = "abc1234def";
@@ -27,7 +39,9 @@ function fakeGithub() {
       repos: { listPullRequestsAssociatedWithCommit: async () => ({ data: [{ number: 7, state: "open" }] }) },
       pulls: {
         list: async () => ({ data: [] }),
-        get: async () => ({ data: { number: 7, state: "open", head: { sha: prHead }, labels: labels.map((name) => ({ name })) } }),
+        get: async () => ({
+          data: { number: 7, state: "open", head: { sha: prHead }, labels: labels.map((name) => ({ name })) },
+        }),
       },
       actions: {
         listWorkflowRunsForRepo: async () => ({ data: { workflow_runs: runs } }),
@@ -60,7 +74,14 @@ const context = {
 const core = { info: () => {} };
 const run = () => triage({ github: fakeGithub(), context, core });
 
-const green = (id: number, name: string, n = 1): Run => ({ id, name, run_number: n, status: "completed", conclusion: "success", html_url: `u/${id}` });
+const green = (id: number, name: string, n = 1): Run => ({
+  id,
+  name,
+  run_number: n,
+  status: "completed",
+  conclusion: "success",
+  html_url: `u/${id}`,
+});
 
 beforeEach(() => {
   runs = [];
@@ -101,7 +122,14 @@ describe("ci triage", () => {
 
   it("edits the same comment on recovery and removes the label", async () => {
     runs = [{ ...green(1, "CI"), conclusion: "failure" }];
-    jobs[1] = [{ name: "quality", conclusion: "failure", html_url: "j", steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }] }];
+    jobs[1] = [
+      {
+        name: "quality",
+        conclusion: "failure",
+        html_url: "j",
+        steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }],
+      },
+    ];
     await run();
     runs = [green(4, "CI", 2)];
     await run();
@@ -112,7 +140,14 @@ describe("ci triage", () => {
 
   it("keeps the red report while a recovery run is still in flight", async () => {
     runs = [{ ...green(1, "CI"), conclusion: "failure" }];
-    jobs[1] = [{ name: "quality", conclusion: "failure", html_url: "j", steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }] }];
+    jobs[1] = [
+      {
+        name: "quality",
+        conclusion: "failure",
+        html_url: "j",
+        steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }],
+      },
+    ];
     await run();
     runs = [{ ...green(4, "CI", 2), status: "in_progress", conclusion: null }];
     await run();
@@ -160,7 +195,14 @@ describe("ci triage", () => {
 
   it("does not declare recovery when the re-run was cancelled", async () => {
     runs = [{ ...green(1, "CI"), conclusion: "failure" }];
-    jobs[1] = [{ name: "quality", conclusion: "failure", html_url: "j", steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }] }];
+    jobs[1] = [
+      {
+        name: "quality",
+        conclusion: "failure",
+        html_url: "j",
+        steps: [{ name: "Repository hygiene", number: 3, conclusion: "failure" }],
+      },
+    ];
     await run();
     runs = [{ ...green(4, "CI", 2), conclusion: "cancelled" }];
     await run();

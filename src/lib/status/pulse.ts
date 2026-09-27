@@ -23,11 +23,7 @@ export function emptyPulseStore(): PulseStore {
   return { lastSlot: null, lastBoard: null, pulses: [] };
 }
 
-export function makePulse(
-  board: BoardSnapshot,
-  slot: number,
-  previous: BoardSnapshot | null,
-): Pulse {
+export function makePulse(board: BoardSnapshot, slot: number, previous: BoardSnapshot | null): Pulse {
   return {
     slot,
     at: board.generatedAt,

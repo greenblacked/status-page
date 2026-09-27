@@ -15,9 +15,7 @@ const boardCache = createTtlCache(collectBoard, CACHE_TTL_MS, {
  * costing a vendor sweep per request. Server-only, so the client bundle
  * drops the cache and the collectors it would otherwise pull in.
  */
-export const getStatusBoard = createServerOnlyFn(
-  (): Promise<BoardSnapshot> => boardCache.get({ allowStale: true }),
-);
+export const getStatusBoard = createServerOnlyFn((): Promise<BoardSnapshot> => boardCache.get({ allowStale: true }));
 
 export const fetchStatusBoard = createServerFn({ method: "GET" }).handler(async () => {
   return boardCache.get();

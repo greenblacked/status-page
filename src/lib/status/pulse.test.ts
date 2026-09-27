@@ -1,8 +1,8 @@
-import { describe, it } from "vitest";
 import assert from "node:assert/strict";
+import { describe, it } from "vitest";
+import { board, service } from "../../test/fixtures.ts";
 import { emptyPulseStore, syncPulse } from "./pulse.ts";
 import type { BoardSnapshot, Health } from "./types.ts";
-import { board, service } from "../../test/fixtures.ts";
 
 function snapshot(at: string, health: Health): BoardSnapshot {
   return board(

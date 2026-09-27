@@ -15,7 +15,10 @@ describe("robots", () => {
   });
 
   it("adds X-Robots-Tag without dropping the response's status, headers or body", async () => {
-    const original = new Response("board", { status: 503, headers: { "Content-Type": "text/plain", "Retry-After": "60" } });
+    const original = new Response("board", {
+      status: 503,
+      headers: { "Content-Type": "text/plain", "Retry-After": "60" },
+    });
     const tagged = withNoindex(original);
     expect(tagged.status).toBe(503);
     expect(tagged.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");

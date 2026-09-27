@@ -26,7 +26,10 @@ function streamOf(total: number) {
 }
 
 function stubFetch(response: () => Response) {
-  vi.stubGlobal("fetch", vi.fn(async () => response()));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response()),
+  );
 }
 
 describe("readBodyCapped / fetchText size cap", () => {

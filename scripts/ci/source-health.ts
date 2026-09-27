@@ -218,7 +218,8 @@ export async function syncIssues(results: Result[]): Promise<void> {
         title: `Collector failure: ${result.name}`,
         failing: !result.ok,
         body: (firstFailure, at) => issueBody(result, firstFailure, at),
-        recovered: (at) => `✅ Recovered: **${result.name}** read cleanly at ${at} (${result.latencyMs}ms). ${runUrl()}`,
+        recovered: (at) =>
+          `✅ Recovered: **${result.name}** read cleanly at ${at} (${result.latencyMs}ms). ${runUrl()}`,
       },
       now,
     );
@@ -242,7 +243,10 @@ type IssueSpec = {
 
 async function syncOneIssue(repo: string, spec: IssueSpec, now: string): Promise<void> {
   const open = (
-    await github<Issue[]>("GET", `/repos/${repo}/issues?state=open&per_page=10&labels=${encodeURIComponent(spec.labels.join(","))}`)
+    await github<Issue[]>(
+      "GET",
+      `/repos/${repo}/issues?state=open&per_page=10&labels=${encodeURIComponent(spec.labels.join(","))}`,
+    )
   ).filter((issue) => !issue.pull_request);
   const existing = open[0];
 
@@ -351,7 +355,9 @@ export async function syncDeployHealth(result: ReadyzResult): Promise<void> {
 async function deployHealth(): Promise<number> {
   const base = process.env.PRODUCTION_URL ?? "";
   if (!base) {
-    console.log("::notice::PRODUCTION_URL is not set, so the production deployment is not checked (CONTRIBUTING.md#deploying)");
+    console.log(
+      "::notice::PRODUCTION_URL is not set, so the production deployment is not checked (CONTRIBUTING.md#deploying)",
+    );
     return 0;
   }
   let parsed: URL;

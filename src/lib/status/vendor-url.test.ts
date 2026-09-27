@@ -5,7 +5,9 @@ const FALLBACK = "https://status.example.com/";
 
 describe("vendorUrl", () => {
   it("keeps an https link", () => {
-    expect(vendorUrl("https://status.example.com/incidents/1", FALLBACK)).toBe("https://status.example.com/incidents/1");
+    expect(vendorUrl("https://status.example.com/incidents/1", FALLBACK)).toBe(
+      "https://status.example.com/incidents/1",
+    );
   });
 
   it("falls back for a plain http link, even on an allowed host", () => {

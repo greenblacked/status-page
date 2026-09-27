@@ -1,7 +1,7 @@
 import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
+import type { BoardSnapshotReader } from "./board-snapshot";
 import { createBoardSnapshotReader } from "./board-snapshot";
 import { getCloudflareContext } from "./cloudflare-context";
-import type { BoardSnapshotReader } from "./board-snapshot";
 import type { BoardSnapshot } from "./types";
 
 // vite.config.ts aliases "@/lib/status/board" to this file only when

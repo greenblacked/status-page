@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { service } from "../../test/fixtures.ts";
 import { parseStarred, serializeStarred, starredFirst, toggleStarred } from "./starred";
 import type { ServiceId } from "./types";
-import { service } from "../../test/fixtures.ts";
 
 describe("parseStarred", () => {
   it("keeps known service ids", () => {

@@ -9,23 +9,10 @@ import {
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
-import { fetchJson, fetchText, meteredBytes, meterBytes, PayloadError, SourceError } from "./http.ts";
+import { googleImpact, overallSummary, statuspageComponent, statuspageIndicator, worseHealth } from "./health.ts";
+import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
+import type { ComponentHealth, Health, Incident, ServiceId, ServiceSnapshot, SourceFailure } from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
-import {
-  googleImpact,
-  overallSummary,
-  statuspageComponent,
-  statuspageIndicator,
-  worseHealth,
-} from "./health.ts";
-import type {
-  ComponentHealth,
-  Health,
-  Incident,
-  ServiceId,
-  ServiceSnapshot,
-  SourceFailure,
-} from "./types.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
@@ -110,10 +97,11 @@ type SteamSdr = {
   >;
 };
 
-function base(id: ServiceId, checkedAt: string, latencyMs: number): Omit<
-  ServiceSnapshot,
-  "health" | "summary" | "components" | "incidents"
-> {
+function base(
+  id: ServiceId,
+  checkedAt: string,
+  latencyMs: number,
+): Omit<ServiceSnapshot, "health" | "summary" | "components" | "incidents"> {
   const entry = CATALOG_BY_ID[id];
   return {
     id: entry.id,
@@ -266,16 +254,15 @@ function fromStatuspage(
   // During maintenance with no incident, the maintenance itself is what the
   // card should name; the indicator description is only a generic fallback.
   const hint =
-    incidents[0]?.title ||
-    (health === "maintenance" ? maintenances[0]?.name : undefined) ||
-    data.status?.description;
+    incidents[0]?.title || (health === "maintenance" ? maintenances[0]?.name : undefined) || data.status?.description;
   return {
     ...base(id, checkedAt, latencyMs),
     health,
     summary: overallSummary(health, incidents.length, hint),
-    components: components.filter((component) => component.health !== "operational").concat(
-      components.filter((component) => component.health === "operational").slice(0, 4),
-    ).slice(0, 8),
+    components: components
+      .filter((component) => component.health !== "operational")
+      .concat(components.filter((component) => component.health === "operational").slice(0, 4))
+      .slice(0, 8),
     incidents,
   };
 }
@@ -319,10 +306,7 @@ export function awsEventActive(event: AwsEvent, now: number): boolean {
   // null and "" coerce to 0, which would read as resolved, so only a real
   // number or a non-blank numeric string counts as a reported status.
   const raw = event.status as unknown;
-  const status =
-    typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "")
-      ? Number(raw)
-      : Number.NaN;
+  const status = typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "") ? Number(raw) : Number.NaN;
   if (!Number.isFinite(status)) return !saysResolved(lastMessage);
   if (saysResolved(lastMessage) && status === 0) return false;
   return status !== 0;
@@ -423,8 +407,12 @@ async function collectSteam(): Promise<ServiceSnapshot> {
       result.status === "rejected" ? classifyFailure(result.reason).message : "Unexpected response shape.";
     const health: Health = apiOk && storeOk ? "operational" : "degraded";
     const components: ComponentHealth[] = [
-      apiOk ? { name: "Steam Web API", health: "operational" } : { name: "Steam Web API", health: "outage", detail: why(info) },
-      storeOk ? { name: "Steam Store", health: "operational" } : { name: "Steam Store", health: "outage", detail: why(store) },
+      apiOk
+        ? { name: "Steam Web API", health: "operational" }
+        : { name: "Steam Web API", health: "outage", detail: why(info) },
+      storeOk
+        ? { name: "Steam Store", health: "operational" }
+        : { name: "Steam Store", health: "outage", detail: why(store) },
     ];
     return {
       ...base("steam", new Date().toISOString(), Date.now() - started),
@@ -571,10 +559,7 @@ async function collectSpotify(): Promise<ServiceSnapshot> {
   }
 }
 
-function appleEventHealth(event: {
-  eventStatus?: string;
-  statusType?: string;
-}): Health {
+function appleEventHealth(event: { eventStatus?: string; statusType?: string }): Health {
   const status = (event.eventStatus ?? "").toLowerCase();
   const type = (event.statusType ?? "").toLowerCase();
   if (status === "resolved" || status === "completed") return "operational";
@@ -730,7 +715,9 @@ export function decodeXmlField(raw: string): string {
   return result;
 }
 
-export function parseRssItems(xml: string): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
+export function parseRssItems(
+  xml: string,
+): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
   const items: Array<{ title: string; description: string; pubDate?: string; link?: string }> = [];
   const blocks = xml.split(/<item[\s>]/i).slice(1);
   for (const block of blocks) {
@@ -757,10 +744,7 @@ export function grokItemHealth(description: string): Health {
 // status.x.ai serves its whole incident history in one feed, so an item is
 // only evidence about right now if it is recent. An item with no parseable
 // pubDate cannot be shown to be current; AWS drops undated events the same way.
-export function grokItemActive(
-  item: { description: string; pubDate?: string },
-  now: number,
-): boolean {
+export function grokItemActive(item: { description: string; pubDate?: string }, now: number): boolean {
   if (grokItemHealth(item.description) === "operational") return false;
   const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
   return Number.isFinite(at) && now - at <= STALE_MS;
@@ -850,7 +834,8 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
         )
       ).filter((channel): channel is NonNullable<typeof channel> => Boolean(channel));
       if (!channels.length) {
-        if (unparsed > 0) throw new PayloadError(`MikroTik answered ${unparsed} version channel(s) in an unrecognised format.`);
+        if (unparsed > 0)
+          throw new PayloadError(`MikroTik answered ${unparsed} version channel(s) in an unrecognised format.`);
         throw new SourceError("MikroTik version channels did not respond.");
       }
       const stable = channels.find((channel) => channel.file === "NEWESTa7.stable");

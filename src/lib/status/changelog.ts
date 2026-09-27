@@ -41,7 +41,10 @@ export function parseMikrotikNewest(body: string): { version: string; releasedAt
 }
 
 export function summarizeMikrotikChangelog(text: string): string {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
   const heading = lines.find((line) => /^what's new in /i.test(line));
   const bullet = lines.find((line) => /^\*\)/.test(line));
   const note = bullet ? bullet.replace(/^\*\)\s*/, "").replace(/;\s*$/, "") : "";
@@ -61,9 +64,7 @@ export function parseAppleOsTitle(title: string): { family: string; version: str
   };
 }
 
-export function appleOsReleases(
-  items: Array<{ title: string; pubDate?: string; link?: string }>,
-): OsRelease[] {
+export function appleOsReleases(items: Array<{ title: string; pubDate?: string; link?: string }>): OsRelease[] {
   const releases: OsRelease[] = [];
   for (const item of items) {
     const parsed = parseAppleOsTitle(item.title);
@@ -80,9 +81,7 @@ export function appleOsReleases(
   return releases;
 }
 
-export function latestAppleOsByFamily(
-  items: Array<{ title: string; pubDate?: string; link?: string }>,
-): OsRelease[] {
+export function latestAppleOsByFamily(items: Array<{ title: string; pubDate?: string; link?: string }>): OsRelease[] {
   const seen = new Set<string>();
   const latest: OsRelease[] = [];
   for (const release of appleOsReleases(items)) {
@@ -92,7 +91,9 @@ export function latestAppleOsByFamily(
     if (latest.length === OS_FAMILIES.length) break;
   }
   return latest.sort(
-    (a, b) => OS_FAMILIES.indexOf(a.family as (typeof OS_FAMILIES)[number]) - OS_FAMILIES.indexOf(b.family as (typeof OS_FAMILIES)[number]),
+    (a, b) =>
+      OS_FAMILIES.indexOf(a.family as (typeof OS_FAMILIES)[number]) -
+      OS_FAMILIES.indexOf(b.family as (typeof OS_FAMILIES)[number]),
   );
 }
 

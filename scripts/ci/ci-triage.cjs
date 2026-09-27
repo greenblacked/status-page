@@ -123,7 +123,9 @@ async function describeFailure(github, owner, repo, run) {
 function render(headSha, rows, failing) {
   const short = headSha.slice(0, 7);
   const lines = [MARKER];
-  lines.push(failing ? `### ❌ CI failing on \`${short}\`` : `### ✅ Recovered: all watched workflows pass on \`${short}\``);
+  lines.push(
+    failing ? `### ❌ CI failing on \`${short}\`` : `### ✅ Recovered: all watched workflows pass on \`${short}\``,
+  );
   lines.push("", "| Workflow | Result |", "| --- | --- |");
   for (const row of rows) lines.push(`| ${row.workflow} | ${row.result} |`);
   lines.push(

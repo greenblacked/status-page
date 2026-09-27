@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bytes, type Handler, json, networkError, stubFetch, text, utf16 } from "../../test/stub-fetch.ts";
 import { CATALOG } from "./catalog.ts";
 import { collectAllServices } from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
-import { bytes, json, networkError, stubFetch, text, utf16, type Handler } from "../../test/stub-fetch.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
 // Keep these in sync with the URLs the collectors actually fetch.
@@ -59,17 +59,19 @@ function statuspageSummary(overrides: {
   };
 }
 
-function googleIncident(overrides: Partial<{
-  id: string;
-  begin: string;
-  end: string | null;
-  modified: string;
-  external_desc: string;
-  status_impact: string;
-  severity: string;
-  service_name: string;
-  uri: string;
-}>) {
+function googleIncident(
+  overrides: Partial<{
+    id: string;
+    begin: string;
+    end: string | null;
+    modified: string;
+    external_desc: string;
+    status_impact: string;
+    severity: string;
+    service_name: string;
+    uri: string;
+  }>,
+) {
   return {
     id: "incident-1",
     begin: "2026-09-20T00:00:00Z",
@@ -163,7 +165,12 @@ describe("collectAllServices against stubbed vendor payloads", () => {
 
   it("falls back to a generic sentence instead of a blank summary when the description is empty", async () => {
     stubFetch({
-      [URLS.chatgpt]: json({ status: { indicator: "minor", description: "" }, components: [], incidents: [], scheduled_maintenances: [] }),
+      [URLS.chatgpt]: json({
+        status: { indicator: "minor", description: "" },
+        components: [],
+        incidents: [],
+        scheduled_maintenances: [],
+      }),
     });
     const services = await collectAllServices();
     expect(services.find((s) => s.id === "chatgpt")!.summary).toBe("Degraded performance on one or more components.");
@@ -488,14 +495,16 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(snapshot.summary).not.toContain("/api/v2/summary.json");
 
     const warnCalls = (console.warn as ReturnType<typeof vi.fn>).mock.calls;
-    const failureLine = warnCalls.map((call) => String(call[0])).find((line) => {
-      try {
-        const parsed = JSON.parse(line);
-        return parsed.event === "collector_failed" && parsed.service === "spotify";
-      } catch {
-        return false;
-      }
-    });
+    const failureLine = warnCalls
+      .map((call) => String(call[0]))
+      .find((line) => {
+        try {
+          const parsed = JSON.parse(line);
+          return parsed.event === "collector_failed" && parsed.service === "spotify";
+        } catch {
+          return false;
+        }
+      });
     expect(failureLine).toBeDefined();
   });
 
@@ -684,7 +693,9 @@ describe("collectAllServices against stubbed vendor payloads", () => {
 
     it("Apple Developer Releases: a page with no OS items is unknown with a parser failure", async () => {
       stubFetch({
-        [URLS.appleOs]: text("<!DOCTYPE html><html><head><title>Apple Developer</title></head><body>We'll be back soon.</body></html>"),
+        [URLS.appleOs]: text(
+          "<!DOCTYPE html><html><head><title>Apple Developer</title></head><body>We'll be back soon.</body></html>",
+        ),
       });
       const appleOs = await collect("apple-os");
       expect(appleOs.health).toBe("unknown");

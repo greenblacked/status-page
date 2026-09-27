@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readSnapshot, writeSnapshot } from "./kv-snapshot-store";
 import type { SnapshotKv } from "./kv-snapshot-store";
+import { readSnapshot, writeSnapshot } from "./kv-snapshot-store";
 import type { BoardSnapshot } from "./types";
 
 // A minimal in-memory stand-in for a Cloudflare KVNamespace: only the

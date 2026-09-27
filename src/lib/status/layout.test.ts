@@ -65,15 +65,20 @@ describe("boardHeadline", () => {
   it("names up to two services, then counts", () => {
     expect(boardHeadline(board([service("apple", "outage", "platforms", "Apple")])).title).toBe("Outage: Apple");
     expect(
-      boardHeadline(board([service("gcp", "degraded", "cloud", "Google Cloud"), service("aws", "degraded", "cloud", "AWS")])).title,
+      boardHeadline(
+        board([service("gcp", "degraded", "cloud", "Google Cloud"), service("aws", "degraded", "cloud", "AWS")]),
+      ).title,
     ).toBe("Degraded: Google Cloud and AWS");
     expect(
-      boardHeadline(board([service("gcp", "degraded"), service("aws", "degraded"), service("steam", "degraded")])).title,
+      boardHeadline(board([service("gcp", "degraded"), service("aws", "degraded"), service("steam", "degraded")]))
+        .title,
     ).toBe("3 services degraded");
   });
 
   it("names confirmed breakage before an unreadable source, and says so in the tone", () => {
-    const headline = boardHeadline(board([service("grok", "unknown", "ai"), service("gcp", "degraded", "cloud", "Google Cloud")]));
+    const headline = boardHeadline(
+      board([service("grok", "unknown", "ai"), service("gcp", "degraded", "cloud", "Google Cloud")]),
+    );
     expect(headline).toEqual({ tone: "degraded", title: "Degraded: Google Cloud" });
   });
 
@@ -86,7 +91,9 @@ describe("boardHeadline", () => {
 describe("documentTitle and serviceAnchor", () => {
   it("prefixes the tab title with the attention count only when there is one", () => {
     expect(documentTitle(board([service("gcp", "operational")]), "Status Bar")).toBe("Status Bar");
-    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status Bar")).toBe("(2) Status Bar");
+    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status Bar")).toBe(
+      "(2) Status Bar",
+    );
   });
 
   it("builds a stable element id per service", () => {
