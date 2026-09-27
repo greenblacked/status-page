@@ -60,16 +60,39 @@ export function formatAge(ms: number): string {
   return `${hours}h ago`;
 }
 
-// The board refetches every slot, so a snapshot older than three of them
-// has stopped moving: the server, its collector or this tab's network is
-// stuck, and "Live" would be a claim the board cannot back.
+// The board refetches every slot, so a snapshot that has not moved for
+// three of them has stopped: the server, its collector or this tab's
+// network is stuck, and "Live" would be a claim the board cannot back.
 export const STALE_AFTER_MS = 3 * PULSE_INTERVAL_MS;
 
-/** False until mounted (`now` 0). A timestamp that cannot be read cannot be vouched for. */
-export function isStale(generatedAt: string, now: number): boolean {
-  if (now <= 0) return false;
-  const at = parseTimestamp(generatedAt);
-  return at === null || now - at > STALE_AFTER_MS;
+/**
+ * The snapshot on screen and when, by this browser's clock, the board first
+ * showed it. Staleness is timed from here rather than from `generatedAt`:
+ * that is the server's clock, and a browser whose clock ran seven minutes
+ * ahead called every snapshot stale the moment it arrived.
+ */
+export type SnapshotSeen = { generatedAt: string; seenAt: number };
+
+/**
+ * `previous`, or a new record when `generatedAt` has moved on. Only a newer
+ * snapshot counts: an older one, from a cache that lags, is no sign of life.
+ * Nothing is recorded before mount (`now` 0).
+ */
+export function noteSnapshot(previous: SnapshotSeen | null, generatedAt: string, now: number): SnapshotSeen | null {
+  if (now <= 0) return previous;
+  if (!previous) return { generatedAt, seenAt: now };
+  if (previous.generatedAt === generatedAt) return previous;
+  // Both timestamps come from the server, so comparing them is safe.
+  const before = parseTimestamp(previous.generatedAt);
+  const after = parseTimestamp(generatedAt);
+  if (before !== null && after !== null && after <= before) return previous;
+  return { generatedAt, seenAt: now };
+}
+
+/** Whether the snapshot first seen at `seenAt` has sat unchanged too long. False until mounted. */
+export function isStale(seenAt: number, now: number): boolean {
+  if (now <= 0 || seenAt <= 0) return false;
+  return now - seenAt > STALE_AFTER_MS;
 }
 
 /** An age in words a screen reader reads well: "7 min ago", "2 hours ago". */

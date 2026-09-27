@@ -10,6 +10,7 @@ import {
   lastPulseAt,
   nextPulseAt,
   nextRefetchAt,
+  noteSnapshot,
   parseTimestamp,
   pickRefetchJitter,
   PULSE_INTERVAL_MS,
@@ -80,16 +81,50 @@ describe("stale snapshots", () => {
   const generatedAt = "2026-09-22T12:00:00.000Z";
   const at = Date.parse(generatedAt);
 
-  it("turns stale after three missed refetches", () => {
+  it("turns stale after three slots without a new snapshot", () => {
     assert.equal(STALE_AFTER_MS, 3 * PULSE_INTERVAL_MS);
-    assert.equal(isStale(generatedAt, at + 90_000), false);
-    assert.equal(isStale(generatedAt, at + STALE_AFTER_MS), false);
-    assert.equal(isStale(generatedAt, at + STALE_AFTER_MS + 1), true);
+    assert.equal(isStale(at, at + 90_000), false);
+    assert.equal(isStale(at, at + STALE_AFTER_MS), false);
+    assert.equal(isStale(at, at + STALE_AFTER_MS + 1), true);
   });
 
-  it("claims nothing before mount and distrusts an unreadable time", () => {
-    assert.equal(isStale(generatedAt, 0), false);
-    assert.equal(isStale("garbage", at), true);
+  it("claims nothing before mount", () => {
+    assert.equal(isStale(at, 0), false);
+    assert.equal(isStale(0, at), false);
+    assert.equal(noteSnapshot(null, generatedAt, 0), null);
+  });
+
+  it("times a snapshot from when this browser first showed it", () => {
+    const seen = noteSnapshot(null, generatedAt, at + 30_000);
+    assert.deepEqual(seen, { generatedAt, seenAt: at + 30_000 });
+    // The same snapshot again keeps its first sighting.
+    assert.equal(noteSnapshot(seen, generatedAt, at + 150_000), seen);
+    const next = "2026-09-22T12:02:00.000Z";
+    assert.deepEqual(noteSnapshot(seen, next, at + 150_000), { generatedAt: next, seenAt: at + 150_000 });
+  });
+
+  it("ignores a snapshot older than the one on screen", () => {
+    const seen = noteSnapshot(null, generatedAt, at);
+    assert.equal(noteSnapshot(seen, "2026-09-22T11:58:00.000Z", at + 60_000), seen);
+    // Unreadable times cannot be ordered, so any change counts.
+    assert.equal(noteSnapshot(seen, "garbage", at + 60_000)?.seenAt, at + 60_000);
+  });
+
+  it("is not fooled by a browser clock seven minutes ahead", () => {
+    const skew = 7 * 60_000;
+    // The browser reads 12:07 when the server's 12:00 snapshot arrives.
+    const seen = noteSnapshot(null, generatedAt, at + skew);
+    assert.equal(isStale(seen?.seenAt ?? 0, at + skew + 60_000), false);
+    // Snapshots keep coming, each two minutes behind the browser's clock.
+    let current = seen;
+    for (let slot = 1; slot <= 10; slot += 1) {
+      const next = new Date(at + slot * PULSE_INTERVAL_MS).toISOString();
+      const clientNow = at + skew + slot * PULSE_INTERVAL_MS + 20_000;
+      current = noteSnapshot(current, next, clientNow);
+      assert.equal(isStale(current?.seenAt ?? 0, clientNow + 60_000), false);
+    }
+    // Then they stop.
+    assert.equal(isStale(current?.seenAt ?? 0, (current?.seenAt ?? 0) + STALE_AFTER_MS + 1), true);
   });
 
   it("says the age in words", () => {
