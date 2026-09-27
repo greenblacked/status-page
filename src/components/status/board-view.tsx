@@ -605,7 +605,12 @@ function SummaryPanel({
             id="board-headline"
             className="flex items-center gap-3 font-display text-2xl font-medium tracking-[-0.03em] text-balance sm:text-3xl"
           >
-            <HealthDot health={headline.tone} ping={headline.tone !== "operational"} className="size-2.5" />
+            <HealthDot
+              health={headline.tone}
+              ping={headline.tone !== "operational"}
+              pingColor="event"
+              className="size-2.5"
+            />
             {/* Live on the sentence alone: the counts below roll as they change. */}
             <span aria-live="polite">{headline.title}</span>
           </h2>

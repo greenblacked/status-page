@@ -667,14 +667,15 @@
 }
 
 /*
-  A card whose status just changed gets a stronger neutral rim. Neutral on
-  purpose: status colour belongs to the badge and the dot, never the whole
-  card, and the badge already says which way it changed.
+  A card whose status just changed takes the warm event rim: the one
+  thing on the board that says "this moved". Not a status colour, which
+  belongs to the badge and the dot, and the badge already says which way
+  it changed.
 */
 .service-card-changed {
   box-shadow:
     inset 0 1px 0 var(--rim-top),
-    0 0 0 1.5px color-mix(in oklab, var(--color-accent) 45%, transparent),
+    0 0 0 1.5px color-mix(in oklab, var(--color-event) 45%, transparent),
     0 18px 40px -24px var(--drop);
 }
 
@@ -705,7 +706,7 @@
 
 @keyframes changed-flash {
   0% {
-    outline: 2px solid color-mix(in oklab, var(--color-accent) 55%, transparent);
+    outline: 2px solid color-mix(in oklab, var(--color-event) 55%, transparent);
     outline-offset: 6px;
   }
   100% {
@@ -726,6 +727,11 @@
   border-radius: inherit;
   background: inherit;
   animation: ping 1.8s var(--ease-out) infinite;
+}
+
+/* The headline's ping when the board needs attention: the warm point. */
+.ping-event::after {
+  background: var(--color-event);
 }
 
 @keyframes ping {
