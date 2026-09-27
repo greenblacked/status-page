@@ -2,7 +2,8 @@
 
 | Workflow | Trigger | What it guards |
 | --- | --- | --- |
-| [`ci.yml`](ci.yml) | push to `main` or `dev` (not the commits `release.yml` pushes, which start no workflow), PRs into either, manual | Typecheck, tests, build and SSR smoke (`scripts/ci/smoke.sh`) on the Node version pinned in `.nvmrc` and on Node 24; repository hygiene, documentation links, shell scripts, commit messages, branch name, workflow syntax |
+| [`ci.yml`](ci.yml) | push to `main` or `dev` (not the commits `release.yml` pushes, which start no workflow), PRs into either, a merge queue, manual | One job per concern: `lint` (Biome, hygiene, documentation links, changelog section, shellcheck), `typecheck`, `test` (with coverage thresholds) and `build` plus SSR smoke (`scripts/ci/smoke.sh`) on the Node version in `.nvmrc` and on Node 24, `browser tests` (Playwright and axe against that build), `commit messages`, `branch name`, and `workflow lint` (actionlint and zizmor). `CI OK` passes only when all of them did and is the one check to require. Job summaries show coverage and client bundle sizes |
+| [`scorecard.yml`](scorecard.yml) | push to `main`, branch protection changes, weekly, manual | OpenSSF Scorecard: grades pinning, token permissions, branch protection, review and the rest of the supply chain, uploads findings to code scanning and publishes the score behind the README badge |
 | [`codeql.yml`](codeql.yml) | push to `main` or `dev`, PRs into either, weekly, manual | Static security and quality analysis of the TypeScript sources and of the workflows themselves (CodeQL's `actions` language) |
 | [`dependency-review.yml`](dependency-review.yml) | PRs into `main` or `dev` | Blocks high or critical vulnerabilities in dependency changes. Warns, and does not fail, when Dependency graph is off |
 | [`ci-triage.yml`](ci-triage.yml) | completion of CI, CodeQL or Dependency review on a PR | One self-updating comment per PR naming the failed job, the failed step and its likely cause, plus a `ci-failed` label. Reads the API only and never runs PR code. Active once on `main` |
@@ -13,11 +14,16 @@
 | [`pr-title.yml`](pr-title.yml) | PRs into `main` or `dev`, including title edits | The PR title is a Conventional Commit. A squash merge makes it the commit that `release.yml` reads once it reaches `main` |
 | [`base-images.yml`](base-images.yml) | PRs that change `compose.yaml`, its script or the dependencies; weekly; manual | Runs `compose.yaml` against the real `ci-node22`, `ci-node24` and `ci-security` images, so a base-image change that breaks this repository shows up here first |
 
+Jobs that need Node use the shared [`../actions/setup`](../actions/setup/action.yml) action: Node from `.nvmrc` (or a given version), npm pinned to `packageManager`, `npm ci` and `npm audit signatures`. `deploy.yml` and `release.yml` install explicitly instead, so the workflows that publish can be read on their own, and the release gate never restores a shared cache.
+
 Every check in `ci.yml` has a local equivalent:
 
 ```bash
-npm ci && npm run typecheck && npm test && npm run build
+npm ci && npm run check   # lint, typecheck, tests, hygiene and links
+npm run test:coverage     # unit tests against the coverage thresholds
+npm run build && npm run test:e2e   # browser tests; `npx playwright install chromium` once
 ./scripts/ci/hygiene.sh  # line endings, trailing whitespace, final newline, no `any`, no raw hex
+actionlint && uvx zizmor .github   # the workflow lint job: syntax, then a security audit
 ./scripts/ci/links.sh    # relative links in the Markdown docs
 ./scripts/ci/smoke.sh http://127.0.0.1:4173   # after `npm run preview`: the smoke test CI and the deploy run
 ./scripts/ci/commits.sh origin/dev..HEAD   # origin/main..HEAD for a fix branched from main
