@@ -50,6 +50,13 @@ jobs:
           fi
           test "$(npm --version)" = "11.9.0"
       - run: npm ci
+      # Checks every installed tarball against the registry's signature
+      # (and provenance attestation, where one is published), so a package
+      # altered in a cache or on the way in fails the run before it is
+      # tested or built. Install scripts have run by now; this catches
+      # tampering, not a malicious release the registry signed.
+      - name: Verify npm registry signatures
+        run: npm audit signatures
       - run: npm run typecheck
       - run: npm test
       - run: npm run build

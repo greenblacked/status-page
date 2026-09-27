@@ -261,6 +261,8 @@ You can also use **Workers & Pages → status-bar → Deployments** in the dashb
 Dependabot proposes npm and GitHub Actions updates weekly, grouped into production dependencies, development dependencies and Actions.
 
 - Actions stay pinned to a full commit SHA with the version in a trailing comment
+- A new release is proposed only after a cooldown, 7 days for npm and 3 for Actions, so a hijacked release that is pulled within days never reaches the lockfile. Security updates are not held back
+- CI and the deploy build run `npm audit signatures` right after `npm ci`, so a tarball that does not match the registry's signature fails the run
 - `@types/node` must match the oldest supported Node (`engines` and `.nvmrc`), so Dependabot skips its major versions. Raise it by hand in the same PR that raises `engines`
 
 ## Adding a service

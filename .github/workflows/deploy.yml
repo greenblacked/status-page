@@ -75,6 +75,10 @@ jobs:
           esac
 
       - run: npm ci
+      # Every installed tarball against the registry's signature, before
+      # any of it is built into the Worker (see ci.yml).
+      - name: Verify npm registry signatures
+        run: npm audit signatures
       - run: npm run typecheck
       - run: npm test
       - name: Build for Cloudflare Workers

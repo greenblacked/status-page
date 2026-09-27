@@ -39,6 +39,7 @@ Out of scope:
 ## How the repository defends itself
 
 - Every third-party Action is pinned to a full commit SHA, and the actionlint image is pinned by digest.
+- Dependabot waits out a cooldown before proposing a release (7 days for npm, 3 for Actions), and CI verifies every installed npm package's registry signature (`npm audit signatures`) before building.
 - Workflows default to read-only tokens. Jobs that write request only the scopes they need.
 - CodeQL and dependency review run on every pull request into `main` or `dev`.
 - The Cloudflare API token is an environment secret, limited to the `staging` and `production` environments, which admit only `dev` and `main`. Pull requests never receive it. The job that holds it installs with `--ignore-scripts` and runs no build, no npm script and no project JavaScript; the only repository file it runs is the post-deploy smoke test (bash and curl), in a step without the token ([CONTRIBUTING.md#deploying](CONTRIBUTING.md#deploying)). On Cloudflare, the deployed Worker itself has one binding, a KV namespace it reads and writes its own board snapshot in; nothing reaches it but the Worker's own scheduled job and requests to the board.
