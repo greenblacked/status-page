@@ -7,7 +7,7 @@
 // Appends to $GITHUB_STEP_SUMMARY when it is set, and prints to stdout
 // otherwise, so the same command shows the table locally.
 
-import { appendFileSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -61,10 +61,12 @@ export function renderBundle(assets: Asset[]): string {
 export function collectAssets(dir: string): Asset[] {
   const assets: Asset[] = [];
   const walk = (current: string) => {
-    for (const name of readdirSync(current)) {
-      const path = join(current, name);
-      if (statSync(path).isDirectory()) walk(path);
-      else if (/\.(js|css)$/.test(name)) {
+    // The directory entry says what it is, so there is no separate stat
+    // that the file could change between.
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile() && /\.(js|css)$/.test(entry.name)) {
         const content = readFileSync(path);
         assets.push({ path: relative(dir, path), bytes: content.length, gzip: gzipSync(content).length });
       }
