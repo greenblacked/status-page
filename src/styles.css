@@ -506,8 +506,12 @@
   }
   70%,
   100% {
-    /* 2.4: the outer ring reaches about 5px past the dot, inside the 8px gap to its label. */
-    transform: scale(2.4);
+    /*
+      1.7: the dot and its 1.5px ring are 5px in radius, so at full size the
+      ring ends 5px past the 3.5px dot and stays 3px clear of the 8px gap to
+      its label.
+    */
+    transform: scale(1.7);
     opacity: 0;
   }
 }
