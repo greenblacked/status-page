@@ -118,6 +118,48 @@ describe("collectAllServices shared fetches", () => {
   });
 });
 
+describe("collectAllServices vendor timestamps", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("keeps an active AWS event whose date is not a number, without a start time", async () => {
+    const recent = Math.floor(Date.now() / 1000) - 600;
+    const events = JSON.stringify([
+      {
+        arn: "arn:aws:health:eu-west-1::event/EC2/1",
+        date: "n/a",
+        region_name: "eu-west-1",
+        status: "1",
+        service_name: "Amazon EC2",
+        summary: "Increased API error rates",
+        event_log: [{ summary: "Investigating", message: "We are investigating", status: 1, timestamp: recent }],
+      },
+    ]);
+    // AWS serves this feed as UTF-16 with a byte-order mark.
+    const utf16 = new Uint8Array(Buffer.from(`﻿${events}`, "utf16le"));
+    stubFetch((url) =>
+      url === "https://health.aws.amazon.com/public/currentevents"
+        ? new Response(utf16)
+        : new Response("not found", { status: 404, statusText: "Not Found" }),
+    );
+
+    const aws = (await collectAllServices()).find((service) => service.id === "aws");
+
+    expect(aws?.failure).toBeUndefined();
+    expect(aws?.health).toBe("degraded");
+    expect(aws?.incidents).toHaveLength(1);
+    expect(aws?.incidents[0]?.startedAt).toBeUndefined();
+    expect(aws?.incidents[0]?.updatedAt).toBe(new Date(recent * 1000).toISOString());
+  });
+});
+
 describe("collectAllServices vendor links", () => {
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});

@@ -17,6 +17,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- One AWS or Apple event with an unreadable timestamp no longer turns the whole card Unknown; that event just shows without a start time.
 - The staging deployment no longer shows up in search results: it sends `X-Robots-Tag: noindex` and a `/robots.txt` that disallows crawling. Production, and any self-hosted build, now serves a `/robots.txt` that allows it.
 - On Cloudflare, an outage of the KV store that holds the board no longer turns every page into an error: the board is collected straight from the vendors instead, at most once a minute per server.
 - When no board can be produced at all, `/api/status.json`, `/feed.xml`, the badges and `/metrics` answer `503` with `Retry-After`, so feed readers, Shields.io and scrapers treat it as temporary instead of as a server error.

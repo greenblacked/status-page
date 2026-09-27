@@ -5,6 +5,7 @@ import {
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
+  epochToIso,
   grokItemActive,
   grokItemHealth,
   parseRssItems,
@@ -277,5 +278,19 @@ describe("collector failure classification", () => {
       kind: "parser",
       message: "Grok feed returned no readable items.",
     });
+  });
+});
+
+describe("epochToIso", () => {
+  it("converts epoch seconds and milliseconds, as numbers or numeric strings", () => {
+    assert.equal(epochToIso(1789558341, 1000), "2026-09-16T11:32:21.000Z");
+    assert.equal(epochToIso("1789558341", 1000), "2026-09-16T11:32:21.000Z");
+    assert.equal(epochToIso(1789558341000, 1), "2026-09-16T11:32:21.000Z");
+  });
+
+  it("returns undefined instead of throwing for anything that is not a usable timestamp", () => {
+    for (const value of [undefined, null, "", "n/a", "   ", 0, "0", Number.NaN, Number.POSITIVE_INFINITY, 1e20, {}, true]) {
+      assert.equal(epochToIso(value, 1000), undefined, String(value));
+    }
   });
 });

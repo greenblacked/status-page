@@ -340,6 +340,22 @@ function awsHealthFromEvent(event: AwsEvent): Health {
   return "degraded";
 }
 
+/**
+ * An epoch timestamp from a vendor payload as an ISO string, or undefined
+ * when it is missing, not a number ("n/a", ""), or outside the range a Date
+ * can hold. `new Date(NaN).toISOString()` throws a RangeError, and one bad
+ * timestamp on one event used to fail the whole collector and blank its
+ * card; a missing start time only loses one line of detail.
+ * `unitMs` is 1000 for seconds (AWS), 1 for milliseconds (Apple).
+ */
+export function epochToIso(value: unknown, unitMs: number): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const epoch = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
+  if (!Number.isFinite(epoch) || epoch === 0) return undefined;
+  const date = new Date(epoch * unitMs);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 async function collectAws(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -357,8 +373,8 @@ async function collectAws(): Promise<ServiceSnapshot> {
         id: event.arn ?? event.summary ?? crypto.randomUUID(),
         title: `${event.service_name ?? event.service ?? "AWS"} — ${event.summary ?? last?.summary ?? "Event"}`,
         health: itemHealth,
-        startedAt: event.date ? new Date(Number(event.date) * 1000).toISOString() : undefined,
-        updatedAt: last?.timestamp ? new Date(last.timestamp * 1000).toISOString() : undefined,
+        startedAt: epochToIso(event.date, 1000),
+        updatedAt: epochToIso(last?.timestamp, 1000),
         url: "https://health.aws.amazon.com/health/status",
       };
     });
@@ -591,7 +607,7 @@ async function collectApple(): Promise<ServiceSnapshot> {
           id: `${service.serviceName}-${event.epochStartDate ?? event.datePosted ?? event.message}`,
           title: `${service.serviceName}: ${event.message ?? event.statusType ?? "Issue"}`,
           health: itemHealth,
-          startedAt: event.epochStartDate ? new Date(event.epochStartDate).toISOString() : undefined,
+          startedAt: epochToIso(event.epochStartDate, 1),
           url: "https://www.apple.com/support/systemstatus/",
         });
       }
