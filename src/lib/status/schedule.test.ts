@@ -104,6 +104,16 @@ describe("stale snapshots", () => {
     assert.deepEqual(noteSnapshot(seen, next, at + 150_000), { generatedAt: next, seenAt: at + 150_000 });
   });
 
+  it("calls a snapshot stale on arrival when it is hours old by the server's clock", () => {
+    // Opened long after the board stopped: stale at once, with its real age.
+    const seen = noteSnapshot(null, generatedAt, at + 3 * 60 * 60_000);
+    assert.equal(seen?.seenAt, at);
+    assert.equal(isStale(seen?.seenAt ?? 0, at + 3 * 60 * 60_000), true);
+    // Within what clock skew could explain, the browser's clock still decides.
+    const skewed = noteSnapshot(null, generatedAt, at + 20 * 60_000);
+    assert.equal(isStale(skewed?.seenAt ?? 0, at + 20 * 60_000), false);
+  });
+
   it("ignores a snapshot older than the one on screen", () => {
     const seen = noteSnapshot(null, generatedAt, at);
     assert.equal(noteSnapshot(seen, "2026-09-22T11:58:00.000Z", at + 60_000), seen);

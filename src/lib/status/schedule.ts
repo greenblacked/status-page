@@ -76,13 +76,26 @@ export const STALE_AFTER_MS = 3 * PULSE_INTERVAL_MS;
 export type SnapshotSeen = { generatedAt: string; seenAt: number };
 
 /**
+ * A snapshot this old by the server's own timestamp, on the page's first
+ * sight of it, is stale whatever the browser's clock says: no real clock
+ * skew comes near half an hour, and without this a board that stopped
+ * hours ago would read "Live" for its first six minutes on screen.
+ */
+export const STALE_ON_ARRIVAL_MS = 30 * 60_000;
+
+/**
  * `previous`, or a new record when `generatedAt` has moved on. Only a newer
  * snapshot counts: an older one, from a cache that lags, is no sign of life.
  * Nothing is recorded before mount (`now` 0).
  */
 export function noteSnapshot(previous: SnapshotSeen | null, generatedAt: string, now: number): SnapshotSeen | null {
   if (now <= 0) return previous;
-  if (!previous) return { generatedAt, seenAt: now };
+  if (!previous) {
+    const at = parseTimestamp(generatedAt);
+    // Timed from the server's clock only when the gap dwarfs any skew.
+    const arrivedStale = at !== null && now - at > STALE_ON_ARRIVAL_MS;
+    return { generatedAt, seenAt: arrivedStale ? at : now };
+  }
   if (previous.generatedAt === generatedAt) return previous;
   // Both timestamps come from the server, so comparing them is safe.
   const before = parseTimestamp(previous.generatedAt);
