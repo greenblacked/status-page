@@ -12,7 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { healthLabel } from "@/lib/status/health";
 import type { HistoryDay } from "@/lib/status/history";
-import { serviceAnchor } from "@/lib/status/layout";
+import { serviceAnchor, serviceIndex } from "@/lib/status/layout";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
@@ -88,6 +88,10 @@ export function ServiceCard({
               {service.name}
             </h3>
             <p className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-subtle">
+              {/* The catalog index, like a numbered body on a plate. Decorative. */}
+              <span aria-hidden className="tabular-nums slashed-zero">
+                {serviceIndex(service.id)} ·{" "}
+              </span>
               {service.shortName}
               {emphasized ? " · changed" : ""}
             </p>
