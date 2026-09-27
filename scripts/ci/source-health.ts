@@ -105,7 +105,7 @@ type Issue = { number: number; created_at: string; pull_request?: unknown };
 
 function env(name: string): string {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is required with --issues`);
+  if (!value) throw new Error(`${name} is required to open or close GitHub issues`);
   return value;
 }
 
