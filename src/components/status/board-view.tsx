@@ -278,6 +278,7 @@ export function BoardView({
   return (
     <div className="liquid-stage text-fg">
       <div className="aurora" aria-hidden />
+      <div className="aurora-grid" aria-hidden />
       <div className="liquid-content">
         {/*
           First in the tab order, so a keyboard user can pass the header's
