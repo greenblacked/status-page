@@ -115,7 +115,9 @@ describe("ci triage", () => {
     await run();
     expect(comments).toHaveLength(1);
     expect(comments[0].body.startsWith(MARKER)).toBe(true);
-    expect(comments[0].body).toContain("`verify (node 24)` → `Run npm test`: test failure");
+    expect(comments[0].body).toContain(
+      "`verify (node 24)` → `Run npm test`: unit test failure, or coverage under its threshold",
+    );
     expect(comments[0].body).toContain("https://gh/job/9#step:7:1");
     expect(labels).toEqual(["ci-failed"]);
   });
@@ -222,5 +224,19 @@ describe("ci triage", () => {
     expect(categorize("CI", "commit messages", "Check Conventional Commits")).toBe("commit message format");
     expect(categorize("Dependency review", "dependency-review", "Review dependency changes")).toMatch(/vulnerability/);
     expect(categorize("CI", "verify", undefined)).toMatch(/^infrastructure/);
+    // The step names ci.yml uses.
+    expect(categorize("CI", "lint", "Set up the toolchain (npm ci)")).toMatch(/^dependency install/);
+    expect(categorize("CI", "lint", "Lint and format (Biome)")).toMatch(/^lint or formatting/);
+    expect(categorize("CI", "typecheck", "Typecheck")).toBe("type error");
+    expect(categorize("CI", "test (node pinned)", "Unit tests with coverage (npm run test:coverage)")).toMatch(
+      /^unit test failure/,
+    );
+    expect(categorize("CI", "test (node 24)", "Unit tests (npm test)")).toMatch(/^unit test failure/);
+    expect(categorize("CI", "build (node pinned)", "Build (npm run build)")).toBe("build");
+    expect(categorize("CI", "browser tests", "Browser tests (Playwright)")).toMatch(/^browser test failure/);
+    expect(categorize("CI", "lint", "Changelog covers package.json version")).toMatch(/^CHANGELOG/);
+    expect(categorize("CI", "branch name", "Check the branch naming convention")).toBe("branch name");
+    expect(categorize("CI", "workflow lint", "zizmor")).toBe("workflow security");
+    expect(categorize("CI", "CI OK", "Check every job passed")).toMatch(/required job/);
   });
 });
