@@ -127,7 +127,10 @@ jobs:
           set -uo pipefail
           worker="$(jq -r '.name' dist/server/wrangler.json)"
           log_file="${RUNNER_TEMP}/status-bar-worker.log"
-          setsid npx --no-install vite preview --port 4181 --strictPort </dev/null >"$log_file" 2>&1 &
+          # --host 127.0.0.1: without it the preview listens on "localhost",
+          # which is ::1 on GitHub's runners, and smoke.sh's 127.0.0.1 is
+          # never answered.
+          setsid npx --no-install vite preview --host 127.0.0.1 --port 4181 --strictPort </dev/null >"$log_file" 2>&1 &
           preview_pid=$!
           cleanup() {
             kill -- -"$preview_pid" 2>/dev/null || true

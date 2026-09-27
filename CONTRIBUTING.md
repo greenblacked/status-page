@@ -223,7 +223,7 @@ done
 
 ```bash
 DEPLOY_TARGET=cloudflare npm run build            # the production Worker in dist/
-DEPLOY_TARGET=cloudflare npx vite preview         # runs it in workerd, Cloudflare's runtime, with a local, simulated KV namespace
+DEPLOY_TARGET=cloudflare npx vite preview --host 127.0.0.1   # runs it in workerd, Cloudflare's runtime, with a local, simulated KV namespace
 npx wrangler deploy --dry-run --config dist/server/wrangler.json   # what would upload
 DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging npm run build      # the staging Worker
 ```
