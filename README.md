@@ -366,7 +366,7 @@ React 19 on TanStack Start, Tailwind CSS 4, TypeScript in strict mode, Vitest an
 | `npm run typecheck` | Type-check without emitting |
 | `npm test` | Unit tests, fully offline |
 | `npm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
-| `npm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `npm run build` first, and `npx playwright install chromium` once |
+| `npm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `npm run build` first, and `npx playwright install chromium webkit` once |
 | `npm run build` / `npm run preview` | Production build into `dist/`, and a local server for it |
 | `npm run build:cf` / `npm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
 | `npm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
@@ -394,7 +394,7 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 | Lint | Biome lint and format, repository hygiene, documentation links, the changelog section, shellcheck |
 | Types and tests | Strict typecheck; unit tests on the pinned Node and Node 24, with coverage thresholds |
 | Build | Production build and SSR smoke test on both Node versions, with the client bundle size in the job summary |
-| Browser | Playwright on desktop and mobile: no console errors or hydration warnings, axe WCAG 2.2 AA, keyboard paths |
+| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in light and dark: no console errors or hydration warnings, axe WCAG 2.2 AA, text contrast on the glass with the blur stripped away, keyboard paths |
 | Conventions | Conventional Commit messages and PR title, branch name |
 | Workflows | actionlint and zizmor, so no workflow change weakens the pipeline |
 | Security | CodeQL for TypeScript and the workflows, dependency review |

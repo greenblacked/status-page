@@ -71,3 +71,121 @@ test("fits the viewport without horizontal scrolling", async ({ page }) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test("carries the Apple device head tags, with the icon and manifest served", async ({ page, request }) => {
+  await page.goto("/");
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/);
+  await expect(page.locator('meta[name="theme-color"][media*="light"]')).toHaveCount(1);
+  await expect(page.locator('meta[name="theme-color"][media*="dark"]')).toHaveCount(1);
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Status Bar");
+  for (const rel of ["apple-touch-icon", "manifest"]) {
+    const link = page.locator(`link[rel="${rel}"]`);
+    await expect(link).toHaveCount(1);
+    const href = await link.getAttribute("href");
+    const response = await request.get(href!);
+    expect(response.status(), `${rel} ${href}`).toBe(200);
+  }
+});
+
+/** The computed backdrop filter, prefixed or not, for every element matching `selector`. */
+function backdropFilters(page: Page, selector: string): Promise<string[]> {
+  return page.locator(selector).evaluateAll((elements) =>
+    elements.map((element) => {
+      const style = getComputedStyle(element);
+      const value = style.getPropertyValue("backdrop-filter") || style.getPropertyValue("-webkit-backdrop-filter");
+      return value || "none";
+    }),
+  );
+}
+
+test("blurs the glass panels and never the whisper surfaces", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  const glass = await backdropFilters(page, ".glass");
+  expect(glass.some((value) => value.includes("blur("))).toBe(true);
+  const whisper = await backdropFilters(page, ".glass-whisper");
+  expect(whisper.length).toBeGreaterThan(0);
+  expect(whisper.filter((value) => value !== "none")).toEqual([]);
+});
+
+test("floats a compact header with the controls once the hero scrolls away", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  const header = page.getByRole("region", { name: "Board controls" });
+  await expect(header).toBeHidden();
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await expect(header).toBeVisible();
+  await expect(header.getByRole("button", { name: "Refresh status now" })).toBeVisible();
+  // Its Refresh and Alerts are second copies: no id may appear twice.
+  const duplicates = await page.evaluate(() => {
+    const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
+    return ids.filter((id, index) => ids.indexOf(id) !== index);
+  });
+  expect(duplicates).toEqual([]);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(header).toBeHidden();
+});
+
+test("keeps Reduce glass across a reload", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  const html = page.locator("html");
+  await expect(html).not.toHaveAttribute("data-reduce-transparency");
+
+  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  const toggle = page.getByRole("switch", { name: "Reduce glass" });
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await expect(html).toHaveAttribute("data-reduce-transparency", "true");
+  expect((await backdropFilters(page, ".glass")).filter((value) => value !== "none")).toEqual([]);
+
+  const problems = watchConsole(page);
+  await page.reload();
+  await expect(html).toHaveAttribute("data-reduce-transparency", "true");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await expect(page.getByRole("switch", { name: "Reduce glass" })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("switch", { name: "Reduce glass" }).click();
+  await expect(html).not.toHaveAttribute("data-reduce-transparency");
+  // The attribute set before hydration must not upset React.
+  expect(problems).toEqual([]);
+});
+
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`renders the ${colorScheme} appearance with no console errors`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme });
+    const problems = watchConsole(page);
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await page.waitForLoadState("networkidle");
+    expect(problems).toEqual([]);
+  });
+
+  // axe cannot measure text over a backdrop-filter or a gradient, so it
+  // reports those as incomplete rather than failing them. With every blur,
+  // gradient and pseudo-element stripped, only the materials' flat fills
+  // remain behind the text; this proves those alone keep it at WCAG AA.
+  test(`keeps text at AA contrast on the flat fills alone (${colorScheme})`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await page.addStyleTag({
+      content: `
+        *, *::before, *::after {
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+          background-image: none !important;
+          animation: none !important;
+          transition: none !important;
+        }
+        *::before, *::after { display: none !important; }
+      `,
+    });
+    const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+    const failing = results.violations.flatMap((violation) =>
+      violation.nodes.map((node) => `${node.target.join(" ")}: ${node.failureSummary ?? ""}`),
+    );
+    expect(failing).toEqual([]);
+  });
+}
