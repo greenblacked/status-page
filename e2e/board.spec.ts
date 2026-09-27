@@ -135,7 +135,7 @@ test("blurs the glass panels and never the whisper surfaces", async ({ page }) =
   expect(whisper.filter((value) => value !== "none")).toEqual([]);
 });
 
-test("floats a compact header with the controls once the hero scrolls away", async ({ page }) => {
+test("floats a compact header with the controls once the hero scrolls away", async ({ page, browserName }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   const header = page.getByRole("region", { name: "Board controls" });
@@ -154,8 +154,19 @@ test("floats a compact header with the controls once the hero scrolls away", asy
 
   // A click leaves focus on the button in Chromium; that must not hold the
   // bar over the hero's own controls once the page is back at the top.
+  // Clicked where it shows, once its fade-in has settled, as a tap would:
+  // Playwright's click first scrolls its target into view, and WebKit
+  // scrolls a stuck sticky bar to its place in the page, back over the hero.
   await page.locator("footer").scrollIntoViewIfNeeded();
-  await header.getByRole("button", { name: "Refresh status now" }).click();
+  const refresh = header.getByRole("button", { name: "Refresh status now" });
+  await expect(refresh).toBeInViewport();
+  // The bar's own transitions only: the live ring inside it never finishes.
+  await header.evaluate((bar) => Promise.all(bar.getAnimations().map((animation) => animation.finished)));
+  const box = await refresh.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  // Safari leaves a clicked button unfocused; Chromium focuses it, the case that matters.
+  if (browserName === "chromium") await expect(refresh).toBeFocused();
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(header).toBeHidden();
   // Hidden from the accessibility tree, so found by its markup instead.
