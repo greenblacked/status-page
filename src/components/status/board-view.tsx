@@ -7,10 +7,11 @@ import { HealthDot } from "@/components/status/health-dot";
 import { type Freshness, LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
 import { ServiceCard, ServiceTile } from "@/components/status/service-card";
-import { ShortcutsDialog } from "@/components/status/shortcuts-dialog";
+import { SettingsDialog } from "@/components/status/settings-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
 import { useNow } from "@/components/status/use-now";
+import { useReduceGlass } from "@/components/status/use-reduce-glass";
 import { useShortcuts, useSingleKeyShortcuts } from "@/components/status/use-shortcuts";
 import { useStarred } from "@/components/status/use-starred";
 import { Button } from "@/components/ui/button";
@@ -73,8 +74,9 @@ export function BoardView({
   const searchRef = useRef<HTMLInputElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
   const heroGone = useScrolledPast(heroRef);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
+  const reduceGlass = useReduceGlass();
   useSpotlight(mainRef);
   // Chosen once per page load: the tab keeps its own spot in every slot.
   const [refetchJitter] = useState(() => pickRefetchJitter());
@@ -265,7 +267,7 @@ export function BoardView({
           setFilters(DEFAULT_FILTERS);
           return;
         case "help":
-          setShortcutsOpen(true);
+          setSettingsOpen(true);
           return;
       }
     },
@@ -510,15 +512,16 @@ export function BoardView({
             {/*
               On every screen width: with the single-key shortcuts off, ? no
               longer opens the list, and this button is the way back to the
-              switch, including on a desktop zoomed to a phone's width.
+              switches, including on a desktop zoomed to a phone's width, and
+              the only way to them on a touch screen.
             */}
             <p>
               <button
                 type="button"
                 className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                onClick={() => setShortcutsOpen(true)}
+                onClick={() => setSettingsOpen(true)}
               >
-                Keyboard shortcuts
+                Settings and shortcuts
               </button>
               {singleKey.enabled ? (
                 <span className="hidden sm:inline">
@@ -528,11 +531,13 @@ export function BoardView({
               ) : null}
             </p>
           </footer>
-          <ShortcutsDialog
-            open={shortcutsOpen}
-            onClose={() => setShortcutsOpen(false)}
+          <SettingsDialog
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
             singleKey={singleKey.enabled}
             onSingleKeyChange={singleKey.setEnabled}
+            reduceGlass={reduceGlass.enabled}
+            onReduceGlassChange={reduceGlass.setEnabled}
           />
         </main>
       </div>

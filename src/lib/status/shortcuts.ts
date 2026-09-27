@@ -44,8 +44,8 @@ export type ShortcutOptions = {
    * Every shortcut that is one printable key: `/`, `?`, R, I, S and 1–6. A
    * speech-input user who dictates types characters, each of which would
    * fire one (WCAG 2.1.4), so they can be switched off together. Esc stays:
-   * it types nothing. The search box and the footer's keyboard shortcuts
-   * button, which holds the switch, stay a Tab away.
+   * it types nothing. The search box and the footer's settings and
+   * shortcuts button, which opens the switch, stay a Tab away.
    */
   singleKey: boolean;
 };
@@ -94,7 +94,7 @@ export const SHORTCUT_HELP: Array<{ keys: string[]; label: string; singleKey: bo
   { keys: ["S"], label: "Starred only", singleKey: true },
   { keys: ["R"], label: "Refresh now", singleKey: true },
   { keys: ["Esc"], label: "Clear search and filters", singleKey: false },
-  { keys: ["?"], label: "Show these shortcuts", singleKey: true },
+  { keys: ["?"], label: "Show settings and shortcuts", singleKey: true },
 ];
 
 export const SINGLE_KEY_STORAGE_KEY = "status-bar:single-key-shortcuts";

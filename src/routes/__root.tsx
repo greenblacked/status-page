@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { useState } from "react";
 import { APP_NAME } from "@/lib/status/catalog";
+import { REDUCE_GLASS_BOOT_SCRIPT } from "@/lib/status/glass";
 import appCss from "../styles.css?url";
 
 function RootDocument() {
@@ -15,6 +16,9 @@ function RootDocument() {
   );
 
   return (
+    // suppressHydrationWarning, <html> only: the Reduce glass boot script
+    // (scripts, below) may add data-reduce-transparency to this element
+    // before React hydrates it, which the server could not know about.
     <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
         <HeadContent />
@@ -76,6 +80,8 @@ export const Route = createRootRoute({
       { rel: "alternate", type: "application/atom+xml", title: `${APP_NAME} incidents`, href: "/feed.xml" },
       { rel: "stylesheet", href: appCss },
     ],
+    // Applies a stored Reduce glass choice before the first paint.
+    scripts: [{ children: REDUCE_GLASS_BOOT_SCRIPT }],
   }),
   component: RootDocument,
 });
