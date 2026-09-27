@@ -5,6 +5,7 @@ Vendor payloads for the collector tests in `../collectors.test.ts`. Each file st
 | File | Stands in for | Collector | Origin |
 | --- | --- | --- | --- |
 | `aws/currentevents.json` | `https://health.aws.amazon.com/public/currentevents` | `collectAws` | Hand-built |
+| `github/summary.json` | `https://www.githubstatus.com/api/v2/summary.json` | `collectGithub` | Recorded 2026-09-27, trimmed to 5 of 12 components |
 | `grok/feed.xml` | `https://status.x.ai/feed.xml` | `collectGrok` | Hand-built |
 | `mikrotik/NEWESTa*.*` | `https://upgrade.mikrotik.com/routeros/<file>`, one per channel | `collectMikrotik` | Hand-built |
 | `mikrotik/<version>/CHANGELOG` | `https://download.mikrotik.com/routeros/<version>/CHANGELOG` | `collectMikrotik` | Hand-built |
