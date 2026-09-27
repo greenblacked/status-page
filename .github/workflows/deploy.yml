@@ -112,7 +112,7 @@ jobs:
         run: npx --no-install wrangler deploy --dry-run --config dist/server/wrangler.json
 
   deploy:
-    name: deploy to ${{ needs.build.outputs.environment }}
+    name: deploy
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
