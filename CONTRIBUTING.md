@@ -177,7 +177,7 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 - **It is an environment secret, not a repository secret.** GitHub hands it only to a job that names the `staging` or `production` environment, and each environment admits one branch.
 - **Pull requests never get it,** from forks or not. The workflow has no `pull_request_target`, so pull request code never runs with secrets or a write token.
-- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there. It also runs no build, no npm script and no project JavaScript: it only uploads what the build job made (`no_bundle`), and only its deploy and rollback steps see the token. The one repository file it runs is the post-deploy smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh) (bash, curl and jq, from the same protected branch as the deploy), in a step without the token.
+- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there, and checks that install with `npm audit signatures`, so the wrangler that runs beside the token is the one the registry signed. It also runs no build, no npm script and no project JavaScript: it only uploads what the build job made (`no_bundle`), and only its deploy and rollback steps see the token. The one repository file it runs is the post-deploy smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh) (bash, curl and jq, from the same protected branch as the deploy), in a step without the token.
 - **It can do one thing.** The token is scoped to Workers on one account and expires.
 - **Nothing in the repository names the account.** `wrangler.jsonc` has no `account_id`; the workflow passes `CLOUDFLARE_ACCOUNT_ID` from the environment. Local secrets (`.dev.vars*`) and wrangler's state (`.wrangler`) are git-ignored.
 
@@ -262,7 +262,7 @@ Dependabot proposes npm and GitHub Actions updates weekly, grouped into producti
 
 - Actions stay pinned to a full commit SHA with the version in a trailing comment
 - A new release is proposed only after a cooldown, 7 days for npm and 3 for Actions, so a hijacked release that is pulled within days never reaches the lockfile. Security updates are not held back
-- CI and the deploy build run `npm audit signatures` right after `npm ci`, so a tarball that does not match the registry's signature fails the run
+- Every install in CI and in the deploy workflow (its build, its dry run and the deploy job that holds the token) runs `npm audit signatures` right after `npm ci`, so a tarball that does not match the registry's signature fails the run
 - `@types/node` must match the oldest supported Node (`engines` and `.nvmrc`), so Dependabot skips its major versions. Raise it by hand in the same PR that raises `engines`
 
 ## Adding a service
