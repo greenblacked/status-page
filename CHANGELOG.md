@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Security
+
+- Every page and API response now carries security headers: a Content-Security-Policy that allows only the board's own origin and forbids framing, HSTS, `nosniff`, a referrer policy and a permissions policy.
+
 ## [0.4.0] - 2026-09-26
 
 ### Added
