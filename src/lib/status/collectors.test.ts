@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { collectAllServices } from "./sources.server.ts";
-import { json, networkError, stubFetch, text } from "../../test/stub-fetch.ts";
+import type { ServiceId, ServiceSnapshot } from "./types.ts";
+import { bytes, json, networkError, stubFetch, text, utf16, type Handler } from "../../test/stub-fetch.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
 // Keep these in sync with the URLs the collectors actually fetch.
@@ -16,7 +18,31 @@ const URLS = {
   android: "https://status.play.google.com/incidents.json",
   chatgpt: "https://status.openai.com/api/v2/summary.json",
   claude: "https://status.claude.com/api/v2/summary.json",
+  aws: "https://health.aws.amazon.com/public/currentevents",
+  grok: "https://status.x.ai/feed.xml",
+  mikrotikUpgrade: "https://upgrade.mikrotik.com/routeros/",
+  mikrotikDownload: "https://download.mikrotik.com/routeros/",
+  appleOs: "https://developer.apple.com/news/releases/rss/releases.rss",
 };
+
+const FIXTURES = new URL("./__fixtures__/", import.meta.url);
+
+function fixture(path: string): string {
+  return readFileSync(new URL(path, FIXTURES), "utf8");
+}
+
+// The five RouterOS version channel files, each answering `body(file)`.
+const MIKROTIK_FILES = [
+  "NEWESTa7.stable",
+  "NEWESTa7.long-term",
+  "NEWESTa7.testing",
+  "NEWESTa7.development",
+  "NEWESTa6.long-term",
+];
+
+function mikrotikChannels(body: (file: string) => string): Record<string, Handler> {
+  return Object.fromEntries(MIKROTIK_FILES.map((file) => [`${URLS.mikrotikUpgrade}${file}`, text(body(file))]));
+}
 
 // Minimal but shape-correct Statuspage summary.json fixture.
 function statuspageSummary(overrides: {
@@ -483,5 +509,172 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     const snapshot = services.find((s) => s.id === "gcp")!;
     expect(snapshot.health).toBe("unknown");
     expect(snapshot.failure?.kind).toBe("parser");
+  });
+
+  // Whole payloads shaped like each vendor's real response, trimmed to a few
+  // items, rather than the one-field objects above. __fixtures__/README.md
+  // says where each comes from and how to refresh it.
+  describe("vendor payload fixtures", () => {
+    // The fixtures' dates are fixed, so pin the clock inside the collectors'
+    // 14-day windows. Only Date is faked: fetchText's abort timer stays real.
+    // Every timestamp sits near noon UTC, so the "Sep 18" style dates on the
+    // cards read the same in any time zone from UTC-11 to UTC+11.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function collect(id: ServiceId): Promise<ServiceSnapshot> {
+      const snapshot = (await collectAllServices()).find((s) => s.id === id);
+      if (!snapshot) throw new Error(`no snapshot for ${id}`);
+      return snapshot;
+    }
+
+    it("AWS currentevents: only the fresh, unresolved event is active, as regional impact", async () => {
+      stubFetch({ [URLS.aws]: bytes(utf16(fixture("aws/currentevents.json"))) });
+      const aws = await collect("aws");
+      expect(aws.failure).toBeUndefined();
+      expect(aws.health).toBe("degraded");
+      expect(aws.summary).toBe("Amazon Elastic Compute Cloud — Increased API Error Rates");
+      // The Lambda event reports resolved and the CloudFront one is 30 days
+      // old, so neither shows up as a component or an incident.
+      expect(aws.components).toEqual([
+        { name: "Amazon Elastic Compute Cloud (N. Virginia)", health: "degraded", detail: "Increased API Error Rates" },
+      ]);
+      expect(aws.incidents).toEqual([
+        {
+          id: "arn:aws:health:us-east-1::event/EC2/AWS_EC2_OPERATIONAL_ISSUE/AWS_EC2_OPERATIONAL_ISSUE_4E7B1C2D9A0F",
+          title: "Amazon Elastic Compute Cloud — Increased API Error Rates",
+          health: "degraded",
+          startedAt: "2026-09-20T10:00:00.000Z",
+          updatedAt: "2026-09-20T11:00:00.000Z",
+          url: "https://health.aws.amazon.com/health/status",
+        },
+      ]);
+      expect(aws.meta).toEqual({ publicEvents: 3, active: 1 });
+    });
+
+    it("AWS currentevents: a truncated payload is unknown with a parser failure", async () => {
+      const truncated = fixture("aws/currentevents.json").slice(0, 400);
+      stubFetch({ [URLS.aws]: bytes(utf16(truncated)) });
+      const aws = await collect("aws");
+      expect(aws.health).toBe("unknown");
+      expect(aws.failure?.kind).toBe("parser");
+      expect(aws.components).toEqual([]);
+      expect(aws.incidents).toEqual([]);
+    });
+
+    it("Grok feed.xml: a recent unresolved item is an incident; resolved and stale items are not", async () => {
+      stubFetch({ [URLS.grok]: text(fixture("grok/feed.xml")) });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("degraded");
+      expect(grok.summary).toBe("Elevated error rates on Grok & the xAI API");
+      expect(grok.components).toEqual([]);
+      expect(grok.incidents).toEqual([
+        {
+          id: "https://status.x.ai/incidents/01K5R8Q2V7M3",
+          title: "Elevated error rates on Grok & the xAI API",
+          health: "degraded",
+          startedAt: "2026-09-20T09:30:00.000Z",
+          url: "https://status.x.ai/incidents/01K5R8Q2V7M3",
+        },
+      ]);
+      expect(grok.meta).toBeUndefined();
+    });
+
+    it("Grok feed.xml: a feed with no RSS items (an Atom feed) is unknown with a parser failure", async () => {
+      stubFetch({
+        [URLS.grok]: text(
+          '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>xAI Status</title>' +
+            "<entry><title>Elevated errors</title></entry></feed>",
+        ),
+      });
+      const grok = await collect("grok");
+      expect(grok.health).toBe("unknown");
+      expect(grok.failure).toEqual({ kind: "parser", message: "Grok feed returned no readable items." });
+      expect(grok.summary).toBe("Grok feed returned no readable items.");
+      expect(grok.incidents).toEqual([]);
+    });
+
+    it("MikroTik: every channel becomes a component, and the newest release's CHANGELOG is the summary", async () => {
+      stubFetch({
+        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
+        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+      });
+      const mikrotik = await collect("mikrotik");
+      expect(mikrotik.failure).toBeUndefined();
+      expect(mikrotik.health).toBe("operational");
+      expect(mikrotik.summary).toBe(
+        "What's new in 7.21beta4 (2026-Sep-19 12:00) — bgp - fixed route refresh handling when the peer restarts",
+      );
+      // Released within 14 days reads as "maintenance": a fresh release is
+      // worth a look, not an all-clear.
+      expect(mikrotik.components).toEqual([
+        { name: "RouterOS 7 stable", health: "maintenance", detail: "7.20.2 · Sep 15" },
+        { name: "RouterOS 7 long-term", health: "operational", detail: "7.18.4 · Jul 22" },
+        { name: "RouterOS 7 testing", health: "maintenance", detail: "7.21beta3 · Sep 17" },
+        { name: "RouterOS 7 development", health: "maintenance", detail: "7.21beta4 · Sep 19" },
+        { name: "RouterOS 6 long-term", health: "operational", detail: "6.49.19 · Mar 3" },
+      ]);
+      expect(mikrotik.incidents).toEqual([]);
+      expect(mikrotik.meta).toEqual({
+        latest: "7.20.2",
+        versions:
+          "RouterOS 7 stable=7.20.2|RouterOS 7 long-term=7.18.4|RouterOS 7 testing=7.21beta3|" +
+          "RouterOS 7 development=7.21beta4|RouterOS 6 long-term=6.49.19",
+      });
+    });
+
+    it("MikroTik: channel files that answer but hold no version are unknown with a parser failure", async () => {
+      stubFetch(mikrotikChannels(() => "\n"));
+      const mikrotik = await collect("mikrotik");
+      expect(mikrotik.health).toBe("unknown");
+      expect(mikrotik.failure).toEqual({
+        kind: "parser",
+        message: "MikroTik answered 5 version channel(s) in an unrecognised format.",
+      });
+      expect(mikrotik.components).toEqual([]);
+      expect(mikrotik.meta).toBeUndefined();
+    });
+
+    it("Apple Developer Releases: the newest item per OS family, in family order, headed by the latest", async () => {
+      stubFetch({ [URLS.appleOs]: text(fixture("apple-os/releases.rss")) });
+      const appleOs = await collect("apple-os");
+      expect(appleOs.failure).toBeUndefined();
+      expect(appleOs.health).toBe("operational");
+      expect(appleOs.summary).toBe("Latest: iOS 26.1 beta 2 (23B5059e) · Sep 18");
+      // Xcode is not an OS and is skipped; the older iOS 26.0.1 loses to the
+      // beta listed above it; visionOS is older than 14 days.
+      expect(appleOs.components).toEqual([
+        { name: "iOS", health: "maintenance", detail: "26.1 beta 2 (23B5059e) · Sep 18" },
+        { name: "iPadOS", health: "maintenance", detail: "26.1 beta 2 (23B5059e) · Sep 18" },
+        { name: "macOS", health: "maintenance", detail: "Tahoe 26.1 beta 2 (25B5042k) · Sep 18" },
+        { name: "watchOS", health: "maintenance", detail: "26.0.1 (23R356) · Sep 14" },
+        { name: "tvOS", health: "maintenance", detail: "26.0.1 (23J583) · Sep 14" },
+        { name: "visionOS", health: "operational", detail: "26.0 (23M336) · Aug 21" },
+      ]);
+      expect(appleOs.incidents).toEqual([]);
+      expect(appleOs.meta).toEqual({
+        latest: "iOS 26.1 beta 2 (23B5059e)",
+        versions:
+          "iOS=26.1 beta 2 (23B5059e)|iPadOS=26.1 beta 2 (23B5059e)|macOS=Tahoe 26.1 beta 2 (25B5042k)|" +
+          "watchOS=26.0.1 (23R356)|tvOS=26.0.1 (23J583)|visionOS=26.0 (23M336)",
+      });
+    });
+
+    it("Apple Developer Releases: a page with no OS items is unknown with a parser failure", async () => {
+      stubFetch({
+        [URLS.appleOs]: text("<!DOCTYPE html><html><head><title>Apple Developer</title></head><body>We'll be back soon.</body></html>"),
+      });
+      const appleOs = await collect("apple-os");
+      expect(appleOs.health).toBe("unknown");
+      expect(appleOs.failure).toEqual({ kind: "parser", message: "Apple OS release feed had no OS items." });
+      expect(appleOs.components).toEqual([]);
+    });
   });
 });

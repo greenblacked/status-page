@@ -25,6 +25,22 @@ export function text(body: string, init: Init = {}): Handler {
     });
 }
 
+// Raw bytes, for a vendor whose payload is not UTF-8 text: the AWS collector
+// reads its Health feed as UTF-16 (fetchText's `binary` mode).
+export function bytes(body: Uint8Array<ArrayBuffer>, init: Init = {}): Handler {
+  return () =>
+    new Response(body, {
+      status: init.status ?? 200,
+      statusText: init.statusText,
+      headers: { "content-type": "application/json" },
+    });
+}
+
+/** `text` encoded as UTF-16LE behind a byte-order mark. */
+export function utf16(text: string): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(Buffer.from(`\uFEFF${text}`, "utf16le"));
+}
+
 // Simulates a network-level failure (DNS, connection reset, …) rather than
 // an HTTP error response: the handler rejects instead of returning a Response.
 export function networkError(message = "fetch failed"): Handler {

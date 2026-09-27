@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Releases - Apple Developer</title>
+    <link>https://developer.apple.com/news/releases/</link>
+    <atom:link href="https://developer.apple.com/news/releases/rss/releases.rss" rel="self" type="application/rss+xml"/>
+    <description>Apple Developer Releases</description>
+    <language>en-US</language>
+    <lastBuildDate>Fri, 18 Sep 2026 05:30:00 PDT</lastBuildDate>
+    <item>
+      <title>Xcode 26.1 beta 2 (17B5035f)</title>
+      <link>https://developer.apple.com/news/releases/?id=09182026e</link>
+      <guid>https://developer.apple.com/news/releases/?id=09182026e</guid>
+      <pubDate>Fri, 18 Sep 2026 05:40:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+    <item>
+      <title>iOS 26.1 beta 2 (23B5059e)</title>
+      <link>https://developer.apple.com/news/releases/?id=09182026a</link>
+      <guid>https://developer.apple.com/news/releases/?id=09182026a</guid>
+      <pubDate>Fri, 18 Sep 2026 05:30:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+    <item>
+      <title>iPadOS 26.1 beta 2 (23B5059e)</title>
+      <link>https://developer.apple.com/news/releases/?id=09182026b</link>
+      <guid>https://developer.apple.com/news/releases/?id=09182026b</guid>
+      <pubDate>Fri, 18 Sep 2026 05:00:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+    <item>
+      <title>macOS Tahoe 26.1 beta 2 (25B5042k)</title>
+      <link>https://developer.apple.com/news/releases/?id=09182026c</link>
+      <guid>https://developer.apple.com/news/releases/?id=09182026c</guid>
+      <pubDate>Fri, 18 Sep 2026 05:00:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+    <item>
+      <title>watchOS 26.0.1 (23R356)</title>
+      <link>https://developer.apple.com/news/releases/?id=09142026c</link>
+      <guid>https://developer.apple.com/news/releases/?id=09142026c</guid>
+      <pubDate>Mon, 14 Sep 2026 05:00:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+    <item>
+      <title>tvOS 26.0.1 (23J583)</title>
+      <link>https://developer.apple.com/news/releases/?id=09142026b</link>
+      <guid>https://developer.apple.com/news/releases/?id=09142026b</guid>
+      <pubDate>Mon, 14 Sep 2026 05:00:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+    <item>
+      <title>iOS 26.0.1 (23A355)</title>
+      <link>https://developer.apple.com/news/releases/?id=09142026a</link>
+      <guid>https://developer.apple.com/news/releases/?id=09142026a</guid>
+      <pubDate>Mon, 14 Sep 2026 05:00:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+    <item>
+      <title>visionOS 26.0 (23M336)</title>
+      <link>https://developer.apple.com/news/releases/?id=08212026a</link>
+      <guid>https://developer.apple.com/news/releases/?id=08212026a</guid>
+      <pubDate>Fri, 21 Aug 2026 05:00:00 PDT</pubDate>
+      <description><![CDATA[<p><a href="https://developer.apple.com/download/">View downloads</a></p>]]></description>
+    </item>
+  </channel>
+</rss>
