@@ -180,7 +180,10 @@ export function BoardView({
     if (!next) return;
     event.preventDefault();
     setRevealing(service.id);
-    withViewTransition(() => setFilters(next));
+    // Plainly, not in a View Transition: a filter change has to feel
+    // instant (see withViewTransition), and the cards' stagger already
+    // animates the board that comes back.
+    setFilters(next);
   }
   useEffect(() => {
     if (!revealing) return;
