@@ -10,6 +10,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 - A **Single-key shortcuts** switch in the keyboard shortcuts list (`?`) turns off the letter and number keys, for speech input or anyone who presses them by accident. `/`, `?` and `Esc` keep working, and the choice is kept in this browser.
 - A **Skip to services** link, the first stop when you press Tab, jumps past the header straight to the cards.
+- Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown", when the headline changes, and when a refresh fails.
 
 ### Changed
 

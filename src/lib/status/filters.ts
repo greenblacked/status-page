@@ -76,3 +76,11 @@ export function matchesFilters(
   const hay = `${service.name} ${service.shortName} ${service.summary} ${service.category}`.toLowerCase();
   return hay.includes(needle);
 }
+
+/**
+ * What the board's polite live region says once the filters settle, so a
+ * screen reader user hears what a filter or search left on the board.
+ */
+export function resultsAnnouncement(shown: number, total: number): string {
+  return `${shown} of ${total} ${total === 1 ? "service" : "services"} shown`;
+}

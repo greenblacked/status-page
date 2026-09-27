@@ -4,6 +4,7 @@ import {
   filtersFromSearch,
   matchesFilters,
   parseBoardSearch,
+  resultsAnnouncement,
   searchFromFilters,
 } from "./filters";
 import type { Health, ServiceId, ServiceSnapshot } from "./types";
@@ -84,5 +85,13 @@ describe("matchesFilters", () => {
     expect(matchesFilters(gcp, starredOnly, new Set(["gcp"]))).toBe(true);
     expect(matchesFilters(steam, starredOnly, new Set(["gcp"]))).toBe(false);
     expect(matchesFilters(gcp, starredOnly)).toBe(false);
+  });
+});
+
+describe("resultsAnnouncement", () => {
+  it("says how many services the filters leave", () => {
+    expect(resultsAnnouncement(3, 14)).toBe("3 of 14 services shown");
+    expect(resultsAnnouncement(0, 14)).toBe("0 of 14 services shown");
+    expect(resultsAnnouncement(1, 1)).toBe("1 of 1 service shown");
   });
 });

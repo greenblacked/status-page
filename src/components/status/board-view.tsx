@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
 import { APP_NAME, CATEGORIES } from "@/lib/status/catalog";
-import { type BoardFilters, DEFAULT_FILTERS, matchesFilters } from "@/lib/status/filters";
+import { type BoardFilters, DEFAULT_FILTERS, matchesFilters, resultsAnnouncement } from "@/lib/status/filters";
 import { attentionBreakdown } from "@/lib/status/health";
 import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
 import {
@@ -35,6 +35,9 @@ const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [
   { id: "all", label: "All" },
   ...CATEGORIES,
 ];
+
+// Long enough for a search to settle between keystrokes.
+const ANNOUNCE_DELAY_MS = 700;
 
 export function BoardView({
   initial,
@@ -125,6 +128,23 @@ export function BoardView({
       ),
     [board.services, filters, starred],
   );
+
+  // A screen reader hears what a filter or search left on the board once
+  // the typing stops, not after every key and not on the first load.
+  const [announcement, setAnnouncement] = useState("");
+  const shownCount = useRef({ shown: visible.length, total: board.services.length });
+  useEffect(() => {
+    shownCount.current = { shown: visible.length, total: board.services.length };
+  });
+  const announcedFilters = useRef(filters);
+  useEffect(() => {
+    if (filters === announcedFilters.current) return;
+    announcedFilters.current = filters;
+    const timer = window.setTimeout(() => {
+      setAnnouncement(resultsAnnouncement(shownCount.current.shown, shownCount.current.total));
+    }, ANNOUNCE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [filters]);
 
   const issueCount = board.services.length - board.counts.operational;
   // Starring moves a card, so it glides there like a refresh does.
@@ -295,6 +315,9 @@ export function BoardView({
               </Button>
             </div>
           </div>
+          <p role="status" className="sr-only">
+            {announcement}
+          </p>
         </header>
 
         {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
@@ -305,7 +328,7 @@ export function BoardView({
           className="relative mx-auto max-w-6xl scroll-mt-4 px-4 pb-20 outline-none sm:px-6"
         >
           {boardQuery.isError ? (
-            <p className="mb-4 rounded-2xl glass px-4 py-3 text-sm text-down">
+            <p role="alert" className="mb-4 rounded-2xl glass px-4 py-3 text-sm text-down">
               Could not refresh official sources. Showing the last successful snapshot.
             </p>
           ) : null}
@@ -321,7 +344,7 @@ export function BoardView({
               ) : visible.length === 0 ? (
                 // Stars load after hydration; until then an empty Starred view proves nothing.
                 starredOnly && !starsReady ? null : (
-                  <p className="rounded-3xl glass px-5 py-10 text-center text-muted">
+                  <p role="status" className="rounded-3xl glass px-5 py-10 text-center text-muted">
                     {starredOnly && starred.size === 0
                       ? "No starred services yet. Star a card to keep it here and at the top of the board."
                       : "No services match that filter."}
@@ -474,7 +497,8 @@ function SummaryPanel({
             className="flex items-center gap-3 font-display text-2xl font-medium tracking-[-0.03em] text-balance sm:text-3xl"
           >
             <HealthDot health={headline.tone} ping={headline.tone !== "operational"} className="size-2.5" />
-            {headline.title}
+            {/* Live on the sentence alone: the counts below roll as they change. */}
+            <span aria-live="polite">{headline.title}</span>
           </h2>
           <p className="mt-1.5 font-mono text-[11px] tabular-nums text-subtle">
             {attention ? attentionBreakdown(board.counts) : `All ${total} official sources report normal operation`}
