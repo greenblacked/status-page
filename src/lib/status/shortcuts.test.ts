@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type KeyInput, shortcutFor } from "./shortcuts";
+import {
+  type KeyInput,
+  parseSingleKeyPreference,
+  serializeSingleKeyPreference,
+  SHORTCUT_HELP,
+  shortcutFor,
+} from "./shortcuts";
 
 function press(key: string, code: string, extra: Partial<KeyInput> = {}): KeyInput {
   return {
@@ -62,5 +68,40 @@ describe("shortcutFor", () => {
 
   it("ignores held-down keys", () => {
     expect(shortcutFor(press("i", "KeyI", { repeat: true }))).toBeNull();
+  });
+});
+
+describe("single-key shortcuts switched off", () => {
+  const off = { singleKey: false };
+
+  it("drops the letter and number keys", () => {
+    expect(shortcutFor(press("r", "KeyR"), off)).toBeNull();
+    expect(shortcutFor(press("i", "KeyI"), off)).toBeNull();
+    expect(shortcutFor(press("s", "KeyS"), off)).toBeNull();
+    expect(shortcutFor(press("1", "Digit1"), off)).toBeNull();
+    expect(shortcutFor(press("6", "Numpad6"), off)).toBeNull();
+    // By physical key on a non-Latin layout, too.
+    expect(shortcutFor(press("к", "KeyR"), off)).toBeNull();
+  });
+
+  it("keeps search, help and Escape", () => {
+    expect(shortcutFor(press("/", "Slash"), off)).toEqual({ type: "focus-search" });
+    expect(shortcutFor(press("?", "Slash", { shiftKey: true }), off)).toEqual({ type: "help" });
+    expect(shortcutFor(press("Escape", "Escape"), off)).toEqual({ type: "reset" });
+    expect(shortcutFor(press("Escape", "Escape", { editable: true }), off)).toEqual({ type: "leave-search" });
+  });
+
+  it("marks exactly the keys the switch turns off", () => {
+    const switchable = SHORTCUT_HELP.filter((item) => item.singleKey).flatMap((item) => item.keys);
+    expect(switchable).toEqual(["1–6", "I", "S", "R"]);
+  });
+});
+
+describe("single-key preference", () => {
+  it("defaults to on and round-trips", () => {
+    expect(parseSingleKeyPreference(null)).toBe(true);
+    expect(parseSingleKeyPreference("garbage")).toBe(true);
+    expect(parseSingleKeyPreference(serializeSingleKeyPreference(false))).toBe(false);
+    expect(parseSingleKeyPreference(serializeSingleKeyPreference(true))).toBe(true);
   });
 });

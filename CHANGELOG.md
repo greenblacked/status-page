@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Added
+
+- A **Single-key shortcuts** switch in the keyboard shortcuts list (`?`) turns off the letter and number keys, for speech input or anyone who presses them by accident. `/`, `?` and `Esc` keep working, and the choice is kept in this browser.
+
 ### Changed
 
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.

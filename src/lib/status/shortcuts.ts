@@ -39,7 +39,19 @@ function digit(input: KeyInput): number | null {
   return match ? Number(match[1]) : null;
 }
 
-export function shortcutFor(input: KeyInput): ShortcutAction | null {
+export type ShortcutOptions = {
+  /**
+   * The letter and number keys (R, I, S, 1–6). A speech-input user who says
+   * a word types its letters, each of which would fire one (WCAG 2.1.4), so
+   * they can be switched off. `/`, `?` and Esc stay: they are how to reach
+   * the search box and the switch itself.
+   */
+  singleKey: boolean;
+};
+
+export const DEFAULT_SHORTCUT_OPTIONS: ShortcutOptions = { singleKey: true };
+
+export function shortcutFor(input: KeyInput, options: ShortcutOptions = DEFAULT_SHORTCUT_OPTIONS): ShortcutAction | null {
   // Browser and system shortcuts (Ctrl+R, Cmd+1) stay theirs.
   if (input.ctrlKey || input.metaKey || input.altKey) return null;
   if (input.editable) return input.key === "Escape" ? { type: "leave-search" } : null;
@@ -51,7 +63,7 @@ export function shortcutFor(input: KeyInput): ShortcutAction | null {
   if (input.key === "?" || (slashKey && input.shiftKey)) return { type: "help" };
   if (input.key === "/" || slashKey) return { type: "focus-search" };
   if (input.key === "Escape") return { type: "reset" };
-  if (input.shiftKey) return null;
+  if (input.shiftKey || !options.singleKey) return null;
   if (letter(input, "r")) return { type: "refresh" };
   if (letter(input, "i")) return { type: "toggle-issues" };
   if (letter(input, "s")) return { type: "toggle-starred" };
@@ -61,13 +73,31 @@ export function shortcutFor(input: KeyInput): ShortcutAction | null {
   return category ? { type: "category", category } : null;
 }
 
-/** What the help dialog lists, in the order it lists them. */
-export const SHORTCUT_HELP: Array<{ keys: string[]; label: string }> = [
-  { keys: ["/"], label: "Search services" },
-  { keys: [`1–${NUMBERED.length}`], label: `All, ${CATEGORIES.map((category) => category.label).join(", ")}` },
-  { keys: ["I"], label: "Issues only" },
-  { keys: ["S"], label: "Starred only" },
-  { keys: ["R"], label: "Refresh now" },
-  { keys: ["Esc"], label: "Clear search and filters" },
-  { keys: ["?"], label: "Show these shortcuts" },
+/**
+ * What the help dialog lists, in the order it lists them. `singleKey` marks
+ * the keys the single-key switch turns off.
+ */
+export const SHORTCUT_HELP: Array<{ keys: string[]; label: string; singleKey: boolean }> = [
+  { keys: ["/"], label: "Search services", singleKey: false },
+  {
+    keys: [`1–${NUMBERED.length}`],
+    label: `All, ${CATEGORIES.map((category) => category.label).join(", ")}`,
+    singleKey: true,
+  },
+  { keys: ["I"], label: "Issues only", singleKey: true },
+  { keys: ["S"], label: "Starred only", singleKey: true },
+  { keys: ["R"], label: "Refresh now", singleKey: true },
+  { keys: ["Esc"], label: "Clear search and filters", singleKey: false },
+  { keys: ["?"], label: "Show these shortcuts", singleKey: false },
 ];
+
+export const SINGLE_KEY_STORAGE_KEY = "status-bar:single-key-shortcuts";
+
+/** On unless this browser switched them off; anything unreadable counts as on. */
+export function parseSingleKeyPreference(raw: string | null): boolean {
+  return raw !== "off";
+}
+
+export function serializeSingleKeyPreference(on: boolean): string {
+  return on ? "on" : "off";
+}

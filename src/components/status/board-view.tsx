@@ -8,7 +8,7 @@ import { ServiceCard, ServiceTile } from "@/components/status/service-card";
 import { ShortcutsDialog } from "@/components/status/shortcuts-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
-import { useShortcuts } from "@/components/status/use-shortcuts";
+import { useShortcuts, useSingleKeyShortcuts } from "@/components/status/use-shortcuts";
 import { useStarred } from "@/components/status/use-starred";
 import { useNow } from "@/components/status/use-now";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,7 @@ export function BoardView({
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const singleKey = useSingleKeyShortcuts();
   useSpotlight(mainRef);
 
   const boardQuery = useQuery({
@@ -179,7 +180,7 @@ export function BoardView({
         setShortcutsOpen(true);
         return;
     }
-  });
+  }, { singleKey: singleKey.enabled });
 
   return (
     <div className="liquid-stage text-fg">
@@ -390,7 +391,12 @@ export function BoardView({
               .
             </p>
           </footer>
-          <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+          <ShortcutsDialog
+            open={shortcutsOpen}
+            onClose={() => setShortcutsOpen(false)}
+            singleKey={singleKey.enabled}
+            onSingleKeyChange={singleKey.setEnabled}
+          />
         </main>
       </div>
     </div>
