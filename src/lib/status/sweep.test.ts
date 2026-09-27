@@ -117,3 +117,73 @@ describe("collectAllServices shared fetches", () => {
     expect(fortnite?.failure).toEqual(epic?.failure);
   });
 });
+
+describe("collectAllServices vendor links", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function incidentUrls(services: Awaited<ReturnType<typeof collectAllServices>>, id: string) {
+    return services.find((service) => service.id === id)?.incidents.map((incident) => incident.url);
+  }
+
+  it("keeps vendor links on the vendor's hosts and replaces anything else with the catalog page", async () => {
+    const statuspage = (shortlinks: string[]) =>
+      JSON.stringify({
+        status: { indicator: "minor", description: "Minor" },
+        incidents: shortlinks.map((shortlink, index) => ({
+          id: `i${index}`,
+          name: `Incident ${index}`,
+          status: "investigating",
+          impact: "minor",
+          shortlink,
+        })),
+      });
+    const recent = new Date(Date.now() - 60_000).toUTCString();
+    const grokFeed = [
+      "<rss><channel>",
+      `<item><title>Good</title><description>Degraded API</description><pubDate>${recent}</pubDate><link>https://status.x.ai/incidents/1</link></item>`,
+      `<item><title>Offsite</title><description>Degraded API</description><pubDate>${recent}</pubDate><link>https://evil.test/phish</link></item>`,
+      `<item><title>Script</title><description>Degraded API</description><pubDate>${recent}</pubDate><link>javascript:alert(1)</link></item>`,
+      "</channel></rss>",
+    ].join("");
+    const google = JSON.stringify([
+      { id: "a", begin: "2026-09-20T00:00:00Z", external_desc: "Errors", status_impact: "SERVICE_DISRUPTION", uri: "incidents/abc" },
+      { id: "b", begin: "2026-09-20T00:00:00Z", external_desc: "Errors", status_impact: "SERVICE_DISRUPTION", uri: "https://evil.test/x" },
+      { id: "c", begin: "2026-09-20T00:00:00Z", external_desc: "Errors", status_impact: "SERVICE_DISRUPTION", uri: "javascript:alert(1)" },
+    ]);
+    stubFetch((url) => {
+      if (url === CLAUDE) {
+        return new Response(statuspage(["https://stspg.io/abc", "javascript:alert(1)", "https://evil.test/x", "https://status.claude.com/incidents/9"]));
+      }
+      if (url === "https://status.x.ai/feed.xml") return new Response(grokFeed);
+      if (url === "https://status.cloud.google.com/incidents.json") return new Response(google);
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+
+    const services = await collectAllServices();
+
+    expect(incidentUrls(services, "claude")).toEqual([
+      "https://stspg.io/abc",
+      "https://status.claude.com/",
+      "https://status.claude.com/",
+      "https://status.claude.com/incidents/9",
+    ]);
+    expect(incidentUrls(services, "grok")).toEqual([
+      "https://status.x.ai/incidents/1",
+      "https://status.x.ai/",
+      "https://status.x.ai/",
+    ]);
+    expect(incidentUrls(services, "gcp")).toEqual([
+      "https://status.cloud.google.com/incidents/abc",
+      "https://status.cloud.google.com/",
+      "https://status.cloud.google.com/",
+    ]);
+  });
+});

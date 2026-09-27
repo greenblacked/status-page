@@ -5,10 +5,12 @@ import {
   isFreshRelease,
   latestAppleOsByFamily,
   MIKROTIK_CHANNELS,
+  mikrotikChangelogUrl,
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
 import { fetchJson, fetchText, meteredBytes, meterBytes, PayloadError, SourceError } from "./http.ts";
+import { hostOf, vendorUrl } from "./vendor-url.ts";
 import {
   googleImpact,
   overallSummary,
@@ -173,7 +175,8 @@ function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }> {
   return fn().then((value) => ({ value, ms: Date.now() - started }));
 }
 
-function googleIncidents(incidents: GoogleIncident[], sourceRoot: string) {
+function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
+  const { sourceUrl } = CATALOG_BY_ID[id];
   const open = incidents.filter((incident) => !incident.end);
   let health: Health = "operational";
   const components: ComponentHealth[] = [];
@@ -195,10 +198,11 @@ function googleIncidents(incidents: GoogleIncident[], sourceRoot: string) {
       health: itemHealth,
       startedAt: incident.begin,
       updatedAt: incident.modified,
-      // Resolved against the root rather than concatenated: the feed's
-      // "incidents/<id>" form has no leading slash, and concatenation
-      // produced "https://status.cloud.google.comincidents/<id>".
-      url: incident.uri ? new URL(incident.uri, `${sourceRoot.replace(/\/$/, "")}/`).href : sourceRoot,
+      // Resolved rather than concatenated: the feed's "incidents/<id>" form
+      // has no leading slash, and concatenation produced
+      // "https://status.cloud.google.comincidents/<id>". vendorUrl keeps it
+      // on Google's own status host, whatever the feed says.
+      url: vendorUrl(incident.uri, sourceUrl, [hostOf(sourceUrl)]),
     };
   });
   return { health, incidents: mapped, components };
@@ -211,6 +215,8 @@ function fromStatuspage(
   componentFilter?: (name: string, group?: boolean) => boolean,
 ): ServiceSnapshot {
   const checkedAt = new Date().toISOString();
+  const { sourceUrl } = CATALOG_BY_ID[id];
+  const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
   const components = (data.components ?? [])
     .filter((component) => (componentFilter ? componentFilter(component.name, component.group) : !component.group))
     .map((component) => ({
@@ -245,7 +251,9 @@ function fromStatuspage(
       health: statuspageIndicator(incident.impact),
       startedAt: incident.started_at,
       updatedAt: incident.updated_at,
-      url: incident.shortlink,
+      // Statuspage writes incident shortlinks on stspg.io; the vendor's own
+      // status host is allowed too. No shortlink stays no link, as before.
+      url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
     }));
 
   const maintenances = (data.scheduled_maintenances ?? []).filter((item) => {
@@ -278,7 +286,7 @@ async function collectGcp(): Promise<ServiceSnapshot> {
     const { value, ms } = await timed(() =>
       fetchJson<GoogleIncident[]>("https://status.cloud.google.com/incidents.json"),
     );
-    const parsed = googleIncidents(value, "https://status.cloud.google.com");
+    const parsed = googleIncidents(value, "gcp");
     return {
       ...base("gcp", new Date().toISOString(), ms),
       health: parsed.health,
@@ -607,7 +615,7 @@ async function collectAndroid(): Promise<ServiceSnapshot> {
     const { value, ms } = await timed(() =>
       fetchJson<GoogleIncident[]>("https://status.play.google.com/incidents.json"),
     );
-    const parsed = googleIncidents(value, "https://status.play.google.com");
+    const parsed = googleIncidents(value, "android");
     return {
       ...base("android", new Date().toISOString(), ms),
       health: parsed.health,
@@ -764,7 +772,7 @@ async function collectGrok(): Promise<ServiceSnapshot> {
         title: item.title,
         health: itemHealth,
         startedAt: item.pubDate ? new Date(item.pubDate).toISOString() : undefined,
-        url: item.link ?? "https://status.x.ai/",
+        url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
       };
     });
     return {
@@ -839,9 +847,12 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
       }, channels[0]);
       let notes = "";
       const notesVersion = newest?.version ?? stable?.version;
-      if (notesVersion) {
+      // parseMikrotikNewest already refuses a malformed version; building
+      // the URL through the same check keeps it that way if that changes.
+      const notesUrl = notesVersion ? mikrotikChangelogUrl(notesVersion) : null;
+      if (notesUrl) {
         try {
-          const changelog = await fetchText(`https://download.mikrotik.com/routeros/${notesVersion}/CHANGELOG`);
+          const changelog = await fetchText(notesUrl);
           notes = summarizeMikrotikChangelog(changelog.body);
         } catch {
           notes = "";
