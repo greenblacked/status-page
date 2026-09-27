@@ -1,1 +1,1 @@
-__LOAD_FROM__/workspace/status-page/src/lib/status/sources.server.ts
+@file:///workspace/sources_raw_for_mcp.ts
