@@ -9,6 +9,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Changed
 
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
+- A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically.
 
 ### Security
 

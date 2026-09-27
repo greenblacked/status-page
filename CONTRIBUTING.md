@@ -175,7 +175,7 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 - **It is an environment secret, not a repository secret.** GitHub hands it only to a job that names the `staging` or `production` environment, and each environment admits one branch.
 - **Pull requests never get it,** from forks or not. The workflow has no `pull_request_target`, so pull request code never runs with secrets or a write token.
-- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there. It also runs no project code and no build: it only uploads what the build job made (`no_bundle`), and only its deploy step sees the token.
+- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there. It also runs no project code and no build: it only uploads what the build job made (`no_bundle`), and only its deploy and rollback steps see the token.
 - **It can do one thing.** The token is scoped to Workers on one account and expires.
 - **Nothing in the repository names the account.** `wrangler.jsonc` has no `account_id`; the workflow passes `CLOUDFLARE_ACCOUNT_ID` from the environment. Local secrets (`.dev.vars*`) and wrangler's state (`.wrangler`) are git-ignored.
 
