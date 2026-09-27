@@ -53,4 +53,29 @@ describe("kv-snapshot-store", () => {
     await expect(readSnapshot(kv)).resolves.toEqual(board({ durationMs: 2 }));
     expect(kv.store.size).toBe(1);
   });
+
+  it("reads null for a value that is not JSON, so the next sweep replaces it", async () => {
+    const kv = fakeKv();
+    kv.store.set("board", "{not json");
+
+    await expect(readSnapshot(kv)).resolves.toBeNull();
+  });
+
+  it("reads null for JSON of another shape, such as an older format", async () => {
+    const kv = fakeKv();
+    kv.store.set("board", JSON.stringify({ version: 2, data: [] }));
+    await expect(readSnapshot(kv)).resolves.toBeNull();
+
+    kv.store.set("board", JSON.stringify(board({ generatedAt: "yesterday" })));
+    await expect(readSnapshot(kv)).resolves.toBeNull();
+  });
+
+  it("still throws when KV itself fails, rather than treating it as empty", async () => {
+    const failing: SnapshotKv = {
+      get: () => Promise.reject(new Error("KV unavailable")),
+      put: () => Promise.resolve(),
+    };
+
+    await expect(readSnapshot(failing)).rejects.toThrow("KV unavailable");
+  });
 });

@@ -125,4 +125,38 @@ describe("createBoardSnapshotReader", () => {
     expect(collectBoard).toHaveBeenCalledTimes(1);
     await drain();
   });
+
+  it("read() keeps serving the last board when KV fails after the memo expires", async () => {
+    vi.useFakeTimers();
+    try {
+      const kv = fakeKv(board("2026-09-27T00:02:00.000Z"));
+      const reader = createBoardSnapshotReader(kv);
+      const { waitUntil } = waitUntilSpy();
+      await reader.read(waitUntil);
+
+      kv.get = () => Promise.reject(new Error("KV unavailable"));
+      vi.advanceTimersByTime(10_000);
+
+      await expect(reader.read(waitUntil)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
+      expect(collectBoard).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("read() fails when KV fails and the isolate has nothing to fall back on", async () => {
+    const kv = fakeKv();
+    kv.get = () => Promise.reject(new Error("KV unavailable"));
+    const reader = createBoardSnapshotReader(kv);
+
+    await expect(reader.read(waitUntilSpy().waitUntil)).rejects.toThrow("KV unavailable");
+  });
+
+  it("refresh() still works when called detached from the reader", async () => {
+    const kv = fakeKv();
+    vi.mocked(collectBoard).mockResolvedValue(board("2026-09-27T00:02:00.000Z"));
+    const { refresh } = createBoardSnapshotReader(kv);
+
+    await expect(refresh(waitUntilSpy().waitUntil)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
+  });
 });

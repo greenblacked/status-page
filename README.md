@@ -247,7 +247,7 @@ Usually under three minutes old. Each board asks the server every two minutes.
 
 Running on Node (`npm run build`/`npm run preview`, or any other Node host), the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago. Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
 
-Running on Cloudflare Workers, a scheduled job collects every vendor every two minutes and every request just reads that result, so it never waits on a vendor either. **Refresh** there shows the newest scheduled snapshot rather than forcing a new sweep, so it is never more than two minutes old.
+Running on Cloudflare Workers, a scheduled job collects every vendor every two minutes and every request just reads that result, so it never waits on a vendor either. **Refresh** there shows the newest scheduled snapshot rather than forcing a new sweep. Allowing for the schedule, Cloudflare's own read caching and each board's two-minute check, what you see is usually a few minutes old at most.
 
 </details>
 

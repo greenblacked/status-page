@@ -69,4 +69,15 @@ describe("runScheduledSweep", () => {
     expect(collectBoard).toHaveBeenCalledTimes(1);
     await expect(readSnapshot(kv)).resolves.toEqual(board("2026-09-27T00:04:00.000Z"));
   });
+
+  it("replaces a stored value it cannot read instead of failing on it forever", async () => {
+    const kv = fakeKv();
+    kv.store.set("board", "{not json");
+    vi.mocked(collectBoard).mockResolvedValue(board("2026-09-27T00:04:00.000Z"));
+
+    await runScheduledSweep(kv, () => Date.parse("2026-09-27T00:04:00.000Z"));
+
+    expect(collectBoard).toHaveBeenCalledTimes(1);
+    await expect(readSnapshot(kv)).resolves.toEqual(board("2026-09-27T00:04:00.000Z"));
+  });
 });

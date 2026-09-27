@@ -38,3 +38,8 @@ export const refreshStatusBoard = createServerFn({ method: "POST" }).handler(asy
   const { waitUntil } = getCloudflareContext();
   return boardReader().refresh(waitUntil);
 });
+
+// Type-checks this file against board.ts: tsc resolves "@/lib/status/board"
+// to board.ts whatever DEPLOY_TARGET is, so without this a renamed export or a
+// changed signature here would only show up in a Cloudflare build.
+({ getStatusBoard, fetchStatusBoard, loadStatusBoardForPage, refreshStatusBoard }) satisfies typeof import("./board");

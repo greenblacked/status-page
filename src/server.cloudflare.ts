@@ -20,7 +20,9 @@ export default {
     return runWithCloudflareContext({ env, waitUntil: ctx.waitUntil.bind(ctx) }, () => handleRequest(request));
   },
 
-  scheduled(_event: ScheduledController, env: CloudflareEnv, ctx: ExecutionContext): void {
-    ctx.waitUntil(runScheduledSweep(env.STATUS_SNAPSHOT));
+  // Awaited rather than handed to waitUntil, so a sweep that throws shows as
+  // a failed cron run in the dashboard's past events, which is what to alert on.
+  async scheduled(_event: ScheduledController, env: CloudflareEnv): Promise<void> {
+    await runScheduledSweep(env.STATUS_SNAPSHOT);
   },
 };

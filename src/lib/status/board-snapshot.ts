@@ -51,11 +51,18 @@ export function createBoardSnapshotReader(kv: SnapshotKv): BoardSnapshotReader {
     return inflight;
   }
 
+  function read(waitUntil: WaitUntil): Promise<BoardSnapshot> {
+    if (cached && Date.now() - cached.at < ISOLATE_MEMO_MS) return Promise.resolve(cached.value);
+    // If KV itself fails, an isolate that has shown a board keeps showing it
+    // rather than turning every request into an error.
+    return loadFresh(waitUntil).catch((error: unknown) => {
+      if (cached) return cached.value;
+      throw error;
+    });
+  }
+
   return {
-    read(waitUntil: WaitUntil): Promise<BoardSnapshot> {
-      if (cached && Date.now() - cached.at < ISOLATE_MEMO_MS) return Promise.resolve(cached.value);
-      return loadFresh(waitUntil);
-    },
+    read,
 
     async refresh(waitUntil: WaitUntil): Promise<BoardSnapshot> {
       // The Refresh button never sweeps vendors itself on Workers: doing so
@@ -73,7 +80,7 @@ export function createBoardSnapshotReader(kv: SnapshotKv): BoardSnapshotReader {
       }
       // KV still empty: fall back to the same cold-start path as a normal
       // read, so Refresh works even before the first cron tick has landed.
-      return this.read(waitUntil);
+      return read(waitUntil);
     },
   };
 }
