@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { fixtureBoard, serveBoard } from "./fixture-board";
 
 const SERVICES = 14;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
@@ -37,12 +38,31 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
   expect(blocking).toEqual([]);
 });
 
-test("starts the tab order with a skip link that moves focus to the services", async ({ page, isMobile }) => {
+test("starts the tab order with a skip link that moves focus to the services", async ({
+  page,
+  isMobile,
+  browserName,
+}) => {
   test.skip(isMobile, "no Tab key on a touch device");
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await page.keyboard.press("Tab");
   const skip = page.getByRole("link", { name: "Skip to services" });
+  // First in the tab order by the markup itself: nothing before it can take
+  // focus, and the compact header, hidden at the top, is inert.
+  const first = await page.evaluate(() => {
+    const focusable = [...document.querySelectorAll<HTMLElement>("a[href], button, input, [tabindex]")].find(
+      (element) => element.tabIndex >= 0 && !element.closest("[inert]"),
+    );
+    return focusable?.textContent?.trim();
+  });
+  expect(first).toBe("Skip to services");
+  if (browserName === "webkit") {
+    // Safari only tabs to links with a setting switched on, and WebKit's
+    // Tab handling differs by platform, so focus it directly there.
+    await skip.focus();
+  } else {
+    await page.keyboard.press("Tab");
+  }
   await expect(skip).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator("main#services")).toBeFocused();
@@ -170,31 +190,61 @@ for (const colorScheme of ["light", "dark"] as const) {
     await page.waitForLoadState("networkidle");
     expect(problems).toEqual([]);
   });
+}
 
-  // axe cannot measure text over a backdrop-filter or a gradient, so it
-  // reports those as incomplete rather than failing them. With every blur,
-  // gradient and pseudo-element stripped, only the materials' flat fills
-  // remain behind the text; this proves those alone keep it at WCAG AA.
-  test(`keeps text at AA contrast on the flat fills alone (${colorScheme})`, async ({ page }) => {
-    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-    await page.goto("/");
-    await expect(cards(page)).toHaveCount(SERVICES);
-    await page.addStyleTag({
-      content: `
-        *, *::before, *::after {
-          backdrop-filter: none !important;
-          -webkit-backdrop-filter: none !important;
-          background-image: none !important;
-          animation: none !important;
-          transition: none !important;
-        }
-        *::before, *::after { display: none !important; }
-      `,
-    });
-    const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
-    const failing = results.violations.flatMap((violation) =>
-      violation.nodes.map((node) => `${node.target.join(" ")}: ${node.failureSummary ?? ""}`),
-    );
-    expect(failing).toEqual([]);
+/**
+ * axe cannot measure text over a backdrop-filter or a gradient: it reports
+ * those as incomplete rather than failing them. With every blur, gradient
+ * and pseudo-element stripped, only the materials' flat fills remain behind
+ * the text, so a pass proves those alone keep it at WCAG AA.
+ */
+async function contrastFailures(page: Page): Promise<string[]> {
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        backdrop-filter: none !important;
+        -webkit-backdrop-filter: none !important;
+        background-image: none !important;
+        animation: none !important;
+        transition: none !important;
+      }
+      *::before, *::after { display: none !important; }
+    `,
   });
+  const results = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+  return results.violations.flatMap((violation) =>
+    violation.nodes.map((node) => `${node.target.join(" ")}: ${node.failureSummary ?? ""}`),
+  );
+}
+
+// On the fixture board, so every status colour, badge, incident time and
+// the Stale state are on screen, whatever the vendors say during the run.
+for (const colorScheme of ["light", "dark"] as const) {
+  for (const contrast of ["no-preference", "more"] as const) {
+    const name = `${colorScheme}${contrast === "more" ? ", Increase Contrast" : ""}`;
+    test(`keeps every text colour at AA on the flat fills alone (${name})`, async ({ page }) => {
+      await page.clock.install();
+      const board = fixtureBoard(Date.now());
+      await serveBoard(page, () => board);
+      await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
+      await page.goto("/");
+      await expect(cards(page)).toHaveCount(SERVICES);
+      await page.getByRole("button", { name: "Refresh status now" }).first().click();
+      for (const label of ["Outage", "Degraded", "Maintenance", "Unknown", "Operational"]) {
+        await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
+      }
+      await expect(page.getByText(/^since \d\d:\d\d UTC/).first()).toBeVisible();
+      expect(await contrastFailures(page)).toEqual([]);
+
+      // Seven minutes on, the same snapshot again: the board says Stale.
+      await page.clock.fastForward("07:00");
+      await expect(page.getByText("Stale", { exact: true })).toBeVisible();
+      expect(await contrastFailures(page)).toEqual([]);
+
+      // And the settings dialog, with the single-key shortcuts dimmed.
+      await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+      await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
+      expect(await contrastFailures(page)).toEqual([]);
+    });
+  }
 }

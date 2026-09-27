@@ -311,7 +311,8 @@ Do not scrape unofficial aggregators.
 - [Biome](https://biomejs.dev/) formats, lints and sorts imports ([`biome.json`](biome.json)); `npm run lint:fix` applies it. A `biome-ignore` comment must say why
 - TypeScript strict, no `any`
 - No unused locals, imports or parameters: `tsconfig.json` sets `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` fails on them. Prefix a parameter that a signature requires but the body ignores with `_`
-- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX. Every colour token has a light and a dark value, written with `light-dark()`. The build compiles that into toggles keyed on the system's `prefers-color-scheme`, so the whole page follows the system and `color-scheme` on one element does not switch its tokens. And text tokens must clear 4.5:1 on every material's flat fill: the browser tests strip the blur and check
+- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX. Every colour token has a light and a dark value, written with `light-dark()`. The build compiles that into toggles keyed on the system's `prefers-color-scheme`, so the whole page follows the system and `color-scheme` on one element does not switch its tokens
+- Text must clear 4.5:1 on every material's flat fill. A browser test proves it: on a fixture board with every state, incident times and the Stale badge ([`e2e/fixture-board.ts`](e2e/fixture-board.ts)), in light and dark, with and without Increase Contrast, it strips blur, gradients and pseudo-elements and runs axe's colour-contrast rule. It does not measure text over the aurora itself; the light aurora's colours are chosen to stay close to the page's brightness for that reason
 - Status color is for badges and dots only, not entire panels
 - Three materials, and nothing else is translucent:
   - `.glass-chrome` for controls that float above the content (the compact header, the settings dialog), one on screen at a time
