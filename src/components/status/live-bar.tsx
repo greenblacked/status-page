@@ -51,23 +51,14 @@ export function LiveBar({
           <Radio className={cn("size-3.5", isFetching || stale ? "text-muted" : "live-dot text-ok")} aria-hidden />
           {/*
             The live region is scoped to this word alone. The age and the
-            countdown tick every second, and a wider region made a screen
-            reader re-announce them every second. A stale board's age joins
-            it: it moves once a minute, and it is the news.
+            countdown tick, and a wider region made a screen reader
+            re-announce them every time they moved, a stale board's age
+            once a minute for as long as it stayed stale.
           */}
           <span className="flex items-center gap-2 text-fg" aria-live="polite">
-            {isFetching ? (
-              "Checking official sources"
-            ) : stale ? (
-              <>
-                <Badge tone="mute">Stale</Badge>
-                <span className="text-subtle">last check {formatStaleAge(ageMs)}</span>
-              </>
-            ) : (
-              "Live"
-            )}
+            {isFetching ? "Checking official sources" : stale ? <Badge tone="mute">Stale</Badge> : "Live"}
           </span>
-          {stale ? null : <span>· last check {age}</span>}
+          {stale ? <span>last check {formatStaleAge(ageMs)}</span> : <span>· last check {age}</span>}
         </p>
         <p>
           Next update <span className="text-fg">{mounted ? formatCountdown(remaining) : "—"}</span>
