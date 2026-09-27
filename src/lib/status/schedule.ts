@@ -18,11 +18,13 @@ export function nextPulseAt(now = Date.now()): number {
 }
 
 // The board refetches this long after each two-minute slot rather than on
-// it: on Workers the cron writes the slot's snapshot a few seconds in, and
-// a spread keeps every open tab from asking in the same second. Each page
-// load picks one value and keeps it.
-export const REFETCH_JITTER_MIN_MS = 5_000;
-export const REFETCH_JITTER_MAX_MS = 20_000;
+// it: on Workers the cron's sweep takes nine seconds or more before its KV
+// write, and a spread keeps every open tab from asking in the same second.
+// A slow sweep can still miss a tab's moment; that tab then shows the
+// slot's snapshot one refetch later. Each page load picks one value and
+// keeps it.
+export const REFETCH_JITTER_MIN_MS = 15_000;
+export const REFETCH_JITTER_MAX_MS = 30_000;
 
 export function pickRefetchJitter(random: () => number = Math.random): number {
   return REFETCH_JITTER_MIN_MS + Math.floor(random() * (REFETCH_JITTER_MAX_MS - REFETCH_JITTER_MIN_MS));
