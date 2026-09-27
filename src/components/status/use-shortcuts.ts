@@ -76,7 +76,9 @@ export function useSingleKeyShortcuts(): { enabled: boolean; setEnabled: (on: bo
   useEffect(() => {
     setEnabledState(readSingleKey());
     const onStorage = (event: StorageEvent) => {
-      if (event.key === SINGLE_KEY_STORAGE_KEY) setEnabledState(parseSingleKeyPreference(event.newValue));
+      // A null key is localStorage.clear() in another tab: back to the default.
+      if (event.key === null) setEnabledState(parseSingleKeyPreference(null));
+      else if (event.key === SINGLE_KEY_STORAGE_KEY) setEnabledState(parseSingleKeyPreference(event.newValue));
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
