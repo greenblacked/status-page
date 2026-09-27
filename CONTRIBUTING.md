@@ -161,7 +161,7 @@ Never move or reuse a tag that has a published release; release a new patch vers
 | `dev` | `staging` | `status-bar-staging` |
 | `main` | `production` | `status-bar` |
 
-Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace.
+Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. Every build, pull request or push, also runs the built Worker in workerd with an empty local KV namespace, fires its Cron Trigger once and checks that the snapshot moves forward (`scripts/ci/smoke.sh --cron`), so a Worker whose scheduled handler throws never reaches a deploy. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace.
 
 ### How the board stays fresh on Workers
 
@@ -243,7 +243,7 @@ curl -X POST "http://127.0.0.1:4173/cdn-cgi/local/explorer/api/local/scheduled?w
   -H 'Content-Type: application/json' -d '{"cron":"*/2 * * * *"}'
 ```
 
-For a `CLOUDFLARE_ENV=staging` build, the Worker is `status-bar-staging`.
+For a `CLOUDFLARE_ENV=staging` build, the Worker is `status-bar-staging`. Run `vite preview` without `CLOUDFLARE_ENV` either way: the built `dist/server/wrangler.json` already is that environment's config, and naming it again registers the Worker as `status-bar-staging-staging`. `./scripts/ci/smoke.sh http://127.0.0.1:4173 --cron status-bar` does all of this and checks the result, as the deploy workflow's build job does. The build also leaves `.wrangler/deploy/config.json`, which `vite preview` needs; delete only `.wrangler/state` to start again from an empty KV namespace.
 
 ### Rolling back
 
