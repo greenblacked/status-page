@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -133,5 +133,30 @@ describe("source-health --record", () => {
     }
     expect(new Uint8Array(readFileSync(join(dir, "health.aws.amazon.com", "public", "currentevents")))).toEqual(body);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("keeps a file name within file system limits", () => {
+    const file = recordPath("rec", new URL(`https://example.com/${"a".repeat(300)}`));
+    expect(file.split(/[\\/]/).every((segment) => segment.length <= 200)).toBe(true);
+  });
+
+  it("still hands the collector its response when the file cannot be saved", async () => {
+    // A regular file where a directory must go: mkdir fails with ENOTDIR.
+    const dir = mkdtempSync(join(tmpdir(), "record-"));
+    const blocked = join(dir, "not-a-directory");
+    writeFileSync(blocked, "");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async () => new Response("ok", { status: 200 }));
+    const stop = recordResponses(blocked);
+    try {
+      const response = await fetch("https://status.x.ai/feed.xml");
+      expect(await response.text()).toBe("ok");
+      expect(errors).toHaveBeenCalledWith(expect.stringContaining("record: could not save"));
+    } finally {
+      stop();
+      vi.unstubAllGlobals();
+      errors.mockRestore();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

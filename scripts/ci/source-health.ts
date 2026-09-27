@@ -102,9 +102,10 @@ function inline(text: string): string {
 // ------------------------------------------------------------- recording ---
 
 // One path segment, safe on any file system: a query such as `?appid=730`
-// or an odd character becomes `_`, and `.`/`..` can never walk upwards.
+// or an odd character becomes `_`, `.`/`..` can never walk upwards, and
+// no segment outgrows the usual 255-byte file name limit.
 function safeSegment(segment: string): string {
-  const cleaned = segment.replace(/[^A-Za-z0-9._-]/g, "_");
+  const cleaned = segment.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 200);
   return /^\.+$/.test(cleaned) ? cleaned.replace(/\./g, "_") : cleaned;
 }
 
@@ -119,14 +120,22 @@ export function recordPath(dir: string, url: URL): string {
 // Wraps fetch rather than the collectors, so sources.server.ts stays as it
 // is and the files hold exactly the bytes a collector was sent (AWS's UTF-16
 // included). A later attempt overwrites an earlier one. Returns the undo.
+// A file that cannot be saved is reported and skipped: thrown from inside
+// fetch, it would count as that vendor's network failure, and with
+// --issues open an issue against every vendor for a local disk problem.
 export function recordResponses(dir: string): () => void {
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const response = await realFetch(input, init);
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     const file = recordPath(dir, url);
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, new Uint8Array(await response.clone().arrayBuffer()));
+    try {
+      const body = new Uint8Array(await response.clone().arrayBuffer());
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, body);
+    } catch (error) {
+      console.error(`record: could not save ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     return response;
   };
   return () => {
