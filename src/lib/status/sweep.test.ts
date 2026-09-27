@@ -64,3 +64,56 @@ describe("collectAllServices logging", () => {
     expect(Number(failure?.bytes)).toBeGreaterThan(MAX_BODY_BYTES);
   });
 });
+
+const EPIC = "https://status.epicgames.com/api/v2/summary.json";
+
+describe("collectAllServices shared fetches", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("fetches Epic's summary once per sweep for both the Epic and the Fortnite card", async () => {
+    const summary = JSON.stringify({
+      status: { indicator: "minor", description: "Minor Service Outage" },
+      components: [
+        { id: "1", name: "Fortnite", status: "partial_outage" },
+        { id: "2", name: "Epic Games Store", status: "operational" },
+      ],
+    });
+    const calls = stubFetch((url) =>
+      url === EPIC ? new Response(summary) : new Response("not found", { status: 404, statusText: "Not Found" }),
+    );
+
+    const services = await collectAllServices();
+
+    expect(calls.filter((url) => url === EPIC)).toHaveLength(1);
+    expect(services.find((service) => service.id === "epic")?.health).toBe("operational");
+    expect(services.find((service) => service.id === "fortnite")?.health).toBe("degraded");
+  });
+
+  it("does not carry the shared fetch over to the next sweep", async () => {
+    const calls = stubFetch(() => new Response("not found", { status: 404, statusText: "Not Found" }));
+
+    await collectAllServices();
+    await collectAllServices();
+
+    expect(calls.filter((url) => url === EPIC)).toHaveLength(2);
+  });
+
+  it("fails both cards with the same reason when the shared fetch fails", async () => {
+    stubFetch(() => new Response("unavailable", { status: 503, statusText: "Service Unavailable" }));
+
+    const services = await collectAllServices();
+
+    const epic = services.find((service) => service.id === "epic");
+    const fortnite = services.find((service) => service.id === "fortnite");
+    expect(epic?.failure).toMatchObject({ kind: "http", status: 503 });
+    expect(fortnite?.failure).toEqual(epic?.failure);
+  });
+});

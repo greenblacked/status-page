@@ -497,24 +497,38 @@ async function collectCs2Europe(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectEpic(): Promise<ServiceSnapshot> {
+// State shared by the collectors of one collectAllServices() call, and
+// only that call: the next sweep starts empty, so nothing here can serve a
+// stale payload.
+type Sweep = {
+  epicSummary: () => Promise<{ value: StatuspageSummary; ms: number }>;
+};
+
+function createSweep(): Sweep {
+  let epic: Promise<{ value: StatuspageSummary; ms: number }> | undefined;
+  return {
+    // Epic and Fortnite are two cards cut from one Statuspage summary, so
+    // one sweep fetches it once and both read the same answer (or the same
+    // failure). The bytes count toward whichever collector asked first.
+    epicSummary: () =>
+      (epic ??= timed(() => fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"))),
+  };
+}
+
+async function collectEpic(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"),
-    );
+    const { value, ms } = await sweep.epicSummary();
     return fromStatuspage("epic", value, ms, (name) => !/fortnite/i.test(name));
   } catch (error) {
     return failed("epic", started, error);
   }
 }
 
-async function collectFortnite(): Promise<ServiceSnapshot> {
+async function collectFortnite(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"),
-    );
+    const { value, ms } = await sweep.epicSummary();
     return fromStatuspage("fortnite", value, ms, (name) => /fortnite/i.test(name));
   } catch (error) {
     return failed("fortnite", started, error);
@@ -925,14 +939,15 @@ function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapsh
 }
 
 export async function collectAllServices(): Promise<ServiceSnapshot[]> {
+  const sweep = createSweep();
   return Promise.all(
     [
       collectGcp,
       collectAws,
       collectSteam,
       collectCs2Europe,
-      collectEpic,
-      collectFortnite,
+      () => collectEpic(sweep),
+      () => collectFortnite(sweep),
       collectSpotify,
       collectApple,
       collectAndroid,
