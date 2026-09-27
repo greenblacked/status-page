@@ -119,8 +119,9 @@ jobs:
         # makes the preview register the Worker as "status-bar-staging-staging".
         env:
           DEPLOY_TARGET: cloudflare
-          # On by default in @cloudflare/vite-plugin; set so a changed
-          # default cannot switch the endpoint off unnoticed.
+          # On by default in @cloudflare/vite-plugin; set explicitly so a
+          # changed default in a later version does not switch off the
+          # endpoint smoke.sh --cron needs.
           X_LOCAL_EXPLORER: 'true'
         run: |
           set -uo pipefail
