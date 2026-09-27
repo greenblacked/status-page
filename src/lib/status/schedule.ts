@@ -1,4 +1,3 @@
-export const LIVE_REFETCH_MS = 2 * 60 * 1000;
 export const CACHE_TTL_MS = 45_000;
 // A page load may be served a snapshot up to this long past the TTL while a
 // fresh one is collected behind it, so the first visitor after a quiet spell
@@ -64,7 +63,7 @@ export function formatAge(ms: number): string {
 // The board refetches every slot, so a snapshot older than three of them
 // has stopped moving: the server, its collector or this tab's network is
 // stuck, and "Live" would be a claim the board cannot back.
-export const STALE_AFTER_MS = 3 * LIVE_REFETCH_MS;
+export const STALE_AFTER_MS = 3 * PULSE_INTERVAL_MS;
 
 /** False until mounted (`now` 0). A timestamp that cannot be read cannot be vouched for. */
 export function isStale(generatedAt: string, now: number): boolean {

@@ -8,7 +8,6 @@ import {
   formatUtcTime,
   isStale,
   lastPulseAt,
-  LIVE_REFETCH_MS,
   nextPulseAt,
   nextRefetchAt,
   parseTimestamp,
@@ -82,7 +81,7 @@ describe("stale snapshots", () => {
   const at = Date.parse(generatedAt);
 
   it("turns stale after three missed refetches", () => {
-    assert.equal(STALE_AFTER_MS, 3 * LIVE_REFETCH_MS);
+    assert.equal(STALE_AFTER_MS, 3 * PULSE_INTERVAL_MS);
     assert.equal(isStale(generatedAt, at + 90_000), false);
     assert.equal(isStale(generatedAt, at + STALE_AFTER_MS), false);
     assert.equal(isStale(generatedAt, at + STALE_AFTER_MS + 1), true);
