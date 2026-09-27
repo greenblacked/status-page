@@ -303,7 +303,7 @@ React 19 on TanStack Start, Tailwind v4, Vitest, TypeScript in strict mode.
 | `npm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
 | `npm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
 
-The scripts that set variables inline (`build:cf`, `preview:cf`) and `check` need a POSIX shell: on Windows, use WSL or [point npm at Git Bash](CONTRIBUTING.md#locally).
+The scripts that set variables inline (`build:cf`, `preview:cf`, `deploy:dry-run`) and `check` need a POSIX shell: on Windows, use WSL or [point npm at Git Bash](CONTRIBUTING.md#locally).
 
 ```text
 src/lib/status/           # catalog, health model, collectors, cache and schedule
