@@ -77,11 +77,10 @@ export function SettingsDialog({
           {SHORTCUT_HELP.map((item) => {
             const off = item.singleKey && !singleKey;
             return (
-              <div
-                key={item.label}
-                className={cn("flex items-center justify-between gap-4 text-sm", off && "opacity-50")}
-              >
-                <dt className="text-muted">
+              // Dimmed by colour, not opacity: at half opacity the switched-off
+              // rows fell under 4.5:1, and they still have to be readable.
+              <div key={item.label} className="flex items-center justify-between gap-4 text-sm">
+                <dt className={off ? "text-subtle" : "text-muted"}>
                   {item.label}
                   {off ? <span className="sr-only"> (switched off)</span> : null}
                 </dt>
@@ -90,8 +89,8 @@ export function SettingsDialog({
                     <kbd
                       key={key}
                       className={cn(
-                        "min-w-7 rounded-2xs glass-inset px-2 py-0.5 text-center font-mono text-xs text-fg",
-                        off && "line-through",
+                        "min-w-7 rounded-2xs glass-inset px-2 py-0.5 text-center font-mono text-xs",
+                        off ? "text-subtle line-through" : "text-fg",
                       )}
                     >
                       {key}
