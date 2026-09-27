@@ -529,20 +529,32 @@ const ALERT_LABEL: Record<AlertsState, string> = {
 function AlertsButton({ state, onToggle }: { state: AlertsState; onToggle: () => void }) {
   if (state === "unsupported") return null;
   const Icon = state === "on" ? BellRing : state === "blocked" ? BellOff : Bell;
+  const blocked = state === "blocked";
   return (
-    <Button
-      variant={state === "on" ? "default" : "outline"}
-      size="sm"
-      onClick={onToggle}
-      disabled={state === "blocked"}
-      // A toggle keeps one name and lets aria-pressed carry the state; the
-      // title explains the current state to pointer users.
-      aria-pressed={state === "on"}
-      aria-label="Browser alerts"
-      title={ALERT_LABEL[state]}
-    >
-      <Icon className="size-3.5" />
-      <span className="hidden sm:inline">Alerts</span>
-    </Button>
+    <>
+      <Button
+        variant={state === "on" ? "default" : "outline"}
+        size="sm"
+        // aria-disabled, not disabled: a disabled button drops out of the Tab
+        // order, so a keyboard or screen reader user never learns why alerts
+        // are off. This one stays reachable, does nothing, and says why.
+        onClick={blocked ? undefined : onToggle}
+        aria-disabled={blocked || undefined}
+        aria-describedby={blocked ? "alerts-blocked-hint" : undefined}
+        // A toggle keeps one name and lets aria-pressed carry the state; the
+        // title explains the current state to pointer users.
+        aria-pressed={state === "on"}
+        aria-label="Browser alerts"
+        title={ALERT_LABEL[state]}
+      >
+        <Icon className="size-3.5" />
+        <span className="hidden sm:inline">Alerts</span>
+      </Button>
+      {blocked ? (
+        <span id="alerts-blocked-hint" className="sr-only">
+          Blocked in this browser's site settings
+        </span>
+      ) : null}
+    </>
   );
 }

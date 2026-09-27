@@ -20,6 +20,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 - **Refresh** no longer greys out during every background check, which dropped keyboard focus back to the top of the page. It stays usable and says when a check is running.
 - Buttons, links and the search box show their keyboard focus ring in Windows High Contrast and other forced-colours modes, where it used to disappear.
+- When the browser blocks notifications, the bell stays reachable from the keyboard and tells screen readers why alerts are unavailable, instead of silently dropping out of the Tab order.
 
 ### Security
 
