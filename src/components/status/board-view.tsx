@@ -6,6 +6,7 @@ import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } fr
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
+import { PeriodDial } from "@/components/status/period-dial";
 import { ServiceCard, ServiceTile } from "@/components/status/service-card";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
@@ -598,7 +599,7 @@ function SummaryPanel({
 
   return (
     <section aria-labelledby="board-headline" className="glass rounded-xl p-5 sm:p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <h2
             id="board-headline"
@@ -635,11 +636,20 @@ function SummaryPanel({
             </ul>
           ) : null}
         </div>
-        <dl className="grid shrink-0 grid-cols-3 gap-6 sm:gap-10">
-          <Stat label="Operational" value={board.counts.operational} of={total} />
-          <Stat label="Attention" value={attention} />
-          <Stat label="Sources" value={total - board.counts.unknown} of={total} />
-        </dl>
+        {/* On a phone the counts stack into a specimen table beside the dial; wider, they sit in a row. */}
+        <div className="flex items-center justify-between gap-5 sm:gap-10 lg:shrink-0 lg:justify-end">
+          <dl className="flex min-w-0 flex-1 flex-col gap-1.5 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
+            <Stat label="Operational" value={board.counts.operational} of={total} />
+            <Stat label="Attention" value={attention} />
+            <Stat label="Sources" value={total - board.counts.unknown} of={total} />
+          </dl>
+          <PeriodDial
+            now={now}
+            jitterMs={refetchJitter}
+            tone={headline.tone}
+            className="size-20 min-[380px]:size-24 sm:size-28 lg:size-32"
+          />
+        </div>
       </div>
       <LiveBar
         freshness={freshness}
@@ -655,9 +665,9 @@ function SummaryPanel({
 function Stat({ label, value, of }: { label: string; value: number; of?: number }) {
   const shown = useCountUp(value);
   return (
-    <div>
+    <div className="flex items-baseline justify-between gap-2 sm:block">
       <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-subtle">{label}</dt>
-      <dd className="mt-1 font-display text-2xl tabular-nums tracking-[-0.03em]">
+      <dd className="font-display text-lg tabular-nums tracking-[-0.03em] sm:mt-1 sm:text-2xl">
         {shown}
         {of !== undefined ? <span className="text-subtle">/{of}</span> : null}
       </dd>

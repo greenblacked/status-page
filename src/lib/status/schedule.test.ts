@@ -16,6 +16,7 @@ import {
   noteSnapshot,
   PULSE_INTERVAL_MS,
   parseTimestamp,
+  periodPhase,
   pickRefetchJitter,
   pulseProgress,
   REFETCH_JITTER_MAX_MS,
@@ -80,6 +81,37 @@ describe("refetch schedule", () => {
       assert.ok(at > now && at - now <= PULSE_INTERVAL_MS);
       assert.equal((at - 12_345) % PULSE_INTERVAL_MS, 0);
     }
+  });
+});
+
+describe("period phase", () => {
+  const noon = Date.parse("2026-09-22T12:00:00.000Z");
+  const jitter = 20_000;
+
+  it("starts at the refetch and ends at the next one", () => {
+    const start = periodPhase(noon + jitter, jitter);
+    assert.equal(start.endsAt, noon + jitter + PULSE_INTERVAL_MS);
+    assert.equal(start.elapsedMs, 0);
+    assert.equal(start.progress, 0);
+    const quarter = periodPhase(noon + jitter + 30_000, jitter);
+    assert.equal(quarter.elapsedMs, 30_000);
+    assert.equal(quarter.progress, 0.25);
+  });
+
+  it("agrees with the countdown at every second", () => {
+    for (let now = noon; now < noon + 2 * PULSE_INTERVAL_MS; now += 999) {
+      const phase = periodPhase(now, jitter);
+      assert.equal(phase.endsAt, nextRefetchAt(now, jitter));
+      assert.equal(phase.elapsedMs + (phase.endsAt - now), PULSE_INTERVAL_MS);
+      assert.ok(phase.progress >= 0 && phase.progress < 1);
+    }
+  });
+
+  it("rounds down to a step for a dial that moves in steps", () => {
+    const phase = periodPhase(noon + jitter + 32_400, jitter, 5_000);
+    assert.equal(phase.elapsedMs, 30_000);
+    assert.equal(phase.progress, 0.25);
+    assert.equal(phase.endsAt, noon + jitter + PULSE_INTERVAL_MS);
   });
 });
 

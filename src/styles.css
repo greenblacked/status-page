@@ -536,6 +536,137 @@
 }
 
 /*
+  The period dial (period-dial.tsx): a ring of 120 ticks, one per second
+  between refetches. The lit copy of the ring is masked to the part of the
+  period that has run; --period-progress is registered so it can animate,
+  in 120 steps, which repaints this small element once a second and never
+  more. The hand is a transform, which the compositor turns on its own.
+  Both start at the right moment from a negative delay set by the page.
+*/
+@property --period-progress {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.period-dial {
+  position: relative;
+  flex-shrink: 0;
+  aspect-ratio: 1;
+  contain: layout paint;
+}
+
+.period-ring,
+.period-motion,
+.period-sweep,
+.period-hand {
+  position: absolute;
+  inset: 0;
+}
+
+.period-ring {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.period-orbit {
+  stroke: var(--color-hairline);
+  stroke-width: 1;
+}
+
+.period-tick {
+  stroke: var(--color-tick);
+  stroke-width: 1;
+}
+
+.period-tick-major {
+  stroke: color-mix(in oklab, var(--color-fg) 38%, transparent);
+  stroke-width: 1;
+}
+
+.period-tick-quarter {
+  stroke: color-mix(in oklab, var(--color-fg) 60%, transparent);
+  stroke-width: 1.5;
+}
+
+.period-ring[data-lit] .period-orbit {
+  stroke: color-mix(in oklab, var(--color-fg) 45%, transparent);
+}
+
+.period-ring[data-lit] :is(.period-tick, .period-tick-major) {
+  stroke: color-mix(in oklab, var(--color-fg) 82%, transparent);
+}
+
+.period-ring[data-lit] .period-tick-quarter {
+  stroke: var(--color-fg);
+}
+
+.period-sweep {
+  --period-progress: var(--period-at, 0);
+  /* Half a tick past the edge, so the tick for the second under way is lit. */
+  mask-image: conic-gradient(#000 calc(var(--period-progress) * 360deg + 1.5deg), transparent 0);
+}
+
+.period-hand {
+  transform: rotate(calc(var(--period-at, 0) * 1turn));
+}
+
+/* The warm point: on the orbit, at the moment the period has reached. */
+.period-mark {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 9999px;
+  background-color: var(--color-event);
+  box-shadow:
+    0 0 0 3px oklch(from var(--color-event) l c h / 0.16),
+    0 0 12px 1px oklch(from var(--color-event) l c h / 0.45);
+}
+
+/* The lens at the centre, holding the board's health point. */
+.period-lens {
+  position: absolute;
+  inset: 31%;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  background-image: radial-gradient(circle at 34% 28%, var(--glass-tint-top), transparent 70%);
+  box-shadow:
+    inset 0 1px 0 var(--rim-top),
+    0 0 0 1px var(--color-hairline);
+}
+
+.period-motion[data-running] > .period-sweep {
+  animation: period-fill var(--period-length) steps(120, end) var(--period-delay) both;
+}
+
+.period-motion[data-running] > .period-hand {
+  animation: period-turn var(--period-length) linear var(--period-delay) both;
+}
+
+@keyframes period-fill {
+  from {
+    --period-progress: 0;
+  }
+  to {
+    --period-progress: 1;
+  }
+}
+
+@keyframes period-turn {
+  from {
+    transform: rotate(0turn);
+  }
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/*
   A card whose status just changed gets a stronger neutral rim. Neutral on
   purpose: status colour belongs to the badge and the dot, never the whole
   card, and the badge already says which way it changed.
@@ -717,6 +848,8 @@
     --rim-outline: transparent;
     --rim-outline-strong: transparent;
     --whisper-edge: transparent;
+    --color-hairline: light-dark(rgb(10 15 25 / 0.3), rgb(255 255 255 / 0.34));
+    --color-tick: light-dark(rgb(10 15 25 / 0.42), rgb(255 255 255 / 0.48));
   }
 
   .glass,
@@ -747,7 +880,9 @@
   .live-signal,
   .live-signal::before,
   .live-signal::after,
-  .aurora::before {
+  .aurora::before,
+  .period-motion[data-running] > .period-sweep,
+  .period-motion[data-running] > .period-hand {
     animation: none;
   }
 
