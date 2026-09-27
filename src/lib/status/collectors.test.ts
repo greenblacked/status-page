@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { collectAllServices } from "./sources.server.ts";
+import { json, networkError, stubFetch, text } from "../../test/stub-fetch.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
 // Keep these in sync with the URLs the collectors actually fetch.
@@ -16,41 +17,6 @@ const URLS = {
   chatgpt: "https://status.openai.com/api/v2/summary.json",
   claude: "https://status.claude.com/api/v2/summary.json",
 };
-
-type Handler = () => Response | Promise<Response>;
-
-function json(body: unknown, init: { status?: number; statusText?: string } = {}): Handler {
-  return () =>
-    new Response(JSON.stringify(body), {
-      status: init.status ?? 200,
-      statusText: init.statusText,
-      headers: { "content-type": "application/json" },
-    });
-}
-
-function text(body: string, init: { status?: number; statusText?: string } = {}): Handler {
-  return () =>
-    new Response(body, {
-      status: init.status ?? 200,
-      statusText: init.statusText,
-      headers: { "content-type": "text/xml" },
-    });
-}
-
-// Simulates a network-level failure (DNS, connection reset, …) rather than
-// an HTTP error response: the handler rejects instead of returning a Response.
-function networkError(message = "fetch failed"): Handler {
-  return () => Promise.reject(new TypeError(message));
-}
-
-function stubFetch(routes: Partial<Record<string, Handler>>) {
-  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    const handler = routes[url];
-    if (!handler) return new Response("not found", { status: 404, statusText: "Not Found" });
-    return handler();
-  });
-}
 
 // Minimal but shape-correct Statuspage summary.json fixture.
 function statuspageSummary(overrides: {
