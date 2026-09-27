@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { readSnapshot, writeSnapshot } from "./kv-snapshot-store";
+import { HISTORY_KEY, publicHistory } from "./history";
+import type { HistoryDocument } from "./history";
+import { readHistory, readSnapshot, writeHistory, writeSnapshot } from "./kv-snapshot-store";
 import type { SnapshotKv } from "./kv-snapshot-store";
 import type { BoardSnapshot } from "./types";
 
@@ -77,5 +79,67 @@ describe("kv-snapshot-store", () => {
     };
 
     await expect(readSnapshot(failing)).rejects.toThrow("KV unavailable");
+  });
+});
+
+describe("kv history store", () => {
+  it("round-trips history:v1 through the public serializer", async () => {
+    const kv = fakeKv();
+    const history: HistoryDocument = {
+      schema: 1,
+      updatedAt: "2026-09-27T12:00:00.000Z",
+      timezone: "UTC",
+      retentionDays: 30,
+      services: {
+        gcp: { days: [{ date: "2026-09-27", worst: "operational", samples: 1, up: 1 }] },
+      },
+    };
+
+    const bytes = await writeHistory(kv, history);
+    expect(bytes).toBeGreaterThan(0);
+    expect(kv.store.get(HISTORY_KEY)).toBe(JSON.stringify(publicHistory(history)));
+    await expect(readHistory(kv)).resolves.toEqual(publicHistory(history));
+  });
+
+  it("strips extra day fields before writing to KV", async () => {
+    const kv = fakeKv();
+    const dirty = {
+      schema: 1 as const,
+      updatedAt: "2026-09-27T12:00:00.000Z",
+      timezone: "UTC" as const,
+      retentionDays: 30 as const,
+      services: {
+        gcp: {
+          days: [
+            {
+              date: "2026-09-27",
+              worst: "outage" as const,
+              samples: 1,
+              up: 0,
+              failure: { message: "nope" },
+            },
+          ],
+        },
+      },
+    };
+
+    await writeHistory(kv, dirty as HistoryDocument);
+    const raw = kv.store.get(HISTORY_KEY)!;
+    expect(raw).not.toMatch(/failure|nope/);
+    expect(JSON.parse(raw).services.gcp.days[0]).toEqual({
+      date: "2026-09-27",
+      worst: "outage",
+      samples: 1,
+      up: 0,
+    });
+  });
+
+  it("reads null for corrupt history so the next merge starts fresh", async () => {
+    const kv = fakeKv();
+    kv.store.set(HISTORY_KEY, "{not json");
+    await expect(readHistory(kv)).resolves.toBeNull();
+
+    kv.store.set(HISTORY_KEY, JSON.stringify({ schema: 99 }));
+    await expect(readHistory(kv)).resolves.toBeNull();
   });
 });
