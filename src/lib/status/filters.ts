@@ -84,3 +84,17 @@ export function matchesFilters(
 export function resultsAnnouncement(shown: number, total: number): string {
   return `${shown} of ${total} ${total === 1 ? "service" : "services"} shown`;
 }
+
+/**
+ * The filters that put `service` on the board, or null when it is already
+ * there. The summary's attention chips link to cards, and a filtered board
+ * has not rendered every card, so a chip for a hidden one clears the filters
+ * before it jumps.
+ */
+export function filtersToReveal(
+  service: ServiceSnapshot,
+  filters: BoardFilters,
+  starred: ReadonlySet<ServiceId> = new Set(),
+): BoardFilters | null {
+  return matchesFilters(service, filters, starred) ? null : DEFAULT_FILTERS;
+}

@@ -21,6 +21,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- A service named under the headline now opens its card even when a search or filter hides it: the filters clear and the card comes into view with keyboard focus on it. It used to do nothing.
 - The board no longer says **Live** over a snapshot that has stopped updating: after six minutes without a fresh one it shows **Stale** and how long ago the last check was.
 - **Refresh** no longer greys out during every background check, which dropped keyboard focus back to the top of the page. It stays usable and says when a check is running.
 - Buttons, links and the search box show their keyboard focus ring in Windows High Contrast and other forced-colours modes, where it used to disappear.

@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
+import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveBar } from "@/components/status/live-bar";
 import { ServiceCard, ServiceTile } from "@/components/status/service-card";
@@ -16,7 +16,13 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
 import { APP_NAME, CATEGORIES } from "@/lib/status/catalog";
-import { type BoardFilters, DEFAULT_FILTERS, matchesFilters, resultsAnnouncement } from "@/lib/status/filters";
+import {
+  type BoardFilters,
+  DEFAULT_FILTERS,
+  filtersToReveal,
+  matchesFilters,
+  resultsAnnouncement,
+} from "@/lib/status/filters";
 import { attentionBreakdown } from "@/lib/status/health";
 import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
 import {
@@ -28,7 +34,7 @@ import {
 } from "@/lib/status/pulse";
 import { CACHE_TTL_MS, formatUtcTime, lastPulseAt, LIVE_REFETCH_MS, parseTimestamp } from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
-import type { BoardSnapshot, CategoryId, ServiceSnapshot } from "@/lib/status/types";
+import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
 const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [
@@ -146,6 +152,26 @@ export function BoardView({
     return () => window.clearTimeout(timer);
   }, [filters]);
 
+  // An attention chip whose card the filters hide clears them first, then
+  // lands on the card once it has rendered.
+  const [revealing, setRevealing] = useState<ServiceId | null>(null);
+  function revealService(service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) {
+    const next = filtersToReveal(service, filters, starred);
+    // On the board already: the plain anchor scrolls to it.
+    if (!next) return;
+    event.preventDefault();
+    setRevealing(service.id);
+    withViewTransition(() => setFilters(next));
+  }
+  useEffect(() => {
+    if (!revealing) return;
+    const card = document.getElementById(serviceAnchor(revealing));
+    if (!card) return;
+    setRevealing(null);
+    card.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    card.focus({ preventScroll: true });
+  }, [revealing, visible]);
+
   const issueCount = board.services.length - board.counts.operational;
   // Starring moves a card, so it glides there like a refresh does.
   const onToggleStar = (id: ServiceSnapshot["id"]) => withViewTransition(() => toggleStar(id));
@@ -253,7 +279,7 @@ export function BoardView({
             </div>
           </div>
 
-          <SummaryPanel board={board} headline={headline} fetching={fetching} now={now} />
+          <SummaryPanel board={board} headline={headline} fetching={fetching} now={now} onReveal={revealService} />
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <label className="relative block min-w-0 flex-1">
@@ -480,11 +506,14 @@ function SummaryPanel({
   headline,
   fetching,
   now,
+  onReveal,
 }: {
   board: BoardSnapshot;
   headline: ReturnType<typeof boardHeadline>;
   fetching: boolean;
   now: number;
+  /** A chip was followed; clears the filters first if they hide its card. */
+  onReveal: (service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const total = board.services.length;
   const attention = total - board.counts.operational;
@@ -519,6 +548,7 @@ function SummaryPanel({
                 <li key={service.id}>
                   <a
                     href={`#${serviceAnchor(service.id)}`}
+                    onClick={(event) => onReveal(service, event)}
                     className="focus-ring inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
                   >
                     <HealthDot health={service.health} />

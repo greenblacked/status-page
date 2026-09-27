@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FILTERS,
   filtersFromSearch,
+  filtersToReveal,
   matchesFilters,
   parseBoardSearch,
   resultsAnnouncement,
@@ -85,6 +86,23 @@ describe("matchesFilters", () => {
     expect(matchesFilters(gcp, starredOnly, new Set(["gcp"]))).toBe(true);
     expect(matchesFilters(steam, starredOnly, new Set(["gcp"]))).toBe(false);
     expect(matchesFilters(gcp, starredOnly)).toBe(false);
+  });
+});
+
+describe("filtersToReveal", () => {
+  const gcp = service("gcp", "outage");
+  const starred = new Set<ServiceId>(["steam"]);
+
+  it("keeps the filters when the card is already on the board", () => {
+    expect(filtersToReveal(gcp, DEFAULT_FILTERS)).toBeNull();
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, category: "cloud", issuesOnly: true })).toBeNull();
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, starredOnly: true }, new Set(["gcp"]))).toBeNull();
+  });
+
+  it("clears the filters when they hide the card", () => {
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, category: "gaming" })).toEqual(DEFAULT_FILTERS);
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, query: "steam" })).toEqual(DEFAULT_FILTERS);
+    expect(filtersToReveal(gcp, { ...DEFAULT_FILTERS, starredOnly: true }, starred)).toEqual(DEFAULT_FILTERS);
   });
 });
 

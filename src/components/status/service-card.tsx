@@ -69,8 +69,11 @@ export function ServiceCard({
   return (
     <article
       id={serviceAnchor(service.id)}
+      // Focusable by script and by its #service-<id> link, never by Tab, so
+      // an attention chip leaves the keyboard on the card it jumped to.
+      tabIndex={-1}
       className={cn(
-        "spotlight group relative flex scroll-mt-6 flex-col rounded-3xl glass p-4 transition-[box-shadow,transform] duration-[var(--motion-fast)] ease-[var(--ease-smooth-out)] hover:shadow-[var(--shadow-border-hover)] stagger-in",
+        "focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-3xl glass p-4 transition-[box-shadow,transform] duration-[var(--motion-fast)] ease-[var(--ease-smooth-out)] hover:shadow-[var(--shadow-border-hover)] stagger-in",
         emphasized && (service.health === "outage" ? "service-card-changed is-down" : "service-card-changed"),
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, viewTransitionName: `vt-${service.id}` }}
@@ -246,8 +249,9 @@ export function ServiceTile({
   return (
     <article
       id={serviceAnchor(service.id)}
+      tabIndex={-1}
       className={cn(
-        "spotlight flex scroll-mt-6 items-center gap-3 rounded-2xl glass py-2 pr-1.5 pl-3 stagger-in",
+        "focus-ring spotlight flex scroll-mt-6 items-center gap-3 rounded-2xl glass py-2 pr-1.5 pl-3 stagger-in",
         emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 30}ms`, viewTransitionName: `vt-${service.id}` }}
