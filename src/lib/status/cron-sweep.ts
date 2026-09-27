@@ -1,6 +1,7 @@
 import { collectBoard } from "./collect-board";
+import { mergeBoardIntoHistory } from "./history";
 import type { SnapshotKv } from "./kv-snapshot-store";
-import { readSnapshot, writeSnapshot } from "./kv-snapshot-store";
+import { readHistory, readSnapshot, writeHistory, writeSnapshot } from "./kv-snapshot-store";
 import { MIN_FORCED_REFRESH_MS } from "./schedule";
 
 /**
@@ -9,6 +10,10 @@ import { MIN_FORCED_REFRESH_MS } from "./schedule";
  * Every request reads the snapshot this writes (board.cloudflare.ts) instead
  * of collecting itself, so vendor load stays at one sweep per tick no matter
  * how many isolates or colos are serving requests.
+ *
+ * After a successful board write it also merges one sample per service into
+ * the rolling `history:v1` document (UTC day buckets, 30-day retention).
+ * Requests never write either key.
  *
  * Each run ends in exactly one JSON log line, `sweep_completed` or
  * `sweep_failed`, so Workers Logs (observability in wrangler.jsonc) can be
@@ -35,6 +40,7 @@ export async function runScheduledSweep(kv: SnapshotKv, now: () => number = Date
             services: existing.services.length,
             unknown: existing.counts.unknown ?? 0,
             bytes: 0,
+            historyBytes: 0,
             skipped: true,
           }),
         );
@@ -43,6 +49,23 @@ export async function runScheduledSweep(kv: SnapshotKv, now: () => number = Date
     }
     const snapshot = await collectBoard();
     const bytes = await writeSnapshot(kv, snapshot);
+    // History is best-effort for the log line, but a merge/put failure still
+    // fails the sweep: the board write already landed, and the next tick
+    // retries the merge from whatever is stored (corrupt history recovers).
+    let historyBytes = 0;
+    try {
+      const prior = await readHistory(kv);
+      const history = mergeBoardIntoHistory(prior, snapshot);
+      historyBytes = await writeHistory(kv, history);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "history_merge_failed",
+          message: error instanceof Error ? error.message : String(error),
+        }),
+      );
+      throw error;
+    }
     console.log(
       JSON.stringify({
         event: "sweep_completed",
@@ -50,6 +73,7 @@ export async function runScheduledSweep(kv: SnapshotKv, now: () => number = Date
         services: snapshot.services.length,
         unknown: snapshot.counts.unknown,
         bytes,
+        historyBytes,
         skipped: false,
       }),
     );

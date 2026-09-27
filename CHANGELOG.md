@@ -8,6 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- A public JSON API at `/api/history.json` with each service's UTC-day uptime for the last 30 days (`date`, `worst`, `samples`, `up`), kept by the Cloudflare cron beside the board snapshot.
 - A **Single-key shortcuts** switch in the keyboard shortcuts list (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Keyboard shortcuts** button at the foot of the page, now shown on every screen size, opens the list again, and the choice is kept in this browser.
 - A **Skip to services** link, the first stop when you press Tab, jumps past the header straight to the cards.
 - Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown" or "0 of 14 services shown. No services match that filter.", when the headline changes, and when a refresh fails.

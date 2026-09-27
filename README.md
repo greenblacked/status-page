@@ -45,7 +45,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 | **One board, five states** | Fourteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or Unknown, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
-| **Open integrations** | A JSON API, an Atom feed, Shields.io badges and Prometheus metrics, all from the same snapshot as the page |
+| **Open integrations** | A JSON API, daily uptime history, an Atom feed, Shields.io badges and Prometheus metrics |
 | **Runs anywhere** | Any Node host, or Cloudflare Workers with a scheduled collector and a KV snapshot. `docker compose` for a local run with no Node install |
 
 ## What it watches
@@ -170,11 +170,12 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 
 ## Integrations
 
-The board publishes what it shows in four open formats. All four come from the same two-minute snapshot as the page, allow cross-origin reads, and are cached for a minute.
+The board publishes what it shows in five open formats. All five allow cross-origin reads and are cached for a minute. Status, feed, badges and metrics come from the same two-minute snapshot as the page; `/api/history.json` is the rolling UTC day aggregates written by cron.
 
 | Endpoint | Format | Use it for |
 | --- | --- | --- |
 | `/api/status.json` | JSON: overall health, headline, counts, and each service's health, summary, source and incidents | Scripts, dashboards, chat bots |
+| `/api/history.json` | JSON: per-service daily worst health, sample count and operational fraction (`up`), last 30 UTC days | Uptime charts, SLO scripts, historical dashboards |
 | `/feed.xml` | Atom, one entry per service that needs attention | Alerts in Slack, Teams, Discord or a feed reader |
 | `/api/badge/<service>` | [Shields.io endpoint badge](https://shields.io/badges/endpoint-badge) | A live status badge in a README or wiki |
 | `/metrics` | [Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-based-format): each service's state, incidents and source reachability | Prometheus, Grafana and Alertmanager |
@@ -183,6 +184,7 @@ The board publishes what it shows in four open formats. All four come from the s
 
 ```bash
 curl -s http://localhost:3000/api/status.json | jq '.overall, .headline'
+curl -s http://localhost:3000/api/history.json | jq '.services | keys'
 curl -s http://localhost:3000/feed.xml | head -20
 curl -s http://localhost:3000/api/badge/gcp
 curl -s http://localhost:3000/metrics | grep 'status="outage"'
