@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boardHeadline, documentTitle, groupServices, scrolledPast, serviceAnchor } from "./layout";
+import { boardHeadline, documentTitle, groupServices, keyboardFocus, scrolledPast, serviceAnchor } from "./layout";
 import type { BoardSnapshot, CategoryId, Health, ServiceId, ServiceSnapshot } from "./types";
 
 function service(id: ServiceId, health: Health, category: CategoryId = "cloud", name: string = id): ServiceSnapshot {
@@ -113,3 +113,27 @@ describe("scrolledPast", () => {
     expect(scrolledPast(entry(false, 900), 64)).toBe(false);
   });
 });
+
+describe("keyboardFocus", () => {
+  const element = (visible: boolean) => ({ matches: (selector: string) => selector === ":focus-visible" && visible });
+
+  it("holds for keyboard focus and not for a click", () => {
+    expect(keyboardFocus(element(true))).toBe(true);
+    expect(keyboardFocus(element(false))).toBe(false);
+  });
+
+  it("assumes keyboard focus where :focus-visible is unknown, and ignores non-elements", () => {
+    const old = {
+      matches: () => {
+        throw new SyntaxError("unknown pseudo-class");
+      },
+    };
+    expect(keyboardFocus(old)).toBe(true);
+    expect(keyboardFocus(null)).toBe(false);
+    expect(keyboardFocus(notAnElement())).toBe(false);
+  });
+});
+
+function notAnElement(): object {
+  return { matches: "not a function" };
+}

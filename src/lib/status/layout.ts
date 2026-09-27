@@ -105,3 +105,20 @@ export function scrolledPast(
 ): boolean {
   return !entry.isIntersecting && entry.boundingClientRect.top < topInset;
 }
+
+/**
+ * Whether focus arrived the way :focus-visible marks it, by keyboard
+ * rather than a click. A browser without :focus-visible throws on the
+ * selector; focus then counts as keyboard focus, the safe side for a
+ * keyboard user.
+ */
+export function keyboardFocus(target: unknown): boolean {
+  if (typeof target !== "object" || target === null || !("matches" in target)) return false;
+  const { matches } = target as { matches: unknown };
+  if (typeof matches !== "function") return false;
+  try {
+    return matches.call(target, ":focus-visible") === true;
+  } catch {
+    return true;
+  }
+}

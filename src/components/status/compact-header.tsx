@@ -1,7 +1,7 @@
 import { type ReactNode, type RefObject, useEffect, useState } from "react";
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveSignal } from "@/components/status/live-signal";
-import { scrolledPast } from "@/lib/status/layout";
+import { keyboardFocus, scrolledPast } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
 
@@ -54,14 +54,14 @@ export function CompactHeader({
   /** The controls, rendered by the board so they share its state and handlers. */
   children: ReactNode;
 }) {
-  const [keyboardFocus, setKeyboardFocus] = useState(false);
-  const visible = shown || keyboardFocus;
+  const [heldByKeyboard, setKeyboardFocus] = useState(false);
+  const visible = shown || heldByKeyboard;
   return (
     <section
       aria-label="Board controls"
       data-shown={visible}
       inert={!visible}
-      onFocus={(event) => setKeyboardFocus(focusVisible(event.target))}
+      onFocus={(event) => setKeyboardFocus(keyboardFocus(event.target))}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false);
       }}
@@ -82,14 +82,4 @@ export function CompactHeader({
       <div className="ml-auto flex shrink-0 items-center gap-1.5">{children}</div>
     </section>
   );
-}
-
-/** Whether focus arrived the way :focus-visible marks it: by keyboard, not by a click. */
-function focusVisible(target: EventTarget): boolean {
-  try {
-    return target instanceof Element && target.matches(":focus-visible");
-  } catch {
-    // A browser without :focus-visible: treat focus as keyboard focus, as before.
-    return true;
-  }
 }
