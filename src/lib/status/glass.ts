@@ -22,6 +22,36 @@ export type AttributeTarget = {
   removeAttribute(name: string): void;
 };
 
+/** Where the choice is kept; a getter, since merely reading window.localStorage can throw. */
+export type PreferenceStorage = { getItem(key: string): string | null; setItem(key: string, value: string): void };
+
+export function readReduceGlass(storage: () => PreferenceStorage): boolean {
+  try {
+    return parseReduceGlassPreference(storage().getItem(REDUCE_GLASS_STORAGE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+export function writeReduceGlass(storage: () => PreferenceStorage, on: boolean): void {
+  try {
+    storage().setItem(REDUCE_GLASS_STORAGE_KEY, serializeReduceGlassPreference(on));
+  } catch {
+    // Private windows can refuse storage; the choice then lasts for this visit.
+  }
+}
+
+/**
+ * What a `storage` event from another tab means for this one: the new
+ * choice, or null when the event is about another key. A null key is
+ * localStorage.clear(), which puts the default back.
+ */
+export function reduceGlassFromStorageEvent(event: { key: string | null; newValue: string | null }): boolean | null {
+  if (event.key === null) return parseReduceGlassPreference(null);
+  if (event.key !== REDUCE_GLASS_STORAGE_KEY) return null;
+  return parseReduceGlassPreference(event.newValue);
+}
+
 export function applyReduceGlass(root: AttributeTarget, on: boolean): void {
   if (on) root.setAttribute(REDUCE_GLASS_ATTRIBUTE, "true");
   else root.removeAttribute(REDUCE_GLASS_ATTRIBUTE);

@@ -1,6 +1,7 @@
 import { type ReactNode, type RefObject, useEffect, useState } from "react";
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveSignal } from "@/components/status/live-signal";
+import { scrolledPast } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
 
@@ -17,10 +18,7 @@ export function useScrolledPast(target: RefObject<HTMLElement | null>, topInset 
     if (!element || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (!entry) return;
-        // Only above the viewport: a hero below it (never the case today)
-        // would not mean the controls are gone.
-        setPast(!entry.isIntersecting && entry.boundingClientRect.top < topInset);
+        if (entry) setPast(scrolledPast(entry, topInset));
       },
       { rootMargin: `-${topInset}px 0px 0px 0px` },
     );

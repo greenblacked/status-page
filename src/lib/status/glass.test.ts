@@ -6,7 +6,10 @@ import {
   REDUCE_GLASS_ATTRIBUTE,
   REDUCE_GLASS_BOOT_SCRIPT,
   REDUCE_GLASS_STORAGE_KEY,
+  readReduceGlass,
+  reduceGlassFromStorageEvent,
   serializeReduceGlassPreference,
+  writeReduceGlass,
 } from "./glass";
 
 function fakeRoot(): AttributeTarget & { attributes: Map<string, string> } {
@@ -56,5 +59,42 @@ describe("reduce glass boot script", () => {
 
   it("leaves the page alone when storage is refused", () => {
     expect(run("on", "throws")).toBeUndefined();
+  });
+});
+
+describe("reduce glass storage", () => {
+  function memory(initial: Record<string, string> = {}) {
+    const items = new Map(Object.entries(initial));
+    return {
+      items,
+      getItem: (key: string) => items.get(key) ?? null,
+      setItem: (key: string, value: string) => void items.set(key, value),
+    };
+  }
+  const refused = () => {
+    throw new Error("storage refused");
+  };
+
+  it("reads and writes the stored choice", () => {
+    const store = memory();
+    expect(readReduceGlass(() => store)).toBe(false);
+    writeReduceGlass(() => store, true);
+    expect(store.items.get(REDUCE_GLASS_STORAGE_KEY)).toBe("on");
+    expect(readReduceGlass(() => store)).toBe(true);
+    writeReduceGlass(() => store, false);
+    expect(readReduceGlass(() => store)).toBe(false);
+  });
+
+  it("falls back to off when storage is refused, and keeps going", () => {
+    expect(readReduceGlass(refused)).toBe(false);
+    expect(() => writeReduceGlass(refused, true)).not.toThrow();
+  });
+
+  it("follows other tabs, and a cleared storage puts the default back", () => {
+    expect(reduceGlassFromStorageEvent({ key: REDUCE_GLASS_STORAGE_KEY, newValue: "on" })).toBe(true);
+    expect(reduceGlassFromStorageEvent({ key: REDUCE_GLASS_STORAGE_KEY, newValue: "off" })).toBe(false);
+    expect(reduceGlassFromStorageEvent({ key: REDUCE_GLASS_STORAGE_KEY, newValue: null })).toBe(false);
+    expect(reduceGlassFromStorageEvent({ key: null, newValue: null })).toBe(false);
+    expect(reduceGlassFromStorageEvent({ key: "status-bar:starred", newValue: "[]" })).toBeNull();
   });
 });

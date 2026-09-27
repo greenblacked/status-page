@@ -4,7 +4,7 @@ import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, use
 import { CompactHeader, useScrolledPast } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
-import { type Freshness, LiveBar, useFreshness } from "@/components/status/live-bar";
+import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
 import { ServiceCard, ServiceTile } from "@/components/status/service-card";
 import { SettingsDialog } from "@/components/status/settings-dialog";
@@ -32,6 +32,7 @@ import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/li
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import {
   CACHE_TTL_MS,
+  type Freshness,
   formatUtcTime,
   lastPulseAt,
   nextRefetchAt,

@@ -93,3 +93,15 @@ export function documentTitle(board: BoardSnapshot, appName: string): string {
   const attention = board.services.filter((service) => service.health !== "operational").length;
   return attention ? `(${attention}) ${appName}` : appName;
 }
+
+/**
+ * Whether an observed element has scrolled up out of view, from an
+ * IntersectionObserver entry: gone and above the viewport, where
+ * `topInset` is how far down a floating bar covers the screen.
+ */
+export function scrolledPast(
+  entry: { isIntersecting: boolean; boundingClientRect: { top: number } },
+  topInset: number,
+): boolean {
+  return !entry.isIntersecting && entry.boundingClientRect.top < topInset;
+}

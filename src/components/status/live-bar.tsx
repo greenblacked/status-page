@@ -2,26 +2,17 @@ import { Radio } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import {
+  type Freshness,
   formatAge,
   formatCountdown,
   formatStaleAge,
-  isStale,
-  type LiveState,
-  liveState,
+  freshnessOf,
   nextRefetchAt,
   noteSnapshot,
   PULSE_INTERVAL_MS,
   type SnapshotSeen,
 } from "@/lib/status/schedule";
 import { cn } from "@/lib/utils";
-
-/** How fresh the board on screen is, shared by the live bar and the live signals. */
-export type Freshness = {
-  /** Timed by this browser's clock, from when it first showed this snapshot. */
-  ageMs: number;
-  stale: boolean;
-  state: LiveState;
-};
 
 /**
  * Tracks the snapshot on screen. Timed by this browser's clock alone, from
@@ -35,10 +26,7 @@ export function useFreshness(checkedAt: string, isFetching: boolean, now: number
   const [seen, setSeen] = useState<SnapshotSeen | null>(null);
   const noted = noteSnapshot(seen, checkedAt, now);
   if (noted !== seen) setSeen(noted);
-  const seenAt = noted?.seenAt ?? 0;
-  // A check in flight may yet bring it back, so it is not called stale while one runs.
-  const stale = !isFetching && isStale(seenAt, now);
-  return { ageMs: now - seenAt, stale, state: liveState(isFetching, stale) };
+  return freshnessOf(noted, isFetching, now);
 }
 
 /** The freshness strip at the foot of the summary panel. */
