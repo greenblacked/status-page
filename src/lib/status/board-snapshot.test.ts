@@ -127,7 +127,11 @@ describe("createBoardSnapshotReader", () => {
   });
 
   describe("when KV itself fails", () => {
+    // Boards below are stamped 00:02:00, one minute before this.
+    const NOW = new Date("2026-09-27T00:03:00.000Z");
+
     beforeEach(() => {
+      vi.useFakeTimers({ now: NOW });
       vi.spyOn(console, "warn").mockImplementation(() => {});
     });
 
@@ -135,6 +139,10 @@ describe("createBoardSnapshotReader", () => {
       vi.useRealTimers();
       vi.restoreAllMocks();
     });
+
+    function kvFailures(): Array<{ event: string; message: string }> {
+      return vi.mocked(console.warn).mock.calls.map((call) => JSON.parse(String(call[0])));
+    }
 
     it("read() on a cold isolate collects the board, logs kv_read_failed, and never writes to KV", async () => {
       const kv = fakeKv();
@@ -148,13 +156,10 @@ describe("createBoardSnapshotReader", () => {
       expect(collectBoard).toHaveBeenCalledTimes(1);
       expect(waitUntil).not.toHaveBeenCalled();
       expect(putSpy).not.toHaveBeenCalled();
-      expect(vi.mocked(console.warn).mock.calls.map((call) => JSON.parse(String(call[0])))).toEqual([
-        { event: "kv_read_failed", message: "KV unavailable" },
-      ]);
+      expect(kvFailures()).toEqual([{ event: "kv_read_failed", message: "KV unavailable" }]);
     });
 
-    it("read() reuses the outage board for a minute, not just the usual five seconds", async () => {
-      vi.useFakeTimers();
+    it("read() serves the outage board for a minute, then asks KV again and keeps it while it is fresh", async () => {
       const kv = fakeKv();
       const getSpy = vi.fn(() => Promise.reject(new Error("KV unavailable")));
       kv.get = getSpy;
@@ -165,17 +170,73 @@ describe("createBoardSnapshotReader", () => {
       await reader.read(waitUntil);
       vi.advanceTimersByTime(59_000);
       await reader.read(waitUntil);
-      expect(collectBoard).toHaveBeenCalledTimes(1);
       expect(getSpy).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(2_000);
-      await reader.read(waitUntil);
-      expect(collectBoard).toHaveBeenCalledTimes(2);
+      await expect(reader.read(waitUntil)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
       expect(getSpy).toHaveBeenCalledTimes(2);
+      // Two minutes old: kept, not swept again.
+      expect(collectBoard).toHaveBeenCalledTimes(1);
+    });
+
+    it("read() on a warm isolate keeps its fresh board: no collect, no KV write", async () => {
+      const kv = fakeKv(board("2026-09-27T00:02:00.000Z"));
+      const putSpy = vi.spyOn(kv, "put");
+      const reader = createBoardSnapshotReader(kv);
+      const { waitUntil } = waitUntilSpy();
+      await reader.read(waitUntil);
+
+      const getSpy = vi.fn(() => Promise.reject(new Error("KV unavailable")));
+      kv.get = getSpy;
+      vi.advanceTimersByTime(10_000);
+
+      await expect(reader.read(waitUntil)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
+      expect(collectBoard).not.toHaveBeenCalled();
+      expect(putSpy).not.toHaveBeenCalled();
+      expect(waitUntil).not.toHaveBeenCalled();
+      expect(kvFailures()).toEqual([{ event: "kv_read_failed", message: "KV unavailable" }]);
+
+      // Held for the outage memo, not re-read every five seconds.
+      vi.advanceTimersByTime(59_000);
+      await reader.read(waitUntil);
+      expect(getSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("read() on a warm isolate collects once, for every waiting request, when its board is too old to keep", async () => {
+      // 9.5 minutes old: still ready, but it would go stale within the
+      // outage memo, so it is not kept.
+      vi.setSystemTime(new Date("2026-09-27T00:11:30.000Z"));
+      const kv = fakeKv(board("2026-09-27T00:02:00.000Z"));
+      const putSpy = vi.spyOn(kv, "put");
+      const reader = createBoardSnapshotReader(kv);
+      const { waitUntil } = waitUntilSpy();
+      await reader.read(waitUntil);
+
+      kv.get = () => Promise.reject(new Error("KV unavailable"));
+      let resolveCollect!: (value: BoardSnapshot) => void;
+      vi.mocked(collectBoard).mockReturnValue(
+        new Promise((resolve) => {
+          resolveCollect = resolve;
+        }),
+      );
+      vi.advanceTimersByTime(10_000);
+
+      const reads = [reader.read(waitUntil), reader.read(waitUntil), reader.read(waitUntil)];
+      // Let the rejected KV read settle so the collect has started.
+      await Promise.resolve();
+      await Promise.resolve();
+      resolveCollect(board("2026-09-27T00:11:40.000Z"));
+
+      await expect(Promise.all(reads)).resolves.toEqual([
+        board("2026-09-27T00:11:40.000Z"),
+        board("2026-09-27T00:11:40.000Z"),
+        board("2026-09-27T00:11:40.000Z"),
+      ]);
+      expect(collectBoard).toHaveBeenCalledTimes(1);
+      expect(putSpy).not.toHaveBeenCalled();
     });
 
     it("read() goes back to KV once it answers again", async () => {
-      vi.useFakeTimers();
       const kv = fakeKv(board("2026-09-27T00:04:00.000Z"));
       const get = kv.get.bind(kv);
       kv.get = () => Promise.reject(new Error("KV unavailable"));
@@ -209,21 +270,6 @@ describe("createBoardSnapshotReader", () => {
       resolveCollect(board("2026-09-27T00:02:00.000Z"));
 
       await expect(Promise.all(reads)).resolves.toHaveLength(3);
-      expect(collectBoard).toHaveBeenCalledTimes(1);
-    });
-
-    it("read() keeps serving the last board when KV and the collect both fail", async () => {
-      vi.useFakeTimers();
-      const kv = fakeKv(board("2026-09-27T00:02:00.000Z"));
-      const reader = createBoardSnapshotReader(kv);
-      const { waitUntil } = waitUntilSpy();
-      await reader.read(waitUntil);
-
-      kv.get = () => Promise.reject(new Error("KV unavailable"));
-      vi.mocked(collectBoard).mockRejectedValue(new Error("collect failed"));
-      vi.advanceTimersByTime(10_000);
-
-      await expect(reader.read(waitUntil)).resolves.toEqual(board("2026-09-27T00:02:00.000Z"));
       expect(collectBoard).toHaveBeenCalledTimes(1);
     });
 
