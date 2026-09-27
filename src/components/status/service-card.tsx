@@ -76,7 +76,7 @@ export function ServiceCard({
       tabIndex={-1}
       className={cn(
         "focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-lg glass p-4 stagger-in",
-        emphasized && (service.health === "outage" ? "service-card-changed is-down" : "service-card-changed"),
+        emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, viewTransitionName: `vt-${service.id}` }}
     >
