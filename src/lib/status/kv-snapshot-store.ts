@@ -13,6 +13,12 @@ export type CloudflareEnv = {
   STATUS_SNAPSHOT: KVNamespace;
   /** "noindex" on the staging Worker (wrangler.jsonc env.staging.vars); unset in production. */
   ROBOTS?: string;
+  /**
+   * The answering Worker version (wrangler.jsonc's `version_metadata`),
+   * sent as X-Worker-Version. Optional so a Worker built without the
+   * binding still answers, only without that header.
+   */
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
 };
 
 // One key: the whole board is small (a few hundred services at most) and is

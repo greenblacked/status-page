@@ -9,6 +9,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Added
 
 - `/readyz` answers `503` when the board is more than ten minutes old or no source could be read, and `200` otherwise, with the snapshot's age and how many services are Unknown. Uptime monitors can watch it; `/healthz` stays the liveness probe.
+- On the hosted Cloudflare deployment, every response names the Worker version that served it in an `X-Worker-Version` header.
 
 ### Changed
 

@@ -4,6 +4,7 @@ import { isNoindex, withNoindex } from "@/lib/robots";
 import { runWithCloudflareContext } from "@/lib/status/cloudflare-context";
 import { runScheduledSweep } from "@/lib/status/cron-sweep";
 import type { CloudflareEnv } from "@/lib/status/kv-snapshot-store";
+import { withWorkerVersion } from "@/lib/worker-version";
 
 // wrangler.jsonc's `main`, used only for DEPLOY_TARGET=cloudflare builds.
 // TanStack Start's own default entry (@tanstack/react-start/server-entry)
@@ -18,8 +19,12 @@ const handleRequest = createStartHandler(defaultStreamHandler);
 
 export default {
   async fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): Promise<Response> {
-    const response = await runWithCloudflareContext({ env, waitUntil: ctx.waitUntil.bind(ctx) }, () =>
-      handleRequest(request),
+    // Every response the Worker makes names the version that made it, for
+    // the deploy's smoke test (worker-version.ts). Static assets never
+    // reach the Worker, so they carry no version; /healthz always does.
+    const response = withWorkerVersion(
+      await runWithCloudflareContext({ env, waitUntil: ctx.waitUntil.bind(ctx) }, () => handleRequest(request)),
+      env.CF_VERSION_METADATA?.id,
     );
     // The staging Worker (ROBOTS=noindex in wrangler.jsonc) is public but
     // must not be indexed. Set here, on every response the Worker makes,
