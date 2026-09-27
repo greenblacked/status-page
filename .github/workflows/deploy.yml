@@ -178,9 +178,9 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     # Install and deploy take a few minutes; the smoke test's version wait
-    # (up to 2), its retries (about 1) and a rollback's confirmation (up to
-    # 2) come on top.
-    timeout-minutes: 15
+    # (up to 2), its retries (under 1), its readiness wait (up to 5) and a
+    # rollback's confirmation (up to 2) come on top.
+    timeout-minutes: 20
     environment:
       name: ${{ needs.build.outputs.environment }}
       url: ${{ vars.DEPLOY_URL }}
@@ -261,15 +261,30 @@ jobs:
         if: vars.DEPLOY_URL != ''
         # The same checks as CI's preview (scripts/ci/smoke.sh: plain bash,
         # curl and jq, no npm and no token), plus --require-ready: a deploy
-        # whose /readyz is 503 serves a stale or all-Unknown board and is
-        # rolled back. A new version can take a few seconds to reach every
-        # location: --expect-version waits up to --wait for /healthz to come
-        # from the version just deployed, then holds every check to it, so
-        # the old version can neither pass nor fail the test in its place.
+        # whose /readyz is still 503 at the end serves a stale or all-Unknown
+        # board and is rolled back. A new version can take a few seconds to
+        # reach every location: --expect-version waits up to --wait for
+        # /healthz to come from the version just deployed, then holds every
+        # check to it, so the old version can neither pass nor fail the test
+        # in its place. --attempts then retries the page, API and feed checks
+        # for about half a minute, so a broken one fails fast.
+        #
+        # /readyz gets --ready-wait 300 on top, because a deploy can be the
+        # fix for a board that is already stale (say the previous version's
+        # cron was broken), and that turns ready only once the new version's
+        # cron has written a fresh snapshot and it has reached this location:
+        #   up to 120 s  until the first */2 cron tick after the deploy
+        #   ~20 s        for the sweep itself (9 s vendor timeouts, in parallel)
+        #   up to ~60 s  for the KV write to be visible elsewhere (KV is
+        #                eventually consistent; Cloudflare documents up to 60 s)
+        #   5 s          for the isolate memo (src/lib/status/board-snapshot.ts)
+        # which is about 3.5 minutes. Five, counted from after the other
+        # checks pass, leaves room for a slow sweep without rolling back a
+        # deploy that is repairing the board.
         env:
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
           VERSION_ID: ${{ steps.deploy.outputs.version_id }}
-        run: ./scripts/ci/smoke.sh "$DEPLOY_URL" --expect-version "$VERSION_ID" --wait 120 --require-ready --attempts 6
+        run: ./scripts/ci/smoke.sh "$DEPLOY_URL" --expect-version "$VERSION_ID" --wait 120 --attempts 3 --require-ready --ready-wait 300
 
       - name: Roll back the failed deployment
         id: rollback

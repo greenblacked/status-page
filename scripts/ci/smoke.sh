@@ -6,11 +6,20 @@
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4173 --cron status-bar
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --attempts 6
 #   ./scripts/ci/smoke.sh https://status.example.com --expect-version <id> --wait 120
+#   ./scripts/ci/smoke.sh https://status.example.com --require-ready --ready-wait 300
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
 # (14 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
 # unless --require-ready: CI and sandboxes cannot always reach the vendors,
 # and an all-Unknown board is a correct answer there, not a broken build.
+#
+# --attempts retries the whole set of checks, 10 s apart. With
+# --require-ready, /readyz then has to answer 200, checked again every 10 s
+# for up to --ready-wait seconds (default 0: once). The two are separate
+# because they wait for different things: a broken page or API should fail
+# within a minute, while a board that is stale when a deploy lands only
+# turns ready after the next Cron Trigger's snapshot reaches this location,
+# which takes minutes (deploy.yml explains the numbers).
 #
 # --expect-version <id> first waits, within --wait, until /healthz carries
 # X-Worker-Version: <id> (src/lib/worker-version.ts), then requires it on
@@ -38,12 +47,13 @@ CRON_THROTTLE_S=16
 CRON_ADVANCE_S=60
 
 usage() {
-  echo "usage: $0 <base-url> [--cron <worker-name>] [--require-ready] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
+  echo "usage: $0 <base-url> [--cron <worker-name>] [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
 }
 
 base=""
 cron_worker=""
 require_ready=false
+ready_wait=0
 attempts=1
 wait_s=60
 expect_version=""
@@ -51,6 +61,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --cron) [ $# -ge 2 ] || { usage >&2; exit 2; }; cron_worker="$2"; shift 2 ;;
     --require-ready) require_ready=true; shift ;;
+    --ready-wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; ready_wait="$2"; shift 2 ;;
     --attempts) [ $# -ge 2 ] || { usage >&2; exit 2; }; attempts="$2"; shift 2 ;;
     --wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; wait_s="$2"; shift 2 ;;
     --expect-version) [ $# -ge 2 ] || { usage >&2; exit 2; }; expect_version="$2"; shift 2 ;;
@@ -63,6 +74,7 @@ done
 [[ "$base" =~ ^https?://[^[:space:]]+$ ]] || { echo "::error::not an http(s) URL: $base" >&2; exit 2; }
 [[ "$attempts" =~ ^[1-9][0-9]*$ ]] || { echo "::error::--attempts takes a positive number" >&2; exit 2; }
 [[ "$wait_s" =~ ^[0-9]+$ ]] || { echo "::error::--wait takes a number of seconds" >&2; exit 2; }
+[[ "$ready_wait" =~ ^[0-9]+$ ]] || { echo "::error::--ready-wait takes a number of seconds" >&2; exit 2; }
 # Worker version ids are UUIDs; this keeps anything else out of the messages.
 if [ -n "$expect_version" ] && ! [[ "$expect_version" =~ ^[A-Za-z0-9-]{1,64}$ ]]; then
   echo "::error::--expect-version takes a Worker version id such as 8842dd8a-be26-460d-a3ea-2890e9015024" >&2
@@ -171,17 +183,30 @@ run_checks() {
   check_version /readyz
   case "$status" in
     200) ;;
-    503)
-      if [ "$require_ready" = true ]; then
-        fail "/readyz: 503 $(head -c 300 "$work/body")"
-      else
-        echo "note: /readyz is 503 (allowed without --require-ready): $(head -c 300 "$work/body")"
-      fi
-      ;;
+    # --require-ready holds /readyz to 200 in wait_for_ready, after these.
+    503) [ "$require_ready" = true ] || echo "note: /readyz is 503 (allowed without --require-ready): $(head -c 300 "$work/body")" ;;
     *) fail "/readyz: $status, expected 200 or 503" ;;
   esac
 
   return "$failed"
+}
+
+wait_for_ready() {
+  local deadline=$((SECONDS + ready_wait))
+  while :; do
+    get /readyz
+    if [ "$status" = 200 ] && from_expected_version; then
+      echo "ok  /readyz is 200"
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      check_version /readyz
+      [ "$status" = 200 ] || fail "/readyz: $status after ${ready_wait}s, expected 200 (--require-ready): $(head -c 300 "$work/body")"
+      return 1
+    fi
+    echo "/readyz is $status: $(head -c 200 "$work/body"); checking again in 10s"
+    sleep 10
+  done
 }
 
 generated_at() {
@@ -244,6 +269,10 @@ until run_checks; do
   sleep 10
 done
 echo "ok  /healthz, /, /api/status.json, /feed.xml, /metrics and /readyz answer on $base"
+
+if [ "$require_ready" = true ]; then
+  wait_for_ready || { echo "smoke: FAILED against $base" >&2; exit 1; }
+fi
 
 if [ -n "$cron_worker" ]; then
   check_cron || { echo "smoke: FAILED against $base" >&2; exit 1; }
