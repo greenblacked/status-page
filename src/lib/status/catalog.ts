@@ -77,6 +77,14 @@ export const CATALOG: CatalogEntry[] = [
     sourceUrl: "https://spotify.statuspage.io/",
   },
   {
+    id: "github",
+    name: "GitHub",
+    shortName: "GitHub",
+    category: "platforms",
+    sourceName: "GitHub Status",
+    sourceUrl: "https://www.githubstatus.com/",
+  },
+  {
     id: "apple",
     name: "Apple",
     shortName: "Apple",
