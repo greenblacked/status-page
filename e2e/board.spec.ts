@@ -124,6 +124,15 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   expect(duplicates).toEqual([]);
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(header).toBeHidden();
+
+  // A click leaves focus on the button in Chromium; that must not hold the
+  // bar over the hero's own controls once the page is back at the top.
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await header.getByRole("button", { name: "Refresh status now" }).click();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(header).toBeHidden();
+  // Hidden from the accessibility tree, so found by its markup instead.
+  await expect(page.locator('section[aria-label="Board controls"]')).toHaveAttribute("inert", "");
 });
 
 test("keeps Reduce glass across a reload", async ({ page }) => {

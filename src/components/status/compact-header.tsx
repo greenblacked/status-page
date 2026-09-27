@@ -34,9 +34,11 @@ export function useScrolledPast(target: RefObject<HTMLElement | null>, topInset 
  * once the hero has scrolled away. The one chrome surface on the page.
  *
  * Hidden, it is `inert`, so Tab never lands on a control nobody can see
- * and the skip link stays the first stop. It stays put while focus is
- * inside it, so scrolling back up never pulls focus out from under a
- * keyboard user.
+ * and the skip link stays the first stop. It stays put while keyboard
+ * focus is inside it, so scrolling back up never pulls focus out from
+ * under a keyboard user. Focus from a click does not hold it: Chromium
+ * and Firefox focus a clicked button, and the bar would then sit over the
+ * hero's own controls after scrolling back to the top.
  */
 export function CompactHeader({
   shown,
@@ -52,16 +54,16 @@ export function CompactHeader({
   /** The controls, rendered by the board so they share its state and handlers. */
   children: ReactNode;
 }) {
-  const [focusWithin, setFocusWithin] = useState(false);
-  const visible = shown || focusWithin;
+  const [keyboardFocus, setKeyboardFocus] = useState(false);
+  const visible = shown || keyboardFocus;
   return (
     <section
       aria-label="Board controls"
       data-shown={visible}
       inert={!visible}
-      onFocus={() => setFocusWithin(true)}
+      onFocus={(event) => setKeyboardFocus(focusVisible(event.target))}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setFocusWithin(false);
+        if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false);
       }}
       className="compact-header glass-chrome flex h-12 items-center gap-3 rounded-full pr-1.5 pl-4"
     >
@@ -80,4 +82,14 @@ export function CompactHeader({
       <div className="ml-auto flex shrink-0 items-center gap-1.5">{children}</div>
     </section>
   );
+}
+
+/** Whether focus arrived the way :focus-visible marks it: by keyboard, not by a click. */
+function focusVisible(target: EventTarget): boolean {
+  try {
+    return target instanceof Element && target.matches(":focus-visible");
+  } catch {
+    // A browser without :focus-visible: treat focus as keyboard focus, as before.
+    return true;
+  }
 }
