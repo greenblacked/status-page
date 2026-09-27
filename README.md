@@ -45,6 +45,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 | **One board, five states** | Fourteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or Unknown, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
+| **At home on Apple devices** | Glass panels over a slow aurora, in light or dark as your system is set, with Display P3 colour on screens that show it. Fits the notch and home indicator, adds to the Home Screen, and follows Increase Contrast and Reduce Motion. Tested in Safari's engine on a Mac, an iPhone and an iPad |
 | **Open integrations** | A JSON API, daily uptime history, an Atom feed, Shields.io badges and Prometheus metrics |
 | **Runs anywhere** | Any Node host, or Cloudflare Workers with a scheduled collector and a KV snapshot. `docker compose` for a local run with no Node install |
 
@@ -160,7 +161,11 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Filter** by Cloud, Gaming, Platforms, AI or Updates, search by name, or switch on **Issues only**.
 - **Star** the services you care about: they sort first, and **Starred** shows only them.
 - **Share a view:** search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered.
-- **Drive it from the keyboard:** `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` lists them all. If single keys get in the way, for example with speech input, switch **Single-key shortcuts** off in that list: every shortcut but `Esc` stops, the search box stays a Tab away, and the **Keyboard shortcuts** button at the foot of the page opens the list again. The first Tab stop is **Skip to services**.
+- **Drive it from the keyboard:** `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` opens **Settings and shortcuts**, which lists them all. If single keys get in the way, for example with speech input, switch **Single-key shortcuts** off there: every shortcut but `Esc` stops, the search box stays a Tab away, and the **Settings and shortcuts** button at the foot of the page opens the list again. The first Tab stop is **Skip to services**.
+- **Light or dark:** the board follows your system appearance, and switches with it.
+- **Reduce glass** in **Settings and shortcuts** turns the frosted panels solid and stops the background drifting, for easier reading or an older phone. Safari does not tell web pages about the system's Reduce Transparency setting, so the board has its own switch; browsers that do pass it on get the same result without it. The choice is kept in this browser.
+- **Scroll down** and a compact bar with the live signal, the headline, **Alerts** and **Refresh** floats at the top of the screen.
+- **Add to Home Screen** in Safari's share menu to open the board full screen, with its own icon, like an app.
 - **Know how fresh it is:** the board pulls a snapshot every two minutes, 15 to 30 seconds after each two-minute mark, by when the server has usually renewed it (a slow sweep shows up one pull later), and the countdown ends when it does. The headline says when the snapshot on screen was taken ("as of 14:05 UTC"). If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did; a snapshot already more than half an hour old when the page opens shows **Stale** straight away.
 - **See how long an incident has run:** a card shows when the vendor says it began, such as "since 14:05 UTC · 2h 10m", or when planned maintenance is due, such as "scheduled for 22:00 UTC".
 - **Read the Board log** to see what changed between two-minute slots.
@@ -368,7 +373,7 @@ React 19 on TanStack Start, Tailwind CSS 4, TypeScript in strict mode, Vitest an
 | `npm run typecheck` | Type-check without emitting |
 | `npm test` | Unit tests, fully offline |
 | `npm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
-| `npm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `npm run build` first, and `npx playwright install chromium` once |
+| `npm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `npm run build` first, and `npx playwright install chromium webkit` once |
 | `npm run build` / `npm run preview` | Production build into `dist/`, and a local server for it |
 | `npm run build:cf` / `npm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
 | `npm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
@@ -396,7 +401,7 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 | Lint | Biome lint and format, repository hygiene, documentation links, the changelog section, shellcheck |
 | Types and tests | Strict typecheck; unit tests on the pinned Node and Node 24, with coverage thresholds |
 | Build | Production build and SSR smoke test on both Node versions, with the client bundle size in the job summary |
-| Browser | Playwright on desktop and mobile: no console errors or hydration warnings, axe WCAG 2.2 AA, keyboard paths |
+| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in light and dark: no console errors or hydration warnings, axe WCAG 2.2 AA, the contrast of every status and text colour on the glass's flat fills (on a fixture board, blur stripped, in light, dark and Increase Contrast), keyboard paths |
 | Conventions | Conventional Commit messages and PR title, branch name |
 | Workflows | actionlint and zizmor, so no workflow change weakens the pipeline |
 | Security | CodeQL for TypeScript and the workflows, dependency review |

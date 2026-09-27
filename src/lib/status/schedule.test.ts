@@ -6,9 +6,11 @@ import {
   formatDuration,
   formatStaleAge,
   formatUtcTime,
+  freshnessOf,
   incidentStart,
   isStale,
   lastPulseAt,
+  liveState,
   nextPulseAt,
   nextRefetchAt,
   noteSnapshot,
@@ -201,5 +203,30 @@ describe("incident times", () => {
     assert.deepEqual(incidentStart(checkedAt + 60_000, 0, checkedAt), { upcoming: true, duration: null });
     assert.deepEqual(incidentStart(checkedAt - 60_000, 0, checkedAt), { upcoming: false, duration: null });
     assert.deepEqual(incidentStart(checkedAt - 60_000, 0, Number.NaN), { upcoming: false, duration: null });
+  });
+});
+
+describe("live signal", () => {
+  it("shows a running check first, then a stale board, then live", () => {
+    assert.equal(liveState(true, true), "checking");
+    assert.equal(liveState(true, false), "checking");
+    assert.equal(liveState(false, true), "stale");
+    assert.equal(liveState(false, false), "live");
+  });
+});
+
+describe("freshnessOf", () => {
+  const seenAt = Date.parse("2026-09-27T12:00:00Z");
+  const seen = { generatedAt: "2026-09-27T12:00:00Z", seenAt };
+
+  it("is live and ageless before mount", () => {
+    assert.deepEqual(freshnessOf(null, false, 0), { ageMs: 0, stale: false, state: "live" });
+  });
+
+  it("goes stale after six minutes, unless a check is running", () => {
+    assert.deepEqual(freshnessOf(seen, false, seenAt + 60_000), { ageMs: 60_000, stale: false, state: "live" });
+    const late = seenAt + STALE_AFTER_MS + 1;
+    assert.deepEqual(freshnessOf(seen, false, late), { ageMs: STALE_AFTER_MS + 1, stale: true, state: "stale" });
+    assert.deepEqual(freshnessOf(seen, true, late), { ageMs: STALE_AFTER_MS + 1, stale: false, state: "checking" });
   });
 });

@@ -44,13 +44,13 @@ export function ServiceTile({
       id={serviceAnchor(service.id)}
       tabIndex={-1}
       className={cn(
-        "focus-ring spotlight flex scroll-mt-6 flex-col gap-2 rounded-2xl glass py-2 pr-1.5 pl-3 stagger-in",
+        "focus-ring spotlight relative flex scroll-mt-6 flex-col gap-2 rounded-md glass-whisper py-2 pr-1.5 pl-3 stagger-in",
         emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 30}ms`, viewTransitionName: `vt-${service.id}` }}
     >
       <div className="flex items-center gap-3">
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl glass-inset text-ok" aria-hidden>
+        <span className="grid size-9 shrink-0 place-items-center rounded-xs glass-inset text-ok" aria-hidden>
           <Icon className="size-4" strokeWidth={1.75} />
         </span>
         <div className="min-w-0 flex-1">
@@ -70,7 +70,7 @@ export function ServiceTile({
           rel="noreferrer"
           aria-label={`${service.sourceName}, official status for ${service.name}`}
           title={service.sourceName}
-          className="focus-ring grid size-11 shrink-0 place-items-center rounded-full text-subtle transition-colors duration-[var(--motion-quick)] hover:text-fg"
+          className="focus-ring pressable grid size-11 shrink-0 place-items-center rounded-full text-subtle hover:text-fg"
         >
           <ArrowUpRight className="size-4" />
         </a>

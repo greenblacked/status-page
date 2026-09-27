@@ -96,13 +96,15 @@ Rules:
 
 ## CI
 
-Run `npm run check` before you push: lint, typecheck, unit tests, and the hygiene and link checks, the same commands CI runs. For the browser tests, build first and install Chromium once:
+Run `npm run check` before you push: lint, typecheck, unit tests, and the hygiene and link checks, the same commands CI runs. For the browser tests, build first and install Chromium and WebKit once:
 
 ```bash
 npm run build
-npx playwright install chromium
+npx playwright install chromium webkit
 npm run test:e2e
 ```
+
+The tests run in five projects: `desktop` and `mobile` on Chromium, and `Desktop Safari`, `iPhone 17 Pro` and `iPad Pro 11` on WebKit, Safari's engine. Pick some with `--project`, for example `npm run test:e2e -- --project=desktop --project="iPhone 17 Pro"`. On Linux, WebKit needs system libraries: `npx playwright install --with-deps webkit` installs them. `PLAYWRIGHT_PORT` moves the preview the tests start off port 4173.
 
 [`ci.yml`](.github/workflows/ci.yml) splits the work into one job per concern, so a red check names its cause: `lint`, `typecheck`, `test` and `build` (each on the pinned Node and on Node 24), `browser tests`, `commit messages`, `branch name` and `workflow lint`. Every job gets its toolchain from [`.github/actions/setup`](.github/actions/setup/action.yml): Node, the npm version in `packageManager`, `npm ci` and a registry signature check.
 
@@ -309,6 +311,15 @@ Do not scrape unofficial aggregators.
 - [Biome](https://biomejs.dev/) formats, lints and sorts imports ([`biome.json`](biome.json)); `npm run lint:fix` applies it. A `biome-ignore` comment must say why
 - TypeScript strict, no `any`
 - No unused locals, imports or parameters: `tsconfig.json` sets `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` fails on them. Prefix a parameter that a signature requires but the body ignores with `_`
-- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX
-- Status color is for badges only, not entire panels
+- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX. Every colour token has a light and a dark value, written with `light-dark()`. The build compiles that into toggles keyed on the system's `prefers-color-scheme`, so the whole page follows the system and `color-scheme` on one element does not switch its tokens
+- Text must clear 4.5:1 on every material's flat fill. A browser test proves it: on a fixture board with every state, incident times and the Stale badge ([`e2e/fixture-board.ts`](e2e/fixture-board.ts)), in light and dark, with and without Increase Contrast, it strips blur, gradients and pseudo-elements and runs axe's colour-contrast rule. It does not measure text over the aurora itself; the light aurora's colours are chosen to stay close to the page's brightness for that reason
+- Status color is for badges and dots only, not entire panels
+- Three materials, and nothing else is translucent:
+  - `.glass-chrome` for controls that float above the content (the compact header, the settings dialog), one on screen at a time
+  - `.glass` for content panels (the summary, attention cards, the board log), a handful per screen
+  - `.glass-whisper`, with no blur, for anything dense or repeated: tiles, chips, the search box
+- Never glass on glass: inside a `.glass` or `.glass-chrome`, nest only `.glass-whisper` or `.glass-inset`
+- Performance: no `will-change: backdrop-filter`, never animate a blur or a `filter`, and animate `transform` and `opacity` only. Blur stays at 24px for `.glass` and 28px for `.glass-chrome`
+- Radii are concentric: a nested shape takes its parent's radius minus the inset between them, rounded down to the nearest `--radius-*` step (`rounded-2xs` to `rounded-xl`). Pills stay `rounded-full`, and Tailwind's default radius scale is switched off
+- New motion goes in the `prefers-reduced-motion` block, and new translucency in the Reduce glass block, in `src/styles.css`
 - Keep fetch timeouts short and failures isolated (`Promise.all` of per-service collectors)

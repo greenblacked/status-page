@@ -13,6 +13,8 @@ const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
+  // manifest-src falls back to default-src: the web manifest and its icons
+  // are served from public/, same origin, like the apple-touch-icon.
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",

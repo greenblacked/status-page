@@ -78,7 +78,7 @@ export function ComponentRow({
     : component.health !== "operational" && <Badge tone={component.health}>{healthLabel(component.health)}</Badge>;
 
   return (
-    <li className="flex items-center gap-3 rounded-xl glass-inset px-3 py-2">
+    <li className="flex items-center gap-3 rounded-xs glass-inset px-3 py-2">
       {/* The floor keeps a name readable beside a long detail without reserving room a short name does not need. */}
       <span className="min-w-[4.5rem] flex-1 truncate text-sm text-fg" title={component.name}>
         {component.name}
@@ -117,7 +117,7 @@ export function StarButton({
       aria-label={`Star ${name}`}
       title={starred ? `Unstar ${name}` : `Star ${name} to keep it first`}
       className={cn(
-        "grid size-11 shrink-0 place-items-center rounded-full transition-colors duration-[var(--motion-quick)] focus-ring",
+        "grid size-11 shrink-0 place-items-center rounded-full focus-ring pressable",
         starred ? "text-fg" : "text-subtle hover:text-fg",
         className,
       )}

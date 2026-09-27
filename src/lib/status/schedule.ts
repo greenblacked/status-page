@@ -110,6 +110,37 @@ export function isStale(seenAt: number, now: number): boolean {
   return now - seenAt > STALE_AFTER_MS;
 }
 
+/**
+ * What the live signal shows: a check running, a board that has stopped
+ * updating, or a live one. Checking wins, since it may yet bring a fresh
+ * snapshot, which is also why the board is not called stale while it runs.
+ */
+export type LiveState = "checking" | "stale" | "live";
+
+export function liveState(fetching: boolean, stale: boolean): LiveState {
+  if (fetching) return "checking";
+  return stale ? "stale" : "live";
+}
+
+/** How fresh the board on screen is, shared by the live bar and the live signals. */
+export type Freshness = {
+  /** Timed by this browser's clock, from when it first showed this snapshot. */
+  ageMs: number;
+  stale: boolean;
+  state: LiveState;
+};
+
+/**
+ * The freshness of the snapshot this browser first showed at `seen`. A
+ * check in flight may yet bring it back, so it is not called stale while
+ * one runs.
+ */
+export function freshnessOf(seen: SnapshotSeen | null, fetching: boolean, now: number): Freshness {
+  const seenAt = seen?.seenAt ?? 0;
+  const stale = !fetching && isStale(seenAt, now);
+  return { ageMs: now - seenAt, stale, state: liveState(fetching, stale) };
+}
+
 /** An age in words a screen reader reads well: "7 min ago", "2 hours ago". */
 export function formatStaleAge(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));

@@ -9,7 +9,8 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-accent text-bg hover:opacity-90",
-        outline: "bg-transparent text-fg shadow-[var(--shadow-border)] hover:shadow-[var(--shadow-border-hover)]",
+        // The whisper material: no blur, so a row of chips costs nothing to scroll.
+        outline: "glass-whisper text-fg",
         ghost: "bg-transparent text-muted hover:text-fg hover:bg-surface-2",
         solid: "bg-surface-2 text-fg hover:bg-surface",
       },

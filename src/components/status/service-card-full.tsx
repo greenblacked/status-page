@@ -71,18 +71,15 @@ export function ServiceCard({
       // an attention chip leaves the keyboard on the card it jumped to.
       tabIndex={-1}
       className={cn(
-        "focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-3xl glass p-4 transition-[box-shadow,transform] duration-[var(--motion-fast)] ease-[var(--ease-smooth-out)] hover:shadow-[var(--shadow-border-hover)] stagger-in",
-        emphasized && (service.health === "outage" ? "service-card-changed is-down" : "service-card-changed"),
+        "focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-lg glass p-4 stagger-in",
+        emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, viewTransitionName: `vt-${service.id}` }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span
-            className={cn(
-              "grid size-10 shrink-0 place-items-center rounded-2xl glass-inset",
-              ICON_TONE[service.health],
-            )}
+            className={cn("grid size-10 shrink-0 place-items-center rounded-xs glass-inset", ICON_TONE[service.health])}
             aria-hidden
           >
             <Icon className="size-4" strokeWidth={1.75} />
@@ -111,7 +108,9 @@ export function ServiceCard({
         </div>
       </div>
 
-      <p className="mt-4 text-sm leading-relaxed text-muted text-pretty [overflow-wrap:anywhere]">{service.summary}</p>
+      <p className="dynamic-text mt-4 text-sm leading-relaxed text-muted text-pretty [overflow-wrap:anywhere]">
+        {service.summary}
+      </p>
       {summaryIncident ? (
         <IncidentSince startedAt={summaryIncident.startedAt} reference={checkedAt} now={now} className="mt-1" />
       ) : null}
@@ -134,10 +133,10 @@ export function ServiceCard({
       ) : null}
 
       {incidents.length > 0 ? (
-        <ul className="mt-3 space-y-2">
+        <ul className="dynamic-text mt-3 space-y-2 text-sm">
           {incidents.map((incident, incidentIndex) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
-            <li key={`${incident.id}-${incidentIndex}`} className="text-sm text-fg [overflow-wrap:anywhere]">
+            <li key={`${incident.id}-${incidentIndex}`} className="text-fg [overflow-wrap:anywhere]">
               <span className={ICON_TONE[incident.health]}>{healthLabel(incident.health)}</span>
               <span className="text-subtle"> · </span>
               {incident.title}
@@ -157,7 +156,7 @@ export function ServiceCard({
           href={incidentUrl ?? service.sourceUrl}
           target="_blank"
           rel="noreferrer"
-          className="focus-ring inline-flex min-h-11 min-w-0 items-center gap-1 rounded-full px-2 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
+          className="focus-ring pressable inline-flex min-h-11 min-w-0 items-center gap-1 rounded-full px-2 text-xs text-muted hover:text-fg"
         >
           <span className="truncate">{incidentUrl ? "View incident" : service.sourceName}</span>
           <ArrowUpRight className="size-3.5 shrink-0" />

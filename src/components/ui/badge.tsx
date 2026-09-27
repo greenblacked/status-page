@@ -11,7 +11,8 @@ const badgeVariants = cva(
         degraded: "bg-warn/15 text-warn",
         outage: "bg-down/15 text-down",
         maintenance: "bg-accent/12 text-accent",
-        unknown: "bg-subtle/15 text-subtle",
+        // Muted text, not subtle: subtle on its own tint sits right at the 4.5:1 floor.
+        unknown: "bg-subtle/15 text-muted",
         mute: "bg-surface-2 text-muted",
       },
     },
