@@ -1,10 +1,11 @@
 @import "tailwindcss";
 
 /*
-  Aurora Signal: glass panels over a slow, deliberately coloured backdrop.
-  Every colour the board uses is a token here, in a light and a dark value
-  written with light-dark(). JSX names the tokens (text-muted, bg-ok,
-  rounded-lg) and never a raw colour.
+  Lucid Vigil: deep ink and warm paper, glass panels over a slow aurora,
+  and colour rationed to small exact points. Every colour the board uses
+  is a token here, in a light and a dark value written with light-dark().
+  JSX names the tokens (text-muted, bg-ok, rounded-lg) and never a raw
+  colour.
 
   What ships is not light-dark() itself: the build (Lightning CSS) turns
   each one into a pair of custom-property toggles that a
@@ -16,6 +17,8 @@
   --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* One short phrase only (the empty board). New York on Apple devices, no font download. */
+  --font-serif: ui-serif, "New York", Georgia, "Times New Roman", serif;
 
   /*
     Text tokens are opaque so their contrast does not depend on what is
@@ -23,19 +26,33 @@
     material below, before any blur or backdrop is considered; the browser
     tests check it with the backdrop stripped (e2e/board.spec.ts).
   */
-  --color-bg: light-dark(#edf0f5, #0a0e16);
-  --color-fg: light-dark(#10141c, #f1f4f9);
-  --color-muted: light-dark(#3b4251, #c0c6d1);
-  /* Light subtle stays over 5.5:1 even where the aurora is strongest behind it. */
-  --color-subtle: light-dark(#4b5464, #959dac);
+  --color-bg: light-dark(#f4f2ec, #05070d);
+  --color-fg: light-dark(#12141a, #eef1f7);
+  --color-muted: light-dark(#3c414d, #b7bfcc);
+  /* Subtle stays over 5.5:1 on every flat fill, light or dark. */
+  --color-subtle: light-dark(#4b5160, #8e97a8);
   --color-surface: light-dark(rgb(16 24 40 / 0.06), rgb(255 255 255 / 0.1));
   --color-surface-2: light-dark(rgb(16 24 40 / 0.1), rgb(255 255 255 / 0.14));
   --color-border: light-dark(rgb(16 24 40 / 0.12), rgb(255 255 255 / 0.15));
   --color-accent: light-dark(#172033, #e6ecf5);
-  /* Status colours: badges and dots only, never a whole panel. */
-  --color-ok: light-dark(#0a6539, #74d3a0);
-  --color-warn: light-dark(#7d4c00, #e8c27a);
-  --color-down: light-dark(#a3211a, #f2968c);
+  /*
+    Status points: badge text and dots only, never a whole panel. Written
+    in OKLCH, one declaration for every screen; each value sits inside
+    sRGB, so the contrast the browser tests measure is the contrast shown.
+  */
+  --color-ok: light-dark(oklch(44.68% 0.1065 155), oklch(83.19% 0.113 173.79));
+  --color-warn: light-dark(oklch(46.25% 0.1014 68.19), oklch(83.15% 0.1003 82.55));
+  --color-down: light-dark(oklch(46.72% 0.1669 28.65), oklch(76.51% 0.1126 26.69));
+  /*
+    The one warm point: the mark that says "look here" (the headline's
+    ping, a card that just changed, the period dial's hand). Never the
+    only carrier of a status, and never on the Outage badge, which stays
+    --color-down so red always means broken.
+  */
+  --color-event: light-dark(oklch(47.9% 0.1124 59.93), oklch(82.38% 0.1408 70.17));
+  /* Fine strokes: the period dial's ticks and the uptime strip's quiet days. */
+  --color-hairline: light-dark(rgb(10 15 25 / 0.14), rgb(255 255 255 / 0.16));
+  --color-tick: light-dark(rgb(10 15 25 / 0.22), rgb(255 255 255 / 0.28));
 
   /*
     Concentric radii. A shape nested in another takes the parent's radius
@@ -101,7 +118,7 @@
   --glass-sheen: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.3));
 
   --chrome-filter: blur(28px) saturate(1.9);
-  --chrome-fill: light-dark(rgb(255 255 255 / 0.8), rgb(24 29 40 / 0.66));
+  --chrome-fill: light-dark(rgb(255 255 255 / 0.8), rgb(18 21 29 / 0.66));
   --chrome-tint-top: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.08));
   --chrome-tint-bottom: light-dark(rgb(255 255 255 / 0.1), rgb(255 255 255 / 0));
 
@@ -137,16 +154,13 @@
 
 /*
   Wide-gamut screens (every recent iPhone, iPad and Mac) get Display P3
-  versions: the same luminance, so the contrast above still holds, with
-  more chroma than sRGB can show. @supports keeps color() away from a
+  versions of the aurora: the same luminance, with more chroma than sRGB
+  can show. @supports keeps color() away from a
   browser that cannot parse it.
 */
 @supports (color: color(display-p3 1 1 1)) {
   @media (color-gamut: p3) {
     :root {
-      --color-ok: light-dark(color(display-p3 0.105 0.402 0.214), color(display-p3 0.473 0.84 0.613));
-      --color-warn: light-dark(color(display-p3 0.484 0.294 0), color(display-p3 0.911 0.76 0.439));
-      --color-down: light-dark(color(display-p3 0.627 0.091 0.064), color(display-p3 0.943 0.575 0.526));
       --aurora-1: light-dark(color(display-p3 0.71 0.97 0.86 / 0.8), color(display-p3 0.1 0.84 0.7 / 0.2));
       --aurora-2: light-dark(color(display-p3 0.774 0.885 1 / 0.8), color(display-p3 0.36 0.42 1 / 0.22));
       --aurora-3: light-dark(color(display-p3 0.881 0.832 1 / 0.8), color(display-p3 0.68 0.36 0.98 / 0.12));
@@ -658,15 +672,15 @@
   @variant reduce-glass {
     --glass-filter: none;
     --chrome-filter: none;
-    --glass-fill: light-dark(#fbfcfe, #181d27);
+    --glass-fill: light-dark(#fcfbf8, #13161d);
     --glass-tint-top: transparent;
     --glass-tint-bottom: transparent;
     --glass-sheen: transparent;
-    --chrome-fill: light-dark(#f7f8fb, #141923);
+    --chrome-fill: light-dark(#f9f8f4, #0f1218);
     --chrome-tint-top: transparent;
     --chrome-tint-bottom: transparent;
-    --whisper-fill: light-dark(#f7f8fb, #131822);
-    --whisper-fill-hover: light-dark(#ffffff, #1b202b);
+    --whisper-fill: light-dark(#f9f8f4, #0e1117);
+    --whisper-fill-hover: light-dark(#ffffff, #171a22);
   }
 }
 
@@ -683,15 +697,15 @@
 */
 @media (prefers-contrast: more) {
   :root {
-    --color-muted: light-dark(#262c38, #dde2ea);
-    --color-subtle: light-dark(#3b4251, #c0c6d1);
+    --color-muted: light-dark(#262a33, #dde2ea);
+    --color-subtle: light-dark(#3a3f4b, #c0c6d1);
     --color-border: light-dark(rgb(16 24 40 / 0.5), rgb(255 255 255 / 0.55));
-    --glass-fill: light-dark(rgb(255 255 255 / 0.92), rgb(22 27 37 / 0.92));
+    --glass-fill: light-dark(rgb(255 255 255 / 0.92), rgb(17 20 27 / 0.92));
     --glass-tint-top: transparent;
     --glass-tint-bottom: transparent;
     --glass-sheen: transparent;
-    --chrome-fill: light-dark(rgb(250 251 253 / 0.96), rgb(20 25 35 / 0.96));
-    --whisper-fill: light-dark(rgb(255 255 255 / 0.9), rgb(22 27 37 / 0.9));
+    --chrome-fill: light-dark(rgb(251 250 246 / 0.96), rgb(15 18 25 / 0.96));
+    --whisper-fill: light-dark(rgb(255 255 255 / 0.9), rgb(17 20 27 / 0.9));
     --inset-fill: light-dark(rgb(15 20 35 / 0.07), rgb(0 0 0 / 0.4));
     /* The solid border below replaces the 1px ring the shadows draw, so the edge stays one pixel. */
     --rim-outline: transparent;
