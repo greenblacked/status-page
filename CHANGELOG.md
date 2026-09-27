@@ -15,6 +15,11 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
 - A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically.
 
+### Fixed
+
+- On Cloudflare, an outage of the KV store that holds the board no longer turns every page into an error: the board is collected straight from the vendors instead, at most once a minute per server.
+- When no board can be produced at all, `/api/status.json`, `/feed.xml`, the badges and `/metrics` answer `503` with `Retry-After`, so feed readers, Shields.io and scrapers treat it as temporary instead of as a server error.
+
 ### Security
 
 - Every page and API response now carries security headers: a Content-Security-Policy that allows only the board's own origin and forbids framing, HSTS, `nosniff`, a referrer policy and a permissions policy.
