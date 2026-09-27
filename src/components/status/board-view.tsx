@@ -32,7 +32,14 @@ import {
   syncPulse,
   type PulseStore,
 } from "@/lib/status/pulse";
-import { CACHE_TTL_MS, formatUtcTime, lastPulseAt, LIVE_REFETCH_MS, parseTimestamp } from "@/lib/status/schedule";
+import {
+  CACHE_TTL_MS,
+  formatUtcTime,
+  lastPulseAt,
+  nextRefetchAt,
+  parseTimestamp,
+  pickRefetchJitter,
+} from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
@@ -70,6 +77,8 @@ export function BoardView({
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   useSpotlight(mainRef);
+  // Chosen once per page load: the tab keeps its own spot in every slot.
+  const [refetchJitter] = useState(() => pickRefetchJitter());
 
   const boardQuery = useQuery({
     queryKey: ["status-board"],
@@ -83,7 +92,14 @@ export function BoardView({
     // loadStatusBoardForPage). Dating the initial data by when it was
     // collected makes that one case refetch on mount; a fresh render does not.
     initialDataUpdatedAt: Date.parse(initial.generatedAt),
-    refetchInterval: LIVE_REFETCH_MS,
+    // A fixed interval ran from whenever this page loaded, while the
+    // countdown and the server's snapshots follow the two-minute wall-clock
+    // slots, so "Next update 0:00" came and went without a fetch. Recomputed
+    // after every fetch, this lands each refetch where the countdown ends.
+    refetchInterval: () => {
+      const current = Date.now();
+      return nextRefetchAt(current, refetchJitter) - current;
+    },
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
@@ -279,7 +295,14 @@ export function BoardView({
             </div>
           </div>
 
-          <SummaryPanel board={board} headline={headline} fetching={fetching} now={now} onReveal={revealService} />
+          <SummaryPanel
+            board={board}
+            headline={headline}
+            fetching={fetching}
+            now={now}
+            refetchJitter={refetchJitter}
+            onReveal={revealService}
+          />
 
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <label className="relative block min-w-0 flex-1">
@@ -506,12 +529,14 @@ function SummaryPanel({
   headline,
   fetching,
   now,
+  refetchJitter,
   onReveal,
 }: {
   board: BoardSnapshot;
   headline: ReturnType<typeof boardHeadline>;
   fetching: boolean;
   now: number;
+  refetchJitter: number;
   /** A chip was followed; clears the filters first if they hide its card. */
   onReveal: (service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
@@ -565,7 +590,13 @@ function SummaryPanel({
           <Stat label="Sources" value={total - board.counts.unknown} of={total} />
         </dl>
       </div>
-      <LiveBar checkedAt={board.generatedAt} isFetching={fetching} now={now} className="mt-5 border-t border-border pt-4" />
+      <LiveBar
+        checkedAt={board.generatedAt}
+        isFetching={fetching}
+        now={now}
+        refetchJitterMs={refetchJitter}
+        className="mt-5 border-t border-border pt-4"
+      />
     </section>
   );
 }

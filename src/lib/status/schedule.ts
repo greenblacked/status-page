@@ -18,6 +18,27 @@ export function nextPulseAt(now = Date.now()): number {
   return lastPulseAt(now) + PULSE_INTERVAL_MS;
 }
 
+// The board refetches this long after each two-minute slot rather than on
+// it: on Workers the cron writes the slot's snapshot a few seconds in, and
+// a spread keeps every open tab from asking in the same second. Each page
+// load picks one value and keeps it.
+export const REFETCH_JITTER_MIN_MS = 5_000;
+export const REFETCH_JITTER_MAX_MS = 20_000;
+
+export function pickRefetchJitter(random: () => number = Math.random): number {
+  return REFETCH_JITTER_MIN_MS + Math.floor(random() * (REFETCH_JITTER_MAX_MS - REFETCH_JITTER_MIN_MS));
+}
+
+/**
+ * When the board next refetches: `jitterMs` past a slot, strictly after
+ * `now`. The query schedules itself by this and the countdown counts down
+ * to it, so "Next update 0:00" is the moment a fetch starts.
+ */
+export function nextRefetchAt(now: number, jitterMs: number): number {
+  const candidate = lastPulseAt(now) + jitterMs;
+  return candidate > now ? candidate : candidate + PULSE_INTERVAL_MS;
+}
+
 export function pulseProgress(now = Date.now()): number {
   const elapsed = now - lastPulseAt(now);
   return Math.min(1, Math.max(0, elapsed / PULSE_INTERVAL_MS));

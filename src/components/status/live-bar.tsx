@@ -5,8 +5,8 @@ import {
   formatCountdown,
   formatStaleAge,
   isStale,
-  nextPulseAt,
-  pulseProgress,
+  nextRefetchAt,
+  PULSE_INTERVAL_MS,
 } from "@/lib/status/schedule";
 import { cn } from "@/lib/utils";
 
@@ -15,16 +15,19 @@ export function LiveBar({
   checkedAt,
   isFetching,
   now,
+  refetchJitterMs,
   className,
 }: {
   checkedAt: string;
   isFetching: boolean;
   now: number;
+  /** The board query's jitter, so the countdown ends when its refetch starts. */
+  refetchJitterMs: number;
   className?: string;
 }) {
   const mounted = now > 0;
-  const remaining = mounted ? Math.max(0, nextPulseAt(now) - now) : 0;
-  const progress = mounted ? pulseProgress(now) : 0;
+  const remaining = mounted ? nextRefetchAt(now, refetchJitterMs) - now : 0;
+  const progress = mounted ? Math.min(1, Math.max(0, 1 - remaining / PULSE_INTERVAL_MS)) : 0;
   const ageMs = now - Date.parse(checkedAt);
   const age = mounted ? formatAge(ageMs) : "…";
   // A check in flight may yet bring it back, so it is not called stale while one runs.

@@ -21,6 +21,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- **Next update** now counts down to the board's actual refetch. It used to reach 0:00 with nothing happening, because the board fetched on its own two-minute timer from whenever the page was opened.
 - A service named under the headline now opens its card even when a search or filter hides it: the filters clear and the card comes into view with keyboard focus on it. It used to do nothing.
 - The board no longer says **Live** over a snapshot that has stopped updating: after six minutes without a fresh one it shows **Stale** and how long ago the last check was.
 - **Refresh** no longer greys out during every background check, which dropped keyboard focus back to the top of the page. It stays usable and says when a check is running.

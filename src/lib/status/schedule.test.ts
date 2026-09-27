@@ -10,9 +10,13 @@ import {
   lastPulseAt,
   LIVE_REFETCH_MS,
   nextPulseAt,
+  nextRefetchAt,
   parseTimestamp,
+  pickRefetchJitter,
   PULSE_INTERVAL_MS,
   pulseProgress,
+  REFETCH_JITTER_MAX_MS,
+  REFETCH_JITTER_MIN_MS,
   STALE_AFTER_MS,
 } from "./schedule.ts";
 
@@ -38,6 +42,38 @@ describe("pulse schedule", () => {
     assert.equal(formatAge(4_000), "just now");
     assert.equal(formatAge(23_000), "23s ago");
     assert.equal(formatAge(3 * 60 * 1000), "3m ago");
+  });
+});
+
+describe("refetch schedule", () => {
+  const noon = Date.parse("2026-09-22T12:00:00.000Z");
+
+  it("picks a jitter inside the window", () => {
+    assert.equal(pickRefetchJitter(() => 0), REFETCH_JITTER_MIN_MS);
+    assert.ok(pickRefetchJitter(() => 0.999_999) < REFETCH_JITTER_MAX_MS);
+    for (let i = 0; i < 100; i += 1) {
+      const jitter = pickRefetchJitter();
+      assert.ok(jitter >= REFETCH_JITTER_MIN_MS && jitter < REFETCH_JITTER_MAX_MS);
+    }
+  });
+
+  it("lands the jitter past the current slot while it is still ahead", () => {
+    assert.equal(nextRefetchAt(noon, 10_000), noon + 10_000);
+    assert.equal(nextRefetchAt(noon + 3_000, 10_000), noon + 10_000);
+  });
+
+  it("moves to the next slot once this slot's moment has passed", () => {
+    assert.equal(nextRefetchAt(noon + 10_000, 10_000), noon + PULSE_INTERVAL_MS + 10_000);
+    assert.equal(nextRefetchAt(noon + 60_000, 10_000), noon + PULSE_INTERVAL_MS + 10_000);
+    assert.equal(nextRefetchAt(noon + PULSE_INTERVAL_MS - 1, 5_000), noon + PULSE_INTERVAL_MS + 5_000);
+  });
+
+  it("is always ahead of now and at most one slot away", () => {
+    for (let now = noon; now < noon + 2 * PULSE_INTERVAL_MS; now += 1_000) {
+      const at = nextRefetchAt(now, 12_345);
+      assert.ok(at > now && at - now <= PULSE_INTERVAL_MS);
+      assert.equal((at - 12_345) % PULSE_INTERVAL_MS, 0);
+    }
   });
 });
 
