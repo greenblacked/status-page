@@ -39,9 +39,10 @@ export function ShortcutsDialog({
         if (event.target === event.currentTarget) onClose();
       }}
       aria-labelledby="shortcuts-heading"
-      className="m-auto w-[min(26rem,calc(100vw-2rem))] bg-transparent p-0 text-fg backdrop:bg-bg/70 backdrop:backdrop-blur-sm"
+      className="m-auto max-h-[calc(100dvh-2rem)] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain bg-transparent p-0 text-fg backdrop:bg-bg/70"
     >
-      <div className="glass rounded-3xl p-5 sm:p-6">
+      {/* The floating layer: chrome, the strongest material. The backdrop only dims, so two blurs never stack. */}
+      <div className="glass-chrome rounded-xl p-5 sm:p-6">
         <div className="flex items-center justify-between gap-4">
           <h2 id="shortcuts-heading" className="font-display text-xl font-medium tracking-[-0.03em]">
             Keyboard shortcuts
@@ -50,7 +51,7 @@ export function ShortcutsDialog({
             <X />
           </Button>
         </div>
-        <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl glass-inset px-3 py-2.5">
+        <div className="mt-4 flex items-center justify-between gap-4 rounded-sm glass-inset px-3 py-2.5">
           <div className="min-w-0">
             <p id="single-key-label" className="text-sm text-fg">
               Single-key shortcuts
@@ -106,7 +107,7 @@ export function ShortcutsDialog({
                     <kbd
                       key={key}
                       className={cn(
-                        "min-w-7 rounded-lg glass-inset px-2 py-0.5 text-center font-mono text-xs text-fg",
+                        "min-w-7 rounded-2xs glass-inset px-2 py-0.5 text-center font-mono text-xs text-fg",
                         off && "line-through",
                       )}
                     >

@@ -3,7 +3,8 @@ import { Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
 import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
-import { LiveBar } from "@/components/status/live-bar";
+import { type Freshness, LiveBar, useFreshness } from "@/components/status/live-bar";
+import { LiveSignal } from "@/components/status/live-signal";
 import { ServiceCard, ServiceTile } from "@/components/status/service-card";
 import { ShortcutsDialog } from "@/components/status/shortcuts-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
@@ -231,6 +232,7 @@ export function BoardView({
   // hydration, and "Checking official sources" then replaced the server's
   // "Live" in the first client render, a hydration mismatch.
   const fetching = now > 0 && (boardQuery.isFetching || refreshing);
+  const freshness = useFreshness(board.generatedAt, fetching, now);
 
   useShortcuts(
     (action) => {
@@ -269,6 +271,7 @@ export function BoardView({
 
   return (
     <div className="liquid-stage text-fg">
+      <div className="aurora" aria-hidden />
       <div className="liquid-content">
         {/*
           First in the tab order, so a keyboard user can pass the header's
@@ -286,11 +289,11 @@ export function BoardView({
         >
           Skip to services
         </a>
-        <header className="relative mx-auto flex max-w-6xl flex-col gap-6 px-4 pt-8 pb-4 sm:px-6 sm:pt-12">
+        <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-4 sm:pt-12">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
-                <span className="live-dot inline-block size-1.5 rounded-full bg-ok" aria-hidden />
+                <LiveSignal state={freshness.state} />
                 Live status board
               </p>
               <h1 className="mt-2 font-display text-4xl font-medium tracking-[-0.04em] text-balance sm:text-6xl">
@@ -324,6 +327,7 @@ export function BoardView({
             board={board}
             headline={headline}
             fetching={fetching}
+            freshness={freshness}
             now={now}
             refetchJitter={refetchJitter}
             onReveal={revealService}
@@ -343,7 +347,7 @@ export function BoardView({
               {singleKey.enabled ? (
                 <kbd
                   aria-hidden
-                  className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-md glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
+                  className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
                 >
                   /
                 </kbd>
@@ -352,7 +356,7 @@ export function BoardView({
             {/* One scrolling row on phones instead of three wrapped ones. */}
             {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
             <div
-              className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
+              className="page-bleed flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
               role="group"
               aria-label="Filter services"
             >
@@ -366,7 +370,7 @@ export function BoardView({
                   onClick={() => updateFilters({ category: filter.id })}
                 >
                   {filter.label}
-                  <span className="font-mono text-[11px] tabular-nums opacity-60">{categoryCount(filter.id)}</span>
+                  <span className="font-mono text-[11px] tabular-nums opacity-70">{categoryCount(filter.id)}</span>
                 </Button>
               ))}
               <Button
@@ -377,7 +381,7 @@ export function BoardView({
                 onClick={() => updateFilters({ issuesOnly: !issuesOnly })}
               >
                 Issues only
-                <span className="font-mono text-[11px] tabular-nums opacity-60">{issueCount}</span>
+                <span className="font-mono text-[11px] tabular-nums opacity-70">{issueCount}</span>
               </Button>
               <Button
                 variant={starredOnly ? "default" : "outline"}
@@ -388,7 +392,7 @@ export function BoardView({
               >
                 <Star className={cn("size-3.5", starredOnly && "fill-current")} />
                 Starred
-                <span className="font-mono text-[11px] tabular-nums opacity-60">{starred.size}</span>
+                <span className="font-mono text-[11px] tabular-nums opacity-70">{starred.size}</span>
               </Button>
             </div>
           </div>
@@ -402,10 +406,10 @@ export function BoardView({
           ref={mainRef}
           id="services"
           tabIndex={-1}
-          className="relative mx-auto max-w-6xl scroll-mt-4 px-4 pb-20 outline-none sm:px-6"
+          className="page-gutter relative mx-auto max-w-6xl scroll-mt-4 pb-20 outline-none"
         >
           {boardQuery.isError ? (
-            <p role="alert" className="mb-4 rounded-2xl glass px-4 py-3 text-sm text-down">
+            <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
               Could not refresh official sources. Showing the last successful snapshot.
             </p>
           ) : null}
@@ -416,14 +420,14 @@ export function BoardView({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {Array.from({ length: 6 }).map((_, index) => (
                     // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
-                    <Skeleton key={index} className="h-56" />
+                    <Skeleton key={index} className="h-56 rounded-lg" />
                   ))}
                 </div>
               ) : visible.length === 0 ? (
                 // Stars load after hydration; until then an empty Starred view proves nothing.
                 // Not a live region: the results announcement already says this.
                 starredOnly && !starsReady ? null : (
-                  <p className="rounded-3xl glass px-5 py-10 text-center text-muted">{emptyMessage}</p>
+                  <p className="rounded-lg glass px-5 py-10 text-center text-muted">{emptyMessage}</p>
                 )
               ) : (
                 <>
@@ -487,21 +491,21 @@ export function BoardView({
             <p>
               Use the board elsewhere:{" "}
               <a
-                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                 href="/api/status.json"
               >
                 JSON API
               </a>
               {" · "}
               <a
-                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                 href="/feed.xml"
               >
                 Atom feed
               </a>{" "}
               for Slack, Teams and feed readers ·{" "}
               <a
-                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                 href="/api/badge/board"
               >
                 status badges
@@ -516,7 +520,7 @@ export function BoardView({
             <p>
               <button
                 type="button"
-                className="focus-ring rounded-xs underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                 onClick={() => setShortcutsOpen(true)}
               >
                 Keyboard shortcuts
@@ -524,7 +528,7 @@ export function BoardView({
               {singleKey.enabled ? (
                 <span className="hidden sm:inline">
                   {" "}
-                  (press <kbd className="rounded-md glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
+                  (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
                 </span>
               ) : null}
             </p>
@@ -571,6 +575,7 @@ function SummaryPanel({
   board,
   headline,
   fetching,
+  freshness,
   now,
   refetchJitter,
   onReveal,
@@ -578,6 +583,7 @@ function SummaryPanel({
   board: BoardSnapshot;
   headline: ReturnType<typeof boardHeadline>;
   fetching: boolean;
+  freshness: Freshness;
   now: number;
   refetchJitter: number;
   /** A chip was followed; clears the filters first if they hide its card. */
@@ -589,7 +595,7 @@ function SummaryPanel({
   const generatedAt = parseTimestamp(board.generatedAt);
 
   return (
-    <section aria-labelledby="board-headline" className="glass rounded-3xl p-5 sm:p-6">
+    <section aria-labelledby="board-headline" className="glass rounded-xl p-5 sm:p-6">
       <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
           <h2
@@ -617,7 +623,7 @@ function SummaryPanel({
                   <a
                     href={`#${serviceAnchor(service.id)}`}
                     onClick={(event) => onReveal(service, event)}
-                    className="focus-ring inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted transition-colors duration-[var(--motion-quick)] hover:text-fg"
+                    className="focus-ring pressable inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted hover:text-fg"
                   >
                     <HealthDot health={service.health} />
                     {service.name}
@@ -634,7 +640,7 @@ function SummaryPanel({
         </dl>
       </div>
       <LiveBar
-        checkedAt={board.generatedAt}
+        freshness={freshness}
         isFetching={fetching}
         now={now}
         refetchJitterMs={refetchJitter}

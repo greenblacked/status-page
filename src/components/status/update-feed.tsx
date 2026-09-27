@@ -8,7 +8,7 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
   const latest = pulses[0];
 
   return (
-    <section className={cn("glass rounded-3xl p-4", className)}>
+    <section className={cn("glass rounded-lg p-4", className)}>
       <div className="flex items-end justify-between gap-3">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">Checks and new releases</p>

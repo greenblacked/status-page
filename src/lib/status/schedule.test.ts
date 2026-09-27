@@ -9,6 +9,7 @@ import {
   incidentStart,
   isStale,
   lastPulseAt,
+  liveState,
   nextPulseAt,
   nextRefetchAt,
   noteSnapshot,
@@ -201,5 +202,14 @@ describe("incident times", () => {
     assert.deepEqual(incidentStart(checkedAt + 60_000, 0, checkedAt), { upcoming: true, duration: null });
     assert.deepEqual(incidentStart(checkedAt - 60_000, 0, checkedAt), { upcoming: false, duration: null });
     assert.deepEqual(incidentStart(checkedAt - 60_000, 0, Number.NaN), { upcoming: false, duration: null });
+  });
+});
+
+describe("live signal", () => {
+  it("shows a running check first, then a stale board, then live", () => {
+    assert.equal(liveState(true, true), "checking");
+    assert.equal(liveState(true, false), "checking");
+    assert.equal(liveState(false, true), "stale");
+    assert.equal(liveState(false, false), "live");
   });
 });

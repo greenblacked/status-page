@@ -110,6 +110,18 @@ export function isStale(seenAt: number, now: number): boolean {
   return now - seenAt > STALE_AFTER_MS;
 }
 
+/**
+ * What the live signal shows: a check running, a board that has stopped
+ * updating, or a live one. Checking wins, since it may yet bring a fresh
+ * snapshot, which is also why the board is not called stale while it runs.
+ */
+export type LiveState = "checking" | "stale" | "live";
+
+export function liveState(fetching: boolean, stale: boolean): LiveState {
+  if (fetching) return "checking";
+  return stale ? "stale" : "live";
+}
+
 /** An age in words a screen reader reads well: "7 min ago", "2 hours ago". */
 export function formatStaleAge(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));

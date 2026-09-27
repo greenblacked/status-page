@@ -15,7 +15,7 @@ function RootDocument() {
   );
 
   return (
-    <html lang="en" className="dark antialiased" suppressHydrationWarning>
+    <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
