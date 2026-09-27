@@ -256,10 +256,11 @@ Dependabot proposes npm and GitHub Actions updates weekly, grouped into producti
 ## Adding a service
 
 1. Add a catalog entry in `src/lib/status/catalog.ts`
-2. Add a collector in `src/lib/status/sources.server.ts`
+2. Add a collector in `src/lib/status/sources.server.ts`, and call it from `collectAllServices` at the same position as its catalog entry. A test in `src/lib/status/collectors.test.ts` fails until the two lists match
 3. Use an **official** machine-readable source (Statuspage JSON, vendor incident JSON, RSS, or a documented public API)
 4. Document the source in the README table
 5. Map vendor states onto `operational | degraded | outage | maintenance | unknown`
+6. Test the collector against a trimmed payload in `src/lib/status/__fixtures__` ([how](src/lib/status/__fixtures__/README.md)), with one malformed payload that must read as `unknown`
 
 Do not scrape unofficial aggregators.
 

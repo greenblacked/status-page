@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CATALOG } from "./catalog.ts";
 import { collectAllServices } from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
 import { bytes, json, networkError, stubFetch, text, utf16, type Handler } from "../../test/stub-fetch.ts";
@@ -496,6 +497,17 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       }
     });
     expect(failureLine).toBeDefined();
+  });
+
+  // A catalog entry without a collector would otherwise ship a card that
+  // never appears, and a collector without an entry would crash base().
+  it("returns exactly one snapshot per catalog entry, in catalog order, even when every vendor is down", async () => {
+    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("fetch failed")));
+    const services = await collectAllServices();
+    expect(services.map((s) => s.id)).toEqual(CATALOG.map((entry) => entry.id));
+    for (const snapshot of services) {
+      expect(snapshot, snapshot.id).toMatchObject({ health: "unknown", failure: { kind: "network" } });
+    }
   });
 
   it("a payload that parses but has the wrong shape is a parser failure", async () => {
