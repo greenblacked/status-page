@@ -48,6 +48,9 @@ export async function readSnapshot(kv: SnapshotKv): Promise<BoardSnapshot | null
   return isBoardSnapshot(value) ? value : null;
 }
 
-export async function writeSnapshot(kv: SnapshotKv, snapshot: BoardSnapshot): Promise<void> {
-  await kv.put(SNAPSHOT_KEY, JSON.stringify(snapshot));
+/** Writes the snapshot and returns its size in bytes, for the sweep's log line. */
+export async function writeSnapshot(kv: SnapshotKv, snapshot: BoardSnapshot): Promise<number> {
+  const value = JSON.stringify(snapshot);
+  await kv.put(SNAPSHOT_KEY, value);
+  return new TextEncoder().encode(value).byteLength;
 }
