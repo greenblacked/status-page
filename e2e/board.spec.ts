@@ -32,9 +32,15 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
+  // Every failing node with axe's own summary (colours and ratio for
+  // contrast), so a failure in CI can be read from the log alone.
   const blocking = results.violations
     .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
-    .map((violation) => `${violation.id}: ${violation.help} (${violation.nodes.length} nodes)`);
+    .flatMap((violation) =>
+      violation.nodes.map(
+        (node) => `${violation.id} ${node.target.join(" ")}: ${node.failureSummary ?? violation.help}`,
+      ),
+    );
   expect(blocking).toEqual([]);
 });
 
