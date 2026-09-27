@@ -30,9 +30,13 @@ jobs:
       - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           # No build step exists yet, so CodeQL scans the sources directly.
-          languages: javascript-typescript
+          # `actions` scans .github/workflows itself (untrusted input in
+          # run:, over-broad permissions, unpinned actions), which is where
+          # the deploy token lives.
+          languages: javascript-typescript, actions
           queries: security-and-quality
 
+      # No `category`: with two languages, each gets its own default,
+      # /language:<language>, which for javascript-typescript is the value
+      # this step used to set, so its alert history carries on.
       - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
-        with:
-          category: /language:javascript-typescript
