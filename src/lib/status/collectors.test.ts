@@ -529,8 +529,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
   describe("vendor payload fixtures", () => {
     // The fixtures' dates are fixed, so pin the clock inside the collectors'
     // 14-day windows. Only Date is faked: fetchText's abort timer stays real.
-    // Every timestamp sits near noon UTC, so the "Sep 18" style dates on the
-    // cards read the same in any time zone from UTC-11 to UTC+11.
+    // Card dates such as "Sep 21" are formatted in vitest.config.ts's UTC.
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
@@ -655,27 +654,31 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
 
     it("Apple Developer Releases: the newest item per OS family, in family order, headed by the latest", async () => {
+      // A real feed, trimmed. This clock keeps the Sep 21 betas inside the
+      // 14-day window and puts the Sep 14 releases just outside it.
+      vi.setSystemTime(new Date("2026-09-29T12:00:00.000Z"));
       stubFetch({ [URLS.appleOs]: text(fixture("apple-os/releases.rss")) });
       const appleOs = await collect("apple-os");
       expect(appleOs.failure).toBeUndefined();
       expect(appleOs.health).toBe("operational");
-      expect(appleOs.summary).toBe("Latest: iOS 26.1 beta 2 (23B5059e) · Sep 18");
-      // Xcode is not an OS and is skipped; the older iOS 26.0.1 loses to the
-      // beta listed above it; visionOS is older than 14 days.
+      expect(appleOs.summary).toBe("Latest: iOS 27.2 beta 2 (24B5089g) · Sep 21");
+      // TestFlight and Xcode are not OS releases and are skipped; iOS 27.0
+      // loses to the beta listed above it; visionOS's newest item is the
+      // Sep 14 release, now older than 14 days.
       expect(appleOs.components).toEqual([
-        { name: "iOS", health: "maintenance", detail: "26.1 beta 2 (23B5059e) · Sep 18" },
-        { name: "iPadOS", health: "maintenance", detail: "26.1 beta 2 (23B5059e) · Sep 18" },
-        { name: "macOS", health: "maintenance", detail: "Tahoe 26.1 beta 2 (25B5042k) · Sep 18" },
-        { name: "watchOS", health: "maintenance", detail: "26.0.1 (23R356) · Sep 14" },
-        { name: "tvOS", health: "maintenance", detail: "26.0.1 (23J583) · Sep 14" },
-        { name: "visionOS", health: "operational", detail: "26.0 (23M336) · Aug 21" },
+        { name: "iOS", health: "maintenance", detail: "27.2 beta 2 (24B5089g) · Sep 21" },
+        { name: "iPadOS", health: "maintenance", detail: "27.2 beta 2 (24B5089g) · Sep 21" },
+        { name: "macOS", health: "maintenance", detail: "27.2 beta 2 (26B5091g) · Sep 21" },
+        { name: "watchOS", health: "maintenance", detail: "27.2 beta 2 (24S5091f) · Sep 21" },
+        { name: "tvOS", health: "maintenance", detail: "27.2 beta 2 (24K5093g) · Sep 21" },
+        { name: "visionOS", health: "operational", detail: "27.0 (24M362) · Sep 14" },
       ]);
       expect(appleOs.incidents).toEqual([]);
       expect(appleOs.meta).toEqual({
-        latest: "iOS 26.1 beta 2 (23B5059e)",
+        latest: "iOS 27.2 beta 2 (24B5089g)",
         versions:
-          "iOS=26.1 beta 2 (23B5059e)|iPadOS=26.1 beta 2 (23B5059e)|macOS=Tahoe 26.1 beta 2 (25B5042k)|" +
-          "watchOS=26.0.1 (23R356)|tvOS=26.0.1 (23J583)|visionOS=26.0 (23M336)",
+          "iOS=27.2 beta 2 (24B5089g)|iPadOS=27.2 beta 2 (24B5089g)|macOS=27.2 beta 2 (26B5091g)|" +
+          "watchOS=27.2 beta 2 (24S5091f)|tvOS=27.2 beta 2 (24K5093g)|visionOS=27.0 (24M362)",
       });
     });
 
