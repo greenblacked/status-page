@@ -32,6 +32,8 @@ jobs:
             node-version: '24'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: ${{ matrix.node-version-file }}
@@ -86,6 +88,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Repository hygiene
         run: ./scripts/ci/hygiene.sh
@@ -110,6 +114,9 @@ jobs:
         with:
           # Need both sides of the range to list the commits this PR adds.
           fetch-depth: 0
+          # The base branch below is fetched anonymously: this repository is
+          # public, and no later step needs a token in .git/config.
+          persist-credentials: false
 
       - name: Check Conventional Commits
         # Branch names are attacker-controlled on a fork PR, so the ref goes
@@ -145,6 +152,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # Pinned by digest: Dependabot does not see images used in `run:`, so
       # bump this by hand from https://hub.docker.com/r/rhysd/actionlint/tags.
