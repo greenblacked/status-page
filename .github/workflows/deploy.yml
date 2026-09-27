@@ -315,9 +315,12 @@ jobs:
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
           FAILED_VERSION: ${{ steps.deploy.outputs.version_id }}
         run: |
+          # Without a trailing slash, as smoke.sh takes it: "https://host/"
+          # would otherwise ask for //healthz.
+          base="${DEPLOY_URL%/}"
           deadline=$((SECONDS + 120))
           while :; do
-            if headers="$(curl --silent --fail --max-time 10 --dump-header - --output /dev/null "$DEPLOY_URL/healthz")"; then
+            if headers="$(curl --silent --fail --max-time 10 --dump-header - --output /dev/null "$base/healthz")"; then
               answering="$(printf '%s\n' "$headers" | tr -d '\r' | awk -F': *' 'tolower($1) == "x-worker-version" { print $2; exit }')"
               if [ "$answering" != "$FAILED_VERSION" ]; then
                 echo "::notice::rolled back: /healthz is answered by ${answering:-a version without X-Worker-Version}, not the failed $FAILED_VERSION"
