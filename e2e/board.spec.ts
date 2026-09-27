@@ -105,6 +105,13 @@ test("carries the Apple device head tags, with the icon and manifest served", as
     const response = await request.get(href!);
     expect(response.status(), `${rel} ${href}`).toBe(200);
   }
+  const manifest: { id: string; icons: Array<{ src: string }> } = await (
+    await request.get("/manifest.webmanifest")
+  ).json();
+  expect(manifest.id).toBe("/");
+  for (const icon of manifest.icons) {
+    expect((await request.get(icon.src)).status(), icon.src).toBe(200);
+  }
 });
 
 /** The computed backdrop filter, prefixed or not, for every element matching `selector`. */

@@ -27,6 +27,10 @@ function RootDocument() {
           because head() keeps a single meta per name. Safari 26 tints its
           toolbars from the page background instead, but a Home Screen
           app's status bar and other browsers still read these.
+          public/manifest.webmanifest has only one theme and background
+          colour, and no way to vary them by appearance, so it uses the
+          dark pair: that matches the icon, and is what a launch screen
+          built from the manifest shows before the page paints.
         */}
         <meta name="theme-color" media="(prefers-color-scheme: light)" content="#edf0f5" />
         <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0e16" />
