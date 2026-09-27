@@ -143,6 +143,8 @@ The board publishes what it shows in four open formats. All four come from the s
 
 `/healthz` answers `ok` for load balancer and Kubernetes liveness probes. It never reads the board, so a slow vendor cannot fail the probe.
 
+`/readyz` says whether the board itself is fit to serve: `200` when the snapshot is under ten minutes old and at least one source answered, `503` when it is older (`"status":"stale"`) or every service is Unknown (`"status":"blind"`), with `{ status, generatedAt, ageSeconds, services, unknown }` either way and nothing cached. Point an uptime monitor or a deploy check at it, **not** a liveness probe: it turns red when the vendors are unreachable, which restarting the server cannot fix.
+
 **Alerts without code.** Subscribe a chat tool to the feed:
 
 - Slack: `/feed subscribe https://<your-host>/feed.xml`
@@ -216,6 +218,7 @@ curl -s http://localhost:3000/feed.xml | head -20
 curl -s http://localhost:3000/api/badge/gcp
 curl -s http://localhost:3000/metrics | grep 'status="outage"'
 curl -s http://localhost:3000/healthz
+curl -s http://localhost:3000/readyz
 ```
 
 ## FAQ

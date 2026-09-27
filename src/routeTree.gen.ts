@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as FeedDotxmlRouteImport } from './routes/feed[.]xml'
 import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as MetricsRouteImport } from './routes/metrics'
+import { Route as ReadyzRouteImport } from './routes/readyz'
 import { Route as ApiStatusDotjsonRouteImport } from './routes/api/status[.]json'
 import { Route as ApiBadgeServiceRouteImport } from './routes/api/badge/$service'
 
@@ -36,6 +37,11 @@ const MetricsRoute = MetricsRouteImport.update({
   path: '/metrics',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ReadyzRoute = ReadyzRouteImport.update({
+  id: '/readyz',
+  path: '/readyz',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiStatusDotjsonRoute = ApiStatusDotjsonRouteImport.update({
   id: '/api/status.json',
   path: '/api/status.json',
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/feed.xml': typeof FeedDotxmlRoute
   '/healthz': typeof HealthzRoute
   '/metrics': typeof MetricsRoute
+  '/readyz': typeof ReadyzRoute
   '/api/status.json': typeof ApiStatusDotjsonRoute
   '/api/badge/$service': typeof ApiBadgeServiceRoute
 }
@@ -60,6 +67,7 @@ export interface FileRoutesByTo {
   '/feed.xml': typeof FeedDotxmlRoute
   '/healthz': typeof HealthzRoute
   '/metrics': typeof MetricsRoute
+  '/readyz': typeof ReadyzRoute
   '/api/status.json': typeof ApiStatusDotjsonRoute
   '/api/badge/$service': typeof ApiBadgeServiceRoute
 }
@@ -69,6 +77,7 @@ export interface FileRoutesById {
   '/feed.xml': typeof FeedDotxmlRoute
   '/healthz': typeof HealthzRoute
   '/metrics': typeof MetricsRoute
+  '/readyz': typeof ReadyzRoute
   '/api/status.json': typeof ApiStatusDotjsonRoute
   '/api/badge/$service': typeof ApiBadgeServiceRoute
 }
@@ -79,6 +88,7 @@ export interface FileRouteTypes {
     | '/feed.xml'
     | '/healthz'
     | '/metrics'
+    | '/readyz'
     | '/api/status.json'
     | '/api/badge/$service'
   fileRoutesByTo: FileRoutesByTo
@@ -87,6 +97,7 @@ export interface FileRouteTypes {
     | '/feed.xml'
     | '/healthz'
     | '/metrics'
+    | '/readyz'
     | '/api/status.json'
     | '/api/badge/$service'
   id:
@@ -95,6 +106,7 @@ export interface FileRouteTypes {
     | '/feed.xml'
     | '/healthz'
     | '/metrics'
+    | '/readyz'
     | '/api/status.json'
     | '/api/badge/$service'
   fileRoutesById: FileRoutesById
@@ -104,6 +116,7 @@ export interface RootRouteChildren {
   FeedDotxmlRoute: typeof FeedDotxmlRoute
   HealthzRoute: typeof HealthzRoute
   MetricsRoute: typeof MetricsRoute
+  ReadyzRoute: typeof ReadyzRoute
   ApiStatusDotjsonRoute: typeof ApiStatusDotjsonRoute
   ApiBadgeServiceRoute: typeof ApiBadgeServiceRoute
 }
@@ -138,6 +151,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MetricsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/readyz': {
+      id: '/readyz'
+      path: '/readyz'
+      fullPath: '/readyz'
+      preLoaderRoute: typeof ReadyzRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/status.json': {
       id: '/api/status.json'
       path: '/api/status.json'
@@ -160,6 +180,7 @@ const rootRouteChildren: RootRouteChildren = {
   FeedDotxmlRoute: FeedDotxmlRoute,
   HealthzRoute: HealthzRoute,
   MetricsRoute: MetricsRoute,
+  ReadyzRoute: ReadyzRoute,
   ApiStatusDotjsonRoute: ApiStatusDotjsonRoute,
   ApiBadgeServiceRoute: ApiBadgeServiceRoute,
 }
