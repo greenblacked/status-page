@@ -3,8 +3,14 @@
 /*
   Aurora Signal: glass panels over a slow, deliberately coloured backdrop.
   Every colour the board uses is a token here, in a light and a dark value
-  that follow the system appearance through light-dark(). JSX names the
-  tokens (text-muted, bg-ok, rounded-lg) and never a raw colour.
+  written with light-dark(). JSX names the tokens (text-muted, bg-ok,
+  rounded-lg) and never a raw colour.
+
+  What ships is not light-dark() itself: the build (Lightning CSS) turns
+  each one into a pair of custom-property toggles that a
+  prefers-color-scheme media query flips on :root. The appearance follows
+  the system, for the whole page; setting color-scheme on one element does
+  not switch the tokens inside it.
 */
 @theme {
   --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -60,8 +66,9 @@
 }
 
 /*
-  Light and dark follow the system. Native scrollbars, form controls and
-  every light-dark() token switch with it.
+  Light and dark follow the system. This declaration is also what the
+  build keys its light-dark() toggles on (see the top of this file), and
+  it switches native scrollbars and form controls.
 */
 :root {
   color-scheme: light dark;
@@ -100,6 +107,7 @@
   --whisper-fill: light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.055));
   --whisper-fill-hover: light-dark(rgb(255 255 255 / 0.78), rgb(255 255 255 / 0.1));
   --whisper-rim: light-dark(rgb(255 255 255 / 0.8), rgb(255 255 255 / 0.08));
+  --whisper-edge: var(--color-border);
 
   --inset-fill: light-dark(rgb(15 20 35 / 0.05), rgb(0 0 0 / 0.26));
   --inset-rim: light-dark(rgb(15 20 35 / 0.06), rgb(255 255 255 / 0.06));
@@ -145,11 +153,12 @@
     /* Safari 26 tints its toolbars from the page's background colour. */
     background-color: var(--color-bg);
     color: var(--color-fg);
-    /* iOS would otherwise enlarge text on rotation to landscape. */
-    -webkit-text-size-adjust: 100%;
+    /*
+      Tailwind's preflight already sets -webkit-text-size-adjust and turns
+      the tap highlight off (replaced here by .pressable); this is the
+      unprefixed property it leaves out.
+    */
     text-size-adjust: 100%;
-    /* Replaced by explicit :active states on every control. */
-    -webkit-tap-highlight-color: transparent;
   }
 
   body {
@@ -330,7 +339,7 @@
   background-color: var(--whisper-fill);
   box-shadow:
     inset 0 1px 0 var(--whisper-rim),
-    0 0 0 1px var(--color-border);
+    0 0 0 1px var(--whisper-edge);
 }
 
 @media (hover: hover) {
@@ -490,7 +499,8 @@
   }
   70%,
   100% {
-    transform: scale(3.4);
+    /* 2.4: the outer ring reaches about 5px past the dot, inside the 8px gap to its label. */
+    transform: scale(2.4);
     opacity: 0;
   }
 }
@@ -620,33 +630,21 @@
   to web pages, so the board has its own switch (Settings and shortcuts),
   which sets data-reduce-transparency on <html>; browsers that do report
   it get the same result from the media query. Panels turn solid, nothing
-  is blurred, and the backdrop stops drifting.
+  is blurred, and the backdrop goes. The reduce-glass variant writes each
+  rule once for both.
 */
-:root[data-reduce-transparency="true"] {
-  --glass-filter: none;
-  --chrome-filter: none;
-  --glass-fill: light-dark(#fbfcfe, #181d27);
-  --glass-tint-top: transparent;
-  --glass-tint-bottom: transparent;
-  --glass-sheen: transparent;
-  --chrome-fill: light-dark(#f7f8fb, #141923);
-  --chrome-tint-top: transparent;
-  --chrome-tint-bottom: transparent;
-  --whisper-fill: light-dark(#f7f8fb, #131822);
-  --whisper-fill-hover: light-dark(#ffffff, #1b202b);
-  --aurora-1: transparent;
-  --aurora-2: transparent;
-  --aurora-3: transparent;
-  --aurora-4: transparent;
-  --grain-opacity: 0;
+@custom-variant reduce-glass {
+  &:where([data-reduce-transparency="true"], [data-reduce-transparency="true"] *) {
+    @slot;
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    @slot;
+  }
 }
 
-:root[data-reduce-transparency="true"] .aurora::before {
-  animation-play-state: paused;
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  :root {
+:root {
+  @variant reduce-glass {
     --glass-filter: none;
     --chrome-filter: none;
     --glass-fill: light-dark(#fbfcfe, #181d27);
@@ -658,15 +656,13 @@
     --chrome-tint-bottom: transparent;
     --whisper-fill: light-dark(#f7f8fb, #131822);
     --whisper-fill-hover: light-dark(#ffffff, #1b202b);
-    --aurora-1: transparent;
-    --aurora-2: transparent;
-    --aurora-3: transparent;
-    --aurora-4: transparent;
-    --grain-opacity: 0;
   }
+}
 
-  .aurora::before {
-    animation-play-state: paused;
+/* No backdrop at all: nothing left to show through solid panels, and nothing to animate. */
+.aurora {
+  @variant reduce-glass {
+    display: none;
   }
 }
 
@@ -686,6 +682,10 @@
     --chrome-fill: light-dark(rgb(250 251 253 / 0.96), rgb(20 25 35 / 0.96));
     --whisper-fill: light-dark(rgb(255 255 255 / 0.9), rgb(22 27 37 / 0.9));
     --inset-fill: light-dark(rgb(15 20 35 / 0.07), rgb(0 0 0 / 0.4));
+    /* The solid border below replaces the 1px ring the shadows draw, so the edge stays one pixel. */
+    --rim-outline: transparent;
+    --rim-outline-strong: transparent;
+    --whisper-edge: transparent;
   }
 
   .glass,

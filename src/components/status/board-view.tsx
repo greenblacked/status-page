@@ -489,21 +489,21 @@ export function BoardView({
             <p>
               Use the board elsewhere:{" "}
               <a
-                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                 href="/api/status.json"
               >
                 JSON API
               </a>
               {" · "}
               <a
-                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                 href="/feed.xml"
               >
                 Atom feed
               </a>{" "}
               for Slack, Teams and feed readers ·{" "}
               <a
-                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                 href="/api/badge/board"
               >
                 status badges
