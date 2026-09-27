@@ -10,8 +10,12 @@
 // CI:     ... scripts/ci/source-health.ts --issues
 //         (per-source failures become issues; the job fails only when the
 //          runner itself looks broken, i.e. most sources fail at once)
+// Record: ... scripts/ci/source-health.ts --record <dir>
+//         (also saves every vendor response as <dir>/<host>/<path>, to
+//          refresh src/lib/status/__fixtures__ from)
 
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectAllServices } from "../../src/lib/status/sources.server.ts";
 import type { ServiceSnapshot, SourceFailure } from "../../src/lib/status/types.ts";
@@ -93,6 +97,41 @@ function renderSummary(results: Result[]): string {
 // Error text lands inside Markdown code spans and table cells.
 function inline(text: string): string {
   return text.replace(/[`|\r\n]+/g, " ").slice(0, 300);
+}
+
+// ------------------------------------------------------------- recording ---
+
+// One path segment, safe on any file system: a query such as `?appid=730`
+// or an odd character becomes `_`, and `.`/`..` can never walk upwards.
+function safeSegment(segment: string): string {
+  const cleaned = segment.replace(/[^A-Za-z0-9._-]/g, "_");
+  return /^\.+$/.test(cleaned) ? cleaned.replace(/\./g, "_") : cleaned;
+}
+
+/** Where `--record` keeps the response for `url`: `<dir>/<host>/<path>`. */
+export function recordPath(dir: string, url: URL): string {
+  const segments = url.pathname.split("/").filter(Boolean).map(safeSegment);
+  if (url.pathname.endsWith("/") || segments.length === 0) segments.push("index");
+  if (url.search) segments.push(`${segments.pop()}${safeSegment(url.search)}`);
+  return join(dir, safeSegment(url.host), ...segments);
+}
+
+// Wraps fetch rather than the collectors, so sources.server.ts stays as it
+// is and the files hold exactly the bytes a collector was sent (AWS's UTF-16
+// included). A later attempt overwrites an earlier one. Returns the undo.
+export function recordResponses(dir: string): () => void {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const response = await realFetch(input, init);
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    const file = recordPath(dir, url);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, new Uint8Array(await response.clone().arrayBuffer()));
+    return response;
+  };
+  return () => {
+    globalThis.fetch = realFetch;
+  };
 }
 
 // ---------------------------------------------------------------- GitHub ---
@@ -192,7 +231,21 @@ export async function syncIssues(results: Result[]): Promise<void> {
 
 async function main(): Promise<number> {
   const withIssues = process.argv.includes("--issues");
-  const results = await probe();
+  const recordAt = process.argv.indexOf("--record");
+  const recordDir = recordAt === -1 ? undefined : process.argv[recordAt + 1];
+  if (recordAt !== -1 && (!recordDir || recordDir.startsWith("--"))) {
+    console.error("usage: source-health.ts [--issues] [--record <dir>]");
+    return 2;
+  }
+  // Only the vendor sweep is recorded, never the GitHub calls after it.
+  const stopRecording = recordDir ? recordResponses(recordDir) : undefined;
+  let results: Result[];
+  try {
+    results = await probe();
+  } finally {
+    stopRecording?.();
+  }
+  if (recordDir) console.log(`recorded vendor responses under ${recordDir}`);
   const failures = results.filter((r) => !r.ok);
 
   console.log(renderTable(results));
