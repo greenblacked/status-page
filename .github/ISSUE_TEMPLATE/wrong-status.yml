@@ -1,0 +1,69 @@
+name: A card shows the wrong status
+description: The board disagrees with the vendor's own status page, or a card is stuck on Unknown.
+title: "[status] "
+labels: ["vendor-source"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Status Bar only relays what each vendor officially publishes. Before filing, open the card's vendor link: if the vendor's own page says the same thing, the board is right.
+  - type: dropdown
+    id: service
+    attributes:
+      label: Service
+      options:
+        - Google Cloud (gcp)
+        - AWS (aws)
+        - Steam (steam)
+        - CS2 Europe (cs2-europe)
+        - Epic Games (epic)
+        - Fortnite (fortnite)
+        - Spotify (spotify)
+        - Apple (apple)
+        - Android / Google Play (android)
+        - Grok (grok)
+        - ChatGPT (chatgpt)
+        - Claude (claude)
+        - MikroTik RouterOS (mikrotik)
+        - Apple OS (apple-os)
+    validations:
+      required: true
+  - type: input
+    id: board
+    attributes:
+      label: What the board shows
+      description: The card's state and its summary line, word for word.
+      placeholder: "Unknown: fetch failed"
+    validations:
+      required: true
+  - type: input
+    id: vendor
+    attributes:
+      label: What the vendor's page shows
+      description: The state on the official status page, with a link.
+    validations:
+      required: true
+  - type: input
+    id: when
+    attributes:
+      label: When (UTC)
+      placeholder: "2026-09-27 14:05 UTC"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where you saw it
+      options:
+        - The hosted board
+        - My own deployment (Node)
+        - My own deployment (Cloudflare Workers)
+        - Running locally
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Anything else
+      description: For a self-hosted board, the server's `collector_failed` log line for this service helps most.
+      render: text
