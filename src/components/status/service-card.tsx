@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { CATEGORIES } from "@/lib/status/catalog";
 import { ALL_CLEAR_SUMMARY, healthLabel } from "@/lib/status/health";
 import { serviceAnchor } from "@/lib/status/layout";
+import { formatDuration, formatUtcTime, parseTimestamp } from "@/lib/status/schedule";
 import type { CategoryId, ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
@@ -37,12 +38,15 @@ export function ServiceCard({
   emphasized = false,
   starred,
   onToggleStar,
+  now,
 }: {
   service: ServiceSnapshot;
   index: number;
   emphasized?: boolean;
   starred: boolean;
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
+  /** The client clock (0 until mounted), for how long an incident has run. */
+  now: number;
 }) {
   const Icon = CATEGORY_ICON[service.category];
   const changelog = service.category === "updates";
@@ -56,7 +60,11 @@ export function ServiceCard({
       : service.components.filter((component) => component.health !== "operational")
   ).slice(0, 6);
   const incidents = service.incidents.filter((incident) => norm(incident.title) !== summary).slice(0, 2);
+  // An incident whose title is the summary has no row of its own, so its
+  // start goes under the summary instead.
+  const summaryIncident = changelog ? undefined : service.incidents.find((incident) => norm(incident.title) === summary);
   const incidentUrl = changelog ? undefined : service.incidents.find((incident) => incident.url)?.url;
+  const checkedAt = Date.parse(service.checkedAt);
 
   return (
     <article
@@ -95,6 +103,9 @@ export function ServiceCard({
       </div>
 
       <p className="mt-4 text-sm leading-relaxed text-muted text-pretty [overflow-wrap:anywhere]">{service.summary}</p>
+      {summaryIncident ? (
+        <IncidentSince startedAt={summaryIncident.startedAt} reference={checkedAt} now={now} className="mt-1" />
+      ) : null}
 
       {rows.length > 0 ? (
         <ul className="mt-4 flex flex-col gap-1.5">
@@ -119,6 +130,7 @@ export function ServiceCard({
               <span className={ICON_TONE[incident.health]}>{healthLabel(incident.health)}</span>
               <span className="text-subtle"> · </span>
               {incident.title}
+              <IncidentSince startedAt={incident.startedAt} reference={checkedAt} now={now} />
             </li>
           ))}
         </ul>
@@ -139,6 +151,45 @@ export function ServiceCard({
         </a>
       </div>
     </article>
+  );
+}
+
+/**
+ * When an incident began, as "since 14:05 UTC", and after hydration how long
+ * it has run. The start is the same text on the server and the client; the
+ * duration needs the visitor's clock, so it waits for `now`.
+ */
+function IncidentSince({
+  startedAt,
+  reference,
+  now,
+  className,
+}: {
+  startedAt: string | undefined;
+  /** When the card was checked; a start on another day shows its date. */
+  reference: number;
+  now: number;
+  className?: string;
+}) {
+  const at = parseTimestamp(startedAt);
+  if (at === null) return null;
+  const duration = now > 0 ? formatDuration(now - at) : null;
+  return (
+    <span className={cn("block font-mono text-[11px] tabular-nums text-subtle", className)}>
+      since{" "}
+      <time dateTime={new Date(at).toISOString()}>
+        {formatUtcTime(at, Number.isFinite(reference) ? reference : at)}
+      </time>
+      {duration ? (
+        <>
+          {" · "}
+          <time dateTime={duration.iso}>
+            <span aria-hidden>{duration.short}</span>
+            <span className="sr-only">{duration.long}</span>
+          </time>
+        </>
+      ) : null}
+    </span>
   );
 }
 

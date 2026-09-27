@@ -127,6 +127,7 @@ Open the local URL that Vite prints. The first load reads all fourteen sources, 
 - Watch the countdown: the board pulls a new snapshot every two minutes
 - Read the **Board log** to see what changed between two-minute slots
 - Press **Refresh** to skip the cache and ask every vendor right now. Presses within 15 seconds of the last check reuse it
+- See how long an incident has run: a card shows when the vendor says it began, such as "since 14:05 UTC · 2h 10m"
 - Open any card's vendor page for the full story
 - Switch on the **bell** for a browser notification when a service changes while the tab is in the background
 

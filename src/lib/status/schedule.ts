@@ -46,3 +46,67 @@ export function formatSlotTime(slot: number): string {
     minute: "2-digit",
   }).format(new Date(slot));
 }
+
+/** A vendor timestamp in ms, or null when it is missing or unreadable. */
+export function parseTimestamp(value: string | undefined): number | null {
+  if (!value) return null;
+  // Vendor timestamps are not always parseable (see integrations.ts).
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? at : null;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const pad = (n: number) => n.toString().padStart(2, "0");
+
+/**
+ * A moment as UTC clock time, "14:05 UTC", with the date first when it is
+ * not on the same UTC day as `reference`: "26 Sep 14:05 UTC", and the year
+ * too when that differs. Neither the browser's clock nor its locale enters
+ * into it, so the server and the client render the same text.
+ */
+export function formatUtcTime(at: number, reference: number = at): string {
+  const date = new Date(at);
+  const ref = new Date(reference);
+  const clock = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
+  const sameDay =
+    date.getUTCFullYear() === ref.getUTCFullYear() &&
+    date.getUTCMonth() === ref.getUTCMonth() &&
+    date.getUTCDate() === ref.getUTCDate();
+  if (sameDay) return clock;
+  const day = `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}`;
+  return date.getUTCFullYear() === ref.getUTCFullYear()
+    ? `${day} ${clock}`
+    : `${day} ${date.getUTCFullYear()} ${clock}`;
+}
+
+export type Duration = {
+  /** "2h 10m", for the eye. */
+  short: string;
+  /** "2 hours 10 minutes", for a screen reader. */
+  long: string;
+  /** "PT2H10M", for a <time dateTime>. */
+  iso: string;
+};
+
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+/** How long something has lasted, to the minute. Negative spans count as none. */
+export function formatDuration(ms: number): Duration {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const iso = `PT${hours}H${minutes % 60}M`;
+  if (minutes < 1) return { short: "under 1m", long: "under a minute", iso };
+  if (hours < 1) return { short: `${minutes}m`, long: plural(minutes, "minute"), iso };
+  if (days < 1) {
+    const rest = minutes % 60;
+    return rest
+      ? { short: `${hours}h ${rest}m`, long: `${plural(hours, "hour")} ${plural(rest, "minute")}`, iso }
+      : { short: `${hours}h`, long: plural(hours, "hour"), iso };
+  }
+  const rest = hours % 24;
+  return rest
+    ? { short: `${days}d ${rest}h`, long: `${plural(days, "day")} ${plural(rest, "hour")}`, iso }
+    : { short: `${days}d`, long: plural(days, "day"), iso };
+}

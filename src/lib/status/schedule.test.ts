@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import {
   formatAge,
   formatCountdown,
+  formatDuration,
+  formatUtcTime,
   lastPulseAt,
   nextPulseAt,
+  parseTimestamp,
   PULSE_INTERVAL_MS,
   pulseProgress,
 } from "./schedule.ts";
@@ -31,5 +34,38 @@ describe("pulse schedule", () => {
     assert.equal(formatAge(4_000), "just now");
     assert.equal(formatAge(23_000), "23s ago");
     assert.equal(formatAge(3 * 60 * 1000), "3m ago");
+  });
+});
+
+describe("incident times", () => {
+  it("parses vendor timestamps and rejects unreadable ones", () => {
+    assert.equal(parseTimestamp("2026-09-22T12:05:00Z"), Date.parse("2026-09-22T12:05:00Z"));
+    assert.equal(parseTimestamp("Tue, 22 Sep 2026 12:05:00 GMT"), Date.parse("2026-09-22T12:05:00Z"));
+    assert.equal(parseTimestamp("not a date"), null);
+    assert.equal(parseTimestamp(""), null);
+    assert.equal(parseTimestamp(undefined), null);
+  });
+
+  it("formats a start as UTC clock time, adding the date only when it differs", () => {
+    const at = Date.parse("2026-09-22T09:05:00Z");
+    assert.equal(formatUtcTime(at), "09:05 UTC");
+    assert.equal(formatUtcTime(at, Date.parse("2026-09-22T23:59:00Z")), "09:05 UTC");
+    assert.equal(formatUtcTime(at, Date.parse("2026-09-24T01:00:00Z")), "22 Sep 09:05 UTC");
+    assert.equal(formatUtcTime(at, Date.parse("2027-01-02T01:00:00Z")), "22 Sep 2026 09:05 UTC");
+  });
+
+  it("formats how long an incident has lasted", () => {
+    const minute = 60_000;
+    assert.deepEqual(formatDuration(20_000), { short: "under 1m", long: "under a minute", iso: "PT0H0M" });
+    assert.deepEqual(formatDuration(-5 * minute), { short: "under 1m", long: "under a minute", iso: "PT0H0M" });
+    assert.deepEqual(formatDuration(45 * minute), { short: "45m", long: "45 minutes", iso: "PT0H45M" });
+    assert.deepEqual(formatDuration(130 * minute), { short: "2h 10m", long: "2 hours 10 minutes", iso: "PT2H10M" });
+    assert.deepEqual(formatDuration(60 * minute), { short: "1h", long: "1 hour", iso: "PT1H0M" });
+    assert.deepEqual(formatDuration((76 * 60 + 1) * minute), {
+      short: "3d 4h",
+      long: "3 days 4 hours",
+      iso: "PT76H1M",
+    });
+    assert.deepEqual(formatDuration(48 * 60 * minute), { short: "2d", long: "2 days", iso: "PT48H0M" });
   });
 });
