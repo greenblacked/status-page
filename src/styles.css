@@ -111,7 +111,7 @@
   --aurora-2: light-dark(rgb(125 200 252 / 0.4), rgb(90 110 245 / 0.22));
   --aurora-3: light-dark(rgb(200 182 253 / 0.34), rgb(170 95 240 / 0.12));
   --aurora-4: light-dark(rgb(253 200 150 / 0.22), rgb(56 180 245 / 0.13));
-  --grain-opacity: 0.035;
+  --grain-opacity: 0.08;
 }
 
 @media (min-width: 40rem) {
@@ -184,10 +184,14 @@
 
 /*
   One fixed layer behind everything. The field inside it is larger than
-  the screen and drifts by transform alone, so the compositor moves it
-  without repainting, and its own overflow is clipped here rather than
-  widening the page. The glass panels' saturate() picks up whichever
-  current is passing behind them.
+  the screen, and its own overflow is clipped here rather than widening
+  the page. The glass panels' saturate() picks up whichever current is
+  behind them.
+
+  It drifts only with a mouse or trackpad (a Mac). A moving backdrop makes
+  every blurred panel above it re-render its blur each frame, which on an
+  iPhone or iPad costs battery for a page left open for hours, so there
+  it holds still. Browsers already stop animating a hidden tab.
 */
 .aurora {
   pointer-events: none;
@@ -207,16 +211,25 @@
     radial-gradient(34% 28% at 78% 22%, var(--aurora-2), transparent 70%),
     radial-gradient(30% 26% at 58% 60%, var(--aurora-3), transparent 72%),
     radial-gradient(40% 30% at 26% 82%, var(--aurora-4), transparent 70%);
-  animation: aurora-drift 84s linear infinite;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .aurora::before {
+    animation: aurora-drift 84s linear infinite;
+  }
+}
+
+/*
+  Grain that breaks up banding in the blur: neutral grey specks with their
+  own alpha, painted normally. A blend mode here would make the whole
+  screen a blended layer.
+*/
 .aurora::after {
   content: "";
   position: absolute;
   inset: 0;
   opacity: var(--grain-opacity);
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 2 0 0 0 -0.8'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 @keyframes aurora-drift {
