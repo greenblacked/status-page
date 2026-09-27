@@ -286,7 +286,7 @@ On Node, the server holds only the latest snapshot, in memory, and reuses it for
 
 <br>
 
-Status Bar deploys to Cloudflare Workers: `dev` to a staging Worker and `main` to production, through [`deploy.yml`](.github/workflows/deploy.yml). [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the setup and how the deploy token is kept out of reach of pull requests. To run it elsewhere, `npm run build` still produces a plain Fetch-style handler in `dist/server/server.js`. `npm run preview` is a smoke test of that build, not a production host.
+Status Bar deploys to Cloudflare Workers: `dev` to a staging Worker and `main` to production, through [`deploy.yml`](.github/workflows/deploy.yml). [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the setup and how the deploy token is kept out of reach of pull requests. To run it elsewhere, `npm run build` still produces a plain Fetch-style handler in `dist/server/server.js`. `npm run preview` is a smoke test of that build, not a production host. The staging Worker answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
 
 </details>
 

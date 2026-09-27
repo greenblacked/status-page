@@ -11,6 +11,8 @@ export type SnapshotKv = {
 
 export type CloudflareEnv = {
   STATUS_SNAPSHOT: KVNamespace;
+  /** "noindex" on the staging Worker (wrangler.jsonc env.staging.vars); unset in production. */
+  ROBOTS?: string;
 };
 
 // One key: the whole board is small (a few hundred services at most) and is

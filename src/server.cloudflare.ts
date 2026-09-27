@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
+import { isNoindex, withNoindex } from "@/lib/robots";
 import { runWithCloudflareContext } from "@/lib/status/cloudflare-context";
 import { runScheduledSweep } from "@/lib/status/cron-sweep";
 import type { CloudflareEnv } from "@/lib/status/kv-snapshot-store";
@@ -16,8 +17,15 @@ import type { CloudflareEnv } from "@/lib/status/kv-snapshot-store";
 const handleRequest = createStartHandler(defaultStreamHandler);
 
 export default {
-  fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): Promise<Response> | Response {
-    return runWithCloudflareContext({ env, waitUntil: ctx.waitUntil.bind(ctx) }, () => handleRequest(request));
+  async fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): Promise<Response> {
+    const response = await runWithCloudflareContext({ env, waitUntil: ctx.waitUntil.bind(ctx) }, () =>
+      handleRequest(request),
+    );
+    // The staging Worker (ROBOTS=noindex in wrangler.jsonc) is public but
+    // must not be indexed. Set here, on every response the Worker makes,
+    // rather than in security-headers.ts, which stays the same for both
+    // builds. Static assets never reach the Worker; robots.txt covers them.
+    return isNoindex(env.ROBOTS) ? withNoindex(response) : response;
   },
 
   // Awaited rather than handed to waitUntil, so a sweep that throws shows as
