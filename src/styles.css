@@ -797,14 +797,58 @@
     visibility 0s linear 0s;
 }
 
+/*
+  Once the fade has finished it leaves the page altogether (display:
+  none, held back by allow-discrete until then), so a hidden bar costs no
+  compositing. Coming back from none, it has no previous style to
+  transition from, and @starting-style supplies one: the hidden pose.
+  Without allow-discrete, a browser just hides it at once.
+*/
 .compact-header[data-shown="false"] {
+  display: none;
   opacity: 0;
   transform: translateY(-0.75rem) scale(0.98);
   visibility: hidden;
   transition:
     opacity var(--motion-quick) var(--ease-out),
     transform var(--motion-fast) var(--ease-smooth-out),
-    visibility 0s linear var(--motion-fast);
+    visibility 0s linear var(--motion-fast),
+    display var(--motion-fast) allow-discrete;
+}
+
+@starting-style {
+  .compact-header[data-shown="true"] {
+    opacity: 0;
+    transform: translateY(-0.75rem) scale(0.98);
+  }
+}
+
+/*
+  The settings dialog rises into place as it opens, from @starting-style,
+  and its dimmed backdrop fades in. Transform only on the dialog itself:
+  opacity below 1 on it would cut its glass off from the page behind, and
+  the blur would pop in at the end. It closes at once: carrying a closing
+  dialog in the top layer needs the overlay property, which not every
+  engine has, and without it the dialog would flash in the page.
+*/
+.settings-dialog[open] {
+  transform: none;
+  transition: transform var(--motion-fast) var(--ease-smooth-out);
+}
+
+.settings-dialog[open]::backdrop {
+  opacity: 1;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+@starting-style {
+  .settings-dialog[open] {
+    transform: translateY(0.5rem) scale(0.97);
+  }
+
+  .settings-dialog[open]::backdrop {
+    opacity: 0;
+  }
 }
 
 /* Cards glide to their new place when a manual refresh moves them between
@@ -817,6 +861,28 @@
 ::view-transition-group(*) {
   animation-duration: var(--motion-fast);
   animation-timing-function: var(--ease-smooth-out);
+}
+
+/*
+  Scroll-driven, decoration only: the hero's title block recedes as it
+  scrolls away under the compact bar. The bar's own showing and hiding
+  (and its inert state) stays with the IntersectionObserver in
+  compact-header.tsx; this only softens the handoff where the browser
+  can drive an animation from scrolling, and changes nothing elsewhere.
+*/
+@supports (animation-timeline: view()) {
+  .hero-recede {
+    animation: hero-recede linear both;
+    animation-timeline: view();
+    animation-range: exit 0% exit 100%;
+  }
+}
+
+@keyframes hero-recede {
+  to {
+    opacity: 0.2;
+    transform: translateY(-0.75rem) scale(0.985);
+  }
 }
 
 /*
@@ -914,13 +980,16 @@
   .live-signal::before,
   .live-signal::after,
   .aurora::before,
+  .hero-recede,
   .period-motion[data-running] > .period-sweep,
   .period-motion[data-running] > .period-hand {
     animation: none;
   }
 
   .compact-header,
-  .compact-header[data-shown="false"] {
+  .compact-header[data-shown="false"],
+  .settings-dialog[open],
+  .settings-dialog[open]::backdrop {
     transform: none;
     transition: none;
   }

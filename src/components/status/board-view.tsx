@@ -303,7 +303,7 @@ export function BoardView({
         </CompactHeader>
         <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-4 sm:pt-12">
           <div ref={heroRef} className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
+            <div className="hero-recede min-w-0">
               <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
                 <LiveSignal state={freshness.state} />
                 Live status board

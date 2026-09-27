@@ -44,7 +44,7 @@ export function SettingsDialog({
         if (event.target === event.currentTarget) onClose();
       }}
       aria-labelledby="settings-heading"
-      className="m-auto max-h-[calc(100dvh-2rem)] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain bg-transparent p-0 text-fg backdrop:bg-bg/70"
+      className="settings-dialog m-auto max-h-[calc(100dvh-2rem)] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain bg-transparent p-0 text-fg backdrop:bg-bg/70"
     >
       {/* The floating layer: chrome, the strongest material. The backdrop only dims, so two blurs never stack. */}
       <div className="glass-chrome rounded-xl p-5 sm:p-6">
