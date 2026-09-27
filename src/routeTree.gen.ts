@@ -16,6 +16,7 @@ import { Route as MetricsRouteImport } from './routes/metrics'
 import { Route as ReadyzRouteImport } from './routes/readyz'
 import { Route as RobotsDottxtRouteImport } from './routes/robots[.]txt'
 import { Route as ApiStatusDotjsonRouteImport } from './routes/api/status[.]json'
+import { Route as ApiHistoryDotjsonRouteImport } from './routes/api/history[.]json'
 import { Route as ApiBadgeServiceRouteImport } from './routes/api/badge/$service'
 
 const IndexRoute = IndexRouteImport.update({
@@ -53,6 +54,11 @@ const ApiStatusDotjsonRoute = ApiStatusDotjsonRouteImport.update({
   path: '/api/status.json',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiHistoryDotjsonRoute = ApiHistoryDotjsonRouteImport.update({
+  id: '/api/history.json',
+  path: '/api/history.json',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiBadgeServiceRoute = ApiBadgeServiceRouteImport.update({
   id: '/api/badge/$service',
   path: '/api/badge/$service',
@@ -67,6 +73,7 @@ export interface FileRoutesByFullPath {
   '/readyz': typeof ReadyzRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/api/status.json': typeof ApiStatusDotjsonRoute
+  '/api/history.json': typeof ApiHistoryDotjsonRoute
   '/api/badge/$service': typeof ApiBadgeServiceRoute
 }
 export interface FileRoutesByTo {
@@ -77,6 +84,7 @@ export interface FileRoutesByTo {
   '/readyz': typeof ReadyzRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/api/status.json': typeof ApiStatusDotjsonRoute
+  '/api/history.json': typeof ApiHistoryDotjsonRoute
   '/api/badge/$service': typeof ApiBadgeServiceRoute
 }
 export interface FileRoutesById {
@@ -88,6 +96,7 @@ export interface FileRoutesById {
   '/readyz': typeof ReadyzRoute
   '/robots.txt': typeof RobotsDottxtRoute
   '/api/status.json': typeof ApiStatusDotjsonRoute
+  '/api/history.json': typeof ApiHistoryDotjsonRoute
   '/api/badge/$service': typeof ApiBadgeServiceRoute
 }
 export interface FileRouteTypes {
@@ -100,6 +109,7 @@ export interface FileRouteTypes {
     | '/readyz'
     | '/robots.txt'
     | '/api/status.json'
+    | '/api/history.json'
     | '/api/badge/$service'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -110,6 +120,7 @@ export interface FileRouteTypes {
     | '/readyz'
     | '/robots.txt'
     | '/api/status.json'
+    | '/api/history.json'
     | '/api/badge/$service'
   id:
     | '__root__'
@@ -120,6 +131,7 @@ export interface FileRouteTypes {
     | '/readyz'
     | '/robots.txt'
     | '/api/status.json'
+    | '/api/history.json'
     | '/api/badge/$service'
   fileRoutesById: FileRoutesById
 }
@@ -131,6 +143,7 @@ export interface RootRouteChildren {
   ReadyzRoute: typeof ReadyzRoute
   RobotsDottxtRoute: typeof RobotsDottxtRoute
   ApiStatusDotjsonRoute: typeof ApiStatusDotjsonRoute
+  ApiHistoryDotjsonRoute: typeof ApiHistoryDotjsonRoute
   ApiBadgeServiceRoute: typeof ApiBadgeServiceRoute
 }
 
@@ -185,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiStatusDotjsonRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/history.json': {
+      id: '/api/history.json'
+      path: '/api/history.json'
+      fullPath: '/api/history.json'
+      preLoaderRoute: typeof ApiHistoryDotjsonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/badge/$service': {
       id: '/api/badge/$service'
       path: '/api/badge/$service'
@@ -203,6 +223,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReadyzRoute: ReadyzRoute,
   RobotsDottxtRoute: RobotsDottxtRoute,
   ApiStatusDotjsonRoute: ApiStatusDotjsonRoute,
+  ApiHistoryDotjsonRoute: ApiHistoryDotjsonRoute,
   ApiBadgeServiceRoute: ApiBadgeServiceRoute,
 }
 export const routeTree = rootRouteImport
