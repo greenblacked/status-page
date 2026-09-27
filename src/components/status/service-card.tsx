@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { CATEGORIES } from "@/lib/status/catalog";
 import { ALL_CLEAR_SUMMARY, healthLabel } from "@/lib/status/health";
 import { serviceAnchor } from "@/lib/status/layout";
-import { formatDuration, formatUtcTime, parseTimestamp } from "@/lib/status/schedule";
+import { formatUtcTime, incidentStart, parseTimestamp } from "@/lib/status/schedule";
 import type { CategoryId, ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
@@ -159,8 +159,10 @@ export function ServiceCard({
 
 /**
  * When an incident began, as "since 14:05 UTC", and after hydration how long
- * it has run. The start is the same text on the server and the client; the
- * duration needs the visitor's clock, so it waits for `now`.
+ * it has run. A start still ahead, such as planned maintenance, reads
+ * "scheduled for 22:00 UTC" instead. The start is the same text on the
+ * server and the client; the duration needs the visitor's clock, so it
+ * waits for `now`.
  */
 function IncidentSince({
   startedAt,
@@ -176,10 +178,10 @@ function IncidentSince({
 }) {
   const at = parseTimestamp(startedAt);
   if (at === null) return null;
-  const duration = now > 0 ? formatDuration(now - at) : null;
+  const { upcoming, duration } = incidentStart(at, now, reference);
   return (
     <span className={cn("block font-mono text-[11px] tabular-nums text-subtle", className)}>
-      since{" "}
+      {upcoming ? "scheduled for " : "since "}
       <time dateTime={new Date(at).toISOString()}>
         {formatUtcTime(at, Number.isFinite(reference) ? reference : at)}
       </time>

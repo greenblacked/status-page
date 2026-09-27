@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatStaleAge,
   formatUtcTime,
+  incidentStart,
   isStale,
   lastPulseAt,
   nextPulseAt,
@@ -155,7 +156,9 @@ describe("incident times", () => {
   it("formats how long an incident has lasted", () => {
     const minute = 60_000;
     assert.deepEqual(formatDuration(20_000), { short: "under 1m", long: "under a minute", iso: "PT0H0M" });
-    assert.deepEqual(formatDuration(-5 * minute), { short: "under 1m", long: "under a minute", iso: "PT0H0M" });
+    assert.equal(formatDuration(-5 * minute), null);
+    assert.equal(formatDuration(-1), null);
+    assert.equal(formatDuration(Number.NaN), null);
     assert.deepEqual(formatDuration(45 * minute), { short: "45m", long: "45 minutes", iso: "PT0H45M" });
     assert.deepEqual(formatDuration(130 * minute), { short: "2h 10m", long: "2 hours 10 minutes", iso: "PT2H10M" });
     assert.deepEqual(formatDuration(60 * minute), { short: "1h", long: "1 hour", iso: "PT1H0M" });
@@ -165,5 +168,25 @@ describe("incident times", () => {
       iso: "PT76H1M",
     });
     assert.deepEqual(formatDuration(48 * 60 * minute), { short: "2d", long: "2 days", iso: "PT48H0M" });
+  });
+
+  it("words a start still ahead as scheduled, with no duration", () => {
+    const checkedAt = Date.parse("2026-09-22T14:00:00Z");
+    const later = Date.parse("2026-09-22T22:00:00Z");
+    const earlier = Date.parse("2026-09-22T12:00:00Z");
+    assert.deepEqual(incidentStart(later, checkedAt + 60_000, checkedAt), { upcoming: true, duration: null });
+    assert.deepEqual(incidentStart(earlier, checkedAt, checkedAt), {
+      upcoming: false,
+      duration: { short: "2h", long: "2 hours", iso: "PT2H0M" },
+    });
+    // Once it begins, it runs.
+    assert.equal(incidentStart(later, later + 5 * 60_000, checkedAt).duration?.short, "5m");
+  });
+
+  it("goes by the check time before mount, and gives no duration", () => {
+    const checkedAt = Date.parse("2026-09-22T14:00:00Z");
+    assert.deepEqual(incidentStart(checkedAt + 60_000, 0, checkedAt), { upcoming: true, duration: null });
+    assert.deepEqual(incidentStart(checkedAt - 60_000, 0, checkedAt), { upcoming: false, duration: null });
+    assert.deepEqual(incidentStart(checkedAt - 60_000, 0, Number.NaN), { upcoming: false, duration: null });
   });
 });

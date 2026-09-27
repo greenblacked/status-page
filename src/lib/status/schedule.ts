@@ -155,9 +155,13 @@ export type Duration = {
 
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
 
-/** How long something has lasted, to the minute. Negative spans count as none. */
-export function formatDuration(ms: number): Duration {
-  const minutes = Math.max(0, Math.floor(ms / 60_000));
+/**
+ * How long something has lasted, to the minute. Null for a negative span:
+ * something that has not started has lasted no time at all, not "under 1m".
+ */
+export function formatDuration(ms: number): Duration | null {
+  if (!(ms >= 0)) return null;
+  const minutes = Math.floor(ms / 60_000);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
   const iso = `PT${hours}H${minutes % 60}M`;
@@ -173,4 +177,19 @@ export function formatDuration(ms: number): Duration {
   return rest
     ? { short: `${days}d ${rest}h`, long: `${plural(days, "day")} ${plural(rest, "hour")}`, iso }
     : { short: `${days}d`, long: plural(days, "day"), iso };
+}
+
+export type IncidentStart = { upcoming: boolean; duration: Duration | null };
+
+/**
+ * How a card words an incident's start. Vendors list planned maintenance
+ * with a start still ahead (Apple's upcoming events), which read as "since
+ * 22:00 UTC · under 1m" at 14:00. A start after now is `upcoming` and has
+ * no duration. Before mount (`now` 0) the snapshot's check time stands in
+ * for now and there is no duration, so the server and the first client
+ * render agree.
+ */
+export function incidentStart(at: number, now: number, checkedAt: number): IncidentStart {
+  if (now <= 0) return { upcoming: at > checkedAt, duration: null };
+  return at > now ? { upcoming: true, duration: null } : { upcoming: false, duration: formatDuration(now - at) };
 }
