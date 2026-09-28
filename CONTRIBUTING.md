@@ -181,10 +181,10 @@ Never move or reuse a tag that has a published release; release a new patch vers
 
 [`deploy.yml`](.github/workflows/deploy.yml) builds the board for [Cloudflare Workers](https://developers.cloudflare.com/workers/) and deploys it with wrangler:
 
-| Branch | Environment | Worker |
-| --- | --- | --- |
-| `dev` | `staging` | `status-bar-staging` |
-| `main` | `production` | `status-bar` |
+| Branch | Environment | Worker | Address |
+| --- | --- | --- | --- |
+| `dev` | `staging` | `status-bar-staging` | its `workers.dev` address |
+| `main` | `production` | `status-bar` | [status.szolotov.com](https://status.szolotov.com) |
 
 Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. Every build, pull request or push, also runs the built Worker in workerd with an empty local KV namespace, fires its Cron Trigger once and checks that the snapshot moves forward (`scripts/ci/smoke.sh --cron`), so a Worker whose scheduled handler throws never reaches a deploy. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The smoke test first waits until `/healthz` carries the `X-Worker-Version` that `wrangler deploy` reported, so it tests the new version rather than the old one still answering somewhere, and after a rollback the job waits until `/healthz` no longer names the failed version. The page, API and feed checks fail within about half a minute, but `/readyz` gets five minutes to turn `200`: a deploy can be the fix for a board that is already stale (the previous version's cron was broken, say), and it only turns ready once the new version's first cron tick (up to 2 minutes away), its sweep, KV's propagation to other locations (up to about a minute) and the isolate's 5-second memo are behind it, about 3.5 minutes in all. Rolling that deploy back as stale would put the broken version back for good. `deploy.yml`'s smoke-test step has the numbers. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace. The staging Worker is public but kept out of search engines: `wrangler.jsonc`'s `env.staging.vars` sets `ROBOTS=noindex`, so every response it makes carries `X-Robots-Tag: noindex, nofollow` and its `/robots.txt` disallows everything; production and the Node build serve `Allow: /`. Every response the Worker makes, on either environment, carries `X-Worker-Version: <version id>` from the `version_metadata` binding (`CF_VERSION_METADATA`, repeated under `env.staging` because bindings are not inherited), so you can see which deployed version answered: `curl -sI https://<your-host>/healthz | grep -i x-worker-version`, against `npx wrangler deployments list`. The Node build sends no such header.
 
@@ -211,7 +211,7 @@ The repository is public, so anyone can read the workflow and open a pull reques
 1. **Create the token.** In the Cloudflare dashboard, go to **My Profile → API Tokens → Create Token** and start from **Edit Cloudflare Workers**. Trim it to what `wrangler deploy` and `wrangler rollback` need:
    - **Account resources:** only this account.
    - **Permissions:** Account · Workers Scripts · Edit, and Account · Account Settings · Read. The Worker's KV binding needs no token permission: `wrangler deploy` only records which namespace to bind. If a deploy is ever refused with a KV authorization error, add Account · Workers KV Storage · Edit.
-   - **Custom domain:** add Zone · Workers Routes · Edit for that zone only, and nothing else.
+   - **Custom domain:** production answers on `status.szolotov.com` (`routes` in `wrangler.jsonc`), so add Zone · Workers Routes · Edit for the `szolotov.com` zone only, and nothing else. The first production deploy creates the DNS record and certificate; `status.szolotov.com` must not already have a DNS record of its own.
    - **TTL:** set an end date, and rotate the token before it.
 
    Cloudflare renames these permissions from time to time, so check the list against [Cloudflare's token docs](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) when you create it.

@@ -8,6 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- The production board lives at [status.szolotov.com](https://status.szolotov.com), a Cloudflare Workers Custom Domain; staging keeps its `workers.dev` address.
 - Each service card shows a 30-day uptime strip from `/api/history.json` (colour by that day's worst health, plus a short uptime percent). A service with no history, or a cold empty document, simply has no strip; the board still loads.
 - A public JSON API at `/api/history.json` with each service's UTC-day uptime for the last 30 days (`date`, `worst`, `samples`, `up`), kept by the Cloudflare cron beside the board snapshot.
 - A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
