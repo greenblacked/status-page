@@ -35,6 +35,11 @@
   // deploy.yml replaces it with the environment's KV_NAMESPACE_ID variable,
   // so the real ids live with the other per-environment settings.
   "kv_namespaces": [{ "binding": "STATUS_SNAPSHOT", "id": "set-by-deploy-workflow" }],
+  // Production answers on status.szolotov.com, a Custom Domain: the first
+  // deploy creates its DNS record and certificate on the szolotov.com zone,
+  // which has to be in the same account and have no record of its own for
+  // that name. With a route set, workers.dev is off for production.
+  "routes": [{ "pattern": "status.szolotov.com", "custom_domain": true }],
   "env": {
     // Built with CLOUDFLARE_ENV=staging from dev; a separate Worker.
     "staging": {
@@ -43,6 +48,10 @@
       "preview_urls": false,
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
       "kv_namespaces": [{ "binding": "STATUS_SNAPSHOT", "id": "set-by-deploy-workflow" }],
+      // `routes` is inherited: without this empty list staging would claim
+      // production's hostname. Staging stays on its workers.dev address.
+      "routes": [],
+      "workers_dev": true,
       // Keeps the public staging board out of search results: every Worker
       // response gets X-Robots-Tag and /robots.txt disallows everything
       // (src/server.cloudflare.ts, src/routes/robots[.]txt.ts). `vars` are
