@@ -580,7 +580,8 @@
   position: relative;
   flex-shrink: 0;
   aspect-ratio: 1;
-  contain: layout paint;
+  /* Layout only: paint containment would clip the mark's glow at twelve. */
+  contain: layout;
 }
 
 .period-ring,

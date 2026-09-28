@@ -60,8 +60,8 @@ export function ServiceTile({
             <span className="sr-only">Operational</span>
           </h3>
           <p className="line-clamp-2 font-mono text-[11px] text-subtle [overflow-wrap:anywhere]">
-            <span aria-hidden className="mr-2 tabular-nums slashed-zero">
-              {serviceIndex(service.id)}
+            <span aria-hidden className="mr-1.5 tabular-nums slashed-zero">
+              {serviceIndex(service.id)} ·
             </span>
             {detail ?? CATEGORIES.find((category) => category.id === service.category)?.label}
           </p>
