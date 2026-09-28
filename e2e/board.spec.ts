@@ -257,7 +257,9 @@ for (const colorScheme of ["light", "dark"] as const) {
       for (const label of ["Outage", "Degraded", "Maintenance", "Unknown", "Operational"]) {
         await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
       }
-      await expect(page.getByText(/^since \d\d:\d\d UTC/).first()).toBeVisible();
+      // Shortly after midnight UTC the fixture's incidents began the day
+      // before, and the card adds their date: "since 27 Sep 21:52 UTC".
+      await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d UTC/).first()).toBeVisible();
       expect(await contrastFailures(page)).toEqual([]);
 
       // Seven minutes on, the same snapshot again: the board says Stale.
