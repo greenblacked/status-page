@@ -4,6 +4,7 @@ import {
   formatAge,
   formatCountdown,
   formatDuration,
+  formatSlotTime,
   formatStaleAge,
   formatUtcTime,
   freshnessOf,
@@ -190,6 +191,11 @@ describe("incident times", () => {
     assert.equal(parseTimestamp("not a date"), null);
     assert.equal(parseTimestamp(""), null);
     assert.equal(parseTimestamp(undefined), null);
+  });
+
+  it("labels a board log slot in UTC, whatever the visitor's time zone", () => {
+    assert.equal(formatSlotTime(Date.parse("2026-09-27T17:44:00Z")), "17:44 UTC");
+    assert.equal(formatSlotTime(Date.parse("2026-09-28T00:04:00Z")), "00:04 UTC");
   });
 
   it("formats a start as UTC clock time, adding the date only when it differs", () => {

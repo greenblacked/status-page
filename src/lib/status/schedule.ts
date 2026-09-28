@@ -173,10 +173,9 @@ export function formatStaleAge(ms: number): string {
 }
 
 export function formatSlotTime(slot: number): string {
-  return new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(slot));
+  // UTC like every other time on the board, and the same text on the server
+  // and in the browser, so the log never disagrees with itself on hydration.
+  return formatUtcTime(slot);
 }
 
 /** A vendor timestamp in ms, or null when it is missing or unreadable. */
