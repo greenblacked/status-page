@@ -485,7 +485,7 @@ export function BoardView({
               )}
             </div>
             {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
-            <UpdateFeed pulses={pulseStore.pulses} className="xl:sticky xl:top-6" />
+            <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
           </div>
 
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}

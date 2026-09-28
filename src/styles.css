@@ -851,6 +851,18 @@
   }
 }
 
+/*
+  The board log stays pinned beside the cards on a wide screen, clear of
+  the compact bar. Here, not as a utility, for the same reason as the
+  compact bar: the material's own position: relative would win over one.
+*/
+@media (min-width: 80rem) {
+  .board-log-pin {
+    position: sticky;
+    top: calc(env(safe-area-inset-top) + 4.5rem);
+  }
+}
+
 /* Cards glide to their new place when a manual refresh moves them between
    sections. Only the named cards are captured: snapshotting the whole
    blurred page delays the update itself. */
