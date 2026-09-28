@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { boardHeadline, documentTitle, groupServices, keyboardFocus, scrolledPast, serviceAnchor } from "./layout";
+import {
+  boardHeadline,
+  documentTitle,
+  groupServices,
+  keyboardFocus,
+  scrolledPast,
+  serviceAnchor,
+  serviceIndex,
+} from "./layout";
 import type { BoardSnapshot, CategoryId, Health, ServiceId, ServiceSnapshot } from "./types";
 
 function service(id: ServiceId, health: Health, category: CategoryId = "cloud", name: string = id): ServiceSnapshot {
@@ -98,6 +106,13 @@ describe("documentTitle and serviceAnchor", () => {
 
   it("builds a stable element id per service", () => {
     expect(serviceAnchor("cs2-europe")).toBe("service-cs2-europe");
+  });
+
+  it("numbers each service by its catalog place, not its place on the board", () => {
+    expect(serviceIndex("gcp")).toBe("01");
+    expect(serviceIndex("cs2-europe")).toBe("04");
+    expect(serviceIndex("apple-os")).toBe("14");
+    expect(serviceIndex("nope" as ServiceId)).toBe("");
   });
 });
 

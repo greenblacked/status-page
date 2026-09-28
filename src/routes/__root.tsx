@@ -32,8 +32,8 @@ function RootDocument() {
           dark pair: that matches the icon, and is what a launch screen
           built from the manifest shows before the page paints.
         */}
-        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#edf0f5" />
-        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0e16" />
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f2ec" />
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#05070d" />
       </head>
       <body className="bg-bg font-sans text-fg">
         <QueryClientProvider client={queryClient}>

@@ -9,7 +9,6 @@ import {
   freshnessOf,
   nextRefetchAt,
   noteSnapshot,
-  PULSE_INTERVAL_MS,
   type SnapshotSeen,
 } from "@/lib/status/schedule";
 import { cn } from "@/lib/utils";
@@ -29,7 +28,10 @@ export function useFreshness(checkedAt: string, isFetching: boolean, now: number
   return freshnessOf(noted, isFetching, now);
 }
 
-/** The freshness strip at the foot of the summary panel. */
+/**
+ * The freshness strip at the foot of the summary panel. Its countdown is the
+ * period dial's accessible value: the dial beside the counts is decorative.
+ */
 export function LiveBar({
   freshness,
   isFetching,
@@ -46,7 +48,6 @@ export function LiveBar({
 }) {
   const mounted = now > 0;
   const remaining = mounted ? nextRefetchAt(now, refetchJitterMs) - now : 0;
-  const progress = mounted ? Math.min(1, Math.max(0, 1 - remaining / PULSE_INTERVAL_MS)) : 0;
   const { ageMs, stale } = freshness;
   const age = mounted ? formatAge(ageMs) : "…";
 
@@ -69,12 +70,6 @@ export function LiveBar({
         <p>
           Next update <span className="text-fg">{mounted ? formatCountdown(remaining) : "—"}</span>
         </p>
-      </div>
-      <div className="mt-2 h-0.5 overflow-hidden rounded-full glass-inset">
-        <div
-          className="h-full origin-left bg-accent/70 transition-transform duration-1000 ease-linear motion-reduce:transition-none"
-          style={{ transform: `scaleX(${progress})` }}
-        />
       </div>
     </div>
   );

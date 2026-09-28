@@ -1,3 +1,4 @@
+import { CATALOG } from "./catalog.ts";
 import type { BoardSnapshot, Health, ServiceSnapshot } from "./types.ts";
 
 // Worst first. Unknown ranks above degraded: a source that cannot be read
@@ -34,6 +35,16 @@ export function groupServices(services: ServiceSnapshot[]): BoardGroups {
 
 export function serviceAnchor(id: ServiceSnapshot["id"]): string {
   return `service-${id}`;
+}
+
+/**
+ * A service's two-digit index, "01" to "14", by its place in the catalog:
+ * the same number wherever the board sorts or filters the card. A
+ * decorative label, never part of a name.
+ */
+export function serviceIndex(id: ServiceSnapshot["id"]): string {
+  const at = CATALOG.findIndex((entry) => entry.id === id);
+  return at < 0 ? "" : String(at + 1).padStart(2, "0");
 }
 
 function names(services: ServiceSnapshot[]): string {

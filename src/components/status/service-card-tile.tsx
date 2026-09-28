@@ -6,7 +6,7 @@ import { CATEGORY_ICON, StarButton } from "@/components/status/service-card-shar
 import { CATEGORIES } from "@/lib/status/catalog";
 import { ALL_CLEAR_SUMMARY } from "@/lib/status/health";
 import type { HistoryDay } from "@/lib/status/history";
-import { serviceAnchor } from "@/lib/status/layout";
+import { serviceAnchor, serviceIndex } from "@/lib/status/layout";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +60,9 @@ export function ServiceTile({
             <span className="sr-only">Operational</span>
           </h3>
           <p className="line-clamp-2 font-mono text-[11px] text-subtle [overflow-wrap:anywhere]">
+            <span aria-hidden className="mr-1.5 tabular-nums slashed-zero">
+              {serviceIndex(service.id)} ·
+            </span>
             {detail ?? CATEGORIES.find((category) => category.id === service.category)?.label}
           </p>
         </div>

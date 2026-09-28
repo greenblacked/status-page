@@ -6,6 +6,7 @@ import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } fr
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
+import { PeriodDial } from "@/components/status/period-dial";
 import { ServiceCard, ServiceTile } from "@/components/status/service-card";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
@@ -278,6 +279,7 @@ export function BoardView({
   return (
     <div className="liquid-stage text-fg">
       <div className="aurora" aria-hidden />
+      <div className="aurora-grid" aria-hidden />
       <div className="liquid-content">
         {/*
           First in the tab order, so a keyboard user can pass the header's
@@ -301,12 +303,12 @@ export function BoardView({
         </CompactHeader>
         <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-4 sm:pt-12">
           <div ref={heroRef} className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
+            <div className="hero-recede min-w-0">
               <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
                 <LiveSignal state={freshness.state} />
                 Live status board
               </p>
-              <h1 className="mt-2 font-display text-4xl font-medium tracking-[-0.04em] text-balance sm:text-6xl">
+              <h1 className="mt-2 font-display text-4xl tracking-[-0.035em] text-balance [font-optical-sizing:auto] [font-weight:350] sm:text-6xl">
                 {APP_NAME}
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted text-pretty sm:text-base">
@@ -423,12 +425,15 @@ export function BoardView({
                 // Stars load after hydration; until then an empty Starred view proves nothing.
                 // Not a live region: the results announcement already says this.
                 starredOnly && !starsReady ? null : (
-                  <p className="rounded-lg glass px-5 py-10 text-center text-muted">{emptyMessage}</p>
+                  // The board's one serif phrase: a caption for the quiet, not a UI label.
+                  <p className="rounded-lg glass px-5 py-10 text-center font-serif text-lg text-muted italic">
+                    {emptyMessage}
+                  </p>
                 )
               ) : (
                 <>
                   <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
                       {groups.attention.map((service, index) => (
                         <ServiceCard
                           key={service.id}
@@ -443,8 +448,12 @@ export function BoardView({
                     </div>
                   </ServiceSection>
                   <ServiceSection id="operational" title="Operational" services={groups.operational}>
-                    {/* Two columns once the board log takes the right side: three left each name a few letters. */}
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-2">
+                    {/*
+                      Columns by the room the section has, not the window's: with the
+                      board log beside it on a wide screen, three would leave each name
+                      a few letters, and it drops back to two by itself.
+                    */}
+                    <div className="grid grid-cols-1 gap-2 @xl:grid-cols-2 @4xl:grid-cols-3">
                       {groups.operational.map((service, index) => (
                         <ServiceTile
                           key={service.id}
@@ -458,7 +467,7 @@ export function BoardView({
                     </div>
                   </ServiceSection>
                   <ServiceSection id="releases" title="Releases" services={groups.releases}>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
                       {groups.releases.map((service, index) => (
                         <ServiceCard
                           key={service.id}
@@ -476,7 +485,7 @@ export function BoardView({
               )}
             </div>
             {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
-            <UpdateFeed pulses={pulseStore.pulses} className="xl:sticky xl:top-6" />
+            <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
           </div>
 
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
@@ -567,7 +576,8 @@ function ServiceSection({
         {title}
         <span className="tabular-nums text-muted">{services.length}</span>
       </h2>
-      {children}
+      {/* A size container: the grid inside, and each card in it, lay out by their own width. */}
+      <div className="@container">{children}</div>
     </section>
   );
 }
@@ -597,13 +607,18 @@ function SummaryPanel({
 
   return (
     <section aria-labelledby="board-headline" className="glass rounded-xl p-5 sm:p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <h2
             id="board-headline"
             className="flex items-center gap-3 font-display text-2xl font-medium tracking-[-0.03em] text-balance sm:text-3xl"
           >
-            <HealthDot health={headline.tone} ping={headline.tone !== "operational"} className="size-2.5" />
+            <HealthDot
+              health={headline.tone}
+              ping={headline.tone !== "operational"}
+              pingColor="event"
+              className="size-2.5"
+            />
             {/* Live on the sentence alone: the counts below roll as they change. */}
             <span aria-live="polite">{headline.title}</span>
           </h2>
@@ -634,11 +649,20 @@ function SummaryPanel({
             </ul>
           ) : null}
         </div>
-        <dl className="grid shrink-0 grid-cols-3 gap-6 sm:gap-10">
-          <Stat label="Operational" value={board.counts.operational} of={total} />
-          <Stat label="Attention" value={attention} />
-          <Stat label="Sources" value={total - board.counts.unknown} of={total} />
-        </dl>
+        {/* On a phone the counts stack into a specimen table beside the dial; wider, they sit in a row. */}
+        <div className="flex items-center justify-between gap-5 sm:gap-10 lg:shrink-0 lg:justify-end">
+          <dl className="flex min-w-0 flex-1 flex-col gap-1.5 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
+            <Stat label="Operational" value={board.counts.operational} of={total} />
+            <Stat label="Attention" value={attention} />
+            <Stat label="Sources" value={total - board.counts.unknown} of={total} />
+          </dl>
+          <PeriodDial
+            now={now}
+            jitterMs={refetchJitter}
+            tone={headline.tone}
+            className="size-20 min-[380px]:size-24 sm:size-28 lg:size-32"
+          />
+        </div>
       </div>
       <LiveBar
         freshness={freshness}
@@ -654,9 +678,9 @@ function SummaryPanel({
 function Stat({ label, value, of }: { label: string; value: number; of?: number }) {
   const shown = useCountUp(value);
   return (
-    <div>
+    <div className="flex items-baseline justify-between gap-2 sm:block">
       <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-subtle">{label}</dt>
-      <dd className="mt-1 font-display text-2xl tabular-nums tracking-[-0.03em]">
+      <dd className="font-display text-lg tabular-nums tracking-[-0.03em] sm:mt-1 sm:text-2xl">
         {shown}
         {of !== undefined ? <span className="text-subtle">/{of}</span> : null}
       </dd>

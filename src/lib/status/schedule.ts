@@ -40,6 +40,28 @@ export function nextRefetchAt(now: number, jitterMs: number): number {
   return candidate > now ? candidate : candidate + PULSE_INTERVAL_MS;
 }
 
+/** Where the board stands in the period that ends at its next refetch. */
+export type PeriodPhase = {
+  /** The next refetch, as `nextRefetchAt` gives it: unique to this period. */
+  endsAt: number;
+  /** How far into the period, in ms, rounded down to `stepMs` when given. */
+  elapsedMs: number;
+  /** `elapsedMs` as a share of the period, from 0 up to (not reaching) 1. */
+  progress: number;
+};
+
+/**
+ * The period the countdown counts down: the same end, the same jitter, so
+ * the period dial and "Next update" never disagree. A `stepMs` coarsens it,
+ * for a dial that must not move more often than that.
+ */
+export function periodPhase(now: number, jitterMs: number, stepMs = 0): PeriodPhase {
+  const endsAt = nextRefetchAt(now, jitterMs);
+  const exact = PULSE_INTERVAL_MS - (endsAt - now);
+  const elapsedMs = stepMs > 0 ? Math.floor(exact / stepMs) * stepMs : exact;
+  return { endsAt, elapsedMs, progress: Math.min(1, Math.max(0, elapsedMs / PULSE_INTERVAL_MS)) };
+}
+
 export function pulseProgress(now = Date.now()): number {
   const elapsed = now - lastPulseAt(now);
   return Math.min(1, Math.max(0, elapsed / PULSE_INTERVAL_MS));
@@ -151,10 +173,9 @@ export function formatStaleAge(ms: number): string {
 }
 
 export function formatSlotTime(slot: number): string {
-  return new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(slot));
+  // UTC like every other time on the board, and the same text on the server
+  // and in the browser, so the log never disagrees with itself on hydration.
+  return formatUtcTime(slot);
 }
 
 /** A vendor timestamp in ms, or null when it is missing or unreadable. */

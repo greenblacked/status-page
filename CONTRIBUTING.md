@@ -313,13 +313,21 @@ Do not scrape unofficial aggregators.
 - No unused locals, imports or parameters: `tsconfig.json` sets `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` fails on them. Prefix a parameter that a signature requires but the body ignores with `_`
 - Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX. Every colour token has a light and a dark value, written with `light-dark()`. The build compiles that into toggles keyed on the system's `prefers-color-scheme`, so the whole page follows the system and `color-scheme` on one element does not switch its tokens
 - Text must clear 4.5:1 on every material's flat fill. A browser test proves it: on a fixture board with every state, incident times and the Stale badge ([`e2e/fixture-board.ts`](e2e/fixture-board.ts)), in light and dark, with and without Increase Contrast, it strips blur, gradients and pseudo-elements and runs axe's colour-contrast rule. It does not measure text over the aurora itself; the light aurora's colours are chosen to stay close to the page's brightness for that reason
-- Status color is for badges and dots only, not entire panels
+- Design, Lucid Vigil: deep ink in dark (the hero appearance), warm paper in light, and colour rationed to small exact points
+  - Status colour is for badge text, dots and the uptime strip's bad days only, never a fill across a badge, panel or card. Badges share one neutral fill and draw their own tone dot; a quiet day on the uptime strip is a neutral tick
+  - `--color-event`, the warm amber, marks the one thing that just moved (the headline's ping, a card that just changed, the period dial's hand). It never carries a status by itself and never replaces `--color-down` on an Outage badge
+  - Status, event and aurora colours are written once in OKLCH, with no separate Display P3 block. Keep status and text colours inside sRGB, so the contrast the tests measure is the contrast shown. Only the aurora may use colours beyond sRGB, and today one dark stop does
+  - Type: the system faces only, no web font. Mono uppercase with wide tracking for labels, and `font-serif` italic for one short phrase (the empty board), nowhere else
+  - The coordinate grid (`.aurora-grid`) is static: never animate it. It goes with the aurora under Reduce glass and under forced colours
+  - The card index (01 to 14) follows the catalog order and is `aria-hidden`: decoration, never part of a name
 - Three materials, and nothing else is translucent:
   - `.glass-chrome` for controls that float above the content (the compact header, the settings dialog), one on screen at a time
   - `.glass` for content panels (the summary, attention cards, the board log), a handful per screen
   - `.glass-whisper`, with no blur, for anything dense or repeated: tiles, chips, the search box
 - Never glass on glass: inside a `.glass` or `.glass-chrome`, nest only `.glass-whisper` or `.glass-inset`
-- Performance: no `will-change: backdrop-filter`, never animate a blur or a `filter`, and animate `transform` and `opacity` only. Blur stays at 24px for `.glass` and 28px for `.glass-chrome`
+- Performance: no `will-change: backdrop-filter`, never animate a blur or a `filter`, and animate `transform` and `opacity` only. The one exception is a registered custom property on a small element, stepped so it repaints rarely, as the period dial does once a second. Blur stays at 24px for `.glass` and 28px for `.glass-chrome`
 - Radii are concentric: a nested shape takes its parent's radius minus the inset between them, rounded down to the nearest `--radius-*` step (`rounded-2xs` to `rounded-xl`). Pills stay `rounded-full`, and Tailwind's default radius scale is switched off
 - New motion goes in the `prefers-reduced-motion` block, and new translucency in the Reduce glass block, in `src/styles.css`
+- Newer CSS is welcome where it degrades to something correct: `@starting-style` and `linear()` easing are used unconditionally, since a browser without them just skips the flourish. Container queries lay out the card grids, which stay a single column without them; every engine the board supports has had them since Safari 16 and Chrome 105. Anything whose absence would break layout or meaning, such as scroll-driven animations, goes behind `@supports` and stays decorative
+- Card internals respond to the card's own width with container-query variants (`@xs:`), not the viewport's (`sm:`), since a card's width depends on the board log beside it
 - Keep fetch timeouts short and failures isolated (`Promise.all` of per-service collectors)

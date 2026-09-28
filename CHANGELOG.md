@@ -25,7 +25,12 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
-- A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. Colours are richer on wide-gamut (Display P3) screens, and all text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.
+- A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. All text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.
+- A calmer look for the board: deep ink in dark, warm paper in light, and a faint drafting grid under the glass. Colour is kept for what needs it: every status badge shares one neutral fill with a small coloured dot, and the 30-day uptime strip shows quiet days as fine grey ticks, so only the days that went wrong stand out.
+- A dial beside the counts ticks through each two-minute check, one tick a second, in step with **Next update**. With Reduce Motion on it stands still and moves on every few seconds.
+- The headline's pulse and a card that has just changed now glow warm amber, the one warm colour on the board, so what moved is easy to spot. Red still always means an outage.
+- Each card and tile shows a small number, 01 to 14, that stays with the service whatever the sort, filter or search.
+- The **Settings and shortcuts** dialog rises into place as it opens, the compact bar slides in more smoothly, and buttons and stars settle with a light spring when you let go.
 - The operational tiles are lighter on the phone: no blur behind each one, so a long board scrolls smoothly, and on a wide screen they sit two to a row so every name fits.
 - The **Keyboard shortcuts** list is now **Settings and shortcuts**, and switched-off shortcuts in it are dimmed in a colour that stays readable instead of fading to half opacity.
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.

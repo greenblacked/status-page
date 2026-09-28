@@ -45,7 +45,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 | **One board, five states** | Fourteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or Unknown, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
-| **At home on Apple devices** | Glass panels over a slow aurora, in light or dark as your system is set, with Display P3 colour on screens that show it. Fits the notch and home indicator, adds to the Home Screen, and follows Increase Contrast and Reduce Motion. Tested in Safari's engine on a Mac, an iPhone and an iPad |
+| **At home on Apple devices** | Glass over a slow aurora and a faint drafting grid, in deep ink or warm paper as your system is set, with colour kept to small exact points and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, and follows Increase Contrast and Reduce Motion. Tested in Safari's engine on a Mac, an iPhone and an iPad |
 | **Open integrations** | A JSON API, daily uptime history, an Atom feed, Shields.io badges and Prometheus metrics |
 | **Runs anywhere** | Any Node host, or Cloudflare Workers with a scheduled collector and a KV snapshot. `docker compose` for a local run with no Node install |
 
