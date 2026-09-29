@@ -9,7 +9,25 @@
   "main": "./src/server.cloudflare.ts",
   "compatibility_date": "2026-09-20",
   "compatibility_flags": ["nodejs_compat"],
-  "observability": { "enabled": true },
+  // Workers Logs and traces, kept in Cloudflare (persist) and sampled in
+  // full. The top-level switch stays off because logs and traces are each
+  // enabled on their own.
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "redact_query_string": false,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true
+    }
+  },
   // Governs the workers.dev preview URLs only, so they stay off. The preview
   // is served on the Custom Domain below, which has its own switch
   // (previews_enabled).
