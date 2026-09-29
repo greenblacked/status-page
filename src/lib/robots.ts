@@ -1,7 +1,7 @@
 // Whether search engines may index this deployment. Production and any
-// self-hosted Node build may; the staging Worker (wrangler.jsonc's
-// env.staging sets ROBOTS=noindex) must not, or a half-finished dev build
-// competes with the real board in search results. Platform-neutral: the
+// self-hosted Node build may; the stage preview (wrangler.jsonc's
+// previews.vars sets ROBOTS=noindex) must not, or a half-finished dev
+// build competes with the real board in search results. Platform-neutral: the
 // caller says which deployment it is.
 
 export const NOINDEX_HEADER_VALUE = "noindex, nofollow";

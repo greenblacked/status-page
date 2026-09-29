@@ -148,7 +148,7 @@ When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 3. Commits `chore(release): X.Y.Z` to `main`, authored by the account that merged. The commit updates `package.json`, `package-lock.json` and the changelog, and turns `## [Unreleased]` into the dated `## [X.Y.Z]` section. If the pull request added nothing under Unreleased, the section is written from the merged commits' subjects instead.
 4. Tags that commit `vX.Y.Z`.
 5. Publishes the GitHub Release with that section as its notes.
-6. Merges `main` back into `dev`, released or not, so `dev` carries the release commit and any fix merged into `main` directly. When that merge actually moves `dev`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `dev` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, staging would keep running the pre-release code until an unrelated push to `dev` redeployed it. A release on `main` while `dev` has lines under Unreleased (an urgent fix, usually) conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts `dev`'s lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, and you resolve it on a branch from `dev`:
+6. Merges `main` back into `dev`, released or not, so `dev` carries the release commit and any fix merged into `main` directly. When that merge actually moves `dev`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `dev` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, the `dev` preview would keep running the pre-release code until an unrelated push to `dev` updated it. A release on `main` while `dev` has lines under Unreleased (an urgent fix, usually) conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts `dev`'s lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, and you resolve it on a branch from `dev`:
 
    ```bash
    git fetch origin
@@ -181,18 +181,18 @@ Never move or reuse a tag that has a published release; release a new patch vers
 
 [`deploy.yml`](.github/workflows/deploy.yml) builds the board for [Cloudflare Workers](https://developers.cloudflare.com/workers/) and deploys it with wrangler:
 
-| Branch | Environment | Worker |
-| --- | --- | --- |
-| `dev` | `staging` | `status-bar-staging` |
-| `main` | `production` | `status-bar` |
+| Branch | Environment | Worker | Address |
+| --- | --- | --- | --- |
+| `dev` | `staging` | `status-page` Worker Preview `stage` | [stage.status.szolotov.com](https://stage.status.szolotov.com) |
+| `main` | `production` | `status-page` deploy | [status.szolotov.com](https://status.szolotov.com) |
 
-Every push to `dev` or `main` deploys; pull requests build and dry-run the Worker without credentials. The built Worker is also smoke-tested locally. A deployed version is checked against its `X-Worker-Version` header and rolled back automatically when the post-deploy smoke test fails, if `DEPLOY_URL` is configured. Staging sets `ROBOTS=noindex` and production remains indexable.
+There is one Worker, `status-page`. Every push to `dev` or `main` deploys; pull requests build and dry-run the Worker without credentials. The built Worker is also smoke-tested locally. A push to `main` runs `wrangler deploy`, which makes the new version the production Worker on its Custom Domain. A push to `dev` runs `wrangler preview --name stage`, which creates or updates a [Worker Preview](https://developers.cloudflare.com/workers/previews/) named `stage` of the same Worker: it never receives production traffic. A Preview takes its settings from the `previews` block of `wrangler.jsonc` (here `ROBOTS=noindex` and the version metadata binding), not from the top level. Its address is `https://stage.status.szolotov.com`: the production Custom Domain `status.szolotov.com` has `"previews_enabled": true` in `wrangler.jsonc`, so Cloudflare serves each Preview one level below it through the wildcard `*.status.szolotov.com`, which it creates itself. Each deployment also gets its own address, which `wrangler preview` prints. Preview addresses go live once a `wrangler deploy` on `main` has published that setting. A production deploy is checked against its `X-Worker-Version` header by the post-deploy smoke test, if `DEPLOY_URL` is configured, and is rolled back automatically when that test fails. A preview reports no version id to wait for, so its smoke test only checks that the address answers; a failed preview is not rolled back, since it never affects production. The preview answers `noindex`; production remains indexable.
 
 ### How the board stays fresh on Workers
 
 Each Worker isolate collects the public vendor feeds on demand, shares a 45-second in-memory cache among its requests, serves a recently expired result while a new collection runs, and throttles forced refreshes to one per 15 seconds. A cold isolate can take several seconds to answer. Isolates do not share their cache, so traffic can cause more vendor requests than a shared store would. There is no persistent 30-day history; `/api/history.json` returns an empty compatible document.
 
-The Cloudflare entry in `src/server.cloudflare.ts` only threads the staging robots setting and version metadata into TanStack's request handler. It has no scheduled event or storage binding. The Node and Worker builds both use `src/lib/status/board.ts`.
+The Cloudflare entry in `src/server.cloudflare.ts` only threads the preview's robots setting and version metadata into TanStack's request handler. It has no scheduled event or storage binding. The Node and Worker builds both use `src/lib/status/board.ts`.
 
 ### How the token is kept safe
 
@@ -200,15 +200,15 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 - **It is an environment secret, not a repository secret.** GitHub hands it only to a job that names the `staging` or `production` environment, and each environment admits one branch.
 - **Pull requests never get it,** from forks or not. The workflow has no `pull_request_target`, so pull request code never runs with secrets or a write token.
-- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there, and checks that install with `npm audit signatures`, so the wrangler that runs beside the token is the one the registry signed. It also runs no build, no npm script and no project JavaScript: it only uploads what the build job made (`no_bundle`), and only its deploy and rollback steps see the token. The repository files it runs are two shell scripts from the same protected branch as the deploy, each in a step without the token: [`scripts/ci/audit-signatures.sh`](scripts/ci/audit-signatures.sh), which retries the signature check only when npm cannot load a verification key, and the post-deploy smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh) (bash, curl and jq).
-- **It can do one thing.** The token is scoped to Workers on one account and expires.
+- **Nothing but wrangler runs beside it.** The job that holds the token installs with `npm ci --ignore-scripts`, so no dependency install script runs there, and checks that install with `npm audit signatures`, so the wrangler that runs beside the token is the one the registry signed. It also runs no build, no npm script and no project JavaScript: it only uploads what the build job made (`no_bundle`), and only its deploy, preview and rollback steps see the token. The repository files it runs are two shell scripts from the same protected branch as the deploy, each in a step without the token: [`scripts/ci/audit-signatures.sh`](scripts/ci/audit-signatures.sh), which retries the signature check only when npm cannot load a verification key, and the post-deploy smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke.sh) (bash, curl and jq).
+- **It can do one thing.** The token is scoped to Workers on one account, plus (for the production deploy) the Workers routes of the `szolotov.com` zone and read access to it, and expires.
 - **Nothing in the repository names the account.** `wrangler.jsonc` has no `account_id`; the workflow passes `CLOUDFLARE_ACCOUNT_ID` from the environment. Local secrets (`.dev.vars*`) and wrangler's state (`.wrangler`) are git-ignored.
 
 ### One-time setup
 
-1. **Create a Cloudflare API token** scoped to this account and Workers Scripts Edit (plus Account Settings Read if required by wrangler). Add Zone Workers Routes Edit only if deploying to a custom route. Set an expiry and rotate it before then. Check [Cloudflare's token documentation](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) for current permission names.
+1. **Create a Cloudflare API token** scoped to this account and Workers Scripts Edit (plus Account Settings Read if required by wrangler). That is all `wrangler preview`, which the `dev` job runs, needs (open beta, wrangler 4.135 or later). The production deploy needs more: the Worker answers on the custom domain `status.szolotov.com` (`routes` in `wrangler.jsonc`), so it also needs Zone Workers Routes Edit and Zone Read for the `szolotov.com` zone only, since `wrangler deploy` looks the zone up by name. One token with all of these can serve both environments, or give `staging` a narrower token with Workers Scripts Edit alone. The zone must be in this account. The first production deploy creates the DNS record and certificate. Check that `status.szolotov.com` has no DNS record first: a deploy from CI replaces an existing A, AAAA or TXT record without asking, and fails if the name has a CNAME record. The same Custom Domain has `"previews_enabled": true`, so once the first deploy on `main` has published it, previews are served on `https://<preview-name>.status.szolotov.com` (the `stage` preview on `stage.status.szolotov.com`). Keep Custom Domains in `wrangler.jsonc`: `wrangler deploy` replaces the Worker's whole set, so one added only in the dashboard is detached by the next deploy. Cloudflare creates the wildcard DNS record and certificate for `*.status.szolotov.com` itself; issuing the certificate can take a few minutes after the first deploy. `wrangler.jsonc` sets `preview_urls` to false, which only turns off the `workers.dev` preview addresses. Set an expiry and rotate it before then. Check [Cloudflare's token documentation](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) for current permission names.
 2. **Create GitHub environments** `staging` (allow only `dev`) and `production` (allow only `main`) in Settings → Environments.
-3. **Enter two settings in each environment:** `CLOUDFLARE_ACCOUNT_ID` as a variable and `CLOUDFLARE_API_TOKEN` as a secret. The deploy workflow requires these two values. `DEPLOY_URL` is optional but recommended: set it to that Worker's public URL after the first deploy to enable post-deploy smoke tests and automatic rollback. The Worker itself has no API token or account ID binding.
+3. **Enter two settings in each environment:** `CLOUDFLARE_ACCOUNT_ID` as a variable (or secret; the account ID is not sensitive) and `CLOUDFLARE_API_TOKEN` as a secret. The deploy workflow requires these two values, and both environments can hold the same token. `DEPLOY_URL` is optional but recommended: set it to the address to check (`https://status.szolotov.com` for production, `https://stage.status.szolotov.com` for staging, the address `wrangler preview` prints) after the first deploy to enable post-deploy smoke tests, and for production automatic rollback. The Worker itself has no API token or account ID binding.
 4. **Monitor production:** optionally set repository variable `PRODUCTION_URL` to its HTTPS address for hourly `/readyz` checks in `source-health.yml`.
 
 No KV namespace or ID is needed. Deploying does not delete an old namespace; remove it in Cloudflare when you no longer need it.
@@ -217,10 +217,9 @@ No KV namespace or ID is needed. Deploying does not delete an old namespace; rem
 
 | Command | Runs | What it does |
 | --- | --- | --- |
-| `npm run build:cf` | `DEPLOY_TARGET=cloudflare vite build` | The production Worker in `dist/` |
+| `npm run build:cf` | `DEPLOY_TARGET=cloudflare vite build` | The Worker in `dist/`, the same for both branches |
 | `npm run preview:cf` | `DEPLOY_TARGET=cloudflare vite preview --host 127.0.0.1` | Runs that build in workerd, Cloudflare's runtime, without storage bindings |
 | `npm run deploy:dry-run` | `WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config dist/server/wrangler.json` | Shows what would upload, as a pull request's CI does |
-| `npm run build:cf:staging` | `DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging vite build` | The staging Worker |
 
 Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
 
@@ -234,19 +233,19 @@ CI and the deploy share one smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke
 ./scripts/ci/smoke.sh https://<your-host> --expect-version <id> --wait 120 --attempts 3 --require-ready --ready-wait 300   # what the deploy checks
 ```
 
-`--expect-version` takes a Worker version id (`npx wrangler deployments list`, or the `Current Version ID:` line `wrangler deploy` prints) and fails if `/healthz` still comes from another version when `--wait` runs out, then requires the same `X-Worker-Version` on every response it checks. `--attempts` retries the page, API and feed checks 10 seconds apart; `--ready-wait` separately gives `/readyz` that many seconds, checked every 10, to turn `200` under `--require-ready`. The deploy job reads the id from the `deploy` line wrangler writes to `WRANGLER_OUTPUT_FILE_PATH`, and stops with an error, before the smoke test, if there is none.
+`--expect-version` takes a Worker version id (`npx wrangler deployments list`, or the `Current Version ID:` line `wrangler deploy` prints) and fails if `/healthz` still comes from another version when `--wait` runs out, then requires the same `X-Worker-Version` on every response it checks. `--attempts` retries the page, API and feed checks 10 seconds apart; `--ready-wait` separately gives `/readyz` that many seconds, checked every 10, to turn `200` under `--require-ready`. On `main`, the deploy job reads the id from the `deploy` line wrangler writes to `WRANGLER_OUTPUT_FILE_PATH`, and stops with an error, before the smoke test, if there is none. On `dev`, the job reads the preview's addresses from the `preview` line instead and does not pass `--expect-version`: `wrangler preview` reports a preview and a deployment id, and nothing shows that either is the id in the Preview's `X-Worker-Version`.
 
-A cold local Worker collects vendors on its first request. For a staging build, run `vite preview` without `CLOUDFLARE_ENV`: the built configuration already selects staging. Run `./scripts/ci/smoke.sh http://127.0.0.1:4173` against the preview.
+A cold local Worker collects vendors on its first request. Run `./scripts/ci/smoke.sh http://127.0.0.1:4173` against the preview.
 
 ### Rolling back
 
-`deploy.yml` already does this by itself when a deploy fails its smoke test (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` reach only that one rollback step, same as the deploy step). To go back to the previous version by hand:
+`deploy.yml` already does this by itself when a production deploy fails its smoke test (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` reach only that one rollback step, same as the deploy and preview steps). A failed preview is not rolled back: it never receives production traffic. To go back to the previous production version by hand:
 
 ```bash
-npx wrangler rollback --name status-bar          # or status-bar-staging
+npx wrangler rollback --name status-page
 ```
 
-You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back changes which Worker version answers requests; each isolate collects vendor status again when its cache expires. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
+You can also use **Workers & Pages → status-page → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rollback applies to production only; a push to `dev` uploads a preview and leaves it alone. Rolling back changes which Worker version answers requests; each isolate collects vendor status again when its cache expires. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
 
 ## Dependencies
 

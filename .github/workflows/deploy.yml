@@ -1,10 +1,14 @@
 name: Deploy
 
-# Builds the board for Cloudflare Workers and deploys it with wrangler: dev
-# to the staging Worker, main to production. Pull requests build and dry-run
-# the deploy with no credentials. A deploy that does not answer its smoke
-# test is rolled back to the previous version automatically, and the job
-# still fails so it is visible. CONTRIBUTING.md#deploying has the setup.
+# Builds the board for Cloudflare Workers and ships it with wrangler to one
+# Worker, status-page: main deploys it to production (wrangler deploy), dev
+# creates or updates a Worker Preview of it named "stage" (wrangler preview),
+# served at https://stage.status.szolotov.com and never on production
+# traffic. Pull requests build and dry-run the deploy with no credentials. A
+# production deploy that does not answer its smoke test is rolled back to the
+# previous version automatically; a preview that does not answer just fails
+# the job, as production is never touched. CONTRIBUTING.md#deploying has the
+# setup.
 #
 # This repository is public, so the Cloudflare API token is guarded in layers:
 #   - It is an environment secret. GitHub gives it only to the deploy job,
@@ -72,8 +76,8 @@ jobs:
           branch="$REF_NAME"
           [ "$EVENT" = pull_request ] && branch="$BASE_REF"
           case "$branch" in
-            main) echo "environment=production" >>"$GITHUB_OUTPUT"; echo "cloudflare_env=" >>"$GITHUB_OUTPUT" ;;
-            dev) echo "environment=staging" >>"$GITHUB_OUTPUT"; echo "cloudflare_env=staging" >>"$GITHUB_OUTPUT" ;;
+            main) echo "environment=production" >>"$GITHUB_OUTPUT" ;;
+            dev) echo "environment=staging" >>"$GITHUB_OUTPUT" ;;
             *) echo "::error::only main (production) and dev (staging) deploy, not $branch"; exit 1 ;;
           esac
 
@@ -84,10 +88,10 @@ jobs:
         run: ./scripts/ci/audit-signatures.sh
       - run: npm run typecheck
       - run: npm test
+      # The same build for both branches: what differs is how it is shipped.
       - name: Build for Cloudflare Workers
         env:
           DEPLOY_TARGET: cloudflare
-          CLOUDFLARE_ENV: ${{ steps.target.outputs.cloudflare_env }}
         run: npm run build
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -151,9 +155,9 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Install and deploy take a few minutes; the smoke test's version wait
-    # (up to 2), its retries (under 1), its readiness wait (up to 5) and a
-    # rollback's confirmation (up to 2) come on top.
+    # Install and deploy (or preview) take a few minutes; the smoke test's
+    # version wait (up to 2), its retries (under 1), its readiness wait (up
+    # to 5) and a rollback's confirmation (up to 2) come on top.
     timeout-minutes: 20
     environment:
       name: ${{ needs.build.outputs.environment }}
@@ -181,10 +185,12 @@ jobs:
 
       - name: Deploy with wrangler
         id: deploy
-        # Only this step and the rollback step see the token.
+        # main: the new version takes production traffic.
+        if: needs.build.outputs.environment == 'production'
+        # Only this step, the preview step and the rollback step see the token.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
           # wrangler appends one JSON line per command to this file; the
           # deploy's line carries the new version's id (the same id its
           # "Current Version ID:" log line prints), which the smoke test
@@ -192,7 +198,7 @@ jobs:
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-output.jsonl
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::set the CLOUDFLARE_API_TOKEN secret and the CLOUDFLARE_ACCOUNT_ID variable on this environment (CONTRIBUTING.md#deploying)"
+            echo "::error::set the CLOUDFLARE_API_TOKEN secret and the CLOUDFLARE_ACCOUNT_ID variable (or secret) on this environment (CONTRIBUTING.md#deploying)"
             exit 1
           fi
           npx --no-install wrangler deploy --config dist/server/wrangler.json
@@ -203,11 +209,48 @@ jobs:
           fi
           echo "version_id=$version_id" >>"$GITHUB_OUTPUT"
 
+      - name: Create the stage preview with wrangler
+        id: preview
+        # dev: a Worker Preview named "stage" of the same Worker, updated in
+        # place by every push and never deployed to production traffic. Its
+        # settings are the config's previews block (ROBOTS=noindex, so it
+        # answers noindex); --ignore-base-config keeps the dashboard's
+        # Previews base config out of it, so the file alone decides.
+        if: needs.build.outputs.environment == 'staging'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+          COMMIT_SHA: ${{ github.sha }}
+          # The preview's line ("type":"preview") carries its URLs.
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-output.jsonl
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::set the CLOUDFLARE_API_TOKEN secret and the CLOUDFLARE_ACCOUNT_ID variable (or secret) on this environment (CONTRIBUTING.md#deploying)"
+            exit 1
+          fi
+          npx --no-install wrangler preview --config dist/server/wrangler.json --name stage --ignore-base-config --message "dev ${COMMIT_SHA:0:7}"
+          host_re='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+'
+          preview_url="$(jq -r 'select(.type == "preview") | .preview_urls[0]? // empty' "$WRANGLER_OUTPUT_FILE_PATH" 2>/dev/null | tail -n 1)" || preview_url=""
+          if [[ "$preview_url" =~ ^https://$host_re/?$ ]]; then
+            echo "::notice::stage preview: $preview_url"
+          else
+            echo "::warning::wrangler preview reported no preview URL, so the custom preview domain is not live yet (it is published by the first wrangler deploy on main with previews_enabled); production traffic is untouched"
+          fi
+          deployment_url="$(jq -r 'select(.type == "preview") | .deployment_urls[0]? // empty' "$WRANGLER_OUTPUT_FILE_PATH" 2>/dev/null | tail -n 1)" || deployment_url=""
+          if [[ "$deployment_url" =~ ^https://$host_re/?$ ]]; then
+            echo "::notice::this deployment: $deployment_url"
+          fi
+
       - name: No DEPLOY_URL set
         if: vars.DEPLOY_URL == ''
-        run: echo "::warning::this environment has no DEPLOY_URL variable, so the deploy is not smoke-tested and a failed one is not rolled back (CONTRIBUTING.md#deploying)"
+        run: echo "::warning::this environment has no DEPLOY_URL variable, so the new version is not smoke-tested and a failed production deploy is not rolled back (CONTRIBUTING.md#deploying)"
 
       - name: Smoke-test the deployment
+        # On dev, DEPLOY_URL is the stage preview's URL. A preview reports no
+        # version id to wait for: wrangler prints a preview id and a
+        # deployment id, and nothing shows either equals the id in
+        # X-Worker-Version. So there is no --expect-version there, and the
+        # checks may be answered by the previous deployment for a moment.
         id: smoke-test
         if: vars.DEPLOY_URL != ''
         # The same checks as CI's preview (scripts/ci/smoke.sh: plain bash,
@@ -225,16 +268,28 @@ jobs:
         env:
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
           VERSION_ID: ${{ steps.deploy.outputs.version_id }}
-        run: ./scripts/ci/smoke.sh "$DEPLOY_URL" --expect-version "$VERSION_ID" --wait 120 --attempts 3 --require-ready --ready-wait 60
+        run: |
+          expect=()
+          if [ -n "$VERSION_ID" ]; then
+            expect=(--expect-version "$VERSION_ID")
+          fi
+          ./scripts/ci/smoke.sh "$DEPLOY_URL" "${expect[@]}" --wait 120 --attempts 3 --require-ready --ready-wait 60
+
+      - name: Preview failed its smoke test
+        # A preview takes no production traffic, so there is nothing to roll
+        # back; the failed check above already fails the job.
+        if: failure() && steps.smoke-test.outcome == 'failure' && needs.build.outputs.environment == 'staging'
+        run: echo "::error::the stage preview did not answer the smoke test. Production traffic is untouched; the preview stays as created until the next push to dev replaces it"
 
       - name: Roll back the failed deployment
         id: rollback
         # Only after a smoke test that actually ran and failed: a build or
         # auth failure earlier leaves nothing new deployed to roll back from.
-        if: failure() && steps.smoke-test.outcome == 'failure'
+        # Production only: a preview has no traffic to roll back.
+        if: failure() && steps.smoke-test.outcome == 'failure' && needs.build.outputs.environment == 'production'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           echo "::warning::the deploy did not answer the smoke test; rolling back to the previous version"
           # The first deploy to an environment has nothing to roll back to;
