@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback } from "react";
-import { BoardHistoryProvider } from "@/components/status/board-history-provider";
 import { BoardView } from "@/components/status/board-view";
 import { loadStatusBoardForPage } from "@/lib/status/board";
 import { type BoardFilters, filtersFromSearch, parseBoardSearch, searchFromFilters } from "@/lib/status/filters";
@@ -23,9 +22,5 @@ function Home() {
     (filters: BoardFilters) => void navigate({ search: searchFromFilters(filters), replace: true, resetScroll: false }),
     [navigate],
   );
-  return (
-    <BoardHistoryProvider>
-      <BoardView initial={board} initialFilters={filtersFromSearch(search)} onFiltersChange={onFiltersChange} />
-    </BoardHistoryProvider>
-  );
+  return <BoardView initial={board} initialFilters={filtersFromSearch(search)} onFiltersChange={onFiltersChange} />;
 }

@@ -6,10 +6,16 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Changed
+
+- Cloudflare Workers now collect status on request with an in-memory cache per isolate. Deployment needs only the Cloudflare account ID and API token.
+
+### Removed
+
+- Workers KV and its Cron Trigger; persistent 30-day uptime history and card strips are unavailable. The history endpoint returns an empty compatibility response.
+
 ### Added
 
-- Each service card shows a 30-day uptime strip from `/api/history.json` (colour by that day's worst health, plus a short uptime percent). A service with no history, or a cold empty document, simply has no strip; the board still loads.
-- A public JSON API at `/api/history.json` with each service's UTC-day uptime for the last 30 days (`date`, `worst`, `samples`, `up`), kept by the Cloudflare cron beside the board snapshot.
 - A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
 - A **Reduce glass** switch in **Settings and shortcuts** turns the frosted panels solid and stops the background moving. Safari does not pass the system's Reduce Transparency setting to web pages, so this is the way to get it on an iPhone, iPad or Mac; browsers that do pass it on get the same result automatically. The choice is kept in this browser.
 - A light appearance. The board now follows your system's light or dark setting and switches when it does.
@@ -27,7 +33,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 - The app is named Status Page across the board, browser metadata, feeds, documentation and release titles.
 - A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. All text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.
-- A calmer look for the board: deep ink in dark, warm paper in light, and a faint drafting grid under the glass. Colour is kept for what needs it: every status badge shares one neutral fill with a small coloured dot, and the 30-day uptime strip shows quiet days as fine grey ticks, so only the days that went wrong stand out.
+- A calmer look for the board: deep ink in dark, warm paper in light, and a faint drafting grid under the glass. Colour is kept for what needs it: every status badge shares one neutral fill with a small coloured dot,.
 - A dial beside the counts ticks through each two-minute check, one tick a second, in step with **Next update**. With Reduce Motion on it stands still and moves on every few seconds.
 - The headline's pulse and a card that has just changed now glow warm amber, the one warm colour on the board, so what moved is easy to spot. Red still always means an outage.
 - Each card and tile shows a small number, 01 to 14, that stays with the service whatever the sort, filter or search.

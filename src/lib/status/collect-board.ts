@@ -17,8 +17,8 @@ export function assembleBoard(services: ServiceSnapshot[], durationMs: number): 
 
 /**
  * Sweeps every vendor once and assembles the result into a board snapshot.
- * Shared by the Node in-memory cache (board.ts) and the Cloudflare cron
- * trigger (cron-sweep.ts), so there is exactly one place that calls
+ * Shared by Node and Cloudflare Workers through the in-memory cache
+ * (board.ts), so there is exactly one place that calls
  * `collectAllServices()`.
  */
 export async function collectBoard(): Promise<BoardSnapshot> {

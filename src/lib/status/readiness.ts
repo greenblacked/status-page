@@ -2,9 +2,8 @@ import type { BoardSnapshot } from "./types.ts";
 
 /**
  * How old the board may get before /readyz calls it stale. The board is
- * collected every two minutes (the Workers cron, or the Node cache on
- * demand), so ten minutes is several missed sweeps in a row, not one slow
- * vendor or one skipped tick.
+ * collected on demand and cached per process or Worker isolate. Ten
+ * minutes is long enough to tolerate a slow vendor or a quiet period.
  */
 export const READY_MAX_AGE_MS = 10 * 60 * 1000;
 

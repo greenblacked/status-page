@@ -1,8 +1,5 @@
 import type { BoardSnapshot, Health } from "./types";
 
-/** Fixed KV key for the rolling uptime history document. */
-export const HISTORY_KEY = "history:v1";
-
 export const HISTORY_SCHEMA = 1;
 export const HISTORY_TIMEZONE = "UTC";
 export const HISTORY_RETENTION_DAYS = 30;
@@ -21,7 +18,7 @@ const HISTORY_RANK: Record<Health, number> = {
 
 const HEALTHS = new Set<string>(Object.keys(HISTORY_RANK));
 
-/** Public day fields only. Nothing else may reach KV or /api/history.json. */
+/** Public day fields only. Only these fields may reach /api/history.json. */
 export type HistoryDay = {
   date: string;
   worst: Health;
@@ -110,9 +107,8 @@ function isHistoryDay(value: unknown): value is HistoryDay {
 /**
  * Accepts a stored value or returns null when it is unusable. A partial
  * document keeps only well-formed service days; corrupt entries are dropped
- * rather than failing the cron. Wrong schema or a non-object resets to null
- * so the next merge starts fresh. Day objects are re-projected to public
- * fields so leftover keys never re-enter memory from KV.
+ * without failing parsing. Wrong schema or a non-object resets to null.
+ * Day objects are re-projected to public fields.
  */
 export function parseHistory(value: unknown): HistoryDocument | null {
   if (typeof value !== "object" || value === null) return null;
