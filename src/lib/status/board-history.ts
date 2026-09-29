@@ -76,7 +76,8 @@ export function historySlots(
   const cursor = new Date(`${oldest}T00:00:00.000Z`);
   const end = new Date(`${today}T00:00:00.000Z`);
   if (!Number.isFinite(cursor.getTime()) || !Number.isFinite(end.getTime()) || cursor > end) return [];
-  while (cursor <= end) {
+  const endTime = end.getTime();
+  while (cursor.getTime() <= endTime) {
     const date = cursor.toISOString().slice(0, 10);
     slots.push({ date, day: byDate.get(date) ?? null });
     cursor.setUTCDate(cursor.getUTCDate() + 1);
