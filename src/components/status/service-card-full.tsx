@@ -4,6 +4,7 @@ import { HistoryStrip } from "@/components/status/history-strip";
 import {
   CATEGORY_ICON,
   ComponentRow,
+  HealthyComponents,
   ICON_TONE,
   IncidentSince,
   norm,
@@ -16,8 +17,9 @@ import type { ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
 /**
- * The full card, for services that need attention and for the release
- * trackers. Every line should add something the summary does not already
+ * The full card, for every service and the release trackers. A service that
+ * needs attention lists its broken components; a healthy one names its
+ * components on one quiet line. Every line should add something the summary does not already
  * say: vendors often repeat one incident as the status description, the
  * affected component and the incident title.
  */
@@ -42,13 +44,16 @@ export function ServiceCard({
   const changelog = service.category === "updates";
   const summary = norm(service.summary);
 
-  // Release channels and CS2 pops are the content of their cards. Elsewhere
-  // only broken components earn a row.
-  const rows = (
-    changelog || service.id === "cs2-europe"
-      ? service.components
-      : service.components.filter((component) => component.health !== "operational")
-  ).slice(0, 6);
+  // Release channels and CS2 pops are the content of their cards. A service
+  // that is up names its components in one compact line instead of rows;
+  // otherwise only broken components earn a row.
+  const healthy = service.health === "operational" && !changelog && service.id !== "cs2-europe";
+  const rows = healthy
+    ? []
+    : (changelog || service.id === "cs2-europe"
+        ? service.components
+        : service.components.filter((component) => component.health !== "operational")
+      ).slice(0, 6);
   const incidents = service.incidents.filter((incident) => norm(incident.title) !== summary).slice(0, 2);
   // An incident whose title is the summary has no row of its own, so its
   // start goes under the summary instead.
@@ -112,6 +117,8 @@ export function ServiceCard({
       {summaryIncident ? (
         <IncidentSince startedAt={summaryIncident.startedAt} reference={checkedAt} now={now} className="mt-1" />
       ) : null}
+
+      {healthy ? <HealthyComponents components={service.components} className="mt-3" /> : null}
 
       {rows.length > 0 ? (
         <ul className="mt-4 flex flex-col gap-1.5">

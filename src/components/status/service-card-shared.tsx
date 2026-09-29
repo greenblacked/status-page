@@ -1,4 +1,5 @@
 import { Cloud, Cpu, Gamepad2, History, Smartphone, Star } from "lucide-react";
+import { HealthDot } from "@/components/status/health-dot";
 import { Badge } from "@/components/ui/badge";
 import { healthLabel } from "@/lib/status/health";
 import { formatUtcTime, incidentStart, parseTimestamp } from "@/lib/status/schedule";
@@ -90,6 +91,44 @@ export function ComponentRow({
       ) : null}
       {badge ? <span className="shrink-0">{badge}</span> : null}
     </li>
+  );
+}
+
+/** How many component names a healthy card names before it says "+N more". */
+export const HEALTHY_COMPONENTS_SHOWN = 6;
+
+/**
+ * The components of a service with nothing to report, as one quiet wrapping
+ * line of names: a small status dot for the eye, the status in words for a
+ * screen reader. Anything past the first few is counted, not dropped
+ * silently. Renders nothing when the vendor lists no components, since
+ * there is nothing true to say.
+ */
+export function HealthyComponents({ components, className }: { components: ComponentHealth[]; className?: string }) {
+  if (components.length === 0) return null;
+  // A stray non-operational component still leads the line.
+  const ordered = [...components].sort(
+    (a, b) => Number(a.health === "operational") - Number(b.health === "operational"),
+  );
+  const shown = ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
+  const more = ordered.length - shown.length;
+  return (
+    <ul aria-label="Components" className={cn("flex flex-wrap gap-x-3 gap-y-1", className)}>
+      {shown.map((component, componentIndex) => (
+        <li
+          // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
+          key={`${component.name}-${componentIndex}`}
+          className="flex max-w-full min-w-0 items-center gap-1.5 text-xs text-muted"
+        >
+          <HealthDot health={component.health} />
+          <span className="truncate" title={component.name}>
+            {component.name}
+          </span>
+          <span className="sr-only">{healthLabel(component.health)}</span>
+        </li>
+      ))}
+      {more > 0 ? <li className="text-xs text-subtle">+{more} more</li> : null}
+    </ul>
   );
 }
 
