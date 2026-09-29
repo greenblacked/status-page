@@ -1,9 +1,38 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 
 const SERVICES = 14;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
+/** The cards of one board group: "attention", "operational" or "releases". */
+const group = (page: Page, id: "attention" | "operational" | "releases") =>
+  page.locator(`section[aria-labelledby="${id}-heading"] article[id^="service-"]`);
+
+/**
+ * Waits out every card's fade-in. A card mid-animation is partly transparent,
+ * and axe would measure its text at that opacity instead of the colour it
+ * settles on.
+ */
+async function cardsSettled(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => (animation as CSSAnimation).animationName === "rise-in")
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
+}
+
+/** Loads the page, then presses Refresh so the served fixture replaces the server's first render. */
+async function openFixture(page: Page, board: () => BoardSnapshot): Promise<void> {
+  await serveBoard(page, board);
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
+}
 
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
 function watchConsole(page: Page): string[] {
@@ -29,6 +58,7 @@ test("renders every service with no console errors or hydration warnings", async
 test("has no serious or critical accessibility violations", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  await cardsSettled(page);
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
@@ -177,6 +207,117 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   await expect(header).toBeHidden();
   // Hidden from the accessibility tree, so found by its markup instead.
   await expect(page.locator('section[aria-label="Board controls"]')).toHaveAttribute("inert", "");
+});
+
+test("renders healthy services as full cards, alike whether or not the vendor lists components", async ({ page }) => {
+  const board = fixtureBoard(Date.now());
+  await openFixture(page, () => board);
+
+  // The heading's count and the cards under it agree.
+  const operational = group(page, "operational");
+  const total = await operational.count();
+  expect(total).toBeGreaterThan(0);
+  await expect(page.locator("#operational-heading")).toContainText(String(total));
+
+  for (const id of ["chatgpt", "claude", "grok"] as const) {
+    const service = board.services.find((item) => item.id === id);
+    if (!service) throw new Error(`the fixture has no ${id}`);
+    const card = page.locator(`article#service-${id}`);
+    // In the Operational group, not a one-line tile in a group of its own.
+    await expect(operational.and(card), `${id} sits in Operational`).toHaveCount(1);
+    // The same parts on every one: name, badge, star, link to the official source.
+    await expect(card.getByRole("heading", { level: 3, name: service.name })).toBeVisible();
+    await expect(card.getByText("Operational", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: `Star ${service.name}` })).toBeVisible();
+    await expect(card.locator(`a[href="${service.sourceUrl}"]`)).toBeVisible();
+    // The component list is there when the vendor reports components, and only then.
+    const list = card.getByRole("list", { name: "Components" });
+    if (service.components.length === 0) {
+      await expect(list).toHaveCount(0);
+    } else {
+      await expect(list).toHaveCount(1);
+      await expect(list.getByRole("listitem")).toHaveCount(service.components.length);
+      for (const component of service.components) {
+        await expect(list.getByText(component.name, { exact: true })).toBeVisible();
+      }
+    }
+  }
+});
+
+test("leads Needs attention with the most urgent service and follows the data", async ({ page }) => {
+  let board = fixtureBoard(Date.now());
+  await openFixture(page, () => board);
+
+  const attention = group(page, "attention");
+  // AWS is an outage, Google Cloud is degraded, Epic is in maintenance, Android is unknown.
+  await expect(attention).toHaveCount(4);
+  await expect(attention.nth(0)).toHaveAttribute("id", "service-aws");
+  await expect(attention.nth(1)).toHaveAttribute("id", "service-gcp");
+  await expect(attention.nth(2)).toHaveAttribute("id", "service-epic");
+  await expect(attention.nth(3)).toHaveAttribute("id", "service-android");
+
+  // Exactly one card is the highlight, and it is the first.
+  const highlight = page.locator('[data-highlight="true"]');
+  await expect(highlight).toHaveCount(1);
+  await expect(highlight.locator("article")).toHaveAttribute("id", "service-aws");
+  await expect(highlight).toContainText("Most urgent");
+  // It holds the whole card, not a stub of it.
+  await expect(highlight.getByText("Outage", { exact: true }).first()).toBeVisible();
+  await expect(highlight.locator('a[href^="https://"]')).toBeVisible();
+
+  // Grok's outage began after AWS's, so it takes the lead on the next refresh.
+  board = fixtureBoard(Date.now(), { grok: "outage" });
+  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  await expect(attention.first()).toHaveAttribute("id", "service-grok");
+  await expect(highlight).toHaveCount(1);
+  await expect(highlight.locator("article")).toHaveAttribute("id", "service-grok");
+
+  // With nothing to attend to there is no highlight and no group.
+  const now = Date.now();
+  board = {
+    ...fixtureBoard(now),
+    services: fixtureBoard(now).services.map((item) => ({
+      ...item,
+      health: "operational" as const,
+      summary: "All systems operational",
+      components: [],
+      incidents: [],
+      failure: undefined,
+    })),
+    counts: { operational: SERVICES, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
+  };
+  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  await expect(attention).toHaveCount(0);
+  await expect(highlight).toHaveCount(0);
+  await expect(cards(page)).toHaveCount(SERVICES);
+});
+
+test("keeps the groups, filters and stars working with full cards", async ({ page }) => {
+  const board = fixtureBoard(Date.now());
+  await openFixture(page, () => board);
+
+  // Attention first, then Operational, then Releases, each with its count.
+  await expect(page.locator("#attention-heading, #operational-heading, #releases-heading")).toHaveText([
+    /Needs attention\s*4/,
+    /Operational\s*\d+/,
+    /Releases\s*\d+/,
+  ]);
+
+  // Issues only leaves the four attention cards, the highlight among them.
+  const issues = page.getByRole("button", { name: /Issues only/ });
+  await issues.click();
+  await expect(cards(page)).toHaveCount(4);
+  await expect(page.locator('[data-highlight="true"] article')).toHaveAttribute("id", "service-aws");
+  await issues.click();
+  await expect(cards(page)).toHaveCount(SERVICES);
+
+  // A star lifts a healthy card to the head of Operational, but never above a worse service in Needs attention.
+  await page.getByRole("button", { name: "Star Claude", exact: true }).click();
+  await expect(group(page, "operational").first()).toHaveAttribute("id", "service-claude");
+  await page.getByRole("button", { name: "Star Google Cloud", exact: true }).click();
+  await expect(group(page, "attention").first()).toHaveAttribute("id", "service-aws");
+  await page.getByRole("button", { name: /^Starred/ }).click();
+  await expect(cards(page)).toHaveCount(2);
 });
 
 test("keeps Reduce glass across a reload", async ({ page }) => {

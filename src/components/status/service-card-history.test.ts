@@ -6,7 +6,6 @@ import type { ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
 import { BoardHistoryContext } from "./board-history-provider";
 import { ServiceCard } from "./service-card-full";
-import { ServiceTile } from "./service-card-tile";
 
 const NOW = Date.parse("2026-09-27T12:00:00.000Z");
 const STRIP = /uptime history/;
@@ -56,46 +55,13 @@ function bareCard(): ReactElement {
   });
 }
 
-/** A tile rendered with no history provider in the tree at all. */
-function bareTile(): ReactElement {
-  return createElement(ServiceTile, {
-    service: service("aws"),
-    index: 0,
-    starred: false,
-    onToggleStar: noop,
-    now: NOW,
-  });
-}
-
-function tile(
-  withHistory: PublicHistory | undefined,
-  id: "aws" | "gcp" = "aws",
-  overrides: Partial<ServiceSnapshot> = {},
-): string {
-  const element: ReactElement = createElement(
-    BoardHistoryContext.Provider,
-    { value: withHistory },
-    createElement(ServiceTile, {
-      service: service(id, overrides),
-      index: 0,
-      starred: false,
-      onToggleStar: noop,
-      now: NOW,
-    }),
-  );
-  return renderToStaticMarkup(element);
-}
-
 describe("cards without history", () => {
   it("render identical markup whether history never loaded, came back empty or omits the service", () => {
     // With the flag on, so a strip would show if there were days to draw.
     vi.stubEnv("VITE_STATUS_HISTORY", "1");
     const plainCard = renderToStaticMarkup(bareCard());
-    const plainTile = renderToStaticMarkup(bareTile());
     expect(plainCard).not.toMatch(STRIP);
     expect(plainCard).not.toContain('role="img"');
-    expect(plainTile).not.toMatch(STRIP);
-    expect(plainTile).not.toContain('role="img"');
 
     const variants: Array<[string, PublicHistory | undefined]> = [
       ["never loaded", undefined],
@@ -105,7 +71,6 @@ describe("cards without history", () => {
     ];
     for (const [name, variant] of variants) {
       expect(card(variant), `card, ${name}`).toBe(plainCard);
-      expect(tile(variant), `tile, ${name}`).toBe(plainTile);
     }
   });
 
@@ -126,8 +91,6 @@ describe("cards with the flag off", () => {
       expect(html).not.toMatch(STRIP);
       expect(html).not.toContain('role="img"');
       expect(html).toBe(card(undefined));
-      expect(tile(document)).not.toMatch(STRIP);
-      expect(tile(document)).toBe(tile(undefined));
     }
   });
 });
@@ -144,23 +107,15 @@ describe("cards with history", () => {
     expect(html).not.toBe(card(undefined));
   });
 
-  it("show the compact strip on the operational tile", () => {
-    const html = tile(history({ aws: { days: DAYS } }));
-    expect(html).toMatch(STRIP);
-    expect(html).toContain("h-3");
-    expect(html).not.toBe(tile(undefined));
-  });
-
   it("show it only on the service the history is for", () => {
     const document = history({ aws: { days: DAYS } });
     expect(card(document, "aws")).toMatch(STRIP);
     expect(card(document, "gcp")).not.toMatch(STRIP);
   });
 
-  it("leave the strip off changelog-category cards and tiles", () => {
+  it("leave the strip off changelog-category cards", () => {
     const document = history({ aws: { days: DAYS } });
     expect(card(document, "aws", { category: "updates" })).not.toMatch(STRIP);
-    expect(tile(document, "aws", { category: "updates" })).not.toMatch(STRIP);
     expect(card(document, "aws", { category: "updates" })).toBe(card(undefined, "aws", { category: "updates" }));
   });
 

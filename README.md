@@ -146,8 +146,9 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 
 ### On the board
 
+- **Every service is a full card**, healthy or not, in three groups: **Needs attention**, **Operational** and **Releases**. Needs attention is ordered by urgency (Outage, then Degraded, then Maintenance, then Unknown, and within one state the incident that began most recently first), and the most urgent service leads it as a wider card marked **Most urgent**. It changes with each snapshot, and it is absent when nothing needs attention.
 - **Filter** by Cloud, Gaming, Platforms, AI or Updates, search by name, or switch on **Issues only**.
-- **Star** the services you care about: they sort first, and **Starred** shows only them.
+- **Star** the services you care about: they sort first in their group, though never above a more urgent service in Needs attention, and **Starred** shows only them.
 - **Share a view:** search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered.
 - **Drive it from the keyboard:** `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` opens **Settings and shortcuts**, which lists them all. If single keys get in the way, for example with speech input, switch **Single-key shortcuts** off there: every shortcut but `Esc` stops, the search box stays a Tab away, and the **Settings and shortcuts** button at the foot of the page opens the list again. The first Tab stop is **Skip to services**.
 - **Light or dark:** the board follows your system appearance, and switches with it.

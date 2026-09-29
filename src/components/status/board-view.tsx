@@ -7,7 +7,7 @@ import { HealthDot } from "@/components/status/health-dot";
 import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
 import { PeriodDial } from "@/components/status/period-dial";
-import { ServiceCard, ServiceTile } from "@/components/status/service-card";
+import { ServiceCard } from "@/components/status/service-card";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
@@ -434,28 +434,41 @@ export function BoardView({
                 <>
                   <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
                     <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                      {groups.attention.map((service, index) => (
-                        <ServiceCard
-                          key={service.id}
-                          service={service}
-                          index={index}
-                          emphasized={changedIds.has(service.id)}
-                          starred={starred.has(service.id)}
-                          onToggleStar={onToggleStar}
-                          now={now}
-                        />
-                      ))}
+                      {groups.attention.map((service, index) => {
+                        const card = (
+                          <ServiceCard
+                            key={service.id}
+                            service={service}
+                            index={index}
+                            emphasized={changedIds.has(service.id)}
+                            starred={starred.has(service.id)}
+                            onToggleStar={onToggleStar}
+                            now={now}
+                          />
+                        );
+                        // The most urgent service, from the latest snapshot: a wider card
+                        // under a plain caption. Neutral, like the rest; the status colour
+                        // stays in its badge, and amber stays for what just moved.
+                        return index === 0 ? (
+                          <div
+                            key={service.id}
+                            data-highlight="true"
+                            className="flex flex-col gap-1.5 @xl:col-span-2 [&>article]:flex-1"
+                          >
+                            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">Most urgent</p>
+                            {card}
+                          </div>
+                        ) : (
+                          card
+                        );
+                      })}
                     </div>
                   </ServiceSection>
                   <ServiceSection id="operational" title="Operational" services={groups.operational}>
-                    {/*
-                      Columns by the room the section has, not the window's: with the
-                      board log beside it on a wide screen, three would leave each name
-                      a few letters, and it drops back to two by itself.
-                    */}
-                    <div className="grid grid-cols-1 gap-2 @xl:grid-cols-2 @4xl:grid-cols-3">
+                    {/* The full card, healthy or not, in the attention grid's columns. */}
+                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
                       {groups.operational.map((service, index) => (
-                        <ServiceTile
+                        <ServiceCard
                           key={service.id}
                           service={service}
                           index={index}

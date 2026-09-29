@@ -7,6 +7,7 @@ import {
   scrolledPast,
   serviceAnchor,
   serviceIndex,
+  sortByUrgency,
 } from "./layout";
 import type { BoardSnapshot, CategoryId, Health, ServiceId, ServiceSnapshot } from "./types";
 
@@ -34,7 +35,7 @@ function board(services: ServiceSnapshot[]): BoardSnapshot {
 }
 
 describe("groupServices", () => {
-  it("puts every non-operational service first, worst first, keeping catalog order within a severity", () => {
+  it("puts every non-operational service first, most urgent first, keeping catalog order within a severity", () => {
     const groups = groupServices([
       service("gcp", "degraded"),
       service("aws", "operational"),
@@ -44,7 +45,7 @@ describe("groupServices", () => {
       service("fortnite", "degraded", "gaming"),
       service("mikrotik", "operational", "updates"),
     ]);
-    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "grok", "gcp", "fortnite", "steam"]);
+    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "gcp", "fortnite", "steam", "grok"]);
     expect(groups.operational.map((s) => s.id)).toEqual(["aws"]);
     expect(groups.releases.map((s) => s.id)).toEqual(["mikrotik"]);
   });
@@ -59,6 +60,66 @@ describe("groupServices", () => {
     const input = [service("gcp", "operational"), service("apple", "outage")];
     groupServices(input);
     expect(input.map((s) => s.id)).toEqual(["gcp", "apple"]);
+  });
+});
+
+describe("sortByUrgency", () => {
+  const incident = (startedAt?: string) => ({ id: "i", title: "t", health: "degraded" as const, startedAt });
+  const withIncident = (id: ServiceId, health: Health, ...starts: Array<string | undefined>) => ({
+    ...service(id, health),
+    incidents: starts.map(incident),
+  });
+
+  it("orders outage, degraded, maintenance, unknown", () => {
+    const sorted = sortByUrgency([
+      service("grok", "unknown"),
+      service("steam", "maintenance"),
+      service("gcp", "degraded"),
+      service("apple", "outage"),
+    ]);
+    expect(sorted.map((s) => s.id)).toEqual(["apple", "gcp", "steam", "grok"]);
+  });
+
+  it("puts the most recently started incident first within a severity", () => {
+    const sorted = sortByUrgency([
+      withIncident("gcp", "degraded", "2026-09-25T08:00:00Z"),
+      withIncident("aws", "degraded", "2026-09-25T07:00:00Z", "2026-09-25T10:00:00Z"),
+      withIncident("steam", "degraded", "2026-09-25T09:00:00Z"),
+    ]);
+    expect(sorted.map((s) => s.id)).toEqual(["aws", "steam", "gcp"]);
+  });
+
+  it("ranks a service with no readable incident start after one with a start, then keeps the given order", () => {
+    const sorted = sortByUrgency([
+      service("steam", "degraded"),
+      withIncident("epic", "degraded", undefined, "not a date"),
+      withIncident("aws", "degraded", "2026-09-25T08:00:00Z"),
+      service("gcp", "degraded"),
+    ]);
+    // aws has the only readable start; the rest tie and keep the order given.
+    expect(sorted.map((s) => s.id)).toEqual(["aws", "steam", "epic", "gcp"]);
+  });
+
+  it("puts a worse severity ahead of a newer incident", () => {
+    const sorted = sortByUrgency([
+      withIncident("aws", "degraded", "2026-09-25T12:00:00Z"),
+      withIncident("gcp", "outage", "2026-09-24T00:00:00Z"),
+    ]);
+    expect(sorted.map((s) => s.id)).toEqual(["gcp", "aws"]);
+  });
+
+  it("returns an empty list, and a copy, when nothing needs attention", () => {
+    expect(sortByUrgency([])).toEqual([]);
+    const input = [service("aws", "outage"), service("gcp", "degraded")];
+    expect(sortByUrgency(input)).not.toBe(input);
+    expect(groupServices([service("aws", "operational")]).attention).toEqual([]);
+  });
+
+  it("changes which service leads when the data changes", () => {
+    const before = groupServices([service("gcp", "degraded"), service("apple", "maintenance")]).attention;
+    const after = groupServices([service("gcp", "degraded"), service("apple", "outage")]).attention;
+    expect(before[0].id).toBe("gcp");
+    expect(after[0].id).toBe("apple");
   });
 });
 

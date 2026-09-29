@@ -354,8 +354,8 @@ Do not scrape unofficial aggregators.
   - The card index (01 to 14) follows the catalog order and is `aria-hidden`: decoration, never part of a name
 - Three materials, and nothing else is translucent:
   - `.glass-chrome` for controls that float above the content (the compact header, the settings dialog), one on screen at a time
-  - `.glass` for content panels (the summary, attention cards, the board log), a handful per screen
-  - `.glass-whisper`, with no blur, for anything dense or repeated: tiles, chips, the search box
+  - `.glass` for content panels: the summary, every service card (healthy or not, the most urgent one included) and the board log. That is a dozen or more on a full board, so keep it to panels of content, never to chips, rows or anything inside a card
+  - `.glass-whisper`, with no blur, for anything dense or repeated inside a panel: chips, the search box
 - Never glass on glass: inside a `.glass` or `.glass-chrome`, nest only `.glass-whisper` or `.glass-inset`
 - Performance: no `will-change: backdrop-filter`, never animate a blur or a `filter`, and animate `transform` and `opacity` only. The one exception is a registered custom property on a small element, stepped so it repaints rarely, as the period dial does once a second. Blur stays at 24px for `.glass` and 28px for `.glass-chrome`
 - Radii are concentric: a nested shape takes its parent's radius minus the inset between them, rounded down to the nearest `--radius-*` step (`rounded-2xs` to `rounded-xl`). Pills stay `rounded-full`, and Tailwind's default radius scale is switched off

@@ -1,18 +1,50 @@
 import { CATALOG } from "./catalog.ts";
 import type { BoardSnapshot, Health, ServiceSnapshot } from "./types.ts";
 
-// Worst first. Unknown ranks above degraded: a source that cannot be read
-// may be hiding anything, and it is also the one the board cannot vouch for.
-const SEVERITY: Record<Health, number> = {
+// Most urgent first: a confirmed outage, then a confirmed degradation, then
+// maintenance, and last a source the board cannot read (it may be hiding
+// anything, but it is not a confirmed problem). The board's headline names
+// confirmed breakage before an unreadable source for the same reason.
+const URGENCY: Record<Health, number> = {
   outage: 0,
-  unknown: 1,
-  degraded: 2,
-  maintenance: 3,
+  degraded: 1,
+  maintenance: 2,
+  unknown: 3,
   operational: 4,
 };
 
+/** When a service's most recently started incident began, as epoch ms; -Infinity if none has a readable start. */
+function latestIncidentStart(service: ServiceSnapshot): number {
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const incident of service.incidents) {
+    const at = incident.startedAt ? Date.parse(incident.startedAt) : Number.NaN;
+    if (Number.isFinite(at) && at > latest) latest = at;
+  }
+  return latest;
+}
+
+/** Newer first; two services with no readable start tie (subtracting two -Infinity values would be NaN). */
+function newerFirst(a: number, b: number): number {
+  if (a === b) return 0;
+  return b > a ? 1 : -1;
+}
+
+/**
+ * Services by urgency: severity first (outage, degraded, maintenance,
+ * unknown, operational), then the most recently started incident. Anything
+ * still tied keeps the order it came in (a stable sort): catalog order, with
+ * starred services first, as the board passes them. A pure sort of a copy,
+ * run on every snapshot, so the first entry is always the current most
+ * urgent service.
+ */
+export function sortByUrgency(services: ServiceSnapshot[]): ServiceSnapshot[] {
+  return [...services].sort(
+    (a, b) => URGENCY[a.health] - URGENCY[b.health] || newerFirst(latestIncidentStart(a), latestIncidentStart(b)),
+  );
+}
+
 export type BoardGroups = {
-  /** Anything not operational, worst first, then in catalog order. */
+  /** Anything not operational, most urgent first (see `sortByUrgency`); its first entry is the board's highlight. */
   attention: ServiceSnapshot[];
   /** Operational status services. */
   operational: ServiceSnapshot[];
@@ -21,10 +53,7 @@ export type BoardGroups = {
 };
 
 export function groupServices(services: ServiceSnapshot[]): BoardGroups {
-  const attention = services
-    .filter((service) => service.health !== "operational")
-    // Array.prototype.sort is stable, so equal severities keep catalog order.
-    .sort((a, b) => SEVERITY[a.health] - SEVERITY[b.health]);
+  const attention = sortByUrgency(services.filter((service) => service.health !== "operational"));
   const healthy = services.filter((service) => service.health === "operational");
   return {
     attention,

@@ -7,6 +7,10 @@ import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/l
 // them all whatever the vendors say today (and offline, every vendor says
 // Unknown). Outage, degraded, maintenance that has not started, unknown,
 // operational services and release trackers, incidents with start times.
+// Two attention services differ in severity (AWS down, Google Cloud
+// degraded), so the most urgent one leads the board. Healthy ChatGPT and
+// Claude list several operational components, and healthy Grok lists none,
+// so every card layout a healthy service can take is on screen.
 
 const minute = 60_000;
 
@@ -15,6 +19,19 @@ type Override = Partial<Omit<ServiceSnapshot, "id">>;
 function overrides(now: number, grok: Health): Partial<Record<ServiceId, Override>> {
   const at = (offset: number) => new Date(now + offset).toISOString();
   return {
+    aws: {
+      health: "outage",
+      summary: "Increased error rates in us-east-1",
+      components: [{ name: "EC2", health: "outage", detail: "us-east-1" }],
+      incidents: [
+        {
+          id: "aws-1",
+          title: "Increased error rates in us-east-1",
+          health: "outage",
+          startedAt: at(-52 * minute),
+        },
+      ],
+    },
     gcp: {
       health: "degraded",
       summary: "Elevated error rates for Cloud Run in europe-west1",
@@ -31,14 +48,38 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         },
       ],
     },
-    grok: {
-      health: grok,
-      summary: grok === "outage" ? "Grok is unavailable for most users" : "Slow responses on grok.com",
+    // Healthy Grok is the bare one: no components at all.
+    ...(grok === "operational"
+      ? {}
+      : {
+          grok: {
+            health: grok,
+            summary: grok === "outage" ? "Grok is unavailable for most users" : "Slow responses on grok.com",
+            components: [
+              { name: "API", health: grok },
+              { name: "grok.com", health: grok },
+            ],
+            incidents: [
+              { id: "grok-1", title: "Investigating failed requests", health: grok, startedAt: at(-38 * minute) },
+            ],
+          },
+        }),
+    chatgpt: {
       components: [
-        { name: "API", health: grok },
-        { name: "grok.com", health: grok },
+        { name: "Conversations", health: "operational" },
+        { name: "Login", health: "operational" },
+        { name: "Voice mode", health: "operational" },
+        { name: "Image generation", health: "operational" },
+        { name: "API", health: "operational" },
       ],
-      incidents: [{ id: "grok-1", title: "Investigating failed requests", health: grok, startedAt: at(-38 * minute) }],
+    },
+    claude: {
+      components: [
+        { name: "claude.ai", health: "operational" },
+        { name: "Claude API", health: "operational" },
+        { name: "Claude Code", health: "operational" },
+        { name: "Claude Console", health: "operational" },
+      ],
     },
     epic: {
       health: "maintenance",
@@ -78,8 +119,8 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
   };
 }
 
-/** Every catalog service, operational unless overridden above. `grok` lets a test change one service between boards. */
-export function fixtureBoard(now: number, { grok = "outage" }: { grok?: Health } = {}): BoardSnapshot {
+/** Every catalog service, operational unless overridden above. `grok` lets a test turn the otherwise healthy, component-less Grok into an incident between boards. */
+export function fixtureBoard(now: number, { grok = "operational" }: { grok?: Health } = {}): BoardSnapshot {
   const patch = overrides(now, grok);
   const services: ServiceSnapshot[] = CATALOG.map((entry, index) => ({
     ...entry,
