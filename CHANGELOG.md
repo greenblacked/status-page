@@ -9,7 +9,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Changed
 
 - Every service now shows its full card, healthy or not, so Operational services list their components and link to the vendor's page just like one that needs attention. The one-line tiles are gone.
-- Needs attention is ordered by urgency (Outage, Degraded, Maintenance, then Unknown, the most recently started incident first within a state), and the most urgent service leads it as a wider card marked **Most urgent**. It follows each new snapshot.
+- Needs attention is ordered by urgency (Outage, Degraded, Maintenance, then Unknown, the most recently started incident first within a state), and the most urgent service leads it as a card marked **Most urgent** that spans the width on wide screens. It follows each new snapshot.
 - Cloudflare Workers now collect status on request with an in-memory cache per isolate. Deployment needs only the Cloudflare account ID and API token.
 - The app is named Status Page across the board, browser metadata, feeds, documentation and release titles.
 - A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. All text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.

@@ -146,7 +146,7 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 
 ### On the board
 
-- **Every service is a full card**, healthy or not, in three groups: **Needs attention**, **Operational** and **Releases**. Needs attention is ordered by urgency (Outage, then Degraded, then Maintenance, then Unknown, and within one state the incident that began most recently first), and the most urgent service leads it as a wider card marked **Most urgent**. It changes with each snapshot, and it is absent when nothing needs attention.
+- **Every service is a full card**, healthy or not, in three groups: **Needs attention**, **Operational** and **Releases**. Needs attention is ordered by urgency (Outage, then Degraded, then Maintenance, then Unknown, and within one state the incident that began most recently first), and the most urgent service leads it as a card marked **Most urgent** that spans the width on wide screens. It changes with each snapshot, and it is absent when nothing needs attention or when a filter or search hides that service. The order is Outage, Degraded, Maintenance, then Unknown, while the headline names a source it could not read ahead of maintenance, so with only those two left the headline and the **Most urgent** card can point at different services.
 - **Filter** by Cloud, Gaming, Platforms, AI or Updates, search by name, or switch on **Issues only**.
 - **Star** the services you care about: they sort first in their group, though never above a more urgent service in Needs attention, and **Starred** shows only them.
 - **Share a view:** search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered.
