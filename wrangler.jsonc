@@ -37,8 +37,8 @@
   "kv_namespaces": [{ "binding": "STATUS_SNAPSHOT", "id": "set-by-deploy-workflow" }],
   // Production answers on status.szolotov.com, a Custom Domain: the first
   // deploy creates its DNS record and certificate on the szolotov.com zone,
-  // which has to be in the same account and have no record of its own for
-  // that name. With a route set, workers.dev is off for production.
+  // which has to be in the same account. A CI deploy replaces any record
+  // already at that name. With a route set, workers.dev is off for production.
   "routes": [{ "pattern": "status.szolotov.com", "custom_domain": true }],
   "env": {
     // Built with CLOUDFLARE_ENV=staging from dev; a separate Worker.
