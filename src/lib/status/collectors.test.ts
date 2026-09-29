@@ -48,7 +48,7 @@ function mikrotikChannels(body: (file: string) => string): Record<string, Handle
 // Minimal but shape-correct Statuspage summary.json fixture.
 function statuspageSummary(overrides: {
   indicator?: string;
-  components?: Array<{ id: string; name: string; status: string; group?: boolean }>;
+  components?: Array<{ id: string; name: string; status: string; group?: boolean; position?: number }>;
   incidents?: Array<{ id: string; name: string; status: string; impact?: string }>;
 }) {
   return {
@@ -476,10 +476,115 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(snapshot.health).toBe("outage");
     // statusType "outage" maps to Health "outage" (see appleEventHealth).
     expect(snapshot.components.find((c) => c.name === "iCloud Mail")?.health).toBe("outage");
-    // Only services with an active event get a component; App Store, whose
-    // events array is empty, must not appear.
-    expect(snapshot.components.map((c) => c.name)).toEqual(["iCloud Mail"]);
+    // The payload lists every service: the one with an active event comes
+    // first, the quiet one (empty events array) follows as operational.
+    expect(snapshot.components).toEqual([
+      { name: "iCloud Mail", health: "outage", detail: "Some users are affected" },
+      { name: "App Store", health: "operational" },
+    ]);
     expect(snapshot.incidents[0].startedAt).toBe(new Date(epochMs).toISOString());
+  });
+
+  it("Statuspage: a healthy vendor lists every leaf component in position order, groups excluded", async () => {
+    const summary = statuspageSummary({
+      components: [
+        { id: "g", name: "APIs (group)", status: "operational", group: true, position: 1 },
+        { id: "3", name: "Files", status: "operational", position: 3 },
+        { id: "1", name: "Chat", status: "operational", position: 1 },
+        { id: "2", name: "Login", status: "operational", position: 2 },
+      ],
+    });
+    stubFetch({ [URLS.chatgpt]: json(summary) });
+    const chatgpt = (await collectAllServices()).find((s) => s.id === "chatgpt")!;
+    expect(chatgpt.health).toBe("operational");
+    expect(chatgpt.components).toEqual([
+      { name: "Chat", health: "operational" },
+      { name: "Login", health: "operational" },
+      { name: "Files", health: "operational" },
+    ]);
+  });
+
+  it("Statuspage: non-operational components lead, then operational ones, each in position order", async () => {
+    const summary = statuspageSummary({
+      indicator: "minor",
+      components: [
+        { id: "1", name: "Chat", status: "operational", position: 1 },
+        { id: "2", name: "Login", status: "degraded_performance", position: 2 },
+        { id: "3", name: "Files", status: "operational", position: 3 },
+        { id: "4", name: "Voice", status: "major_outage", position: 4 },
+      ],
+    });
+    stubFetch({ [URLS.claude]: json(summary) });
+    const claude = (await collectAllServices()).find((s) => s.id === "claude")!;
+    expect(claude.components.map((c) => [c.name, c.health])).toEqual([
+      ["Login", "degraded"],
+      ["Voice", "outage"],
+      ["Chat", "operational"],
+      ["Files", "operational"],
+    ]);
+  });
+
+  it("Statuspage: a huge page is capped at 24 components, and a broken one past the cap still leads", async () => {
+    const components = Array.from({ length: 60 }, (_, i) => ({
+      id: String(i),
+      name: `Component ${i}`,
+      status: i === 55 ? "partial_outage" : "operational",
+      position: i + 1,
+    }));
+    stubFetch({ [URLS.spotify]: json(statuspageSummary({ indicator: "minor", components })) });
+    const spotify = (await collectAllServices()).find((s) => s.id === "spotify")!;
+    expect(spotify.components).toHaveLength(24);
+    expect(spotify.components[0]).toEqual({ name: "Component 55", health: "degraded" });
+    expect(spotify.components.slice(1).map((c) => c.name)).toEqual(
+      Array.from({ length: 23 }, (_, i) => `Component ${i}`),
+    );
+  });
+
+  it("Statuspage: a vendor page with no component list returns no components", async () => {
+    stubFetch({ [URLS.chatgpt]: json(statuspageSummary({ components: [] })) });
+    const chatgpt = (await collectAllServices()).find((s) => s.id === "chatgpt")!;
+    expect(chatgpt.components).toEqual([]);
+  });
+
+  it("Epic and Fortnite list only their own leaf components, never the group rows", async () => {
+    const summary = statuspageSummary({
+      components: [
+        { id: "g1", name: "Fortnite", status: "partial_outage", group: true, position: 1 },
+        { id: "1", name: "Fortnite Matchmaking", status: "partial_outage", position: 2 },
+        { id: "2", name: "Fortnite Store", status: "operational", position: 3 },
+        { id: "g2", name: "Platform", status: "operational", group: true, position: 4 },
+        { id: "3", name: "Accounts", status: "operational", position: 5 },
+      ],
+    });
+    stubFetch({ [URLS.epicFortnite]: json(summary) });
+    const services = await collectAllServices();
+    const epic = services.find((s) => s.id === "epic")!;
+    const fortnite = services.find((s) => s.id === "fortnite")!;
+    expect(epic.health).toBe("operational");
+    expect(epic.components).toEqual([{ name: "Accounts", health: "operational" }]);
+    expect(fortnite.health).toBe("degraded");
+    expect(fortnite.components).toEqual([
+      { name: "Fortnite Matchmaking", health: "degraded" },
+      { name: "Fortnite Store", health: "operational" },
+    ]);
+  });
+
+  it("Apple: every service is a component, active ones first, capped at 24", async () => {
+    const services = Array.from({ length: 30 }, (_, i) => ({
+      serviceName: `Service ${i}`,
+      events:
+        i === 28
+          ? [{ eventStatus: "ongoing", statusType: "issue", message: "Slow", epochStartDate: 1693440600000 }]
+          : [{ eventStatus: "resolved", statusType: "outage", message: "Back", epochStartDate: 1693440600000 }],
+    }));
+    stubFetch({ [URLS.apple]: json({ services }) });
+    const apple = (await collectAllServices()).find((s) => s.id === "apple")!;
+    expect(apple.health).toBe("degraded");
+    expect(apple.components).toHaveLength(24);
+    expect(apple.components[0]).toMatchObject({ name: "Service 28", health: "degraded" });
+    expect(apple.components.slice(1).every((c) => c.health === "operational")).toBe(true);
+    expect(apple.components[1].name).toBe("Service 0");
+    expect(apple.meta).toEqual({ services: 30 });
   });
 
   it("a vendor returning HTTP 403 marks the service unknown with an http failure naming the vendor host", async () => {

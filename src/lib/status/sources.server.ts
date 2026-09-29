@@ -15,6 +15,9 @@ import type { ComponentHealth, Health, Incident, ServiceId, ServiceSnapshot, Sou
 import { hostOf, vendorUrl } from "./vendor-url.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
+// Upper bound on components kept per card. A vendor page can list hundreds;
+// the snapshot is cached and served as JSON, so it must not grow with them.
+const MAX_COMPONENTS = 24;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
 
 type StatuspageSummary = {
@@ -23,6 +26,7 @@ type StatuspageSummary = {
     id: string;
     name: string;
     status: string;
+    position?: number;
     group?: boolean;
     group_id?: string | null;
   }>;
@@ -196,6 +200,13 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
   return { health, incidents: mapped, components };
 }
 
+// Non-operational first, then operational, each in source order, capped at
+// MAX_COMPONENTS. The sort is stable, so the input order is the tie-break.
+function rankComponents(components: ComponentHealth[]): ComponentHealth[] {
+  const isUp = (component: ComponentHealth) => component.health === "operational";
+  return [...components.filter((c) => !isUp(c)), ...components.filter(isUp)].slice(0, MAX_COMPONENTS);
+}
+
 function fromStatuspage(
   id: ServiceId,
   data: StatuspageSummary,
@@ -205,21 +216,32 @@ function fromStatuspage(
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
-  const components = (data.components ?? [])
+  // Components in the vendor's own `position` order. Array.sort is stable and
+  // the index breaks ties, so components with no position keep sent order.
+  // The name filter (Epic/Fortnite) still sees groups, as before, so a group
+  // row can carry the health of a matching service; it is just never listed.
+  const matched = (data.components ?? [])
     .filter((component) => (componentFilter ? componentFilter(component.name, component.group) : !component.group))
-    .map((component) => ({
+    .map((component, index) => ({ component, index }))
+    .sort((a, b) => (a.component.position ?? a.index) - (b.component.position ?? b.index) || a.index - b.index)
+    .map(({ component }) => ({
       name: component.name,
+      group: component.group === true,
       health: statuspageComponent(component.status),
     }));
+  // Leaf components only: groups are containers, not services.
+  const components: ComponentHealth[] = matched
+    .filter((component) => !component.group)
+    .map(({ name, health }) => ({ name, health }));
 
-  // Do not truncate here: the card below ranks non-operational components
-  // first and then caps the list. Slicing to 8 up front dropped a broken
-  // component that sorted past index 8 on a vendor with many components.
+  // The list is capped only when returned (see rankComponents). Health is
+  // worked out from every component first, so a broken one past the cap
+  // still counts.
   let health = componentFilter
-    ? components.reduce((acc, component) => worseHealth(acc, component.health), "operational" as Health)
+    ? matched.reduce((acc, component) => worseHealth(acc, component.health), "operational" as Health)
     : statuspageIndicator(data.status?.indicator);
 
-  if (componentFilter && components.length === 0) {
+  if (componentFilter && matched.length === 0) {
     health = statuspageIndicator(data.status?.indicator);
   }
 
@@ -259,10 +281,7 @@ function fromStatuspage(
     ...base(id, checkedAt, latencyMs),
     health,
     summary: overallSummary(health, incidents.length, hint),
-    components: components
-      .filter((component) => component.health !== "operational")
-      .concat(components.filter((component) => component.health === "operational").slice(0, 4))
-      .slice(0, 8),
+    components: rankComponents(components),
     incidents,
   };
 }
@@ -583,7 +602,12 @@ async function collectApple(): Promise<ServiceSnapshot> {
         const itemHealth = appleEventHealth(event);
         return itemHealth !== "operational";
       });
-      if (!active.length) continue;
+      if (!active.length) {
+        // The payload lists every service, quiet or not, so a healthy one is a
+        // real operational component rather than an invented row.
+        if (service.serviceName) components.push({ name: service.serviceName, health: "operational" });
+        continue;
+      }
       for (const event of active) {
         const itemHealth = appleEventHealth(event);
         health = worseHealth(health, itemHealth);
@@ -601,7 +625,7 @@ async function collectApple(): Promise<ServiceSnapshot> {
       ...base("apple", new Date().toISOString(), ms),
       health,
       summary: overallSummary(health, incidents.length, incidents[0]?.title),
-      components: components.slice(0, 10),
+      components: rankComponents(components),
       incidents,
       meta: { services: value.services?.length ?? 0 },
     };
