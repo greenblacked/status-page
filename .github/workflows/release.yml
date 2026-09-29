@@ -323,7 +323,6 @@ jobs:
           # so this output tells the redeploy-stage job whether stage's tip
           # actually moved and the stage preview needs waking up by hand. dev
           # deploys nothing, so its push needs no follow-up.
-          stage_pushed=false
           failed=0
           git config user.name "$ACTOR"
           git config user.email "$ACTOR_ID+$ACTOR@users.noreply.github.com"
@@ -332,33 +331,53 @@ jobs:
           cp scripts/release/merge-changelog.sh "$merge_changelog"
 
           # stage first, then dev. A problem that stops one branch does not
-          # stop the other, but fails the job at the end.
+          # stop the other, but fails the job at the end. The script runs under
+          # bash -e, so the steps that can fail for reasons outside the merge
+          # (network, checkout) are guarded: a failure sets failed=1 instead of
+          # ending the script, and stage_pushed is written the moment stage's
+          # push succeeds, before dev is touched.
           for branch in stage dev; do
-            if ! git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            listed=0
+            git ls-remote --exit-code --heads origin "$branch" >/dev/null || listed=$?
+            if [ "$listed" = 2 ]; then
               echo "::notice::no $branch branch; nothing to sync"
+              continue
+            elif [ "$listed" != 0 ]; then
+              echo "::error::could not look up $branch on origin; re-run this job"
+              failed=1
               continue
             fi
             synced=false
             # A pull request merged into the branch meanwhile rejects the
             # push; fetch and merge again rather than fail the release run.
             for attempt in 1 2 3; do
-              git fetch --quiet origin "$branch"
+              if ! git fetch --quiet origin "$branch"; then
+                echo "::error::could not fetch $branch; re-run this job"
+                failed=1
+                synced=true
+                break
+              fi
               if git merge-base --is-ancestor origin/main "origin/$branch"; then
                 echo "::notice::$branch already has everything on main"
                 synced=true
                 break
               fi
-              git checkout --quiet -B "$branch" "origin/$branch"
+              if ! git checkout --quiet -B "$branch" "origin/$branch"; then
+                echo "::error::could not check out $branch; re-run this job"
+                failed=1
+                synced=true
+                break
+              fi
               # A plain merge, never a rebase or force-push: the branch is shared.
               if ! git merge --no-edit -m "Merge branch 'main' into $branch" origin/main; then
                 # A release on main while the branch has Unreleased lines
                 # conflicts on CHANGELOG.md alone. merge-changelog.sh resolves
                 # exactly that case and refuses anything else.
                 if [ "$(git diff --name-only --diff-filter=U)" = CHANGELOG.md ] &&
-                  "$merge_changelog" <(git show :1:CHANGELOG.md) <(git show :2:CHANGELOG.md) <(git show :3:CHANGELOG.md) >"$RUNNER_TEMP/CHANGELOG.md"; then
-                  cp "$RUNNER_TEMP/CHANGELOG.md" CHANGELOG.md
-                  git add CHANGELOG.md
-                  git commit --quiet --no-edit
+                  "$merge_changelog" <(git show :1:CHANGELOG.md) <(git show :2:CHANGELOG.md) <(git show :3:CHANGELOG.md) >"$RUNNER_TEMP/CHANGELOG.md" &&
+                  cp "$RUNNER_TEMP/CHANGELOG.md" CHANGELOG.md &&
+                  git add CHANGELOG.md &&
+                  git commit --quiet --no-edit; then
                   echo "::notice::kept main's release in CHANGELOG.md and $branch's lines under Unreleased"
                 else
                   git merge --abort
@@ -369,20 +388,21 @@ jobs:
                 fi
               fi
               if git push origin "HEAD:refs/heads/$branch"; then
-                [ "$branch" != stage ] || stage_pushed=true
+                if [ "$branch" = stage ]; then
+                  echo "stage_pushed=true" >>"$GITHUB_OUTPUT"
+                fi
                 synced=true
                 break
               fi
               echo "::warning::$branch moved during the merge (attempt $attempt); trying again"
-              git checkout --quiet --detach origin/main
+              git checkout --quiet --detach origin/main || true
             done
             if [ "$synced" = false ]; then
               echo "::error::$branch kept moving; re-run this job"
               failed=1
             fi
-            git checkout --quiet --detach origin/main
+            git checkout --quiet --detach origin/main || true
           done
-          echo "stage_pushed=$stage_pushed" >>"$GITHUB_OUTPUT"
           exit "$failed"
 
   redeploy-stage:
