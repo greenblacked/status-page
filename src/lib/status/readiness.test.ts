@@ -44,7 +44,7 @@ describe("readiness", () => {
     expect(readiness(board("2026-09-27T12:00:00.000Z", []), at).status).toBe("blind");
   });
 
-  it("reports stale before blind, since a stopped sweep explains both", () => {
+  it("reports stale before blind, since a board too old to trust says little about its services", () => {
     expect(readiness(board("2026-09-27T11:00:00.000Z", ["unknown"]), at).status).toBe("stale");
   });
 

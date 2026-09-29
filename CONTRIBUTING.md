@@ -211,7 +211,7 @@ The repository is public, so anyone can read the workflow and open a pull reques
 3. **Enter two settings in each environment:** `CLOUDFLARE_ACCOUNT_ID` as a variable and `CLOUDFLARE_API_TOKEN` as a secret. The deploy workflow requires these two values. `DEPLOY_URL` is optional but recommended: set it to that Worker's public URL after the first deploy to enable post-deploy smoke tests and automatic rollback. The Worker itself has no API token or account ID binding.
 4. **Monitor production:** optionally set repository variable `PRODUCTION_URL` to its HTTPS address for hourly `/readyz` checks in `source-health.yml`.
 
-No KV namespace or ID is needed. An old namespace can be left in Cloudflare until you decide to delete it; this change does not delete it.
+No KV namespace or ID is needed. Deploying does not delete an old namespace; remove it in Cloudflare when you no longer need it.
 
 ### Locally
 
