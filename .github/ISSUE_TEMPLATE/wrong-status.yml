@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Status Bar only relays what each vendor officially publishes. Before filing, open the card's vendor link: if the vendor's own page says the same thing, the board is right.
+        Status Page only relays what each vendor officially publishes. Before filing, open the card's vendor link: if the vendor's own page says the same thing, the board is right.
   - type: dropdown
     id: service
     attributes:

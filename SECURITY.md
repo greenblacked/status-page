@@ -14,7 +14,7 @@ Include what you can of:
 - steps to reproduce, or a proof of concept
 - the impact you expect: what an attacker gains
 
-Status Bar has a single maintainer, so responses are best-effort. You should get an acknowledgement within a few days. Fixes land on `main`, and you will be credited in the advisory unless you ask not to be.
+Status Page has a single maintainer, so responses are best-effort. You should get an acknowledgement within a few days. Fixes land on `main`, and you will be credited in the advisory unless you ask not to be.
 
 ## Supported versions
 
@@ -28,13 +28,13 @@ In scope:
 - The CI and automation in `.github/workflows/` and `scripts/ci/`, including anything that could let a pull request from a fork gain write access. `ci-triage.yml` runs with a write token by design and must never execute pull request code.
 - The deployment: anything that could expose the Cloudflare API token that `deploy.yml` uses, or let code other than `dev` or `main` reach the deployed Workers
 - The response headers the board sends (`src/lib/security-headers.ts`)
-- Dependency vulnerabilities that are actually reachable from Status Bar's code
+- Dependency vulnerabilities that are actually reachable from Status Page's code
 
 Out of scope:
 
 - The vendors' own status pages and APIs. Report problems with those to the vendor.
 - Findings that need an already-compromised maintainer account or machine
-- Missing hardening headers on someone else's deployment of Status Bar
+- Missing hardening headers on someone else's deployment of Status Page
 
 ## How the repository defends itself
 

@@ -1,6 +1,6 @@
 import type { CategoryId, ServiceId } from "./types.ts";
 
-export const APP_NAME = "Status Bar";
+export const APP_NAME = "Status Page";
 
 export type CatalogEntry = {
   id: ServiceId;
