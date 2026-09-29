@@ -37,7 +37,10 @@ export function HistoryStrip({
   className,
 }: {
   days: HistoryDay[];
-  /** Client clock ms; 0 / unset falls back to Date.now() after mount callers pass useNow(). */
+  /**
+   * Client clock in ms, normally from useNow(). When it is 0 or unset (the
+   * clock has not been read yet) the strip falls back to Date.now().
+   */
   nowMs?: number;
   /** Tighter bars for the operational tile. */
   compact?: boolean;
@@ -51,9 +54,14 @@ export function HistoryStrip({
   const slots = historySlots(days, today);
   if (slots.length === 0) return null;
 
-  const uptime = sampleWeightedUptime(days);
-  const worst = worstHistoryDay(days);
-  const summary = historyStripSummary(days, uptime, worst);
+  // Caption, worst-day chip and label describe only what the strip draws:
+  // records older than the window must not leak into them.
+  const inWindow = slots.flatMap((slot) => (slot.day ? [slot.day] : []));
+  if (inWindow.length === 0) return null;
+
+  const uptime = sampleWeightedUptime(inWindow);
+  const worst = worstHistoryDay(inWindow);
+  const summary = historyStripSummary(inWindow, uptime, worst, slots.length);
   const showWorstChip = Boolean(worst && worst.worst !== "operational");
 
   return (

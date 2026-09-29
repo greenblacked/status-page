@@ -125,12 +125,18 @@ export function utcToday(nowMs: number = Date.now()): string | null {
 }
 
 /**
- * Screen-reader text for the strip. Built only from public day fields and
- * health labels — never probe text or vendor payloads.
+ * Screen-reader text for the strip. The "N-day" label is the length of the
+ * window the strip draws (`windowDays`), not the number of days that have a
+ * record. Built only from public day fields and health labels — never probe text or vendor payloads.
  */
-export function historyStripSummary(days: HistoryDay[], uptime: number | null, worst: HistoryDay | null): string {
+export function historyStripSummary(
+  days: HistoryDay[],
+  uptime: number | null,
+  worst: HistoryDay | null,
+  windowDays: number = HISTORY_RETENTION_DAYS,
+): string {
   if (days.length === 0) return "";
-  const parts: string[] = [`${days.length}-day uptime history`];
+  const parts: string[] = [`${windowDays}-day uptime history`];
   if (uptime !== null) parts.push(`${formatUptimePercent(uptime)} operational`);
   if (worst && worst.worst !== "operational") {
     parts.push(`worst day ${worst.date}: ${healthLabel(worst.worst)}`);
