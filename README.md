@@ -161,6 +161,8 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Switch on the bell** for a browser notification when a service changes while the tab is in the background.
 - **Open any card's vendor page** for the full story.
 
+A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The flag is read at build time and is off by default; without it the board makes no history request. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
+
 ## Integrations
 
 The board publishes current status in four open formats. Responses allow cross-origin reads and are cached for a minute. `/api/history.json` remains available as an empty compatibility response; without persistent storage it cannot provide uptime history.
