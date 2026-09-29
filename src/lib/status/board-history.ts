@@ -15,12 +15,17 @@ export const HISTORY_FETCH_TIMEOUT_MS = 8_000;
 
 /**
  * Client fetch of the public history document. Same-origin on Node and
- * Workers; CORS is already open for cross-origin readers. Any failure,
- * timeout, non-OK status or malformed body becomes an empty document so the
- * board still loads. Uses parseHistory so only public day fields survive.
+ * Workers; CORS is already open for cross-origin readers. By default any
+ * failure, timeout, non-OK status or malformed body becomes an empty document
+ * so the board still loads. With `throwOnError` the same failures reject
+ * instead, for a caller (the query cache) that must keep its previous good
+ * data rather than store an empty document. Uses parseHistory so only public
+ * day fields survive.
  */
-export async function fetchBoardHistory(fetchImpl: typeof fetch = fetch): Promise<PublicHistory> {
-  const empty = emptyHistory(new Date(0).toISOString());
+export async function fetchBoardHistory(
+  fetchImpl: typeof fetch = fetch,
+  options: { throwOnError?: boolean } = {},
+): Promise<PublicHistory> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
@@ -30,14 +35,17 @@ export async function fetchBoardHistory(fetchImpl: typeof fetch = fetch): Promis
         headers: { Accept: "application/json" },
         signal: controller.signal,
       });
-      if (!response.ok) return empty;
+      if (!response.ok) throw new Error(`History request failed: ${response.status}`);
       const body: unknown = await response.json();
-      return parseHistory(body) ?? empty;
+      const history = parseHistory(body);
+      if (!history) throw new Error("History document is malformed");
+      return history;
     } finally {
       clearTimeout(timer);
     }
-  } catch {
-    return empty;
+  } catch (error) {
+    if (options.throwOnError) throw error;
+    return emptyHistory(new Date(0).toISOString());
   }
 }
 

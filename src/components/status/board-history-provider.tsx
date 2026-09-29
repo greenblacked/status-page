@@ -17,9 +17,28 @@ export const HISTORY_REFRESH_MS = 10 * 60_000;
 export const BoardHistoryContext = createContext<PublicHistory | undefined>(undefined);
 
 /**
+ * Query options for the board history. The fetch rejects on any failure, so
+ * a failed refetch leaves the previous good data in the cache instead of
+ * replacing it with an empty document. Queries never run during SSR.
+ */
+export function boardHistoryQueryOptions(enabled: boolean) {
+  return {
+    queryKey: ["status-history"],
+    queryFn: () => fetchBoardHistory(fetch, { throwOnError: true }),
+    enabled,
+    staleTime: HISTORY_REFRESH_MS,
+    refetchInterval: HISTORY_REFRESH_MS,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    retry: false,
+  } as const;
+}
+
+/**
  * Fetches public GET /api/history.json for the board when `enabled`. A
- * disabled provider makes no request; a failed, slow or empty one leaves the
- * context without days, so every card renders without a strip.
+ * disabled provider makes no request; a failed or slow first fetch leaves the
+ * context without days, so every card renders without a strip, and a failed
+ * refetch keeps the last good days.
  */
 export function BoardHistoryProvider({
   children,
@@ -28,16 +47,7 @@ export function BoardHistoryProvider({
   children: ReactNode;
   enabled?: boolean;
 }) {
-  const historyQuery = useQuery({
-    queryKey: ["status-history"],
-    queryFn: () => fetchBoardHistory(),
-    enabled,
-    staleTime: HISTORY_REFRESH_MS,
-    refetchInterval: HISTORY_REFRESH_MS,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: false,
-  });
+  const historyQuery = useQuery(boardHistoryQueryOptions(enabled));
 
   return <BoardHistoryContext.Provider value={historyQuery.data}>{children}</BoardHistoryContext.Provider>;
 }
