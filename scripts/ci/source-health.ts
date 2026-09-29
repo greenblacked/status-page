@@ -270,8 +270,8 @@ async function syncOneIssue(repo: string, spec: IssueSpec, now: string): Promise
 // ------------------------------------------------------- deploy health ---
 
 // The deployed board's view of itself. Every collector above can read
-// cleanly from a runner while production serves an old snapshot (a stopped
-// Cron Trigger, a KV outage) or cannot reach the vendors from Cloudflare;
+// cleanly from a runner while production serves an old snapshot or cannot
+// reach the vendors from Cloudflare;
 // /readyz (src/routes/readyz.ts) is what says so.
 const DEPLOY_LABEL = "deploy-health";
 const READYZ_TIMEOUT_MS = 15_000;
@@ -331,7 +331,7 @@ function deployIssueBody(result: ReadyzResult, firstFailure: string, now: string
     `| Latest failure | ${now} |`,
     `| Latest run | ${runUrl()} |`,
     "",
-    '`"status":"stale"` means the snapshot is over ten minutes old: check the Worker\'s cron events and the `sweep_failed` lines in Workers Logs. `"status":"blind"` means no vendor could be read from Cloudflare. No answer, or any other status, means the deployment itself is down; CONTRIBUTING.md#deploying has the rollback steps.',
+    '`"status":"stale"` means the snapshot is over ten minutes old: check the `collector_failed` lines in Workers Logs. `"status":"blind"` means no vendor could be read from Cloudflare. No answer, or any other status, means the deployment itself is down; CONTRIBUTING.md#deploying has the rollback steps.',
     "",
     "This issue is maintained by `.github/workflows/source-health.yml`. It updates on each failing run and closes itself when `/readyz` answers 200 again.",
   ].join("\n");

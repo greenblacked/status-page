@@ -50,7 +50,7 @@
     --color-down so red always means broken.
   */
   --color-event: light-dark(oklch(47.9% 0.1124 59.93), oklch(82.38% 0.1408 70.17));
-  /* Fine strokes: the period dial's ticks and the uptime strip's quiet days. */
+  /* Fine strokes, such as the period dial's ticks. */
   --color-hairline: light-dark(rgb(10 15 25 / 0.14), rgb(255 255 255 / 0.16));
   --color-tick: light-dark(rgb(10 15 25 / 0.22), rgb(255 255 255 / 0.28));
 

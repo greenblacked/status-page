@@ -46,8 +46,8 @@ jobs:
 
   deploy-health:
     # The deployed board's own view of itself: every source above can read
-    # cleanly from a runner while production serves an old snapshot (a
-    # stopped Cron Trigger) or reads nothing from Cloudflare. /readyz says
+    # cleanly from a runner while production serves an old snapshot or
+    # reads nothing from Cloudflare. /readyz says
     # so, and a single `deploy-health` issue stays open until it answers
     # 200 again. PRODUCTION_URL is a repository variable, not a deployment
     # environment's, so this job never enters an environment and never

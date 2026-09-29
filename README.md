@@ -393,7 +393,7 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 | Conventions | Conventional Commit messages and PR title, branch name |
 | Workflows | actionlint and zizmor, so no workflow change weakens the pipeline |
 | Security | CodeQL for TypeScript and the workflows, dependency review |
-| Cloudflare | The Worker built, run in workerd with its Cron Trigger fired, and dry-run deployed |
+| Cloudflare | The Worker built, run in workerd, and dry-run deployed |
 
 Outside pull requests, an hourly job calls every real vendor and opens an issue when a source breaks, OpenSSF Scorecard grades the supply chain on every push to `main`, and Dependabot proposes updates only once a release has been public for a few days. [.github/workflows/README.md](.github/workflows/README.md) covers each workflow.
 
