@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Status Bar",
-  "short_name": "Status Bar",
+  "name": "Status Page",
+  "short_name": "Status Page",
   "description": "Official vendor status for cloud, gaming, platform and AI services on one board.",
   "start_url": "/",
   "scope": "/",

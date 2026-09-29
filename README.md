@@ -2,7 +2,7 @@
   <img src="public/favicon.svg" width="72" height="72" alt="">
 </p>
 
-<h1 align="center">Status Bar</h1>
+<h1 align="center">Status Page</h1>
 
 <p align="center"><strong>Official sources. One board.</strong></p>
 
@@ -29,9 +29,9 @@
   <a href="#development">Development</a>
 </p>
 
-## Why Status Bar
+## Why Status Page
 
-When something breaks, the answer is spread across a dozen vendor dashboards, each with its own layout and vocabulary. Outage trackers are quicker, but they count user complaints, not what the vendor has confirmed. Status Bar puts the official answers on one screen and holds itself to four rules:
+When something breaks, the answer is spread across a dozen vendor dashboards, each with its own layout and vocabulary. Outage trackers are quicker, but they count user complaints, not what the vendor has confirmed. Status Page puts the official answers on one screen and holds itself to four rules:
 
 - **Official or nothing.** Every signal comes from the vendor's own status page, feed or public API. No crowd reports, no unofficial aggregators.
 - **Unknown beats a guess.** If a source times out or changes its format, its card says Unknown and why. Missing data never turns into an all clear.
@@ -53,7 +53,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 🟢 Operational · 🔧 Maintenance · 🟡 Degraded · 🔴 Outage · ❔ Unknown
 
-Fourteen services, each read from one official source. This table is the contract: if a source is not listed here, Status Bar does not read it.
+Fourteen services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
 
 | Group | Service | Official source |
 | --- | --- | --- |
@@ -76,7 +76,7 @@ Missing a service? [Request it](https://github.com/greenblacked/status-page/issu
 
 ## How it decides
 
-Each vendor speaks its own dialect. Status Bar translates all of them into five states:
+Each vendor speaks its own dialect. Status Page translates all of them into five states:
 
 | State | Meaning |
 | --- | --- |
@@ -84,7 +84,7 @@ Each vendor speaks its own dialect. Status Bar translates all of them into five 
 | 🔧 Maintenance | Scheduled work is in progress |
 | 🟡 Degraded | Partial impact, elevated errors, or thin coverage |
 | 🔴 Outage | Major or critical impact |
-| ❔ Unknown | The source timed out, returned an error, or sent data Status Bar could not read |
+| ❔ Unknown | The source timed out, returned an error, or sent data Status Page could not read |
 
 The overall card shows the worst state on the board: **All clear** when everything is Operational, **Outage** if anything is out, and **Attention** for everything in between.
 
@@ -220,7 +220,7 @@ Use a service id, or `board` for the whole board:
 
 ```markdown
 ![Google Cloud](https://img.shields.io/endpoint?url=https://<your-host>/api/badge/gcp)
-![Status Bar](https://img.shields.io/endpoint?url=https://<your-host>/api/badge/board)
+![Status Page](https://img.shields.io/endpoint?url=https://<your-host>/api/badge/board)
 ```
 
 Service ids: `gcp`, `aws`, `steam`, `cs2-europe`, `epic`, `fortnite`, `spotify`, `apple`, `android`, `grok`, `chatgpt`, `claude`, `mikrotik`, `apple-os`. An unknown id returns a grey "unknown service" badge instead of an error. Shields.io fetches the badge from your host, so badges need a public deployment.
@@ -270,12 +270,12 @@ groups:
         expr: statusbar_source_up == 0
         for: 15m
         annotations:
-          summary: "Status Bar cannot read the official source for {{ $labels.service }}"
+          summary: "Status Page cannot read the official source for {{ $labels.service }}"
       - alert: StatusBarSnapshotStale
         expr: time() - statusbar_snapshot_timestamp_seconds > 600
         for: 5m
         annotations:
-          summary: "Status Bar has not collected a snapshot for over 10 minutes"
+          summary: "Status Page has not collected a snapshot for over 10 minutes"
 ```
 
 </details>
@@ -317,7 +317,7 @@ The server cannot reach the vendors. The collectors run on the machine that serv
 
 <br>
 
-Not necessarily. Unknown means Status Bar could not read that vendor's source: it timed out, returned an error, sent more than 4 MiB, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure, the vendor host and how many bytes it read (a source that reads cleanly logs `collector_completed` with its latency and size instead). An hourly job in this repository calls every source and opens an issue when one stays unreadable. If a card disagrees with the vendor's own page, [report it](https://github.com/greenblacked/status-page/issues/new?template=wrong-status.yml).
+Not necessarily. Unknown means Status Page could not read that vendor's source: it timed out, returned an error, sent more than 4 MiB, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure, the vendor host and how many bytes it read (a source that reads cleanly logs `collector_completed` with its latency and size instead). An hourly job in this repository calls every source and opens an issue when one stays unreadable. If a card disagrees with the vendor's own page, [report it](https://github.com/greenblacked/status-page/issues/new?template=wrong-status.yml).
 
 </details>
 
@@ -339,7 +339,7 @@ Running on Cloudflare Workers, a scheduled job collects every vendor every two m
 
 <br>
 
-Valve's game-server status API needs an API key, and Status Bar uses none. The public, official signals are Valve's Steam Datagram Relay config and the live player count, and the board reads the European relay network from them. Other regions are not collected.
+Valve's game-server status API needs an API key, and Status Page uses none. The public, official signals are Valve's Steam Datagram Relay config and the live player count, and the board reads the European relay network from them. Other regions are not collected.
 
 </details>
 
@@ -353,7 +353,7 @@ The status page's JSON API sits behind a Cloudflare challenge, so the official R
 </details>
 
 <details>
-<summary><strong>Does Status Bar store anything?</strong></summary>
+<summary><strong>Does Status Page store anything?</strong></summary>
 
 <br>
 
@@ -437,7 +437,7 @@ Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md). Pl
 
 ## Disclaimer and license
 
-Status Bar is not affiliated with Google, Amazon, Valve, Epic Games, Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic. Names and marks belong to their owners.
+Status Page is not affiliated with Google, Amazon, Valve, Epic Games, Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic. Names and marks belong to their owners.
 
 Released under the MIT License. See [LICENSE](LICENSE).
 

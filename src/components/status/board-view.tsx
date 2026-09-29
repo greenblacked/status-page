@@ -491,8 +491,8 @@ export function BoardView({
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
           <footer className="mt-14 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] text-sm text-subtle">
             <p>
-              Status Bar reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic, Spotify,
-              Apple, MikroTik, xAI, OpenAI, or Anthropic.
+              Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
+              Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
             </p>
             <p>Cached server snapshots update every two minutes from official vendor feeds.</p>
             <p>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-tests a running Status Bar: the same checks for CI's Node preview,
+# Smoke-tests a running Status Page: the same checks for CI's Node preview,
 # the Worker running locally in workerd, and a fresh Cloudflare deploy.
 #
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4173
@@ -37,7 +37,7 @@
 set -euo pipefail
 
 SERVICES=14
-TITLE='<title>Status Bar</title>'
+TITLE='<title>Status Page</title>'
 FOOTER='Cached server snapshots update every two minutes from official vendor feeds.'
 # cron-sweep.ts skips a sweep within MIN_FORCED_REFRESH_MS (15 s) of the
 # last snapshot, so --cron waits until the snapshot is older than this.

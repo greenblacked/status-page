@@ -279,12 +279,12 @@ jobs:
           fi
           # A re-run updates the existing release instead of failing on it.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Status Bar $TAG" --notes-file "$notes" --latest="$latest"
+            gh release edit "$TAG" --title "Status Page $TAG" --notes-file "$notes" --latest="$latest"
           else
             # Creates the tag on target. A tag pushed by hand already points
             # there and is used as it is. Neither the tag nor a bump pushed
             # with GITHUB_TOKEN starts this workflow again.
-            gh release create "$TAG" --target "$target" --title "Status Bar $TAG" --notes-file "$notes" --latest="$latest"
+            gh release create "$TAG" --target "$target" --title "Status Page $TAG" --notes-file "$notes" --latest="$latest"
           fi
 
   sync-dev:

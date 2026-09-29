@@ -1,4 +1,4 @@
-# Contributing to Status Bar
+# Contributing to Status Page
 
 Two documents govern how work lands in this repository:
 
@@ -34,7 +34,7 @@ Rules:
 - Subject ≤ 72 characters, no trailing period
 - One logical change per commit
 - Body explains *why* when the diff is not obvious
-- Never commit secrets, `.env` files, or vendor credentials (Status Bar does not need any)
+- Never commit secrets, `.env` files, or vendor credentials (Status Page does not need any)
 
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`.
 
@@ -120,7 +120,7 @@ Workflows are linted by actionlint and audited by [zizmor](https://docs.zizmor.s
 
 ## Releases
 
-Status Bar uses [Semantic Versioning](https://semver.org/). A version, its `vX.Y.Z` tag and its GitHub Release are made only when work reaches `main`. Before 1.0, a minor version adds services, features or health rules, and a patch fixes behavior without changing them.
+Status Page uses [Semantic Versioning](https://semver.org/). A version, its `vX.Y.Z` tag and its GitHub Release are made only when work reaches `main`. Before 1.0, a minor version adds services, features or health rules, and a patch fixes behavior without changing them.
 
 Pull requests merge into `dev`, which never releases, so several of them can go out as one version. Every pull request with a user-visible change adds its lines under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md). Its title is a [Conventional Commit](#commits), because a squash merge makes the title the commit on `dev`, and that commit's type counts toward the next version.
 
@@ -169,7 +169,7 @@ Other ways in, with the same checks:
 | **Run workflow** with bump `current` | Publishes the `package.json` version as it is, if it has no tag yet. Use it to retry a run that committed the bump but did not publish. |
 | [`scripts/release/bump.sh`](scripts/release/bump.sh) `minor` | Makes the same bump commit locally on `release/vX.Y.Z` for review in a pull request. Merging it releases that version as it is. |
 | **Run workflow** with `version` and `commit` | Backfills an older release: tags that commit on `main` with a version whose section is already in `main`'s changelog, and publishes it without marking it Latest. `gh workflow run release.yml --ref main -f version=0.1.1 -f commit=4cf30fd` |
-| A tag pushed by hand | `git tag -a v0.4.0 -m "Status Bar 0.4.0" && git push origin v0.4.0` publishes that tag, if it matches `package.json` and is on `main`. |
+| A tag pushed by hand | `git tag -a v0.4.0 -m "Status Page 0.4.0" && git push origin v0.4.0` publishes that tag, if it matches `package.json` and is on `main`. |
 
 The bump commit and the tag are pushed with the workflow's `GITHUB_TOKEN`, so they start no other workflow and CI does not run on the bump commit itself. The verify job has already checked the same code.
 
