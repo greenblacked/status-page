@@ -5,7 +5,8 @@
 # a pull request into stage and main.
 # Run locally: ./scripts/ci/branch.sh "$(git branch --show-current)" [base]
 # CI sets FROM_FORK=true on a pull request from a fork: a fork's branch called
-# dev or stage is not the repository's.
+# dev, stage, release/vX.Y.Z or chore/sync-main is not the repository's, so
+# none of the exceptions below apply to it.
 set -euo pipefail
 
 name="${1:?usage: branch.sh <branch-name> [<base-branch>]}"
@@ -51,19 +52,26 @@ fi
 # Everything else goes into dev. main takes stage (above) and bump.sh's
 # release/vX.Y.Z pull request; stage takes dev (above) and chore/sync-main, the
 # way to resolve a conflict when release.yml cannot merge main into stage
-# (CONTRIBUTING.md#releases).
+# (CONTRIBUTING.md#releases). Both are the repository's own branches, so a fork
+# cannot use them.
+fork_exception() {
+  echo "::error::branch  $name: a fork's $name is not the repository's; open the pull request into dev from a <prefix>/<short-kebab-description> branch (CONTRIBUTING.md#branches)" >&2
+  exit 1
+}
 case "$base" in
   main)
     if [[ ! "$name" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       echo "::error::branch  $name: pull requests into main come from stage, not $name; open it into dev (CONTRIBUTING.md#branches)" >&2
       exit 1
     fi
+    [[ "${FROM_FORK:-false}" != true ]] || fork_exception
     ;;
   stage)
     if [[ "$name" != chore/sync-main ]]; then
       echo "::error::branch  $name: pull requests into stage come from dev, not $name; open it into dev (CONTRIBUTING.md#branches)" >&2
       exit 1
     fi
+    [[ "${FROM_FORK:-false}" != true ]] || fork_exception
     ;;
 esac
 

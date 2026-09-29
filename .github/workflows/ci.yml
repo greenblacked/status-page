@@ -233,7 +233,7 @@ jobs:
         env:
           BRANCH: ${{ github.head_ref }}
           BASE: ${{ github.base_ref }}
-          FROM_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          FROM_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
         run: ./scripts/ci/branch.sh "$BRANCH" "$BASE"
 
   workflows:

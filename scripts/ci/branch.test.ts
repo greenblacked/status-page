@@ -102,6 +102,22 @@ describe("branch.sh", () => {
       expect(result.output).toContain("a fork's");
     });
 
+    it.each([
+      ["release/v0.4.0", "main"],
+      ["chore/sync-main", "stage"],
+    ])("rejects a fork's %s into %s", (name, base) => {
+      const result = check(name, base, { FROM_FORK: "true" });
+      expect(result.ok).toBe(false);
+      expect(result.output).toContain("a fork's");
+    });
+
+    it.each([
+      ["release/v0.4.0", "main"],
+      ["chore/sync-main", "stage"],
+    ])("still accepts %s into %s when FROM_FORK is false", (name, base) => {
+      expect(check(name, base, { FROM_FORK: "false" }).ok).toBe(true);
+    });
+
     it("lets a fork use an ordinary branch name into dev", () => {
       expect(check("fix/typo", "dev", { FROM_FORK: "true" }).ok).toBe(true);
     });
