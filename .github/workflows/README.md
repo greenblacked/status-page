@@ -26,6 +26,7 @@ npm run build && npm run test:e2e   # browser tests; `npx playwright install chr
 actionlint && uvx zizmor .github   # the workflow lint job: syntax, then a security audit
 ./scripts/ci/links.sh    # relative links in the Markdown docs
 ./scripts/ci/smoke.sh http://127.0.0.1:4173   # after `npm run preview`: the smoke test CI and the deploy run
+./scripts/ci/verify-deploy.sh   # by hand after a deploy (no workflow runs it): headers, robots and TLS of the live hosts
 ./scripts/ci/commits.sh origin/dev..HEAD   # origin/main..HEAD for a fix branched from main
 ./scripts/ci/commits.sh --subject "feat: add a feed"   # a PR title, as pr-title.yml checks it
 ./scripts/ci/branch.sh "$(git branch --show-current)"   # the branch name, as CI checks it
