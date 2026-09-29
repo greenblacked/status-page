@@ -34,7 +34,6 @@ const SLOT_MARK: Record<Health, string> = {
 export function HistoryStrip({
   days,
   nowMs,
-  compact = false,
   className,
 }: {
   days: HistoryDay[];
@@ -43,8 +42,6 @@ export function HistoryStrip({
    * clock has not been read yet) the strip falls back to Date.now().
    */
   nowMs?: number;
-  /** Tighter bars for the operational tile. */
-  compact?: boolean;
   className?: string;
 }) {
   if (days.length === 0) return null;
@@ -89,11 +86,7 @@ export function HistoryStrip({
         </p>
         <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-subtle">30d</p>
       </div>
-      <div
-        role="img"
-        aria-label={summary}
-        className={cn("mt-1.5 flex items-stretch gap-px border-b border-hairline", compact ? "h-3" : "h-4")}
-      >
+      <div role="img" aria-label={summary} className="mt-1.5 flex h-4 items-stretch gap-px border-b border-hairline">
         {slots.map((slot) => (
           <span
             key={slot.date}

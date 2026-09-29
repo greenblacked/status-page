@@ -114,7 +114,7 @@
     Three materials, from most to least expensive:
     chrome   floating controls (the compact header, the dialog), blurred
     glass    content panels (summary, attention cards, board log), blurred
-    whisper  dense or repeated surfaces (tiles, chips, search), no blur
+    whisper  dense or repeated surfaces (chips, search box), no blur
     The fills alone keep text at AA; the blur is a bonus on top of them.
   */
   --glass-blur: 24px;
@@ -364,8 +364,8 @@
 }
 
 /*
-  Level 3, whisper: no backdrop-filter at all, so a grid of fourteen tiles
-  or a row of seven chips costs nothing to scroll. The only surface, with
+  Level 3, whisper: no backdrop-filter at all, so a row of seven chips
+  or a search box costs nothing to scroll. The only surface, with
   .glass-inset, that may sit inside a blurred one: never glass on glass.
 */
 .glass-whisper {

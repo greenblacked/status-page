@@ -88,7 +88,9 @@ function names(services: ServiceSnapshot[]): string {
  * the cards. Confirmed breakage (outage, then degraded) is named before an
  * unreadable source, so `tone` is the health of what the title names, which
  * can differ from the board's overall health (where unknown outranks
- * degraded).
+ * degraded). The cards below are ordered by `sortByUrgency` (outage,
+ * degraded, maintenance, unknown), so the headline's tone is always that of
+ * the first card unless only maintenance and unreadable sources are left.
  */
 export function boardHeadline(board: BoardSnapshot): { tone: Health; title: string } {
   const by = (health: Health) => board.services.filter((service) => service.health === health);

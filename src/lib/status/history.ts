@@ -5,8 +5,10 @@ export const HISTORY_TIMEZONE = "UTC";
 export const HISTORY_RETENTION_DAYS = 30;
 
 /**
- * History severity: outage is worst, operational is best. Distinct from the
- * board's attention ranking in health.ts, where unknown outranks degraded.
+ * History severity: outage is worst, operational is best. The same order as
+ * the board's card urgency in layout.ts (outage, degraded, maintenance,
+ * unknown), and distinct from the overall-health rank in health.ts, where
+ * unknown outranks degraded.
  */
 const HISTORY_RANK: Record<Health, number> = {
   operational: 0,
