@@ -1,4 +1,5 @@
 import {
+  formatHistoryDay,
   formatUptimePercent,
   historySlots,
   historySlotTitle,
@@ -81,7 +82,7 @@ export function HistoryStrip({
             <>
               <span className="text-subtle"> · </span>
               <span className={cn("text-muted", toneText(worst.worst))}>
-                {worst.date.slice(5)} {shortHealth(worst.worst)}
+                <time dateTime={worst.date}>{formatHistoryDay(worst.date)}</time> {shortHealth(worst.worst)}
               </span>
             </>
           ) : null}
