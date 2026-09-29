@@ -1,6 +1,6 @@
 # Git, commits, and README
 
-Short rules Status Bar follows so history stays readable.
+Short rules Status Page follows so history stays readable.
 
 ## Commit messages
 
@@ -51,7 +51,7 @@ Add files via upload
 - Committer = whoever applied it (often the same person)
 - Do not force-push shared branches
 - Do not amend commits you have already pushed unless you own the branch and the PR is still in draft
-- Sign commits (`git commit -S`) if your org requires it; Status Bar does not require it yet
+- Sign commits (`git commit -S`) if your org requires it; Status Page does not require it yet
 
 ## README
 

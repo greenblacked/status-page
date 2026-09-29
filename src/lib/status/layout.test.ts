@@ -98,9 +98,9 @@ describe("boardHeadline", () => {
 
 describe("documentTitle and serviceAnchor", () => {
   it("prefixes the tab title with the attention count only when there is one", () => {
-    expect(documentTitle(board([service("gcp", "operational")]), "Status Bar")).toBe("Status Bar");
-    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status Bar")).toBe(
-      "(2) Status Bar",
+    expect(documentTitle(board([service("gcp", "operational")]), "Status Page")).toBe("Status Page");
+    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status Page")).toBe(
+      "(2) Status Page",
     );
   });
 

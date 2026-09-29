@@ -18,8 +18,8 @@ function watchConsole(page: Page): string[] {
 test("renders every service with no console errors or hydration warnings", async ({ page }) => {
   const problems = watchConsole(page);
   await page.goto("/");
-  // After hydration the title leads with how many services need attention: "(2) Status Bar".
-  await expect(page).toHaveTitle(/^(\(\d+\) )?Status Bar$/);
+  // After hydration the title leads with how many services need attention: "(2) Status Page".
+  await expect(page).toHaveTitle(/^(\(\d+\) )?Status Page$/);
   await expect(cards(page)).toHaveCount(SERVICES);
   // Hydration runs after the first paint; give React time to complain.
   await page.waitForLoadState("networkidle");
@@ -103,7 +103,7 @@ test("carries the Apple device head tags, with the icon and manifest served", as
   await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/);
   await expect(page.locator('meta[name="theme-color"][media*="light"]')).toHaveCount(1);
   await expect(page.locator('meta[name="theme-color"][media*="dark"]')).toHaveCount(1);
-  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Status Bar");
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Status Page");
   for (const rel of ["apple-touch-icon", "manifest"]) {
     const link = page.locator(`link[rel="${rel}"]`);
     await expect(link).toHaveCount(1);
