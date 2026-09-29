@@ -24,8 +24,8 @@ name: Release
 # into dev, so dev carries the release commit and any fix merged into main
 # directly. That merge is pushed with GITHUB_TOKEN, which starts no workflow
 # of its own, so when it actually moved dev this also starts deploy.yml on
-# dev by hand, or the stage preview would keep running the pre-release code
-# until an unrelated push to dev uploaded a new one. CONTRIBUTING.md#releases
+# dev by hand, or the dev preview would keep running the pre-release code
+# until an unrelated push to dev updated it. CONTRIBUTING.md#releases
 # has the details.
 
 on:
@@ -320,7 +320,7 @@ jobs:
         run: |
           # GITHUB_TOKEN pushes below start no workflow (deploy.yml included),
           # so this output tells the redeploy-staging job whether dev's tip
-          # actually moved and the stage preview needs waking up by hand.
+          # actually moved and the dev preview needs waking up by hand.
           if ! git ls-remote --exit-code --heads origin dev >/dev/null; then
             echo "::notice::no dev branch; nothing to sync"
             echo "pushed=false" >>"$GITHUB_OUTPUT"
@@ -370,12 +370,12 @@ jobs:
           exit 1
 
   redeploy-staging:
-    name: redeploy stage preview
+    name: redeploy dev preview
     needs: sync-dev
     # sync-dev pushes the merge with GITHUB_TOKEN, which starts no workflow
     # (GitHub's own loop guard), so deploy.yml never sees dev move and the
-    # stage preview is left running the pre-release code until something else
-    # uploads a new one. Only start it when dev's tip actually changed.
+    # dev preview is left running the pre-release code until something else
+    # deploys. Only start it when dev's tip actually changed.
     if: needs.sync-dev.outputs.pushed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5

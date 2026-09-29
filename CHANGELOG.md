@@ -16,7 +16,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- The production board lives at [status.szolotov.com](https://status.szolotov.com). Builds of `dev` are previews of the same Cloudflare Worker, on [stage.status.szolotov.com](https://stage.status.szolotov.com), and never receive production traffic.
+- The production board lives at [status.szolotov.com](https://status.szolotov.com). Builds of `dev` are a Worker Preview named `dev` of the same Cloudflare Worker, at [dev.stage.status.szolotov.com](https://dev.stage.status.szolotov.com), and never receive production traffic.
 - A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
 - A **Reduce glass** switch in **Settings and shortcuts** turns the frosted panels solid and stops the background moving. Safari does not pass the system's Reduce Transparency setting to web pages, so this is the way to get it on an iPhone, iPad or Mac; browsers that do pass it on get the same result automatically. The choice is kept in this browser.
 - A light appearance. The board now follows your system's light or dark setting and switches when it does.
