@@ -18,11 +18,9 @@ export function nextPulseAt(now = Date.now()): number {
 }
 
 // The board refetches this long after each two-minute slot rather than on
-// it: on Workers the cron's sweep takes nine seconds or more before its KV
-// write, and a spread keeps every open tab from asking in the same second.
-// A slow sweep can still miss a tab's moment; that tab then shows the
-// slot's snapshot one refetch later. Each page load picks one value and
-// keeps it.
+// it: a spread keeps open tabs from asking the Worker at the same second.
+// Each isolate caches its own collection for 45 seconds; a slow vendor
+// may cause a tab to see a new snapshot on its next refetch.
 export const REFETCH_JITTER_MIN_MS = 15_000;
 export const REFETCH_JITTER_MAX_MS = 30_000;
 

@@ -1,61 +1,29 @@
 {
-  // Cloudflare Workers config for `DEPLOY_TARGET=cloudflare npm run build`.
-  // There is no account_id here: deploy.yml passes CLOUDFLARE_ACCOUNT_ID, so
-  // this public file names no account. The Worker has two bindings, a KV
-  // namespace it reads and writes itself and its own version's metadata
-  // (no external secret reaches it): requests read the board from KV, and
-  // the Cron Trigger below is the only thing that reads the vendor feeds.
+  // Cloudflare Workers config. The account ID and API token are supplied by
+  // GitHub environment settings to wrangler at deploy time, not to the Worker.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "status-bar",
-  // Not TanStack Start's own default entry: @cloudflare/vite-plugin resolves
-  // `main` outside TanStack Start's entry system, so this has to name the
-  // file directly. src/server.cloudflare.ts wraps the same
-  // createStartHandler(defaultStreamHandler) the default entry uses, adding
-  // the `scheduled` export for the Cron Trigger below and the env bindings
-  // and waitUntil the request and cron handlers both need.
   "main": "./src/server.cloudflare.ts",
   "compatibility_date": "2026-09-20",
-  // TanStack Start keeps request context in AsyncLocalStorage.
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
-  // Versions uploaded for review get no public preview URL.
   "preview_urls": false,
-  // The answering version's id, which src/server.cloudflare.ts sends as
-  // X-Worker-Version so deploy.yml's smoke test can tell the version it
-  // just deployed from the one before. Not inherited by named environments
-  // (wrangler's config validation), so env.staging repeats it.
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
-  // Sweeps every vendor and writes the board snapshot to KV
-  // (src/lib/status/cron-sweep.ts). `triggers` is inherited, so this also
-  // runs on env.staging below without repeating it. CONTRIBUTING.md#deploying
-  // has the one-time setup this needs.
-  "triggers": { "crons": ["*/2 * * * *"] },
-  // Not inherited by named environments (wrangler's config schema), so
-  // env.staging repeats it. The id here is a placeholder for local previews:
-  // deploy.yml replaces it with the environment's KV_NAMESPACE_ID variable,
-  // so the real ids live with the other per-environment settings.
-  "kv_namespaces": [{ "binding": "STATUS_SNAPSHOT", "id": "set-by-deploy-workflow" }],
   // Production answers on status.szolotov.com, a Custom Domain: the first
   // deploy creates its DNS record and certificate on the szolotov.com zone,
   // which has to be in the same account. A CI deploy replaces any record
   // already at that name. With a route set, workers.dev is off for production.
   "routes": [{ "pattern": "status.szolotov.com", "custom_domain": true }],
   "env": {
-    // Built with CLOUDFLARE_ENV=staging from dev; a separate Worker.
     "staging": {
       "name": "status-bar-staging",
       "observability": { "enabled": true },
       "preview_urls": false,
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
-      "kv_namespaces": [{ "binding": "STATUS_SNAPSHOT", "id": "set-by-deploy-workflow" }],
       // `routes` is inherited: without this empty list staging would claim
       // production's hostname. Staging stays on its workers.dev address.
       "routes": [],
       "workers_dev": true,
-      // Keeps the public staging board out of search results: every Worker
-      // response gets X-Robots-Tag and /robots.txt disallows everything
-      // (src/server.cloudflare.ts, src/routes/robots[.]txt.ts). `vars` are
-      // not inherited, so production, which sets none, stays indexable.
       "vars": { "ROBOTS": "noindex" }
     }
   }
