@@ -91,8 +91,16 @@ describe("historyStripSummary", () => {
   it("names uptime and the worst non-operational day", () => {
     const days = [day("2026-09-26", "degraded", 2, 0.5), day("2026-09-27", "operational", 2, 1)];
     expect(historyStripSummary(days, 0.75, days[0])).toBe(
-      "2-day uptime history. 75.0% operational. worst day 2026-09-26: Degraded",
+      "30-day uptime history. 75.0% operational. worst day 2026-09-26: Degraded",
     );
+  });
+});
+
+describe("historyStripSummary window label", () => {
+  it("names the window length, not the number of recorded days", () => {
+    const days = [day("2026-09-27", "operational", 2, 1)];
+    expect(historyStripSummary(days, 1, days[0])).toBe("30-day uptime history. 100% operational");
+    expect(historyStripSummary(days, 1, days[0], 7)).toBe("7-day uptime history. 100% operational");
   });
 });
 
