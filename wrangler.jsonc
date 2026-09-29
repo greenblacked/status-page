@@ -2,28 +2,26 @@
   // Cloudflare Workers config. The account ID and API token are supplied by
   // GitHub environment settings to wrangler at deploy time, not to the Worker.
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "status-bar",
+  "name": "status-page",
   "main": "./src/server.cloudflare.ts",
   "compatibility_date": "2026-09-20",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "preview_urls": false,
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
-  // Production answers on status.szolotov.com, a Custom Domain: the first
-  // deploy creates its DNS record and certificate on the szolotov.com zone,
-  // which has to be in the same account. A CI deploy replaces any record
-  // already at that name. With a route set, workers.dev is off for production.
+  // Each Worker claims only its own hostname, as a Custom Domain on the
+  // szolotov.com zone (same account). The first deploy creates the DNS record
+  // and certificate; a CI deploy replaces any record already at that name.
+  // A route turns workers.dev off. Production: status.szolotov.com.
   "routes": [{ "pattern": "status.szolotov.com", "custom_domain": true }],
   "env": {
     "staging": {
-      "name": "status-bar-staging",
+      "name": "status-page-staging",
       "observability": { "enabled": true },
       "preview_urls": false,
       "version_metadata": { "binding": "CF_VERSION_METADATA" },
-      // `routes` is inherited: without this empty list staging would claim
-      // production's hostname. Staging stays on its workers.dev address.
-      "routes": [],
-      "workers_dev": true,
+      // `routes` is inherited, so staging sets its own: staging.status.szolotov.com.
+      "routes": [{ "pattern": "staging.status.szolotov.com", "custom_domain": true }],
       "vars": { "ROBOTS": "noindex" }
     }
   }
