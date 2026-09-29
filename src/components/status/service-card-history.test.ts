@@ -2,6 +2,7 @@ import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { HistoryDay, PublicHistory } from "@/lib/status/history";
+import type { ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
 import { BoardHistoryContext } from "./board-history-provider";
 import { ServiceCard } from "./service-card-full";
@@ -21,12 +22,16 @@ const DAYS: HistoryDay[] = [
 
 const noop = () => {};
 
-function card(withHistory: PublicHistory | undefined, id: "aws" | "gcp" = "aws"): string {
+function card(
+  withHistory: PublicHistory | undefined,
+  id: "aws" | "gcp" = "aws",
+  overrides: Partial<ServiceSnapshot> = {},
+): string {
   const element: ReactElement = createElement(
     BoardHistoryContext.Provider,
     { value: withHistory },
     createElement(ServiceCard, {
-      service: service(id, { health: "degraded", summary: "Elevated errors" }),
+      service: service(id, { health: "degraded", summary: "Elevated errors", ...overrides }),
       index: 0,
       starred: false,
       onToggleStar: noop,
@@ -36,11 +41,21 @@ function card(withHistory: PublicHistory | undefined, id: "aws" | "gcp" = "aws")
   return renderToStaticMarkup(element);
 }
 
-function tile(withHistory: PublicHistory | undefined, id: "aws" | "gcp" = "aws"): string {
+function tile(
+  withHistory: PublicHistory | undefined,
+  id: "aws" | "gcp" = "aws",
+  overrides: Partial<ServiceSnapshot> = {},
+): string {
   const element: ReactElement = createElement(
     BoardHistoryContext.Provider,
     { value: withHistory },
-    createElement(ServiceTile, { service: service(id), index: 0, starred: false, onToggleStar: noop, now: NOW }),
+    createElement(ServiceTile, {
+      service: service(id, overrides),
+      index: 0,
+      starred: false,
+      onToggleStar: noop,
+      now: NOW,
+    }),
   );
   return renderToStaticMarkup(element);
 }
@@ -85,5 +100,21 @@ describe("cards with history", () => {
     const document = history({ aws: { days: DAYS } });
     expect(card(document, "aws")).toMatch(STRIP);
     expect(card(document, "gcp")).not.toMatch(STRIP);
+  });
+
+  it("leave the strip off changelog-category cards and tiles", () => {
+    const document = history({ aws: { days: DAYS } });
+    expect(card(document, "aws", { category: "updates" })).not.toMatch(STRIP);
+    expect(tile(document, "aws", { category: "updates" })).not.toMatch(STRIP);
+    expect(card(document, "aws", { category: "updates" })).toBe(card(undefined, "aws", { category: "updates" }));
+  });
+
+  it("expose one accessible summary and hide the caption and per-day bars", () => {
+    const html = card(history({ aws: { days: DAYS } }));
+    expect(html.match(/role="img"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="2-day uptime history');
+    // Every per-day bar is hidden from assistive tech; the caption is too.
+    expect(html.match(/<span aria-hidden="true" title="2026-\d\d-\d\d: /g)).toHaveLength(30);
+    expect(html).toMatch(/<div aria-hidden="true" class="flex items-end justify-between[^>]*><p[^>]*>.*uptime/);
   });
 });

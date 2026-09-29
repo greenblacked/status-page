@@ -144,7 +144,7 @@ export function ServiceCard({
         </ul>
       ) : null}
 
-      {days.length > 0 ? <HistoryStrip days={days} nowMs={now} className="mt-4" /> : null}
+      {days.length > 0 && !changelog ? <HistoryStrip days={days} nowMs={now} className="mt-4" /> : null}
 
       <div className="mt-auto flex items-center justify-between gap-3 pt-4">
         <p className="font-mono text-[11px] tabular-nums text-subtle" title="Time the official source took to answer">

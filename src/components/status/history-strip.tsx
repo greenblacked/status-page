@@ -66,7 +66,8 @@ export function HistoryStrip({
 
   return (
     <div className={cn("min-w-0", className)}>
-      <div className="flex items-end justify-between gap-2">
+      {/* Sighted-only: the role="img" summary below already says all of this. */}
+      <div aria-hidden className="flex items-end justify-between gap-2">
         <p className="font-mono text-[11px] tabular-nums text-subtle">
           {uptime !== null ? (
             <>
@@ -93,7 +94,12 @@ export function HistoryStrip({
         className={cn("mt-1.5 flex items-stretch gap-px border-b border-hairline", compact ? "h-3" : "h-4")}
       >
         {slots.map((slot) => (
-          <span key={slot.date} title={historySlotTitle(slot)} className="flex min-w-0 flex-1 items-end justify-center">
+          <span
+            key={slot.date}
+            aria-hidden
+            title={historySlotTitle(slot)}
+            className="flex min-w-0 flex-1 items-end justify-center"
+          >
             <span
               className={cn("block rounded-[1px]", slot.day ? SLOT_MARK[slot.day.worst] : "h-1 w-px bg-hairline")}
             />
