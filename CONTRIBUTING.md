@@ -183,8 +183,8 @@ Never move or reuse a tag that has a published release; release a new patch vers
 
 | Branch | Environment | Worker | Address |
 | --- | --- | --- | --- |
-| `dev` | `staging` | `status-bar-staging` | its `workers.dev` address |
-| `main` | `production` | `status-bar` | [status.szolotov.com](https://status.szolotov.com) |
+| `dev` | `staging` | `status-page-staging` | [staging.status.szolotov.com](https://staging.status.szolotov.com) |
+| `main` | `production` | `status-page` | [status.szolotov.com](https://status.szolotov.com) |
 
 Every push to `dev` or `main` deploys; pull requests build and dry-run the Worker without credentials. The built Worker is also smoke-tested locally. A deployed version is checked against its `X-Worker-Version` header and rolled back automatically when the post-deploy smoke test fails, if `DEPLOY_URL` is configured. Staging sets `ROBOTS=noindex` and production remains indexable.
 
@@ -206,9 +206,9 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 ### One-time setup
 
-1. **Create a Cloudflare API token** scoped to this account and Workers Scripts Edit (plus Account Settings Read if required by wrangler). Production answers on the custom domain `status.szolotov.com` (`routes` in `wrangler.jsonc`), so also add Zone Workers Routes Edit and Zone Read for the `szolotov.com` zone only: `wrangler deploy` needs the read permission to look the zone up by name. The first production deploy creates the DNS record and certificate. Check that `status.szolotov.com` has no DNS record first: a deploy from CI replaces an existing A, AAAA or TXT record without asking. Set an expiry and rotate it before then. Check [Cloudflare's token documentation](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) for current permission names.
+1. **Create a Cloudflare API token** scoped to this account and Workers Scripts Edit (plus Account Settings Read if required by wrangler). Both Workers answer on custom domains, `status.szolotov.com` for production and `staging.status.szolotov.com` for staging (`routes` in `wrangler.jsonc`), so also add Zone Workers Routes Edit and Zone Read for the `szolotov.com` zone only, which covers both hostnames: `wrangler deploy` needs the read permission to look the zone up by name. The first deploy of each Worker creates its DNS record and certificate. Check that neither `status.szolotov.com` nor `staging.status.szolotov.com` has a DNS record first: a deploy from CI replaces an existing A, AAAA or TXT record without asking. Set an expiry and rotate it before then. Check [Cloudflare's token documentation](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) for current permission names.
 2. **Create GitHub environments** `staging` (allow only `dev`) and `production` (allow only `main`) in Settings → Environments.
-3. **Enter two settings in each environment:** `CLOUDFLARE_ACCOUNT_ID` as a variable and `CLOUDFLARE_API_TOKEN` as a secret. The deploy workflow requires these two values. `DEPLOY_URL` is optional but recommended: set it to that Worker's public URL (`https://status.szolotov.com` for production, the `workers.dev` URL for staging) after the first deploy to enable post-deploy smoke tests and automatic rollback. The Worker itself has no API token or account ID binding.
+3. **Enter two settings in each environment:** `CLOUDFLARE_ACCOUNT_ID` as a variable and `CLOUDFLARE_API_TOKEN` as a secret. The deploy workflow requires these two values. `DEPLOY_URL` is optional but recommended: set it to that Worker's public URL (`https://status.szolotov.com` for production, `https://staging.status.szolotov.com` for staging) after the first deploy to enable post-deploy smoke tests and automatic rollback. The Worker itself has no API token or account ID binding.
 4. **Monitor production:** optionally set repository variable `PRODUCTION_URL` to its HTTPS address for hourly `/readyz` checks in `source-health.yml`.
 
 No KV namespace or ID is needed. An old namespace can be left in Cloudflare until you decide to delete it; this change does not delete it.
@@ -243,10 +243,10 @@ A cold local Worker collects vendors on its first request. For a staging build, 
 `deploy.yml` already does this by itself when a deploy fails its smoke test (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` reach only that one rollback step, same as the deploy step). To go back to the previous version by hand:
 
 ```bash
-npx wrangler rollback --name status-bar          # or status-bar-staging
+npx wrangler rollback --name status-page          # or status-page-staging
 ```
 
-You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back changes which Worker version answers requests; each isolate collects vendor status again when its cache expires. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
+You can also use **Workers & Pages → status-page → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back changes which Worker version answers requests; each isolate collects vendor status again when its cache expires. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
 
 ## Dependencies
 
