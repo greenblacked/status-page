@@ -161,6 +161,8 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Switch on the bell** for a browser notification when a service changes while the tab is in the background.
 - **Open any card's vendor page** for the full story.
 
+A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 npm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
+
 ## Integrations
 
 The board publishes current status in four open formats. Responses allow cross-origin reads and are cached for a minute. `/api/history.json` remains available as an empty compatibility response; without persistent storage it cannot provide uptime history.
@@ -283,11 +285,35 @@ groups:
 
 | Where | How |
 | --- | --- |
-| **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `main` to the `status-page` Worker at [status.szolotov.com](https://status.szolotov.com) and creates `dev` as a Worker Preview named `stage` of that same Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com). Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested, and a production deploy is rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
+| **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `main` to the `status-page` Worker at [status.szolotov.com](https://status.szolotov.com) and creates `stage` as a Worker Preview named `stage` of that same Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com); `dev` deploys nothing. Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested, and a production deploy is rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
 | **Any Node host** | `npm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice. `npm run preview` is a smoke test of that build, not a production host |
 | **Docker** | `docker compose up preview` serves the built board from the public CI images, for a local run or a quick demo |
 
-The `stage` preview of `dev` (`stage.status.szolotov.com`) answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
+The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
+
+### Branches and deploys
+
+| Branch | Role | Deploys |
+| --- | --- | --- |
+| `dev` | Contributions: every pull request targets it | Nothing |
+| `stage` | What is about to ship | Worker Preview at [stage.status.szolotov.com](https://stage.status.szolotov.com) |
+| `main` | What is released | Production at [status.szolotov.com](https://status.szolotov.com) |
+
+Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request, and the rulesets require `CI OK` to pass. The owner and the release workflow can bypass them. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
+
+#### Deployment status
+
+Tick these off as each step is done:
+
+- [ ] `CLOUDFLARE_ACCOUNT_ID` (variable or secret) and `CLOUDFLARE_API_TOKEN` (secret) set on the `staging` and `production` environments
+- [ ] `staging` admits only `stage`, `production` only `main`
+- [x] Cloudflare Workers Builds disconnected
+- [ ] Branch protection (rulesets) on `dev`, `stage` and `main`
+- [ ] First preview from `stage` created
+- [ ] First production deploy from `main` live at [status.szolotov.com](https://status.szolotov.com), which publishes `previews_enabled`
+- [ ] [stage.status.szolotov.com](https://stage.status.szolotov.com) answers (wildcard certificate issued)
+- [ ] `DEPLOY_URL` set on both environments, so smoke tests and the production rollback run
+- [ ] Old `status-page-staging` Worker and `stage.status.szolotov.dev` removed, if present
 
 ## FAQ
 
@@ -397,7 +423,7 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 
 Outside pull requests, an hourly job calls every real vendor and opens an issue when a source breaks, OpenSSF Scorecard grades the supply chain on every push to `main`, and Dependabot proposes updates only once a release has been public for a few days. [.github/workflows/README.md](.github/workflows/README.md) covers each workflow.
 
-**Releases:** pull requests merge into `dev`, which never releases. Merging `dev` into `main` with a merge commit releases everything it brings: CI picks the version from the commit types, commits the bump, tags it `vX.Y.Z`, publishes a GitHub Release with notes taken from [CHANGELOG.md](CHANGELOG.md), and merges `main` back into `dev`. [CONTRIBUTING.md](CONTRIBUTING.md#releases) has the details.
+**Releases:** pull requests merge into `dev`, which never releases, and the owner promotes `dev` to `stage` (the preview) and `stage` to `main`. Merging `stage` into `main` with a merge commit releases everything it brings: CI picks the version from the commit types, commits the bump, tags it `vX.Y.Z`, publishes a GitHub Release with notes taken from [CHANGELOG.md](CHANGELOG.md), and merges `main` back into `stage` and `dev`. [CONTRIBUTING.md](CONTRIBUTING.md#releases) has the details.
 
 **Adding a service:** add a catalog entry in `src/lib/status/catalog.ts` and a collector in `src/lib/status/sources.server.ts`, read only an official machine-readable source, map it onto the five states, and add it to [What it watches](#what-it-watches) in the same commit. [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-service) has the full checklist.
 

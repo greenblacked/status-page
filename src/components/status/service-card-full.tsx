@@ -1,4 +1,6 @@
 import { ArrowUpRight } from "lucide-react";
+import { useServiceHistoryDays } from "@/components/status/board-history-provider";
+import { HistoryStrip } from "@/components/status/history-strip";
 import {
   CATEGORY_ICON,
   ComponentRow,
@@ -35,6 +37,7 @@ export function ServiceCard({
   /** The client clock (0 until mounted), for how long an incident has run. */
   now: number;
 }) {
+  const days = useServiceHistoryDays(service.id);
   const Icon = CATEGORY_ICON[service.category];
   const changelog = service.category === "updates";
   const summary = norm(service.summary);
@@ -139,6 +142,10 @@ export function ServiceCard({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {import.meta.env.VITE_STATUS_HISTORY === "1" && days.length > 0 && service.category !== "updates" ? (
+        <HistoryStrip days={days} nowMs={now} className="mt-4" />
       ) : null}
 
       <div className="mt-auto flex items-center justify-between gap-3 pt-4">

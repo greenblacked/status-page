@@ -1,9 +1,9 @@
 {
   // Cloudflare Workers config. The account ID and API token are supplied by
   // GitHub environment settings to wrangler at deploy time, not to the Worker.
-  // One Worker serves everything: main deploys it to production, and dev
+  // One Worker serves everything: main deploys it to production, and stage
   // becomes a Worker Preview of it named "stage" (deploy.yml), never
-  // production traffic.
+  // production traffic. dev, where pull requests land, deploys nothing.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "status-page",
   "main": "./src/server.cloudflare.ts",

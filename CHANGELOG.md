@@ -19,14 +19,16 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The operational tiles are lighter on the phone: no blur behind each one, so a long board scrolls smoothly, and on a wide screen they sit two to a row so every name fits.
 - The **Keyboard shortcuts** list is now **Settings and shortcuts**, and switched-off shortcuts in it are dimmed in a colour that stays readable instead of fading to half opacity.
 - A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place.
+- The optional uptime strip is tidier: builds without `VITE_STATUS_HISTORY=1` no longer ship its code, a strip's worst day reads like "Sep 26", and the history build is now tested in CI. `docker compose` passes the flag through to the build.
 
 ### Removed
 
-- Workers KV and its Cron Trigger; persistent 30-day uptime history and card strips are unavailable. The history endpoint returns an empty compatibility response.
+- Workers KV and its Cron Trigger; persistent 30-day uptime history is unavailable, so the optional card strips have no data. The history endpoint returns an empty compatibility response.
 
 ### Added
 
-- The production board lives at [status.szolotov.com](https://status.szolotov.com). Builds of `dev` are a Worker Preview named `stage` of the same Cloudflare Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com), and never receive production traffic.
+- The production board lives at [status.szolotov.com](https://status.szolotov.com). Builds of `stage` are a Worker Preview named `stage` of the same Cloudflare Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com), and never receive production traffic. `dev` deploys nothing: the owner promotes work from `dev` to `stage` to `main`.
+- An optional uptime strip on service cards, built only with `VITE_STATUS_HISTORY=1` and shown when `/api/history.json` has days; off by default, and empty until a history source exists.
 - A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
 - A **Reduce glass** switch in **Settings and shortcuts** turns the frosted panels solid and stops the background moving. Safari does not pass the system's Reduce Transparency setting to web pages, so this is the way to get it on an iPhone, iPad or Mac; browsers that do pass it on get the same result automatically. The choice is kept in this browser.
 - A light appearance. The board now follows your system's light or dark setting and switches when it does.
@@ -42,6 +44,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- A production deploy that fails after uploading the Worker now says the new version is live and unchecked, so you know to look at it and roll back if needed.
 - One AWS or Apple event with an unreadable timestamp no longer turns the whole card Unknown; that event just shows without a start time.
 - The staging deployment no longer shows up in search results: it sends `X-Robots-Tag: noindex` and a `/robots.txt` that disallows crawling. Production, and any self-hosted build, now serves a `/robots.txt` that allows it.
 - When no board can be produced at all, `/api/status.json`, `/feed.xml`, the badges and `/metrics` answer `503` with `Retry-After`, so feed readers, Shields.io and scrapers treat it as temporary instead of as a server error.

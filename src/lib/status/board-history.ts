@@ -15,12 +15,17 @@ export const HISTORY_FETCH_TIMEOUT_MS = 8_000;
 
 /**
  * Client fetch of the public history document. Same-origin on Node and
- * Workers; CORS is already open for cross-origin readers. Any failure,
- * timeout, non-OK status or malformed body becomes an empty document so the
- * board still loads. Uses parseHistory so only public day fields survive.
+ * Workers; CORS is already open for cross-origin readers. By default any
+ * failure, timeout, non-OK status or malformed body becomes an empty document
+ * so the board still loads. With `throwOnError` the same failures reject
+ * instead, for a caller (the query cache) that must keep its previous good
+ * data rather than store an empty document. Uses parseHistory so only public
+ * day fields survive.
  */
-export async function fetchBoardHistory(fetchImpl: typeof fetch = fetch): Promise<PublicHistory> {
-  const empty = emptyHistory(new Date(0).toISOString());
+export async function fetchBoardHistory(
+  fetchImpl: typeof fetch = fetch,
+  options: { throwOnError?: boolean } = {},
+): Promise<PublicHistory> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), HISTORY_FETCH_TIMEOUT_MS);
@@ -30,14 +35,17 @@ export async function fetchBoardHistory(fetchImpl: typeof fetch = fetch): Promis
         headers: { Accept: "application/json" },
         signal: controller.signal,
       });
-      if (!response.ok) return empty;
+      if (!response.ok) throw new Error(`History request failed: ${response.status}`);
       const body: unknown = await response.json();
-      return parseHistory(body) ?? empty;
+      const history = parseHistory(body);
+      if (!history) throw new Error("History document is malformed");
+      return history;
     } finally {
       clearTimeout(timer);
     }
-  } catch {
-    return empty;
+  } catch (error) {
+    if (options.throwOnError) throw error;
+    return emptyHistory(new Date(0).toISOString());
   }
 }
 
@@ -76,7 +84,8 @@ export function historySlots(
   const cursor = new Date(`${oldest}T00:00:00.000Z`);
   const end = new Date(`${today}T00:00:00.000Z`);
   if (!Number.isFinite(cursor.getTime()) || !Number.isFinite(end.getTime()) || cursor > end) return [];
-  while (cursor <= end) {
+  const endTime = end.getTime();
+  while (cursor.getTime() <= endTime) {
     const date = cursor.toISOString().slice(0, 10);
     slots.push({ date, day: byDate.get(date) ?? null });
     cursor.setUTCDate(cursor.getUTCDate() + 1);
@@ -117,6 +126,14 @@ export function worstHistoryDay(days: HistoryDay[]): HistoryDay | null {
   return worst;
 }
 
+const HISTORY_DAY_FORMAT = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** A history day (YYYY-MM-DD, UTC) as a short label such as "Sep 26"; the input if unparseable. */
+export function formatHistoryDay(date: string): string {
+  const time = /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(`${date}T00:00:00.000Z`) : Number.NaN;
+  return Number.isFinite(time) ? HISTORY_DAY_FORMAT.format(time) : date;
+}
+
 /** UTC today as YYYY-MM-DD, or null when the clock is unusable. */
 export function utcToday(nowMs: number = Date.now()): string | null {
   if (!Number.isFinite(nowMs)) return null;
@@ -124,12 +141,18 @@ export function utcToday(nowMs: number = Date.now()): string | null {
 }
 
 /**
- * Screen-reader text for the strip. Built only from public day fields and
- * health labels — never probe text or vendor payloads.
+ * Screen-reader text for the strip. The "N-day" label is the length of the
+ * window the strip draws (`windowDays`), not the number of days that have a
+ * record. Built only from public day fields and health labels — never probe text or vendor payloads.
  */
-export function historyStripSummary(days: HistoryDay[], uptime: number | null, worst: HistoryDay | null): string {
+export function historyStripSummary(
+  days: HistoryDay[],
+  uptime: number | null,
+  worst: HistoryDay | null,
+  windowDays: number = HISTORY_RETENTION_DAYS,
+): string {
   if (days.length === 0) return "";
-  const parts: string[] = [`${days.length}-day uptime history`];
+  const parts: string[] = [`${windowDays}-day uptime history`];
   if (uptime !== null) parts.push(`${formatUptimePercent(uptime)} operational`);
   if (worst && worst.worst !== "operational") {
     parts.push(`worst day ${worst.date}: ${healthLabel(worst.worst)}`);

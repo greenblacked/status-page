@@ -1,0 +1,142 @@
+import {
+  formatHistoryDay,
+  formatUptimePercent,
+  historySlots,
+  historySlotTitle,
+  historyStripSummary,
+  sampleWeightedUptime,
+  utcToday,
+  worstHistoryDay,
+} from "@/lib/status/board-history";
+import type { HistoryDay } from "@/lib/status/history";
+import type { Health } from "@/lib/status/types";
+import { cn } from "@/lib/utils";
+
+/*
+  A quiet day is a fine neutral tick; only a day that went wrong gets a
+  full-width mark in its status colour, so the eye lands on the exceptions.
+  A day with no record is a stub on the baseline.
+*/
+const SLOT_MARK: Record<Health, string> = {
+  operational: "h-full w-px bg-tick",
+  degraded: "h-full w-full bg-warn",
+  outage: "h-full w-full bg-down",
+  maintenance: "h-full w-full bg-accent",
+  unknown: "h-full w-full bg-subtle/60",
+};
+
+/**
+ * Compact 30-day uptime strip for a service card. Renders nothing when there
+ * are no public days (cold history or a service the document omits). Colour
+ * alone is never the only cue: a caption and per-slot titles carry the same
+ * meaning. Built only from public day fields.
+ */
+export function HistoryStrip({
+  days,
+  nowMs,
+  compact = false,
+  className,
+}: {
+  days: HistoryDay[];
+  /**
+   * Client clock in ms, normally from useNow(). When it is 0 or unset (the
+   * clock has not been read yet) the strip falls back to Date.now().
+   */
+  nowMs?: number;
+  /** Tighter bars for the operational tile. */
+  compact?: boolean;
+  className?: string;
+}) {
+  if (days.length === 0) return null;
+
+  const today = utcToday(nowMs && nowMs > 0 ? nowMs : Date.now());
+  if (!today) return null;
+
+  const slots = historySlots(days, today);
+  if (slots.length === 0) return null;
+
+  // Caption, worst-day chip and label describe only what the strip draws:
+  // records older than the window must not leak into them.
+  const inWindow = slots.flatMap((slot) => (slot.day ? [slot.day] : []));
+  if (inWindow.length === 0) return null;
+
+  const uptime = sampleWeightedUptime(inWindow);
+  const worst = worstHistoryDay(inWindow);
+  const summary = historyStripSummary(inWindow, uptime, worst, slots.length);
+  const showWorstChip = Boolean(worst && worst.worst !== "operational");
+
+  return (
+    <div className={cn("min-w-0", className)}>
+      {/* Sighted-only: the role="img" summary below already says all of this. */}
+      <div aria-hidden className="flex items-end justify-between gap-2">
+        <p className="font-mono text-[11px] tabular-nums text-subtle">
+          {uptime !== null ? (
+            <>
+              <span className="text-muted">{formatUptimePercent(uptime)}</span>
+              <span> uptime</span>
+            </>
+          ) : (
+            <span>Uptime history</span>
+          )}
+          {showWorstChip && worst ? (
+            <>
+              <span className="text-subtle"> · </span>
+              <span className={cn("text-muted", toneText(worst.worst))}>
+                <time dateTime={worst.date}>{formatHistoryDay(worst.date)}</time> {shortHealth(worst.worst)}
+              </span>
+            </>
+          ) : null}
+        </p>
+        <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-subtle">30d</p>
+      </div>
+      <div
+        role="img"
+        aria-label={summary}
+        className={cn("mt-1.5 flex items-stretch gap-px border-b border-hairline", compact ? "h-3" : "h-4")}
+      >
+        {slots.map((slot) => (
+          <span
+            key={slot.date}
+            aria-hidden
+            title={historySlotTitle(slot)}
+            className="flex min-w-0 flex-1 items-end justify-center"
+          >
+            <span
+              className={cn("block rounded-[1px]", slot.day ? SLOT_MARK[slot.day.worst] : "h-1 w-px bg-hairline")}
+            />
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function shortHealth(health: Health): string {
+  switch (health) {
+    case "operational":
+      return "ok";
+    case "degraded":
+      return "degraded";
+    case "outage":
+      return "outage";
+    case "maintenance":
+      return "maint";
+    default:
+      return "unknown";
+  }
+}
+
+function toneText(health: Health): string {
+  switch (health) {
+    case "operational":
+      return "text-ok";
+    case "degraded":
+      return "text-warn";
+    case "outage":
+      return "text-down";
+    case "maintenance":
+      return "text-accent";
+    default:
+      return "text-subtle";
+  }
+}
