@@ -2,9 +2,9 @@ name: CodeQL
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, stage, dev]
   pull_request:
-    branches: [main, dev]
+    branches: [main, stage, dev]
   schedule:
     # Weekly, so a newly published rule still finds this repository.
     - cron: '17 4 * * 1'
