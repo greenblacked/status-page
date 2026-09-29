@@ -290,3 +290,40 @@ test("renders cards without requesting persistent uptime history", async ({ page
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
   expect(problems).toEqual([]);
 });
+
+// The board asks for history only in a build made with VITE_STATUS_HISTORY=1
+// (nothing collects any today), so this runs against such a build and is
+// skipped against the default one, which the test above covers.
+test("shows an uptime strip on a card once /api/history.json has days", async ({ page }) => {
+  test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
+  const today = new Date();
+  const days = Array.from({ length: 10 }, (_, index) => {
+    const stamp = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (9 - index)));
+    return {
+      date: stamp.toISOString().slice(0, 10),
+      worst: index === 5 ? "degraded" : "operational",
+      samples: 2,
+      up: 1,
+    };
+  });
+  await page.route("**/api/history.json", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema: 1,
+        updatedAt: today.toISOString(),
+        timezone: "UTC",
+        retentionDays: 30,
+        services: { aws: { days } },
+      }),
+    }),
+  );
+
+  const problems = watchConsole(page);
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await expect(page.locator("#service-aws").getByRole("img", { name: /uptime history/i })).toBeVisible();
+  // Only the service the document lists gets one.
+  await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(1);
+  expect(problems).toEqual([]);
+});

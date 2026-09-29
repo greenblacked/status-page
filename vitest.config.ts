@@ -8,6 +8,8 @@ import { defineConfig } from "vitest/config";
 process.env.TZ = "UTC";
 
 export default defineConfig({
+  // The `@/` imports the components use, as in vite.config.ts.
+  resolve: { tsconfigPaths: true },
   test: {
     environment: "node",
     // Only *.test.ts files are tests. Shared helpers live in src/test/ and

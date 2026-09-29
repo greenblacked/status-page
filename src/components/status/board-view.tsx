@@ -462,6 +462,7 @@ export function BoardView({
                           emphasized={changedIds.has(service.id)}
                           starred={starred.has(service.id)}
                           onToggleStar={onToggleStar}
+                          now={now}
                         />
                       ))}
                     </div>

@@ -11,12 +11,17 @@ import type { HistoryDay } from "@/lib/status/history";
 import type { Health } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
-const SLOT_TONE: Record<Health, string> = {
-  operational: "bg-ok",
-  degraded: "bg-warn",
-  outage: "bg-down",
-  maintenance: "bg-accent",
-  unknown: "bg-subtle",
+/*
+  A quiet day is a fine neutral tick; only a day that went wrong gets a
+  full-width mark in its status colour, so the eye lands on the exceptions.
+  A day with no record is a stub on the baseline.
+*/
+const SLOT_MARK: Record<Health, string> = {
+  operational: "h-full w-px bg-tick",
+  degraded: "h-full w-full bg-warn",
+  outage: "h-full w-full bg-down",
+  maintenance: "h-full w-full bg-accent",
+  unknown: "h-full w-full bg-subtle/60",
 };
 
 /**
@@ -74,13 +79,17 @@ export function HistoryStrip({
         </p>
         <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-subtle">30d</p>
       </div>
-      <div role="img" aria-label={summary} className={cn("mt-1.5 flex items-stretch gap-px", compact ? "h-3" : "h-4")}>
+      <div
+        role="img"
+        aria-label={summary}
+        className={cn("mt-1.5 flex items-stretch gap-px border-b border-hairline", compact ? "h-3" : "h-4")}
+      >
         {slots.map((slot) => (
-          <span
-            key={slot.date}
-            title={historySlotTitle(slot)}
-            className={cn("min-w-0 flex-1 rounded-[1px]", slot.day ? SLOT_TONE[slot.day.worst] : "bg-subtle/25")}
-          />
+          <span key={slot.date} title={historySlotTitle(slot)} className="flex min-w-0 flex-1 items-end justify-center">
+            <span
+              className={cn("block rounded-[1px]", slot.day ? SLOT_MARK[slot.day.worst] : "h-1 w-px bg-hairline")}
+            />
+          </span>
         ))}
       </div>
     </div>
