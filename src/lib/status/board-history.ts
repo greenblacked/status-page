@@ -126,6 +126,14 @@ export function worstHistoryDay(days: HistoryDay[]): HistoryDay | null {
   return worst;
 }
 
+const HISTORY_DAY_FORMAT = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** A history day (YYYY-MM-DD, UTC) as a short label such as "Sep 26"; the input if unparseable. */
+export function formatHistoryDay(date: string): string {
+  const time = /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(`${date}T00:00:00.000Z`) : Number.NaN;
+  return Number.isFinite(time) ? HISTORY_DAY_FORMAT.format(time) : date;
+}
+
 /** UTC today as YYYY-MM-DD, or null when the clock is unusable. */
 export function utcToday(nowMs: number = Date.now()): string | null {
   if (!Number.isFinite(nowMs)) return null;

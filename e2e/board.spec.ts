@@ -296,7 +296,8 @@ test("renders cards without requesting persistent uptime history", async ({ page
 // (nothing collects any today). These two run only when the runner is given
 // the same VITE_STATUS_HISTORY=1 it built with, and are skipped otherwise;
 // the default build is covered by the test above, which a history build skips.
-test("shows an uptime strip on a card once /api/history.json has days", async ({ page }) => {
+// CI's history job builds with the flag and runs them by their @history tag.
+test("shows an uptime strip on a card once /api/history.json has days", { tag: "@history" }, async ({ page }) => {
   test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
   const today = new Date();
   const days = Array.from({ length: 10 }, (_, index) => {
@@ -330,7 +331,9 @@ test("shows an uptime strip on a card once /api/history.json has days", async ({
   expect(problems).toEqual([]);
 });
 
-test("renders cards without a strip when /api/history.json is the empty document", async ({ page }) => {
+test("renders cards without a strip when /api/history.json is the empty document", { tag: "@history" }, async ({
+  page,
+}) => {
   test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
   let historyRequests = 0;
   await page.route("**/api/history.json", (route) => {

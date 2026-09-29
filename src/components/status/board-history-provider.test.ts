@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react
 import { type ComponentProps, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BoardHistoryProvider, boardHistoryQueryOptions } from "./board-history-provider";
+import { BoardHistoryProvider, BoardHistoryQueryProvider, boardHistoryQueryOptions } from "./board-history-provider";
 
 // The repo has no DOM environment or React testing library, so the provider
 // is checked through the query options it hands to React Query (driven by a
@@ -24,6 +24,7 @@ function client(): QueryClient {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("BoardHistoryProvider", () => {
@@ -86,8 +87,8 @@ describe("BoardHistoryProvider", () => {
           QueryClientProvider,
           { client: client() },
           createElement(
-            BoardHistoryProvider,
-            { enabled } as ComponentProps<typeof BoardHistoryProvider>,
+            BoardHistoryQueryProvider,
+            { enabled } as ComponentProps<typeof BoardHistoryQueryProvider>,
             createElement("p", null, "board"),
           ),
         ),
@@ -95,5 +96,28 @@ describe("BoardHistoryProvider", () => {
       expect(html).toBe("<p>board</p>");
     }
     expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("is a pass-through, needing no query client, unless the build sets the flag", () => {
+    const fetchStub = vi.fn(async () => Response.json(historyBody(1)));
+    vi.stubGlobal("fetch", fetchStub);
+    for (const flag of [undefined, "", "0", "true"]) {
+      vi.stubEnv("VITE_STATUS_HISTORY", flag as string);
+      const html = renderToStaticMarkup(createElement(BoardHistoryProvider, null, createElement("p", null, "board")));
+      expect(html).toBe("<p>board</p>");
+    }
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("mounts the query provider when the build sets the flag", () => {
+    vi.stubEnv("VITE_STATUS_HISTORY", "1");
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: client() },
+        createElement(BoardHistoryProvider, null, createElement("p", null, "board")),
+      ),
+    );
+    expect(html).toBe("<p>board</p>");
   });
 });

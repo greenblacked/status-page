@@ -88,6 +88,6 @@ describe("HistoryStrip", () => {
       }),
     );
     expect(html).toContain("worst day 2026-09-26: Degraded");
-    expect(html).toContain("09-26 degraded");
+    expect(html).toContain('<time dateTime="2026-09-26">Sep 26</time> degraded');
   });
 });

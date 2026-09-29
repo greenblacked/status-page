@@ -191,6 +191,43 @@ jobs:
             test-results/
           retention-days: 7
 
+  history:
+    name: browser tests (history build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # Read at build time; the runner needs it too, since the @history tests
+      # skip themselves without it.
+      VITE_STATUS_HISTORY: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain (npm ci)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
+
+      # The build differs from the `build` job's, so it is made here instead
+      # of downloaded. Only the desktop project runs, which is Chromium.
+      - name: Install Playwright's Chromium
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: Build with the uptime history strip (npm run build)
+        run: npm run build
+
+      - name: Browser tests for the history build (Playwright)
+        run: npx --no-install playwright test --project=desktop --grep @history
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-report-history
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
   commits:
     name: commit messages
     runs-on: ubuntu-latest
@@ -268,7 +305,7 @@ jobs:
     # request waiting on a check that was skipped.
     name: CI OK
     if: always()
-    needs: [lint, typecheck, test, build, e2e, commits, branch, workflows]
+    needs: [lint, typecheck, test, build, e2e, history, commits, branch, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
