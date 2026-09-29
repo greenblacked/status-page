@@ -79,7 +79,7 @@ export function ComponentRow({
     : component.health !== "operational" && <Badge tone={component.health}>{healthLabel(component.health)}</Badge>;
 
   return (
-    <li className="flex items-center gap-3 rounded-xs glass-inset px-3 py-2">
+    <li data-component-row className="flex items-center gap-3 rounded-xs glass-inset px-3 py-2">
       {/* The floor keeps a name readable beside a long detail without reserving room a short name does not need. */}
       <span className="min-w-[4.5rem] flex-1 truncate text-sm text-fg" title={component.name}>
         {component.name}
@@ -104,14 +104,23 @@ export const HEALTHY_COMPONENTS_SHOWN = 6;
  * silently. Renders nothing when the vendor lists no components, since
  * there is nothing true to say.
  */
-export function HealthyComponents({ components, className }: { components: ComponentHealth[]; className?: string }) {
+export function HealthyComponents({
+  components,
+  total = components.length,
+  className,
+}: {
+  components: ComponentHealth[];
+  /** The vendor's true component count, when the snapshot kept fewer than it lists. */
+  total?: number;
+  className?: string;
+}) {
   if (components.length === 0) return null;
   // A stray non-operational component still leads the line.
   const ordered = [...components].sort(
     (a, b) => Number(a.health === "operational") - Number(b.health === "operational"),
   );
   const shown = ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
-  const more = ordered.length - shown.length;
+  const more = Math.max(total, ordered.length) - shown.length;
   return (
     <ul aria-label="Components" className={cn("flex flex-wrap gap-x-3 gap-y-1", className)}>
       {shown.map((component, componentIndex) => (
@@ -127,7 +136,12 @@ export function HealthyComponents({ components, className }: { components: Compo
           <span className="sr-only">{healthLabel(component.health)}</span>
         </li>
       ))}
-      {more > 0 ? <li className="text-xs text-subtle">+{more} more</li> : null}
+      {more > 0 ? (
+        <li className="text-xs text-subtle" data-more-components>
+          <span aria-hidden>+{more} more</span>
+          <span className="sr-only">{more} more components</span>
+        </li>
+      ) : null}
     </ul>
   );
 }

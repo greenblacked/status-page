@@ -209,6 +209,15 @@ export function BoardView({
   // Starring moves a card, so it glides there like a refresh does.
   const onToggleStar = (id: ServiceSnapshot["id"]) => withViewTransition(() => toggleStar(id));
   const groups = groupServices(visible);
+  // The board's most urgent service, from the whole board rather than the
+  // filtered view (starred services first among equals, as on the cards).
+  // It is highlighted only while it is also the first card on screen, so a
+  // filter or search that hides it leaves no highlight rather than crowning
+  // whatever is left.
+  const mostUrgentId = useMemo(
+    () => groupServices(starredFirst(board.services, starred)).attention[0]?.id,
+    [board.services, starred],
+  );
   const categoryCount = (id: "all" | CategoryId) =>
     id === "all" ? board.services.length : board.services.filter((service) => service.category === id).length;
 
@@ -433,35 +442,23 @@ export function BoardView({
               ) : (
                 <>
                   <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
-                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                      {groups.attention.map((service, index) => {
-                        const card = (
-                          <ServiceCard
-                            key={service.id}
-                            service={service}
-                            index={index}
-                            emphasized={changedIds.has(service.id)}
-                            starred={starred.has(service.id)}
-                            onToggleStar={onToggleStar}
-                            now={now}
-                          />
-                        );
-                        // The most urgent service, from the latest snapshot: a wider card
-                        // under a plain caption. Neutral, like the rest; the status colour
-                        // stays in its badge, and amber stays for what just moved.
-                        return index === 0 ? (
-                          <div
-                            key={service.id}
-                            data-highlight="true"
-                            className="flex flex-col gap-1.5 @xl:col-span-2 [&>article]:flex-1"
-                          >
-                            <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">Most urgent</p>
-                            {card}
-                          </div>
-                        ) : (
-                          card
-                        );
-                      })}
+                    {/* items-start: a short card keeps its own height instead of stretching to its row's tallest. */}
+                    <div className="grid grid-cols-1 items-start gap-3 @xl:grid-cols-2">
+                      {groups.attention.map((service, index) => (
+                        // One element type at every position, so a card that moves in or out of
+                        // first place is moved, not remounted: keyboard focus stays on its Star
+                        // button and the fade-in does not replay.
+                        <ServiceCard
+                          key={service.id}
+                          service={service}
+                          index={index}
+                          highlight={index === 0 && service.id === mostUrgentId}
+                          emphasized={changedIds.has(service.id)}
+                          starred={starred.has(service.id)}
+                          onToggleStar={onToggleStar}
+                          now={now}
+                        />
+                      ))}
                     </div>
                   </ServiceSection>
                   <ServiceSection id="operational" title="Operational" services={groups.operational}>

@@ -112,7 +112,11 @@ describe("sortByUrgency", () => {
     expect(sortByUrgency([])).toEqual([]);
     const input = [service("aws", "outage"), service("gcp", "degraded")];
     expect(sortByUrgency(input)).not.toBe(input);
+  });
+
+  it("leaves the attention group empty when every service is operational", () => {
     expect(groupServices([service("aws", "operational")]).attention).toEqual([]);
+    expect(groupServices([]).attention).toEqual([]);
   });
 
   it("changes which service leads when the data changes", () => {

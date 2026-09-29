@@ -25,13 +25,20 @@ async function cardsSettled(page: Page): Promise<void> {
   );
 }
 
-/** Loads the page, then presses Refresh so the served fixture replaces the server's first render. */
-async function openFixture(page: Page, board: () => BoardSnapshot): Promise<void> {
+/**
+ * Loads the page, then presses Refresh so the served fixture replaces the server's first render.
+ * `ready` names a card and the status word that shows the fixture has arrived.
+ */
+async function openFixture(
+  page: Page,
+  board: () => BoardSnapshot,
+  ready: { id: string; label: string } = { id: "aws", label: "Outage" },
+): Promise<void> {
   await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await page.getByRole("button", { name: "Refresh status now" }).first().click();
-  await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
 }
 
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
@@ -227,8 +234,8 @@ test("renders healthy services as full cards, alike whether or not the vendor li
     await expect(operational.and(card), `${id} sits in Operational`).toHaveCount(1);
     // The same parts on every one: name, badge, star, link to the official source.
     await expect(card.getByRole("heading", { level: 3, name: service.name })).toBeVisible();
-    // First match: the badge in the header, ahead of the component list's screen-reader-only state words.
-    await expect(card.getByText("Operational", { exact: true }).first()).toBeVisible();
+    // The badge in the card header, not the component list's screen-reader-only state words.
+    await expect(card.locator("[data-card-header]").getByText("Operational", { exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: `Star ${service.name}` })).toBeVisible();
     await expect(card.locator(`a[href="${service.sourceUrl}"]`)).toBeVisible();
     // The component list is there when the vendor reports components, and only then.
@@ -258,10 +265,12 @@ test("leads Needs attention with the most urgent service and follows the data", 
   await expect(attention.nth(3)).toHaveAttribute("id", "service-android");
 
   // Exactly one card is the highlight, and it is the first.
-  const highlight = page.locator('[data-highlight="true"]');
+  const highlight = page.locator('article[data-highlight="true"]');
   await expect(highlight).toHaveCount(1);
-  await expect(highlight.locator("article")).toHaveAttribute("id", "service-aws");
+  await expect(highlight).toHaveAttribute("id", "service-aws");
   await expect(highlight).toContainText("Most urgent");
+  // The caption is the card's own first line, not a wrapper around it.
+  await expect(highlight.locator("> p").first()).toHaveText("Most urgent");
   // It holds the whole card, not a stub of it.
   await expect(highlight.getByText("Outage", { exact: true }).first()).toBeVisible();
   await expect(highlight.locator('a[href^="https://"]')).toBeVisible();
@@ -271,7 +280,7 @@ test("leads Needs attention with the most urgent service and follows the data", 
   await page.getByRole("button", { name: "Refresh status now" }).first().click();
   await expect(attention.first()).toHaveAttribute("id", "service-grok");
   await expect(highlight).toHaveCount(1);
-  await expect(highlight.locator("article")).toHaveAttribute("id", "service-grok");
+  await expect(highlight).toHaveAttribute("id", "service-grok");
 
   // With nothing to attend to there is no highlight and no group.
   const now = Date.now();
@@ -293,6 +302,88 @@ test("leads Needs attention with the most urgent service and follows the data", 
   await expect(cards(page)).toHaveCount(SERVICES);
 });
 
+test("keeps keyboard focus on a Star button when its card becomes the most urgent", async ({ page }) => {
+  // Google Cloud and Grok are both degraded, with one start time: a tie, so catalog order
+  // (Google Cloud first) decides, until a star breaks it.
+  const now = Date.now();
+  const startedAt = new Date(now - 30 * 60_000).toISOString();
+  const base = fixtureBoard(now, { grok: "degraded" });
+  const services = base.services.map((item) => {
+    if (item.id === "gcp" || item.id === "grok") {
+      return { ...item, health: "degraded" as const, incidents: item.incidents.map((i) => ({ ...i, startedAt })) };
+    }
+    return item.health === "operational" || item.category === "updates"
+      ? item
+      : {
+          ...item,
+          health: "operational" as const,
+          summary: "All systems operational",
+          components: [],
+          incidents: [],
+          failure: undefined,
+        };
+  });
+  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const item of services) counts[item.health] += 1;
+  const board: BoardSnapshot = { ...base, services, counts };
+  await openFixture(page, () => board, { id: "grok", label: "Degraded" });
+
+  const attention = group(page, "attention");
+  await expect(attention).toHaveCount(2);
+  await expect(attention.nth(0)).toHaveAttribute("id", "service-gcp");
+  await expect(attention.nth(1)).toHaveAttribute("id", "service-grok");
+  const highlight = page.locator('article[data-highlight="true"]');
+  await expect(highlight).toHaveAttribute("id", "service-gcp");
+
+  // Mark the second card's node, to tell a move from a remount afterwards.
+  await page.locator("article#service-grok").evaluate((node) => {
+    (node as HTMLElement & { __same?: boolean }).__same = true;
+  });
+
+  // Star it from the keyboard.
+  const star = page.locator("article#service-grok").getByRole("button", { name: "Star Grok", exact: true });
+  await star.focus();
+  await expect(star).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  // It is now first and the highlight, and focus never left its button.
+  await expect(attention.nth(0)).toHaveAttribute("id", "service-grok");
+  await expect(highlight).toHaveCount(1);
+  await expect(highlight).toHaveAttribute("id", "service-grok");
+  await expect(highlight).toContainText("Most urgent");
+  await expect(page.locator("article#service-gcp")).not.toHaveAttribute("data-highlight");
+  await expect(star).toBeFocused();
+  expect(
+    await page.evaluate(() => {
+      const active = document.activeElement;
+      return {
+        label: active?.getAttribute("aria-label"),
+        card: active?.closest("article")?.id,
+        sameNode: (document.getElementById("service-grok") as (HTMLElement & { __same?: boolean }) | null)?.__same,
+      };
+    }),
+  ).toEqual({ label: "Star Grok", card: "service-grok", sameNode: true });
+
+  // Unstarring hands the lead back, and focus still stays.
+  await page.keyboard.press("Enter");
+  await expect(attention.nth(0)).toHaveAttribute("id", "service-gcp");
+  await expect(highlight).toHaveAttribute("id", "service-gcp");
+  await expect(star).toBeFocused();
+});
+
+test("highlights the board's most urgent service only while it is on screen", async ({ page }) => {
+  const board = fixtureBoard(Date.now());
+  await openFixture(page, () => board);
+  const highlight = page.locator('article[data-highlight="true"]');
+  await expect(highlight).toHaveAttribute("id", "service-aws");
+
+  // Searching leaves Google Cloud first, but it is not the board's most urgent: no highlight.
+  await page.getByLabel("Search services").fill("Google Cloud");
+  await expect(cards(page)).toHaveCount(1);
+  await expect(cards(page).first()).toHaveAttribute("id", "service-gcp");
+  await expect(highlight).toHaveCount(0);
+});
+
 test("keeps the groups, filters and stars working with full cards", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
@@ -308,7 +399,7 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   const issues = page.getByRole("button", { name: /Issues only/ });
   await issues.click();
   await expect(cards(page)).toHaveCount(4);
-  await expect(page.locator('[data-highlight="true"] article')).toHaveAttribute("id", "service-aws");
+  await expect(page.locator('article[data-highlight="true"]')).toHaveAttribute("id", "service-aws");
   await issues.click();
   await expect(cards(page)).toHaveCount(SERVICES);
 

@@ -23,7 +23,8 @@ const up = (count: number): ComponentHealth[] =>
   Array.from({ length: count }, (_, index) => ({ name: `Part ${index + 1}`, health: "operational" }));
 
 const LIST = '<ul aria-label="Components"';
-const ROW = "glass-inset px-3 py-2";
+const ROW = "data-component-row";
+const rows = (html: string) => html.match(/data-component-row/g) ?? [];
 
 describe("healthy service card", () => {
   it("names the first components, marks each up in words, and counts the rest", () => {
@@ -33,6 +34,7 @@ describe("healthy service card", () => {
     for (let n = 1; n <= 6; n++) expect(html).toContain(`>Part ${n}</span>`);
     expect(html).not.toContain(">Part 7<");
     expect(html).toContain("+18 more");
+    expect(html).toContain("18 more components");
     expect(html.match(/<span class="sr-only">Operational<\/span>/g)).toHaveLength(6);
     // The summary, latency and source footer stay.
     expect(html).toContain("All systems operational");
@@ -42,9 +44,23 @@ describe("healthy service card", () => {
     expect(html).not.toContain(ROW);
   });
 
+  it("counts the vendor's true total when the snapshot kept fewer components", () => {
+    const html = render("chatgpt", { components: up(24), componentCount: 40 });
+    expect(html.match(/<li/g)).toHaveLength(7);
+    expect(html).toContain("+34 more");
+    expect(html).toContain("34 more components");
+    expect(html).not.toContain("+18 more");
+  });
+
+  it("falls back to the components it has when the total is absent or smaller", () => {
+    expect(render("chatgpt", { components: up(24) })).toContain("+18 more");
+    expect(render("chatgpt", { components: up(24), componentCount: 3 })).toContain("+18 more");
+  });
+
   it("adds no count when every component fits", () => {
     const html = render("chatgpt", { components: up(3) });
     expect(html.match(/<li/g)).toHaveLength(3);
+    expect(html).not.toContain("data-more-components");
     expect(html).not.toContain("more");
   });
 
@@ -74,7 +90,7 @@ describe("degraded service card", () => {
   it("keeps rows for broken components only, without the healthy list", () => {
     const html = render("chatgpt", { health: "degraded", summary: "Partial outage", components });
     expect(html).not.toContain(LIST);
-    expect(html.match(/glass-inset px-3 py-2/g)).toHaveLength(2);
+    expect(rows(html)).toHaveLength(2);
     expect(html).toContain(">Codex</span>");
     expect(html).toContain(">Login</span>");
     expect(html).not.toContain("Part 1");
@@ -89,7 +105,7 @@ describe("degraded service card", () => {
       health: "degraded" as const,
     }));
     const html = render("chatgpt", { health: "degraded", components: many });
-    expect(html.match(/glass-inset px-3 py-2/g)).toHaveLength(6);
+    expect(rows(html)).toHaveLength(6);
   });
 });
 
@@ -97,10 +113,42 @@ describe("release trackers and CS2 pops", () => {
   it("keep every component as a row, up or not", () => {
     const changelog = render("aws", { category: "updates", components: up(3) });
     expect(changelog).not.toContain(LIST);
-    expect(changelog.match(/glass-inset px-3 py-2/g)).toHaveLength(3);
+    expect(rows(changelog)).toHaveLength(3);
 
     const pops = render("cs2-europe", { components: up(3) });
     expect(pops).not.toContain(LIST);
-    expect(pops.match(/glass-inset px-3 py-2/g)).toHaveLength(3);
+    expect(rows(pops)).toHaveLength(3);
+  });
+});
+
+describe("highlighted service card", () => {
+  const renderCard = (highlight: boolean) =>
+    renderToStaticMarkup(
+      createElement(ServiceCard, {
+        service: service("aws", { health: "outage", summary: "Increased error rates" }),
+        index: 0,
+        highlight,
+        starred: false,
+        onToggleStar: noop,
+        now: Date.parse("2026-09-27T12:00:00.000Z"),
+      }),
+    );
+
+  it("marks the one article, with the caption as its first child and the wide-screen span", () => {
+    const html = renderCard(true);
+    expect(html.startsWith("<article")).toBe(true);
+    expect(html.match(/<article/g)).toHaveLength(1);
+    expect(html).toContain('data-highlight="true"');
+    expect(html).toContain("@xl:col-span-2");
+    const opening = html.indexOf(">") + 1;
+    expect(html.slice(opening).startsWith("<p")).toBe(true);
+    expect(html.slice(opening, html.indexOf("</p>"))).toContain("Most urgent");
+  });
+
+  it("carries no mark, caption or span otherwise", () => {
+    const html = renderCard(false);
+    expect(html).not.toContain("data-highlight");
+    expect(html).not.toContain("Most urgent");
+    expect(html).not.toContain("col-span-2");
   });
 });

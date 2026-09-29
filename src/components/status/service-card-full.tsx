@@ -19,13 +19,19 @@ import { cn } from "@/lib/utils";
 /**
  * The full card, for every service and the release trackers. A service that
  * needs attention lists its broken components; a healthy one names its
- * components on one quiet line. Every line should add something the summary does not already
- * say: vendors often repeat one incident as the status description, the
- * affected component and the incident title.
+ * components on one quiet line. Every line should add something the summary
+ * does not already say: vendors often repeat one incident as the status
+ * description, the affected component and the incident title.
+ *
+ * `highlight` marks the board's most urgent service: the card spans both
+ * columns on wide screens under a plain "Most urgent" caption. It is a prop
+ * on the one <article>, never a wrapper, so a card that gains or loses it
+ * keeps its DOM node (and the keyboard focus inside it).
  */
 export function ServiceCard({
   service,
   index,
+  highlight = false,
   emphasized = false,
   starred,
   onToggleStar,
@@ -33,6 +39,8 @@ export function ServiceCard({
 }: {
   service: ServiceSnapshot;
   index: number;
+  /** The board's most urgent service: wider on wide screens, under a "Most urgent" caption. */
+  highlight?: boolean;
   emphasized?: boolean;
   starred: boolean;
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
@@ -66,16 +74,22 @@ export function ServiceCard({
   return (
     <article
       id={serviceAnchor(service.id)}
+      data-highlight={highlight ? "true" : undefined}
       // Focusable by script and by its #service-<id> link, never by Tab, so
       // an attention chip leaves the keyboard on the card it jumped to.
       tabIndex={-1}
       className={cn(
         "@container focus-ring spotlight group relative flex scroll-mt-6 flex-col rounded-lg glass p-4 stagger-in",
+        highlight && "@xl:col-span-2",
         emphasized && "service-card-changed",
       )}
       style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, viewTransitionName: `vt-${service.id}` }}
     >
-      <div className="flex items-start justify-between gap-3">
+      {highlight ? (
+        // Neutral, like the rest: the status colour stays in the badge, and amber stays for what just moved.
+        <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">Most urgent</p>
+      ) : null}
+      <div data-card-header className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span
             className={cn(
@@ -118,7 +132,13 @@ export function ServiceCard({
         <IncidentSince startedAt={summaryIncident.startedAt} reference={checkedAt} now={now} className="mt-1" />
       ) : null}
 
-      {healthy ? <HealthyComponents components={service.components} className="mt-3" /> : null}
+      {healthy ? (
+        <HealthyComponents
+          components={service.components}
+          total={service.componentCount ?? service.components.length}
+          className="mt-3"
+        />
+      ) : null}
 
       {rows.length > 0 ? (
         <ul className="mt-4 flex flex-col gap-1.5">
