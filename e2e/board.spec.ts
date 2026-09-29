@@ -29,6 +29,22 @@ test("renders every service with no console errors or hydration warnings", async
 test("has no serious or critical accessibility violations", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  // Cards fade in (rise-in). Let each card's own animations end first, or axe
+  // measures text that is still partly transparent and reports its blend with
+  // the page as low contrast. Only time-based ones: a scroll-driven animation
+  // (or an infinite one) never finishes.
+  await cards(page).evaluateAll((elements) =>
+    Promise.all(
+      elements
+        .flatMap((element) => element.getAnimations())
+        .filter(
+          (animation) =>
+            animation.timeline instanceof DocumentTimeline &&
+            animation.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY,
+        )
+        .map((animation) => animation.finished),
+    ),
+  );
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
