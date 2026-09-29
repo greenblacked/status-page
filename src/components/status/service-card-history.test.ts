@@ -112,7 +112,7 @@ describe("cards with history", () => {
   it("expose one accessible summary and hide the caption and per-day bars", () => {
     const html = card(history({ aws: { days: DAYS } }));
     expect(html.match(/role="img"/g)).toHaveLength(1);
-    expect(html).toContain('aria-label="2-day uptime history');
+    expect(html).toContain('aria-label="30-day uptime history');
     // Every per-day bar is hidden from assistive tech; the caption is too.
     expect(html.match(/<span aria-hidden="true" title="2026-\d\d-\d\d: /g)).toHaveLength(30);
     expect(html).toMatch(/<div aria-hidden="true" class="flex items-end justify-between[^>]*><p[^>]*>.*uptime/);
