@@ -1,6 +1,4 @@
 import { ArrowUpRight } from "lucide-react";
-import { useServiceHistoryDays } from "@/components/status/board-history-provider";
-import { HistoryStrip } from "@/components/status/history-strip";
 import {
   CATEGORY_ICON,
   ComponentRow,
@@ -11,7 +9,6 @@ import {
 } from "@/components/status/service-card-shared";
 import { Badge } from "@/components/ui/badge";
 import { healthLabel } from "@/lib/status/health";
-import type { HistoryDay } from "@/lib/status/history";
 import { serviceAnchor, serviceIndex } from "@/lib/status/layout";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
@@ -29,7 +26,6 @@ export function ServiceCard({
   starred,
   onToggleStar,
   now,
-  historyDays = [],
 }: {
   service: ServiceSnapshot;
   index: number;
@@ -38,11 +34,7 @@ export function ServiceCard({
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
   /** The client clock (0 until mounted), for how long an incident has run. */
   now: number;
-  /** Public history days for this service; empty when cold or missing. */
-  historyDays?: HistoryDay[];
 }) {
-  const contextDays = useServiceHistoryDays(service.id);
-  const days = historyDays.length > 0 ? historyDays : contextDays;
   const Icon = CATEGORY_ICON[service.category];
   const changelog = service.category === "updates";
   const summary = norm(service.summary);
@@ -148,8 +140,6 @@ export function ServiceCard({
           ))}
         </ul>
       ) : null}
-
-      {days.length > 0 ? <HistoryStrip days={days} nowMs={now} className="mt-4" /> : null}
 
       <div className="mt-auto flex items-center justify-between gap-3 pt-4">
         <p className="font-mono text-[11px] tabular-nums text-subtle" title="Time the official source took to answer">

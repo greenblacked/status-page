@@ -6,6 +6,8 @@ type TtlCacheOptions = {
   // instead of starting another one, so a scripted Refresh button cannot turn
   // into one vendor sweep per click.
   minForceIntervalMs?: number;
+  // Keep a background refresh alive after a Worker response is sent.
+  onBackgroundRefresh?: (promise: Promise<unknown>) => void;
 };
 
 type GetOptions = { force?: boolean; allowStale?: boolean };
@@ -13,7 +15,7 @@ type GetOptions = { force?: boolean; allowStale?: boolean };
 export function createTtlCache<T>(
   load: () => Promise<T>,
   ttlMs: number,
-  { maxStaleMs = 0, minForceIntervalMs = 0 }: TtlCacheOptions = {},
+  { maxStaleMs = 0, minForceIntervalMs = 0, onBackgroundRefresh }: TtlCacheOptions = {},
 ) {
   let cached: { at: number; value: T } | null = null;
   let inflight: Promise<T> | null = null;
@@ -42,7 +44,8 @@ export function createTtlCache<T>(
     if (allowStale && age < ttlMs + maxStaleMs) {
       // A failed background refresh keeps the old value; the next caller past
       // the stale window waits for a load and sees the error itself.
-      refresh().catch(() => {});
+      const background = refresh().catch(() => {});
+      onBackgroundRefresh?.(background);
       return cached.value;
     }
     return refresh();

@@ -46,8 +46,8 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
 | **At home on Apple devices** | Glass over a slow aurora and a faint drafting grid, in deep ink or warm paper as your system is set, with colour kept to small exact points and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, and follows Increase Contrast and Reduce Motion. Tested in Safari's engine on a Mac, an iPhone and an iPad |
-| **Open integrations** | A JSON API, daily uptime history, an Atom feed, Shields.io badges and Prometheus metrics |
-| **Runs anywhere** | Any Node host, or Cloudflare Workers with a scheduled collector and a KV snapshot. `docker compose` for a local run with no Node install |
+| **Open integrations** | A current-status JSON API, an Atom feed, Shields.io badges and Prometheus metrics |
+| **Runs anywhere** | Any Node host or Cloudflare Workers, with an in-memory cache per process or isolate. `docker compose` for a local run with no Node install |
 
 ## What it watches
 
@@ -115,30 +115,18 @@ The two Updates services track releases, not incidents. They stay Operational an
 ### From vendor to board
 
 ```mermaid
-flowchart LR
-  vendors[("14 official<br/>vendor sources")]
-  browser["Board in the browser<br/>pulls every 2 minutes"]
-
-  subgraph node ["On a Node host"]
-    direction TB
-    nreq["Request"] --> memo{"Snapshot under<br/>45 seconds old?"}
-    memo -->|no| nsweep["Collect all 14 in parallel<br/>9-second timeout each"]
-  end
-
-  subgraph workers ["On Cloudflare Workers"]
-    direction TB
-    cron["Cron Trigger<br/>every 2 minutes"] --> wsweep["Collect all 14"]
-    wsweep --> kv[("Workers KV<br/>latest snapshot")]
-    wreq["Request"] --> kv
-  end
-
-  browser --> nreq
-  browser --> wreq
-  nsweep <--> vendors
-  wsweep <--> vendors
+flowchart TB
+  vendors["14 official vendor sources"]
+  node["Node request and in-memory cache"]
+  worker["Worker request and per-isolate cache"]
+  browser["Browser refreshes every two minutes"]
+  browser --> node
+  browser --> worker
+  node --> vendors
+  worker --> vendors
 ```
 
-Collection runs on the server, so the browser never deals with vendor CORS and every open board shares one snapshot. Each collector fails on its own: one broken source costs one card, never the board. Vendor responses are untrusted input: each is capped at 4 MiB, and a link from a feed is kept only when it is https on the vendor's own host.
+Collection runs on the server, so the browser never deals with vendor CORS. Each process or Worker isolate shares its own 45-second cache among requests. Each collector fails on its own: one broken source costs one card. Vendor responses are capped at 4 MiB, and feed links must use HTTPS on the vendor's host.
 
 ## Quick start
 
@@ -166,7 +154,7 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Reduce glass** in **Settings and shortcuts** turns the frosted panels solid and stops the background drifting, for easier reading or an older phone. Safari does not tell web pages about the system's Reduce Transparency setting, so the board has its own switch; browsers that do pass it on get the same result without it. The choice is kept in this browser.
 - **Scroll down** and a compact bar with the live signal, the headline, **Alerts** and **Refresh** floats at the top of the screen.
 - **Add to Home Screen** in Safari's share menu to open the board full screen, with its own icon, like an app.
-- **Know how fresh it is:** the board pulls a snapshot every two minutes, 15 to 30 seconds after each two-minute mark, by when the server has usually renewed it (a slow sweep shows up one pull later), and the countdown ends when it does. The headline says when the snapshot on screen was taken ("as of 14:05 UTC"). If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did; a snapshot already more than half an hour old when the page opens shows **Stale** straight away.
+- **Know how fresh it is:** the board pulls a snapshot every two minutes, 15 to 30 seconds after each two-minute mark, by when a request can start a new collection, and the countdown ends when it does. The headline says when the snapshot on screen was taken ("as of 14:05 UTC"). If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did; a snapshot already more than half an hour old when the page opens shows **Stale** straight away.
 - **See how long an incident has run:** a card shows when the vendor says it began, such as "since 14:05 UTC · 2h 10m", or when planned maintenance is due, such as "scheduled for 22:00 UTC".
 - **Read the Board log** to see what changed between two-minute slots.
 - **Press Refresh** to skip the cache and ask every vendor right now. Presses within 15 seconds of the last check reuse it.
@@ -175,12 +163,12 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 
 ## Integrations
 
-The board publishes what it shows in five open formats. All five allow cross-origin reads and are cached for a minute. Status, feed, badges and metrics come from the same two-minute snapshot as the page; `/api/history.json` is the rolling UTC day aggregates written by cron.
+The board publishes current status in four open formats. Responses allow cross-origin reads and are cached for a minute. `/api/history.json` remains available as an empty compatibility response; without persistent storage it cannot provide uptime history.
 
 | Endpoint | Format | Use it for |
 | --- | --- | --- |
 | `/api/status.json` | JSON: overall health, headline, counts, and each service's health, summary, source and incidents | Scripts, dashboards, chat bots |
-| `/api/history.json` | JSON: per-service daily worst health, sample count and operational fraction (`up`), last 30 UTC days | Uptime charts, SLO scripts, historical dashboards |
+| `/api/history.json` | JSON: empty `services` map (compatibility only) | Existing clients checking the history schema |
 | `/feed.xml` | Atom, one entry per service that needs attention | Alerts in Slack, Teams, Discord or a feed reader |
 | `/api/badge/<service>` | [Shields.io endpoint badge](https://shields.io/badges/endpoint-badge) | A live status badge in a README or wiki |
 | `/metrics` | [Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-based-format): each service's state, incidents and source reachability | Prometheus, Grafana and Alertmanager |
@@ -295,7 +283,7 @@ groups:
 
 | Where | How |
 | --- | --- |
-| **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `dev` to a staging Worker and `main` to production. A Cron Trigger collects the board every two minutes into Workers KV. With `DEPLOY_URL` set, every deploy is smoke-tested and rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
+| **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `dev` to a staging Worker and `main` to production. Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested and rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
 | **Any Node host** | `npm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice. `npm run preview` is a smoke test of that build, not a production host |
 | **Docker** | `docker compose up preview` serves the built board from the public CI images, for a local run or a quick demo |
 
@@ -330,7 +318,7 @@ Usually under three minutes old. Each board asks the server every two minutes.
 
 Running on Node (`npm run build`/`npm run preview`, or any other Node host), the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago. Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
 
-Running on Cloudflare Workers, a scheduled job collects every vendor every two minutes and every request just reads that result, so it never waits on a vendor either. **Refresh** there shows the newest scheduled snapshot rather than forcing a new sweep. Allowing for the schedule, Cloudflare's own read caching and each board's two-minute check, what you see is usually a few minutes old at most.
+Running on Cloudflare Workers, each isolate collects on demand and keeps its own in-memory cache. A cold request can wait for vendor responses, and **Refresh** requests a new sweep within that isolate (throttled to once per 15 seconds). Different isolates can show different collection times and issue more vendor requests.
 
 </details>
 
@@ -357,7 +345,7 @@ The status page's JSON API sits behind a Cloudflare challenge, so the official R
 
 <br>
 
-On Node, the server holds only the latest snapshot, in memory, and reuses it for up to 45 seconds. On Cloudflare Workers, the scheduled job writes the latest snapshot to a Workers KV namespace, which every request reads; nothing else is stored there, and it holds no personal data. Neither build writes to a disk or a database of its own. The Board log lives in your browser's local storage and keeps the last two hours, next to your alerts on/off choice, your starred services and the single-key shortcuts setting. Private windows or blocked site data leave it empty.
+On Node, the server holds only the latest snapshot, in memory, and reuses it for up to 45 seconds. On Cloudflare Workers, each isolate holds only its recent snapshot in memory; it is lost when that isolate stops. No uptime history is retained. Neither build writes to a disk or a database of its own. The Board log lives in your browser's local storage and keeps the last two hours, next to your alerts on/off choice, your starred services and the single-key shortcuts setting. Private windows or blocked site data leave it empty.
 
 </details>
 

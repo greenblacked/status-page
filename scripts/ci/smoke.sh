@@ -3,7 +3,6 @@
 # the Worker running locally in workerd, and a fresh Cloudflare deploy.
 #
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4173
-#   ./scripts/ci/smoke.sh http://127.0.0.1:4173 --cron status-bar
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --attempts 6
 #   ./scripts/ci/smoke.sh https://status.example.com --expect-version <id> --wait 120
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --ready-wait 300
@@ -17,9 +16,7 @@
 # --require-ready, /readyz then has to answer 200, checked again every 10 s
 # for up to --ready-wait seconds (default 0: once). The two are separate
 # because they wait for different things: a broken page or API should fail
-# within a minute, while a board that is stale when a deploy lands only
-# turns ready after the next Cron Trigger's snapshot reaches this location,
-# which takes minutes (deploy.yml explains the numbers).
+# within a minute, while a cold Worker collects vendors on its first request.
 #
 # --expect-version <id> first waits, within --wait, until /healthz carries
 # X-Worker-Version: <id> (src/lib/worker-version.ts), then requires it on
@@ -28,30 +25,17 @@
 # the old one it is still replacing somewhere, and a new version that never
 # starts answering fails instead of passing on the old one.
 #
-# --cron <worker> also runs the Worker's Cron Trigger through the Local
-# Explorer API that `vite preview` of a DEPLOY_TARGET=cloudflare build
-# serves, and checks that the snapshot the API returns moves forward. Only
-# for local previews: a deployed Worker has no Local Explorer.
-#
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
 
 SERVICES=14
 TITLE='<title>Status Page</title>'
 FOOTER='Cached server snapshots update every two minutes from official vendor feeds.'
-# cron-sweep.ts skips a sweep within MIN_FORCED_REFRESH_MS (15 s) of the
-# last snapshot, so --cron waits until the snapshot is older than this.
-CRON_THROTTLE_S=16
-# The sweep itself (vendor timeouts are 9 s) plus the Worker's 5 s isolate
-# memo, with room to spare on a slow runner.
-CRON_ADVANCE_S=60
-
 usage() {
-  echo "usage: $0 <base-url> [--cron <worker-name>] [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
+  echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
 }
 
 base=""
-cron_worker=""
 require_ready=false
 ready_wait=0
 attempts=1
@@ -59,7 +43,6 @@ wait_s=60
 expect_version=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --cron) [ $# -ge 2 ] || { usage >&2; exit 2; }; cron_worker="$2"; shift 2 ;;
     --require-ready) require_ready=true; shift ;;
     --ready-wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; ready_wait="$2"; shift 2 ;;
     --attempts) [ $# -ge 2 ] || { usage >&2; exit 2; }; attempts="$2"; shift 2 ;;
@@ -78,11 +61,6 @@ done
 # Worker version ids are UUIDs; this keeps anything else out of the messages.
 if [ -n "$expect_version" ] && ! [[ "$expect_version" =~ ^[A-Za-z0-9-]{1,64}$ ]]; then
   echo "::error::--expect-version takes a Worker version id such as 8842dd8a-be26-460d-a3ea-2890e9015024" >&2
-  exit 2
-fi
-# The name goes into a URL query string; Worker names are this shape anyway.
-if [ -n "$cron_worker" ] && ! [[ "$cron_worker" =~ ^[a-z0-9-]+$ ]]; then
-  echo "::error::--cron takes a Worker name such as status-bar" >&2
   exit 2
 fi
 
@@ -171,7 +149,7 @@ run_checks() {
   check_version /api/history.json
   if [ "$status" != 200 ]; then
     fail "/api/history.json: $status, expected 200"
-  elif ! jq -e '.schema == 1 and .timezone == "UTC" and .retentionDays == 30 and (.services | type) == "object"' "$work/body" >/dev/null 2>&1; then
+  elif ! jq -e '.schema == 1 and .timezone == "UTC" and .retentionDays == 30 and (.services | type) == "object" and (.services | length) == 0' "$work/body" >/dev/null 2>&1; then
     fail "/api/history.json: not JSON with schema 1, UTC, retentionDays 30 and services"
   fi
 
@@ -217,53 +195,6 @@ wait_for_ready() {
   done
 }
 
-generated_at() {
-  get /api/status.json
-  [ "$status" = 200 ] && jq -r '.generatedAt // empty' "$work/body" 2>/dev/null
-}
-
-# jq's fromdateiso8601 takes no fractional seconds, and toISOString always
-# writes milliseconds.
-age_seconds() {
-  jq -nr --arg t "$1" '(now - ($t | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) | floor'
-}
-
-check_cron() {
-  local before after age deadline
-  before="$(generated_at)" || true
-  if [ -z "$before" ]; then
-    fail "--cron: /api/status.json had no generatedAt to compare against"
-    return 1
-  fi
-  age="$(age_seconds "$before")" || age=0
-  if ((age < CRON_THROTTLE_S)); then
-    echo "snapshot is ${age}s old; waiting past the sweep throttle"
-    sleep $((CRON_THROTTLE_S - age))
-  fi
-
-  local explorer="$base/cdn-cgi/local/explorer/api/local/scheduled?worker=$cron_worker"
-  status="$(curl --silent --show-error --max-time 90 --output "$work/body" --write-out '%{http_code}' \
-    -X POST -H 'Content-Type: application/json' -d '{"cron":"*/2 * * * *"}' "$explorer")" || status=000
-  if [ "$status" != 200 ] || ! jq -e '.success == true and .result.outcome == "ok"' "$work/body" >/dev/null 2>&1; then
-    fail "--cron: the scheduled handler of $cron_worker did not run cleanly ($status): $(head -c 300 "$work/body")"
-    return 1
-  fi
-
-  deadline=$((SECONDS + CRON_ADVANCE_S))
-  while :; do
-    after="$(generated_at)" || true
-    if [ -n "$after" ] && [[ "$after" > "$before" ]]; then
-      echo "ok  cron sweep moved the snapshot from $before to $after"
-      return 0
-    fi
-    if ((SECONDS >= deadline)); then
-      fail "--cron: the snapshot stayed at $before for ${CRON_ADVANCE_S}s after the cron ran"
-      return 1
-    fi
-    sleep 2
-  done
-}
-
 wait_for_server || exit 1
 
 attempt=1
@@ -282,7 +213,4 @@ if [ "$require_ready" = true ]; then
   wait_for_ready || { echo "smoke: FAILED against $base" >&2; exit 1; }
 fi
 
-if [ -n "$cron_worker" ]; then
-  check_cron || { echo "smoke: FAILED against $base" >&2; exit 1; }
-fi
 echo "smoke: OK"
