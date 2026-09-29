@@ -227,7 +227,8 @@ test("renders healthy services as full cards, alike whether or not the vendor li
     await expect(operational.and(card), `${id} sits in Operational`).toHaveCount(1);
     // The same parts on every one: name, badge, star, link to the official source.
     await expect(card.getByRole("heading", { level: 3, name: service.name })).toBeVisible();
-    await expect(card.getByText("Operational", { exact: true })).toBeVisible();
+    // First match: the badge in the header, ahead of the component list's screen-reader-only state words.
+    await expect(card.getByText("Operational", { exact: true }).first()).toBeVisible();
     await expect(card.getByRole("button", { name: `Star ${service.name}` })).toBeVisible();
     await expect(card.locator(`a[href="${service.sourceUrl}"]`)).toBeVisible();
     // The component list is there when the vendor reports components, and only then.
