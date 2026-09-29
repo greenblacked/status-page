@@ -85,7 +85,8 @@ describe("collectAllServices shared fetches", () => {
     const summary = JSON.stringify({
       status: { indicator: "minor", description: "Minor Service Outage" },
       components: [
-        { id: "1", name: "Fortnite", status: "partial_outage" },
+        { id: "g1", name: "Fortnite", status: "operational", group: true },
+        { id: "1", name: "Matchmaking", status: "partial_outage", group_id: "g1" },
         { id: "2", name: "Epic Games Store", status: "operational" },
       ],
     });

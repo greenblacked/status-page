@@ -48,7 +48,14 @@ function mikrotikChannels(body: (file: string) => string): Record<string, Handle
 // Minimal but shape-correct Statuspage summary.json fixture.
 function statuspageSummary(overrides: {
   indicator?: string;
-  components?: Array<{ id: string; name: string; status: string; group?: boolean; position?: number }>;
+  components?: Array<{
+    id: string;
+    name: string;
+    status: string;
+    group?: boolean;
+    group_id?: string | null;
+    position?: number;
+  }>;
   incidents?: Array<{ id: string; name: string; status: string; impact?: string }>;
 }) {
   return {
@@ -485,13 +492,13 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(snapshot.incidents[0].startedAt).toBe(new Date(epochMs).toISOString());
   });
 
-  it("Statuspage: a healthy vendor lists every leaf component in position order, groups excluded", async () => {
+  it("Statuspage: a healthy vendor lists every leaf component in the vendor's order, groups excluded", async () => {
     const summary = statuspageSummary({
       components: [
-        { id: "g", name: "APIs (group)", status: "operational", group: true, position: 1 },
-        { id: "3", name: "Files", status: "operational", position: 3 },
-        { id: "1", name: "Chat", status: "operational", position: 1 },
-        { id: "2", name: "Login", status: "operational", position: 2 },
+        { id: "g", name: "APIs (group)", status: "operational", group: true },
+        { id: "1", name: "Chat", status: "operational", group_id: "g" },
+        { id: "2", name: "Login", status: "operational", group_id: "g" },
+        { id: "3", name: "Files", status: "operational", group_id: "g" },
       ],
     });
     stubFetch({ [URLS.chatgpt]: json(summary) });
@@ -502,16 +509,35 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       { name: "Login", health: "operational" },
       { name: "Files", health: "operational" },
     ]);
+    expect("componentCount" in chatgpt).toBe(false);
   });
 
-  it("Statuspage: non-operational components lead, then operational ones, each in position order", async () => {
+  it("Statuspage: per-group positions do not interleave groups; the page order is kept", async () => {
+    // Statuspage numbers `position` within each group, so both groups have a
+    // child at 1 and 2. The array is already in page order.
+    const summary = statuspageSummary({
+      components: [
+        { id: "ga", name: "Group A", status: "operational", group: true },
+        { id: "a1", name: "A one", status: "operational", group_id: "ga", position: 1 },
+        { id: "a2", name: "A two", status: "operational", group_id: "ga", position: 2 },
+        { id: "gb", name: "Group B", status: "operational", group: true },
+        { id: "b1", name: "B one", status: "operational", group_id: "gb", position: 1 },
+        { id: "b2", name: "B two", status: "operational", group_id: "gb", position: 2 },
+      ],
+    });
+    stubFetch({ [URLS.chatgpt]: json(summary) });
+    const chatgpt = (await collectAllServices()).find((s) => s.id === "chatgpt")!;
+    expect(chatgpt.components.map((c) => c.name)).toEqual(["A one", "A two", "B one", "B two"]);
+  });
+
+  it("Statuspage: non-operational components lead, then operational ones, each in the vendor's order", async () => {
     const summary = statuspageSummary({
       indicator: "minor",
       components: [
-        { id: "1", name: "Chat", status: "operational", position: 1 },
-        { id: "2", name: "Login", status: "degraded_performance", position: 2 },
-        { id: "3", name: "Files", status: "operational", position: 3 },
-        { id: "4", name: "Voice", status: "major_outage", position: 4 },
+        { id: "1", name: "Chat", status: "operational" },
+        { id: "2", name: "Login", status: "degraded_performance" },
+        { id: "3", name: "Files", status: "operational" },
+        { id: "4", name: "Voice", status: "major_outage" },
       ],
     });
     stubFetch({ [URLS.claude]: json(summary) });
@@ -529,11 +555,11 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       id: String(i),
       name: `Component ${i}`,
       status: i === 55 ? "partial_outage" : "operational",
-      position: i + 1,
     }));
     stubFetch({ [URLS.spotify]: json(statuspageSummary({ indicator: "minor", components })) });
     const spotify = (await collectAllServices()).find((s) => s.id === "spotify")!;
     expect(spotify.components).toHaveLength(24);
+    expect(spotify.componentCount).toBe(60);
     expect(spotify.components[0]).toEqual({ name: "Component 55", health: "degraded" });
     expect(spotify.components.slice(1).map((c) => c.name)).toEqual(
       Array.from({ length: 23 }, (_, i) => `Component ${i}`),
@@ -549,11 +575,11 @@ describe("collectAllServices against stubbed vendor payloads", () => {
   it("Epic and Fortnite list only their own leaf components, never the group rows", async () => {
     const summary = statuspageSummary({
       components: [
-        { id: "g1", name: "Fortnite", status: "partial_outage", group: true, position: 1 },
-        { id: "1", name: "Fortnite Matchmaking", status: "partial_outage", position: 2 },
-        { id: "2", name: "Fortnite Store", status: "operational", position: 3 },
-        { id: "g2", name: "Platform", status: "operational", group: true, position: 4 },
-        { id: "3", name: "Accounts", status: "operational", position: 5 },
+        { id: "g1", name: "Fortnite", status: "partial_outage", group: true },
+        { id: "1", name: "Fortnite Matchmaking", status: "partial_outage", group_id: "g1" },
+        { id: "2", name: "Fortnite Store", status: "operational", group_id: "g1" },
+        { id: "g2", name: "Platform", status: "operational", group: true },
+        { id: "3", name: "Accounts", status: "operational", group_id: "g2" },
       ],
     });
     stubFetch({ [URLS.epicFortnite]: json(summary) });
@@ -569,6 +595,37 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     ]);
   });
 
+  it("Epic and Fortnite split by group name when the children have plain names", async () => {
+    // As on status.epicgames.com: the children of the "Fortnite" group are
+    // named Login, Matchmaking..., and only the group row says Fortnite.
+    const summary = statuspageSummary({
+      components: [
+        { id: "g1", name: "Fortnite", status: "operational", group: true },
+        { id: "1", name: "Login", status: "operational", group_id: "g1" },
+        { id: "2", name: "Matchmaking", status: "partial_outage", group_id: "g1" },
+        { id: "g2", name: "Epic Games Store", status: "operational", group: true },
+        { id: "3", name: "Login", status: "operational", group_id: "g2" },
+        { id: "4", name: "Purchasing", status: "major_outage", group_id: "g2" },
+        { id: "5", name: "Rocket League", status: "operational" },
+      ],
+    });
+    stubFetch({ [URLS.epicFortnite]: json(summary) });
+    const services = await collectAllServices();
+    const epic = services.find((s) => s.id === "epic")!;
+    const fortnite = services.find((s) => s.id === "fortnite")!;
+    expect(fortnite.components).toEqual([
+      { name: "Matchmaking", health: "degraded" },
+      { name: "Login", health: "operational" },
+    ]);
+    expect(fortnite.health).toBe("degraded");
+    expect(epic.components).toEqual([
+      { name: "Purchasing", health: "outage" },
+      { name: "Login", health: "operational" },
+      { name: "Rocket League", health: "operational" },
+    ]);
+    expect(epic.health).toBe("outage");
+  });
+
   it("Apple: every service is a component, active ones first, capped at 24", async () => {
     const services = Array.from({ length: 30 }, (_, i) => ({
       serviceName: `Service ${i}`,
@@ -581,6 +638,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     const apple = (await collectAllServices()).find((s) => s.id === "apple")!;
     expect(apple.health).toBe("degraded");
     expect(apple.components).toHaveLength(24);
+    expect(apple.componentCount).toBe(30);
     expect(apple.components[0]).toMatchObject({ name: "Service 28", health: "degraded" });
     expect(apple.components.slice(1).every((c) => c.health === "operational")).toBe(true);
     expect(apple.components[1].name).toBe("Service 0");

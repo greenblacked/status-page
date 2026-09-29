@@ -26,7 +26,6 @@ type StatuspageSummary = {
     id: string;
     name: string;
     status: string;
-    position?: number;
     group?: boolean;
     group_id?: string | null;
   }>;
@@ -201,30 +200,41 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
 }
 
 // Non-operational first, then operational, each in source order, capped at
-// MAX_COMPONENTS. The sort is stable, so the input order is the tie-break.
-function rankComponents(components: ComponentHealth[]): ComponentHealth[] {
+// MAX_COMPONENTS. `componentCount` is the total the source listed, set only
+// when the cap dropped some, so a card can say how many it is not showing.
+function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
   const isUp = (component: ComponentHealth) => component.health === "operational";
-  return [...components.filter((c) => !isUp(c)), ...components.filter(isUp)].slice(0, MAX_COMPONENTS);
+  const ranked = [...components.filter((c) => !isUp(c)), ...components.filter(isUp)].slice(0, MAX_COMPONENTS);
+  return components.length > MAX_COMPONENTS
+    ? { components: ranked, componentCount: components.length }
+    : { components: ranked };
 }
 
 function fromStatuspage(
   id: ServiceId,
   data: StatuspageSummary,
   latencyMs: number,
-  componentFilter?: (name: string, group?: boolean) => boolean,
+  componentFilter?: (name: string, groupName?: string) => boolean,
 ): ServiceSnapshot {
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
-  // Components in the vendor's own `position` order. Array.sort is stable and
-  // the index breaks ties, so components with no position keep sent order.
-  // The name filter (Epic/Fortnite) still sees groups, as before, so a group
-  // row can carry the health of a matching service; it is just never listed.
+  // Components stay in the vendor's array order, which is the page order.
+  // (`position` is per group, so sorting on it would interleave groups.)
+  // The name filter (Epic/Fortnite) sees groups too, and each child's group
+  // name, so a group row can carry the health of a matching service and
+  // plain-named children follow their group; groups are just never listed.
+  const groupNames = new Map<string, string>();
+  for (const component of data.components ?? []) {
+    if (component.group) groupNames.set(component.id, component.name);
+  }
   const matched = (data.components ?? [])
-    .filter((component) => (componentFilter ? componentFilter(component.name, component.group) : !component.group))
-    .map((component, index) => ({ component, index }))
-    .sort((a, b) => (a.component.position ?? a.index) - (b.component.position ?? b.index) || a.index - b.index)
-    .map(({ component }) => ({
+    .filter((component) =>
+      componentFilter
+        ? componentFilter(component.name, component.group_id ? groupNames.get(component.group_id) : undefined)
+        : !component.group,
+    )
+    .map((component) => ({
       name: component.name,
       group: component.group === true,
       health: statuspageComponent(component.status),
@@ -253,7 +263,7 @@ function fromStatuspage(
   const incidents: Incident[] = activeIncidents
     .filter((incident) => {
       if (!componentFilter) return true;
-      return componentFilter(incident.name, false);
+      return componentFilter(incident.name);
     })
     .map((incident) => ({
       id: incident.id,
@@ -281,7 +291,7 @@ function fromStatuspage(
     ...base(id, checkedAt, latencyMs),
     health,
     summary: overallSummary(health, incidents.length, hint),
-    components: rankComponents(components),
+    ...rankComponents(components),
     incidents,
   };
 }
@@ -546,11 +556,18 @@ function createSweep(): Sweep {
   };
 }
 
+// Fortnite is any component named for it, or sitting in a group named for it:
+// on status.epicgames.com the group's children have plain names (Login,
+// Matchmaking). Epic is everything else.
+function isFortnite(name: string, groupName?: string): boolean {
+  return /fortnite/i.test(name) || (groupName !== undefined && /fortnite/i.test(groupName));
+}
+
 async function collectEpic(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const { value, ms } = await sweep.epicSummary();
-    return fromStatuspage("epic", value, ms, (name) => !/fortnite/i.test(name));
+    return fromStatuspage("epic", value, ms, (name, groupName) => !isFortnite(name, groupName));
   } catch (error) {
     return failed("epic", started, error);
   }
@@ -560,7 +577,7 @@ async function collectFortnite(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const { value, ms } = await sweep.epicSummary();
-    return fromStatuspage("fortnite", value, ms, (name) => /fortnite/i.test(name));
+    return fromStatuspage("fortnite", value, ms, isFortnite);
   } catch (error) {
     return failed("fortnite", started, error);
   }
@@ -625,7 +642,7 @@ async function collectApple(): Promise<ServiceSnapshot> {
       ...base("apple", new Date().toISOString(), ms),
       health,
       summary: overallSummary(health, incidents.length, incidents[0]?.title),
-      components: rankComponents(components),
+      ...rankComponents(components),
       incidents,
       meta: { services: value.services?.length ?? 0 },
     };
