@@ -73,6 +73,29 @@ describe("createTtlCache", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("registers background refreshes so a Worker can keep them alive after the response", async () => {
+    let resolve!: (value: string) => void;
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce("old")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((done) => {
+            resolve = done;
+          }),
+      );
+    const onBackgroundRefresh = vi.fn();
+    const cache = createTtlCache(load, 45_000, { maxStaleMs: 75_000, onBackgroundRefresh });
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+    await expect(cache.get({ allowStale: true })).resolves.toBe("old");
+    expect(onBackgroundRefresh).toHaveBeenCalledOnce();
+    resolve("new");
+    await onBackgroundRefresh.mock.calls[0][0];
+    await expect(cache.get()).resolves.toBe("new");
+  });
+
   it("waits for a fresh value once the stale window has passed", async () => {
     const load = counter();
     const cache = createTtlCache(load, 45_000, { maxStaleMs: 75_000 });

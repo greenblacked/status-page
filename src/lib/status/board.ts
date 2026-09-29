@@ -1,4 +1,5 @@
 import { createServerFn, createServerOnlyFn } from "@tanstack/react-start";
+import { findCloudflareContext } from "./cloudflare-context";
 import { collectBoard } from "./collect-board";
 import { CACHE_MAX_STALE_MS, CACHE_TTL_MS, MIN_FORCED_REFRESH_MS } from "./schedule";
 import { createTtlCache } from "./ttl-cache";
@@ -7,6 +8,7 @@ import type { BoardSnapshot } from "./types";
 const boardCache = createTtlCache(collectBoard, CACHE_TTL_MS, {
   maxStaleMs: CACHE_MAX_STALE_MS,
   minForceIntervalMs: MIN_FORCED_REFRESH_MS,
+  onBackgroundRefresh: (promise) => findCloudflareContext()?.waitUntil(promise),
 });
 
 /**
