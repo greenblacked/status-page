@@ -495,7 +495,28 @@ export function BoardView({
               Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
               Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
             </p>
-            <p>Cached server snapshots update every two minutes from official vendor feeds.</p>
+            <p>
+              This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45
+              seconds.
+            </p>
+            <p>
+              <a
+                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page"
+                rel="noopener"
+              >
+                Source on GitHub
+              </a>
+              {" · "}
+              <a
+                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
+                rel="noopener license"
+              >
+                MIT License
+              </a>
+              : free to use, copy, modify and share, with the copyright notice kept.
+            </p>
             <p>
               Use the board elsewhere:{" "}
               <a

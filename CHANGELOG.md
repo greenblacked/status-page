@@ -27,6 +27,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- The page footer links to the source on GitHub and to the MIT License, and says how often the board is checked: every two minutes in the page, with vendor feeds kept 45 seconds on the server.
 - The production board lives at [status.szolotov.com](https://status.szolotov.com). Builds of `stage` are a Worker Preview named `stage` of the same Cloudflare Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com), and never receive production traffic. `dev` deploys nothing: the owner promotes work from `dev` to `stage` to `main`.
 - An optional uptime strip on service cards, built only with `VITE_STATUS_HISTORY=1` and shown when `/api/history.json` has days; off by default, and empty until a history source exists.
 - A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
