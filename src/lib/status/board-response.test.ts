@@ -29,7 +29,7 @@ describe("respondWithBoard", () => {
 
   it("answers 503 with Retry-After, uncached, when there is no board", async () => {
     const respond = vi.fn();
-    const response = await respondWithBoard(() => Promise.reject(new Error("KV unavailable")), respond);
+    const response = await respondWithBoard(() => Promise.reject(new Error("collect failed")), respond);
 
     expect(respond).not.toHaveBeenCalled();
     expect(response.status).toBe(503);
@@ -39,7 +39,7 @@ describe("respondWithBoard", () => {
     await expect(response.json()).resolves.toHaveProperty("error");
     expect(JSON.parse(String(vi.mocked(console.error).mock.calls[0]?.[0]))).toEqual({
       event: "board_unavailable",
-      message: "KV unavailable",
+      message: "collect failed",
     });
   });
 });

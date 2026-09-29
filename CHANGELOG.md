@@ -9,6 +9,16 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Changed
 
 - Cloudflare Workers now collect status on request with an in-memory cache per isolate. Deployment needs only the Cloudflare account ID and API token.
+- The app is named Status Page across the board, browser metadata, feeds, documentation and release titles.
+- A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. All text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.
+- A calmer look for the board: deep ink in dark, warm paper in light, and a faint drafting grid under the glass. Colour is kept for what needs it: every status badge shares one neutral fill with a small coloured dot.
+- A dial beside the counts ticks through each two-minute check, one tick a second, in step with **Next update**. With Reduce Motion on it stands still and moves on every few seconds.
+- The headline's pulse and a card that has just changed now glow warm amber, the one warm colour on the board, so what moved is easy to spot. Red still always means an outage.
+- Each card and tile shows a small number, 01 to 14, that stays with the service whatever the sort, filter or search.
+- The **Settings and shortcuts** dialog rises into place as it opens, the compact bar slides in more smoothly, and buttons and stars settle with a light spring when you let go.
+- The operational tiles are lighter on the phone: no blur behind each one, so a long board scrolls smoothly, and on a wide screen they sit two to a row so every name fits.
+- The **Keyboard shortcuts** list is now **Settings and shortcuts**, and switched-off shortcuts in it are dimmed in a colour that stays readable instead of fading to half opacity.
+- A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place.
 
 ### Removed
 
@@ -29,25 +39,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - `/readyz` answers `503` when the board is more than ten minutes old or no source could be read, and `200` otherwise, with the snapshot's age and how many services are Unknown. Uptime monitors can watch it; `/healthz` stays the liveness probe.
 - On the hosted Cloudflare deployment, every response names the Worker version that served it in an `X-Worker-Version` header.
 
-### Changed
-
-- The app is named Status Page across the board, browser metadata, feeds, documentation and release titles.
-- A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. All text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.
-- A calmer look for the board: deep ink in dark, warm paper in light, and a faint drafting grid under the glass. Colour is kept for what needs it: every status badge shares one neutral fill with a small coloured dot,.
-- A dial beside the counts ticks through each two-minute check, one tick a second, in step with **Next update**. With Reduce Motion on it stands still and moves on every few seconds.
-- The headline's pulse and a card that has just changed now glow warm amber, the one warm colour on the board, so what moved is easy to spot. Red still always means an outage.
-- Each card and tile shows a small number, 01 to 14, that stays with the service whatever the sort, filter or search.
-- The **Settings and shortcuts** dialog rises into place as it opens, the compact bar slides in more smoothly, and buttons and stars settle with a light spring when you let go.
-- The operational tiles are lighter on the phone: no blur behind each one, so a long board scrolls smoothly, and on a wide screen they sit two to a row so every name fits.
-- The **Keyboard shortcuts** list is now **Settings and shortcuts**, and switched-off shortcuts in it are dimmed in a colour that stays readable instead of fading to half opacity.
-- On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
-- A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place, and gives a deploy that lands on an out-of-date board five minutes for its first scheduled refresh before calling it stale.
-
 ### Fixed
 
 - One AWS or Apple event with an unreadable timestamp no longer turns the whole card Unknown; that event just shows without a start time.
 - The staging deployment no longer shows up in search results: it sends `X-Robots-Tag: noindex` and a `/robots.txt` that disallows crawling. Production, and any self-hosted build, now serves a `/robots.txt` that allows it.
-- On Cloudflare, an outage of the KV store that holds the board no longer turns every page into an error: a server keeps showing the board it already has while it is under ten minutes old, and only one with no board, or an older one, collects it straight from the vendors, at most once a minute.
 - When no board can be produced at all, `/api/status.json`, `/feed.xml`, the badges and `/metrics` answer `503` with `Retry-After`, so feed readers, Shields.io and scrapers treat it as temporary instead of as a server error.
 - On a device whose clock runs ahead of the server's, the page no longer throws away its server-rendered board and redraws it from scratch as it loads.
 - **Next update** now counts down to the board's actual refetch. It used to reach 0:00 with nothing happening, because the board fetched on its own two-minute timer from whenever the page was opened.

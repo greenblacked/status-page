@@ -76,7 +76,7 @@ function isHealth(value: unknown): value is Health {
 
 /**
  * Copies only the four public day fields. Extra keys on an in-memory day
- * (or a hand-edited KV value) are dropped before KV write or the public API.
+ * are dropped before the public API.
  */
 export function publicDay(day: HistoryDay): HistoryDay {
   return {
@@ -221,7 +221,7 @@ export function mergeBoardIntoHistory(
 }
 
 /**
- * Serializer for /api/history.json and for the KV put: only document
+ * Serializer for /api/history.json: only document
  * metadata and the four public day fields. Extra keys on in-memory days
  * are stripped even if a future merge kept them.
  */

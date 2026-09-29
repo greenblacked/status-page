@@ -212,8 +212,8 @@ jobs:
         if: vars.DEPLOY_URL != ''
         # The same checks as CI's preview (scripts/ci/smoke.sh: plain bash,
         # curl and jq, no npm and no token), plus --require-ready: a deploy
-        # whose /readyz is still 503 at the end serves a stale or all-Unknown
-        # board and is rolled back. A new version can take a few seconds to
+        # whose /readyz is still 503 at the end serves an all-Unknown or
+        # old-timestamp board and is rolled back. A new version can take a few seconds to
         # reach every location: --expect-version waits up to --wait for
         # /healthz to come from the version just deployed, then holds every
         # check to it, so the old version can neither pass nor fail the test
@@ -221,7 +221,7 @@ jobs:
         # for about half a minute, so a broken one fails fast.
         #
         # A cold isolate collects sources on its first request, so allow
-        # time for vendor responses and retries without waiting for a cron.
+        # time for vendor responses and retries.
         env:
           DEPLOY_URL: ${{ vars.DEPLOY_URL }}
           VERSION_ID: ${{ steps.deploy.outputs.version_id }}
