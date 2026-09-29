@@ -299,7 +299,7 @@ The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search en
 | `stage` | What is about to ship | Worker Preview at [stage.status.szolotov.com](https://stage.status.szolotov.com) |
 | `main` | What is released | Production at [status.szolotov.com](https://status.szolotov.com) |
 
-Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request with `CI OK` green. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
+Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request, and the rulesets require `CI OK` to pass. The owner and the release workflow can bypass them. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
 
 #### Deployment status
 

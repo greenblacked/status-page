@@ -94,7 +94,7 @@ Branch protection lives in GitHub's settings, not in the code, so the owner sets
 | Setting | `dev` | `stage` | `main` |
 | --- | --- | --- | --- |
 | Require a pull request before merging | yes | yes | yes |
-| Allowed merge methods | squash | merge commit | merge commit |
+| Allowed merge methods | squash (merge commit only for `chore/sync-main`) | merge commit | merge commit |
 | Required approvals | 0 while there is one maintainer | 0 | 0 |
 | Require status checks to pass | `CI OK`, `pull request title`, `analyze (javascript-typescript)`, `analyze (actions)`, `dependency-review` | the same | the same |
 | Require the branch to be up to date | no | no | no |
@@ -104,12 +104,12 @@ Branch protection lives in GitHub's settings, not in the code, so the owner sets
 | Require linear history | no | no | no |
 | Bypass list | Repository admin (the owner), GitHub Actions | the same | the same |
 
-Squash on `dev` keeps one commit per pull request, and the merge commits on `stage` and `main` keep every one of them, so the release reads each type and changelog line (see [Releases](#releases)). Linear history would forbid those merge commits. The bypass list has the owner, who promotes and merges, and GitHub Actions, because [`release.yml`](.github/workflows/release.yml) pushes the release commit to `main` and merges `main` back into `stage` and `dev`; without it those pushes are rejected. `CI OK` sums up the other CI jobs, so a renamed or added job never needs a protection change. Optionally turn on required review from Code Owners ([`.github/CODEOWNERS`](.github/CODEOWNERS)) or the merge queue: `ci.yml` already runs on `merge_group`.
+Squash on `dev` keeps one commit per pull request, except for a `chore/sync-main` pull request, which needs a merge commit (see [Releases](#releases)), so `dev` allows both methods. The merge commits on `stage` and `main` keep every one of them, so the release reads each type and changelog line (see [Releases](#releases)). Linear history would forbid those merge commits. The bypass list has the owner, who promotes and merges, and GitHub Actions, because [`release.yml`](.github/workflows/release.yml) pushes the release commit to `main` and merges `main` back into `stage` and `dev`; without it those pushes are rejected. The repository settings **Allow merge commits** and **Allow squash merging** (**Settings → General → Pull Requests**) must both stay enabled, or a ruleset's allowed method has nothing to use. The owner's bypass is `always`, so the owner can push to a protected branch directly, and rulesets and checks apply to everyone else; set `bypass_mode` to `"pull_request"` for the owner (in `ruleset()` below, on the `RepositoryRole` actor) to make the owner use a pull request too. GitHub Actions keeps `always`. `CI OK` sums up the other CI jobs, so a renamed or added job never needs a protection change. Optionally turn on required review from Code Owners ([`.github/CODEOWNERS`](.github/CODEOWNERS)) or the merge queue: `ci.yml` already runs on `merge_group`.
 
 The same three rulesets through the API, run once by the repository admin with the GitHub CLI signed in (`gh auth login`). The actor ids are GitHub's: role 5 is Repository admin, and integration 15368 is GitHub Actions.
 
 ```bash
-ruleset() { # ruleset <branch> <merge method: merge|squash>
+ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash>
   jq -n --arg branch "$1" --arg method "$2" '{
     name: ("protect " + $branch),
     target: "branch",
@@ -129,7 +129,7 @@ ruleset() { # ruleset <branch> <merge method: merge|squash>
           require_code_owner_review: false,
           require_last_push_approval: false,
           required_review_thread_resolution: false,
-          allowed_merge_methods: [$method] } },
+          allowed_merge_methods: ($method | split(",")) } },
       { type: "required_status_checks", parameters: {
           strict_required_status_checks_policy: false,
           required_status_checks: [
@@ -143,7 +143,7 @@ ruleset() { # ruleset <branch> <merge method: merge|squash>
 }
 ruleset main merge
 ruleset stage merge
-ruleset dev squash
+ruleset dev squash,merge
 ```
 
 `gh api repos/greenblacked/status-page/rulesets` lists them, and `gh api --method DELETE repos/greenblacked/status-page/rulesets/<id>` removes one. Replace any older ruleset or branch rule on `dev` and `main` rather than stacking the two. The required checks can only be picked once they have run on the repository, and `analyze (…)` and `dependency-review` start on pull requests, so if GitHub refuses a name, open a pull request into the branch first.
@@ -211,7 +211,7 @@ When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 3. Commits `chore(release): X.Y.Z` to `main`, authored by the account that merged. The commit updates `package.json`, `package-lock.json` and the changelog, and turns `## [Unreleased]` into the dated `## [X.Y.Z]` section. If the pull request added nothing under Unreleased, the section is written from the merged commits' subjects instead.
 4. Tags that commit `vX.Y.Z`.
 5. Publishes the GitHub Release with that section as its notes.
-6. Merges `main` back into `stage` and then `dev`, released or not, so both carry the release commit and any fix merged into `main` directly. When that merge actually moves `stage`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `stage` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, the preview would keep running the pre-release code until an unrelated push to `stage` updated it. `dev` deploys nothing, so its merge needs no follow-up. A release on `main` while `stage` or `dev` has lines under Unreleased (an urgent fix, usually) conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts the branch's lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, after it has tried the other branch, and you resolve it on a branch from the one that conflicted:
+6. Merges `main` back into `stage` and then `dev`, released or not, so both carry the release commit and anything that reached `main` without going through `stage`, such as a `release/vX.Y.Z` bump. When that merge actually moves `stage`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `stage` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, the preview would keep running the pre-release code until an unrelated push to `stage` updated it. `dev` deploys nothing, so its merge needs no follow-up. A release on `main` while `stage` or `dev` has lines under Unreleased conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts the branch's lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, after it has tried the other branch, and you resolve it on a branch from the one that conflicted:
 
    ```bash
    git fetch origin
@@ -236,7 +236,7 @@ Other ways in, with the same checks:
 
 The bump commit and the tag are pushed with the workflow's `GITHUB_TOKEN`, so they start no other workflow and CI does not run on the bump commit itself. The verify job has already checked the same code.
 
-A ruleset on `main`, `stage` or `dev` that requires pull requests or status checks rejects the workflow's direct pushes to it (the release commit, and the merges of `main` back) unless GitHub Actions is a bypass actor; [Branch protection](#branch-protection) adds it. Without that, release with `bump.sh` and a pull request into `main`, and merge `main` into `stage` and `dev` with pull requests.
+A ruleset on `main`, `stage` or `dev` that requires pull requests or status checks rejects the workflow's direct pushes to it (the release commit, and the merges of `main` back) unless GitHub Actions is a bypass actor; [Branch protection](#branch-protection) adds it. Without that, release with `bump.sh` and a pull request into `main`, and bring `main` into `stage` and `dev` through a `chore/sync-main` branch and pull request (see above).
 
 Never move or reuse a tag that has a published release; release a new patch version instead.
 
