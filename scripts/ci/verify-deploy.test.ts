@@ -244,6 +244,11 @@ esac
     checks: summary ? Number(summary[1]) : Number.NaN,
     failed: summary ? Number(summary[2]) : Number.NaN,
     curlCalls: log("curl-calls"),
+    /** The URL each curl call fetched, parsed, so tests compare hosts and paths exactly. */
+    curlUrls: log("curl-calls").flatMap((call) => {
+      const url = URL.parse(call.trim().split(/\s+/).at(-1) ?? "");
+      return url ? [url] : [];
+    }),
     opensslCalls: log("openssl-calls"),
     timeoutCalls: log("timeout-calls"),
     gtimeoutCalls: log("gtimeout-calls"),
@@ -269,8 +274,8 @@ describe("verify-deploy.sh", () => {
     const r = run(["--timeout", "3"]);
     expect(r.curlCalls.length).toBeGreaterThan(0);
     for (const call of r.curlCalls) expect(call).toContain("--max-time 3");
-    expect(r.curlCalls.some((call) => call.includes(`https://${PROD}/healthz`))).toBe(true);
-    expect(r.curlCalls.some((call) => call.includes(`https://${STAGE}/readyz`))).toBe(true);
+    expect(r.curlUrls.some((url) => url.hostname === PROD && url.pathname === "/healthz")).toBe(true);
+    expect(r.curlUrls.some((url) => url.hostname === STAGE && url.pathname === "/readyz")).toBe(true);
   });
 
   it("uses a 15 second timeout by default", () => {
@@ -290,7 +295,7 @@ describe("verify-deploy.sh", () => {
       san: `DNS:${other}, DNS:*.${other}`,
     });
     expect(r.status).toBe(0);
-    expect(r.curlCalls.every((call) => !call.includes(PROD))).toBe(true);
+    expect(r.curlUrls.every((url) => url.hostname !== PROD)).toBe(true);
     expect(r.opensslCalls.some((call) => call.includes(`${other}:443`) && call.includes(`-servername ${other}`))).toBe(
       true,
     );
@@ -657,7 +662,7 @@ describe("verify-deploy.sh", () => {
       expect(r.status).toBe(0);
       expect(r.ok("prod").length).toBeGreaterThan(0);
       expect(r.output).not.toMatch(/\bstage\b/);
-      expect(r.curlCalls.every((call) => call.includes(`https://${PROD}/`))).toBe(true);
+      expect(r.curlUrls.every((url) => url.protocol === "https:" && url.hostname === PROD)).toBe(true);
     });
 
     it("checks stage alone", () => {
@@ -665,7 +670,7 @@ describe("verify-deploy.sh", () => {
       expect(r.status).toBe(0);
       expect(r.ok("stage").length).toBeGreaterThan(0);
       expect(r.output).not.toMatch(/\bprod\b/);
-      expect(r.curlCalls.every((call) => call.includes(`https://${STAGE}/`))).toBe(true);
+      expect(r.curlUrls.every((url) => url.protocol === "https:" && url.hostname === STAGE)).toBe(true);
     });
 
     it("ignores a broken host it was not asked to check", () => {
