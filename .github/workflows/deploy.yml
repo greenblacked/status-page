@@ -1,19 +1,23 @@
 name: Deploy
 
 # Builds the board for Cloudflare Workers and ships it with wrangler to one
-# Worker, status-page: main deploys it to production (wrangler deploy), dev
+# Worker, status-page: main deploys it to production (wrangler deploy), stage
 # creates or updates a Worker Preview of it named "stage" (wrangler preview),
 # served at https://stage.status.szolotov.com and never on production
-# traffic. Pull requests build and dry-run the deploy with no credentials. A
+# traffic. dev, the branch pull requests merge into, deploys nothing: it is
+# promoted to stage, and stage to main, by the owner. Pull requests into dev,
+# stage and main build and dry-run the deploy with no credentials. A
 # production deploy that does not answer its smoke test is rolled back to the
 # previous version automatically; a preview that does not answer just fails
-# the job, as production is never touched. CONTRIBUTING.md#deploying has the
-# setup.
+# the job, as production is never touched. Run workflow deploys only main or
+# stage; any other ref fails at the first step. CONTRIBUTING.md#deploying has
+# the setup.
 #
 # This repository is public, so the Cloudflare API token is guarded in layers:
 #   - It is an environment secret. GitHub gives it only to the deploy job,
 #     only in the staging or production environment, whose branch rules
-#     admit only dev and main. Pull requests, forks included, never get it.
+#     admit only stage and main. Pull requests, forks included, never get
+#     it, and neither does a push to dev.
 #   - There is no pull_request_target here: pull request code never runs
 #     with secrets or a write token.
 #   - The job that holds the token installs with --ignore-scripts, checks
@@ -29,9 +33,9 @@ name: Deploy
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, stage]
   pull_request:
-    branches: [main, dev]
+    branches: [main, stage, dev]
   workflow_dispatch:
 
 permissions:
@@ -54,6 +58,34 @@ jobs:
     outputs:
       environment: ${{ steps.target.outputs.environment }}
     steps:
+      - name: Pick the environment
+        id: target
+        # First, before any install, so a run for a ref that cannot deploy
+        # fails at once. Branch names are attacker-controlled on a fork PR,
+        # so they go through the environment instead of being interpolated.
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            # Built and dry-run only; the deploy job never runs for a pull request.
+            case "$BASE_REF" in
+              main | stage | dev) echo "environment=none" >>"$GITHUB_OUTPUT" ;;
+              *) echo "::error::pull requests into main, stage and dev are built, not $BASE_REF"; exit 1 ;;
+            esac
+            exit 0
+          fi
+          # A push, or Run workflow: only the branches main and stage deploy.
+          # A tag named like one, or dev, is refused here.
+          [ "$REF_TYPE" = branch ] || { echo "::error::only the branches main (production) and stage (staging) deploy, not the $REF_TYPE $REF_NAME"; exit 1; }
+          case "$REF_NAME" in
+            main) echo "environment=production" >>"$GITHUB_OUTPUT" ;;
+            stage) echo "environment=staging" >>"$GITHUB_OUTPUT" ;;
+            *) echo "::error::only main (production) and stage (staging) deploy, not $REF_NAME. dev deploys nothing: promote it to stage (CONTRIBUTING.md#branches)"; exit 1 ;;
+          esac
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -64,23 +96,6 @@ jobs:
       - name: Pin npm
         run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")" # zizmor: ignore[adhoc-packages] exact version from packageManager
 
-      - name: Pick the environment
-        id: target
-        # Branch names are attacker-controlled on a fork PR, so they go
-        # through the environment instead of being interpolated.
-        env:
-          EVENT: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref_name }}
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          branch="$REF_NAME"
-          [ "$EVENT" = pull_request ] && branch="$BASE_REF"
-          case "$branch" in
-            main) echo "environment=production" >>"$GITHUB_OUTPUT" ;;
-            dev) echo "environment=staging" >>"$GITHUB_OUTPUT" ;;
-            *) echo "::error::only main (production) and dev (staging) deploy, not $branch"; exit 1 ;;
-          esac
-
       - run: npm ci
       # Every installed tarball against the registry's signature, before
       # any of it is built into the Worker (see ci.yml).
@@ -88,7 +103,7 @@ jobs:
         run: ./scripts/ci/audit-signatures.sh
       - run: npm run typecheck
       - run: npm test
-      # The same build for both branches: what differs is how it is shipped.
+      # The same build for every branch: what differs is how it is shipped.
       - name: Build for Cloudflare Workers
         env:
           DEPLOY_TARGET: cloudflare
@@ -211,7 +226,7 @@ jobs:
 
       - name: Create the stage preview with wrangler
         id: preview
-        # dev: a Worker Preview named "stage" of the same Worker, updated in
+        # stage: a Worker Preview named "stage" of the same Worker, updated in
         # place by every push and never deployed to production traffic. Its
         # settings are the config's previews block (ROBOTS=noindex, so it
         # answers noindex); --ignore-base-config keeps the dashboard's
@@ -228,7 +243,7 @@ jobs:
             echo "::error::set the CLOUDFLARE_API_TOKEN secret and the CLOUDFLARE_ACCOUNT_ID variable (or secret) on this environment (CONTRIBUTING.md#deploying)"
             exit 1
           fi
-          npx --no-install wrangler preview --config dist/server/wrangler.json --name stage --ignore-base-config --message "dev ${COMMIT_SHA:0:7}"
+          npx --no-install wrangler preview --config dist/server/wrangler.json --name stage --ignore-base-config --message "stage ${COMMIT_SHA:0:7}"
           host_re='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+'
           preview_url="$(jq -r 'select(.type == "preview") | .preview_urls[0]? // empty' "$WRANGLER_OUTPUT_FILE_PATH" 2>/dev/null | tail -n 1)" || preview_url=""
           if [[ "$preview_url" =~ ^https://$host_re/?$ ]]; then
@@ -246,7 +261,7 @@ jobs:
         run: echo "::warning::this environment has no DEPLOY_URL variable, so the new version is not smoke-tested and a failed production deploy is not rolled back (CONTRIBUTING.md#deploying)"
 
       - name: Smoke-test the deployment
-        # On dev, DEPLOY_URL is the stage preview's URL. A preview reports no
+        # On stage, DEPLOY_URL is the stage preview's URL. A preview reports no
         # version id to wait for: wrangler prints a preview id and a
         # deployment id, and nothing shows either equals the id in
         # X-Worker-Version. So there is no --expect-version there, and the
@@ -279,7 +294,7 @@ jobs:
         # A preview takes no production traffic, so there is nothing to roll
         # back; the failed check above already fails the job.
         if: failure() && steps.smoke-test.outcome == 'failure' && needs.build.outputs.environment == 'staging'
-        run: echo "::error::the stage preview did not answer the smoke test. Production traffic is untouched; the preview stays as created until the next push to dev replaces it"
+        run: echo "::error::the stage preview did not answer the smoke test. Production traffic is untouched; the preview stays as created until the next push to stage replaces it"
 
       - name: Roll back the failed deployment
         id: rollback

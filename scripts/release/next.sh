@@ -11,9 +11,9 @@
 #     Prints changelog lines built from those commits' subjects, for a
 #     release whose pull requests added nothing under ## [Unreleased].
 #
-# release.yml runs `level` on every push to main, so merging dev into main
-# (in a merge commit) releases every feat, fix or breaking change on dev
-# since the last tag, as one version. Merge commits never count.
+# release.yml runs `level` on every push to main, so merging stage into main
+# (in a merge commit) releases every feat, fix or breaking change that came
+# through dev and stage since the last tag, as one version. Merge commits never count.
 # chore(release) commits are the bumps themselves and never count.
 set -euo pipefail
 
