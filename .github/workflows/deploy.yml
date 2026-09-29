@@ -216,7 +216,19 @@ jobs:
             echo "::error::set the CLOUDFLARE_API_TOKEN secret and the CLOUDFLARE_ACCOUNT_ID variable (or secret) on this environment (CONTRIBUTING.md#deploying)"
             exit 1
           fi
-          npx --no-install wrangler deploy --config dist/server/wrangler.json
+          # wrangler uploads the Worker, which serves production at once, and
+          # only then updates its triggers (workers.dev, the Custom Domain).
+          # A trigger failure, such as a token without Workers Routes or Zone
+          # Read on the zone, fails the command with the new version already
+          # live, and the smoke test and rollback below never run for it.
+          deploy_log="$RUNNER_TEMP/wrangler-deploy.log"
+          set -o pipefail
+          if ! npx --no-install wrangler deploy --config dist/server/wrangler.json 2>&1 | tee "$deploy_log"; then
+            if grep -qE '^Uploaded [^ ]+ \(' "$deploy_log"; then
+              echo "::error::wrangler deploy failed after uploading the Worker: the new version is live on production, but its triggers were not fully updated (see the errors above), and it is neither smoke-tested nor rolled back. Check it, and roll back by hand with 'npx wrangler rollback --name status-page' (CONTRIBUTING.md#rolling-back)"
+            fi
+            exit 1
+          fi
           version_id="$(jq -r 'select(.type == "deploy") | .version_id // empty' "$WRANGLER_OUTPUT_FILE_PATH" 2>/dev/null | tail -n 1)" || version_id=""
           if ! [[ "$version_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
             echo "::error::wrangler deploy succeeded but reported no version id in $WRANGLER_OUTPUT_FILE_PATH, so the smoke test cannot tell the new version from the old one. The new version is live and is neither smoke-tested nor rolled back: check it, and roll back by hand if needed (CONTRIBUTING.md#rolling-back)"
