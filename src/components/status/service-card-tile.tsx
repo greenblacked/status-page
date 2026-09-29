@@ -1,5 +1,7 @@
 import { ArrowUpRight } from "lucide-react";
+import { useServiceHistoryDays } from "@/components/status/board-history-provider";
 import { HealthDot } from "@/components/status/health-dot";
+import { HistoryStrip } from "@/components/status/history-strip";
 import { CATEGORY_ICON, StarButton } from "@/components/status/service-card-shared";
 import { CATEGORIES } from "@/lib/status/catalog";
 import { ALL_CLEAR_SUMMARY } from "@/lib/status/health";
@@ -18,13 +20,17 @@ export function ServiceTile({
   emphasized = false,
   starred,
   onToggleStar,
+  now = 0,
 }: {
   service: ServiceSnapshot;
   index: number;
   emphasized?: boolean;
   starred: boolean;
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
+  /** The client clock (0 until mounted), for the strip's UTC day window. */
+  now?: number;
 }) {
+  const days = useServiceHistoryDays(service.id);
   const Icon = CATEGORY_ICON[service.category];
   const detail = service.summary && service.summary !== ALL_CLEAR_SUMMARY ? service.summary : null;
 
@@ -67,6 +73,9 @@ export function ServiceTile({
           <ArrowUpRight className="size-4" />
         </a>
       </div>
+      {days.length > 0 && service.category !== "updates" ? (
+        <HistoryStrip days={days} nowMs={now} compact className="pr-1.5" />
+      ) : null}
     </article>
   );
 }
