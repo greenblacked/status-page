@@ -1,6 +1,6 @@
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HistoryDay, PublicHistory } from "@/lib/status/history";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
@@ -22,6 +22,10 @@ const DAYS: HistoryDay[] = [
 
 const noop = () => {};
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 function card(
   withHistory: PublicHistory | undefined,
   id: "aws" | "gcp" = "aws",
@@ -39,6 +43,28 @@ function card(
     }),
   );
   return renderToStaticMarkup(element);
+}
+
+/** A card rendered with no history provider in the tree at all. */
+function bareCard(): ReactElement {
+  return createElement(ServiceCard, {
+    service: service("aws", { health: "degraded", summary: "Elevated errors" }),
+    index: 0,
+    starred: false,
+    onToggleStar: noop,
+    now: NOW,
+  });
+}
+
+/** A tile rendered with no history provider in the tree at all. */
+function bareTile(): ReactElement {
+  return createElement(ServiceTile, {
+    service: service("aws"),
+    index: 0,
+    starred: false,
+    onToggleStar: noop,
+    now: NOW,
+  });
 }
 
 function tile(
@@ -61,27 +87,56 @@ function tile(
 }
 
 describe("cards without history", () => {
-  it("are byte-for-byte the same whether history never loaded, came back empty or omits the service", () => {
-    const baselineCard = card(undefined);
-    const baselineTile = tile(undefined);
-    expect(baselineCard).not.toMatch(STRIP);
-    expect(baselineTile).not.toMatch(STRIP);
+  it("render identical markup whether history never loaded, came back empty or omits the service", () => {
+    // With the flag on, so a strip would show if there were days to draw.
+    vi.stubEnv("VITE_STATUS_HISTORY", "1");
+    const plainCard = renderToStaticMarkup(bareCard());
+    const plainTile = renderToStaticMarkup(bareTile());
+    expect(plainCard).not.toMatch(STRIP);
+    expect(plainCard).not.toContain('role="img"');
+    expect(plainTile).not.toMatch(STRIP);
+    expect(plainTile).not.toContain('role="img"');
 
-    expect(card(history({}))).toBe(baselineCard);
-    expect(tile(history({}))).toBe(baselineTile);
-    // A service the document leaves out, or lists with no days, gets no strip.
-    expect(card(history({ gcp: { days: DAYS } }))).toBe(baselineCard);
-    expect(tile(history({ aws: { days: [] } }))).toBe(baselineTile);
+    const variants: Array<[string, PublicHistory | undefined]> = [
+      ["never loaded", undefined],
+      ["empty document", history({})],
+      ["service omitted", history({ gcp: { days: DAYS } })],
+      ["service with no days", history({ aws: { days: [] } })],
+    ];
+    for (const [name, variant] of variants) {
+      expect(card(variant), `card, ${name}`).toBe(plainCard);
+      expect(tile(variant), `tile, ${name}`).toBe(plainTile);
+    }
   });
 
   it("add no caption, placeholder or empty strip element", () => {
+    vi.stubEnv("VITE_STATUS_HISTORY", "1");
     const html = card(history({ aws: { days: [] } }));
     expect(html).not.toMatch(/uptime|no data|30d/i);
     expect(html).not.toContain('role="img"');
   });
 });
 
+describe("cards with the flag off", () => {
+  it("draw no strip even when history is in context", () => {
+    const document = history({ aws: { days: DAYS } });
+    for (const flag of [undefined, "", "0"]) {
+      vi.stubEnv("VITE_STATUS_HISTORY", flag as string);
+      const html = card(document);
+      expect(html).not.toMatch(STRIP);
+      expect(html).not.toContain('role="img"');
+      expect(html).toBe(card(undefined));
+      expect(tile(document)).not.toMatch(STRIP);
+      expect(tile(document)).toBe(tile(undefined));
+    }
+  });
+});
+
 describe("cards with history", () => {
+  beforeEach(() => {
+    vi.stubEnv("VITE_STATUS_HISTORY", "1");
+  });
+
   it("show the strip on the full card", () => {
     const html = card(history({ aws: { days: DAYS } }));
     expect(html).toMatch(STRIP);

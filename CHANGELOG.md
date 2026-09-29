@@ -19,6 +19,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The operational tiles are lighter on the phone: no blur behind each one, so a long board scrolls smoothly, and on a wide screen they sit two to a row so every name fits.
 - The **Keyboard shortcuts** list is now **Settings and shortcuts**, and switched-off shortcuts in it are dimmed in a colour that stays readable instead of fading to half opacity.
 - A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place.
+- The optional uptime strip is tidier: builds without `VITE_STATUS_HISTORY=1` no longer ship its code, a strip's worst day reads like "Sep 26", and the history build is now tested in CI. `docker compose` passes the flag through to the build.
 
 ### Removed
 

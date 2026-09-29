@@ -3,14 +3,6 @@ import { createContext, type ReactNode, useContext } from "react";
 import { fetchBoardHistory, serviceHistoryDays } from "@/lib/status/board-history";
 import type { HistoryDay, PublicHistory } from "@/lib/status/history";
 
-/**
- * Whether this build asks for uptime history at all. Neither build collects
- * any today (`/api/history.json` is an empty compatibility document), so the
- * board makes no request and the cards look as they do without this file.
- * Build with `VITE_STATUS_HISTORY=1` once a history source exists.
- */
-export const HISTORY_ENABLED = import.meta.env.VITE_STATUS_HISTORY === "1";
-
 /** History moves by whole UTC days, so it is asked for far less often than the board. */
 export const HISTORY_REFRESH_MS = 10 * 60_000;
 
@@ -40,16 +32,23 @@ export function boardHistoryQueryOptions(enabled: boolean) {
  * context without days, so every card renders without a strip, and a failed
  * refetch keeps the last good days.
  */
-export function BoardHistoryProvider({
-  children,
-  enabled = HISTORY_ENABLED,
-}: {
-  children: ReactNode;
-  enabled?: boolean;
-}) {
+export function BoardHistoryQueryProvider({ children, enabled }: { children: ReactNode; enabled: boolean }) {
   const historyQuery = useQuery(boardHistoryQueryOptions(enabled));
 
   return <BoardHistoryContext.Provider value={historyQuery.data}>{children}</BoardHistoryContext.Provider>;
+}
+
+/**
+ * The board's history provider. Neither build collects any history today
+ * (`/api/history.json` is an empty compatibility document), so unless the
+ * build sets `VITE_STATUS_HISTORY=1` this returns `children` untouched: no
+ * request, no context value, and the bundler drops the query code along with
+ * the strip. The env check is an inline literal so Vite can replace it at
+ * build time.
+ */
+export function BoardHistoryProvider({ children }: { children: ReactNode }) {
+  if (import.meta.env.VITE_STATUS_HISTORY !== "1") return children;
+  return <BoardHistoryQueryProvider enabled>{children}</BoardHistoryQueryProvider>;
 }
 
 /** Days for one service from the board history context; empty when missing. */

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchBoardHistory,
+  formatHistoryDay,
   formatUptimePercent,
   historySlots,
   historySlotTitle,
@@ -101,6 +102,25 @@ describe("historyStripSummary window label", () => {
     const days = [day("2026-09-27", "operational", 2, 1)];
     expect(historyStripSummary(days, 1, days[0])).toBe("30-day uptime history. 100% operational");
     expect(historyStripSummary(days, 1, days[0], 7)).toBe("7-day uptime history. 100% operational");
+  });
+});
+
+describe("formatHistoryDay", () => {
+  it("names the UTC month and day", () => {
+    expect(formatHistoryDay("2026-09-26")).toBe("Sep 26");
+    expect(formatHistoryDay("2026-01-05")).toBe("Jan 5");
+  });
+
+  it("does not shift across month and year boundaries", () => {
+    expect(formatHistoryDay("2026-09-30")).toBe("Sep 30");
+    expect(formatHistoryDay("2026-10-01")).toBe("Oct 1");
+    expect(formatHistoryDay("2025-12-31")).toBe("Dec 31");
+    expect(formatHistoryDay("2026-01-01")).toBe("Jan 1");
+  });
+
+  it("returns an unparseable value as given", () => {
+    expect(formatHistoryDay("nope")).toBe("nope");
+    expect(formatHistoryDay("2026-13-40")).toBe("2026-13-40");
   });
 });
 

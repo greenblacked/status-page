@@ -73,7 +73,7 @@ export function ServiceTile({
           <ArrowUpRight className="size-4" />
         </a>
       </div>
-      {days.length > 0 && service.category !== "updates" ? (
+      {import.meta.env.VITE_STATUS_HISTORY === "1" && days.length > 0 && service.category !== "updates" ? (
         <HistoryStrip days={days} nowMs={now} compact className="pr-1.5" />
       ) : null}
     </article>
