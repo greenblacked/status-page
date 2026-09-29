@@ -3,7 +3,7 @@ import { isNoindex, robotsTxt } from "@/lib/robots";
 import { findCloudflareContext } from "@/lib/status/cloudflare-context";
 
 // GET /robots.txt: "Disallow: /" on a deployment that must not be indexed
-// (the dev preview, whose wrangler.jsonc previews.vars sets ROBOTS=noindex), and
+// (the stage preview, whose wrangler.jsonc previews.vars sets ROBOTS=noindex), and
 // "Allow: /" everywhere else. On the Node build there is no Workers
 // context, so it always allows.
 export const Route = createFileRoute("/robots.txt")({

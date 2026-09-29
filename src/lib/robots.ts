@@ -1,5 +1,5 @@
 // Whether search engines may index this deployment. Production and any
-// self-hosted Node build may; the dev preview (wrangler.jsonc's
+// self-hosted Node build may; the stage preview (wrangler.jsonc's
 // previews.vars sets ROBOTS=noindex) must not, or a half-finished dev
 // build competes with the real board in search results. Platform-neutral: the
 // caller says which deployment it is.
