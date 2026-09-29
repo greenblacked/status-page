@@ -1,3 +1,4 @@
+import { CATALOG } from "./catalog.ts";
 import type { BoardSnapshot, Health, ServiceSnapshot } from "./types.ts";
 
 // Worst first. Unknown ranks above degraded: a source that cannot be read
@@ -34,6 +35,16 @@ export function groupServices(services: ServiceSnapshot[]): BoardGroups {
 
 export function serviceAnchor(id: ServiceSnapshot["id"]): string {
   return `service-${id}`;
+}
+
+/**
+ * A service's two-digit index, "01" to "14", by its place in the catalog:
+ * the same number wherever the board sorts or filters the card. A
+ * decorative label, never part of a name.
+ */
+export function serviceIndex(id: ServiceSnapshot["id"]): string {
+  const at = CATALOG.findIndex((entry) => entry.id === id);
+  return at < 0 ? "" : String(at + 1).padStart(2, "0");
 }
 
 function names(services: ServiceSnapshot[]): string {
@@ -92,4 +103,33 @@ export function boardHeadline(board: BoardSnapshot): { tone: Health; title: stri
 export function documentTitle(board: BoardSnapshot, appName: string): string {
   const attention = board.services.filter((service) => service.health !== "operational").length;
   return attention ? `(${attention}) ${appName}` : appName;
+}
+
+/**
+ * Whether an observed element has scrolled up out of view, from an
+ * IntersectionObserver entry: gone and above the viewport, where
+ * `topInset` is how far down a floating bar covers the screen.
+ */
+export function scrolledPast(
+  entry: { isIntersecting: boolean; boundingClientRect: { top: number } },
+  topInset: number,
+): boolean {
+  return !entry.isIntersecting && entry.boundingClientRect.top < topInset;
+}
+
+/**
+ * Whether focus arrived the way :focus-visible marks it, by keyboard
+ * rather than a click. A browser without :focus-visible throws on the
+ * selector; focus then counts as keyboard focus, the safe side for a
+ * keyboard user.
+ */
+export function keyboardFocus(target: unknown): boolean {
+  if (typeof target !== "object" || target === null || !("matches" in target)) return false;
+  const { matches } = target as { matches: unknown };
+  if (typeof matches !== "function") return false;
+  try {
+    return matches.call(target, ":focus-visible") === true;
+  } catch {
+    return true;
+  }
 }

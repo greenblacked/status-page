@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "./layout";
+import {
+  boardHeadline,
+  documentTitle,
+  groupServices,
+  keyboardFocus,
+  scrolledPast,
+  serviceAnchor,
+  serviceIndex,
+} from "./layout";
 import type { BoardSnapshot, CategoryId, Health, ServiceId, ServiceSnapshot } from "./types";
 
 function service(id: ServiceId, health: Health, category: CategoryId = "cloud", name: string = id): ServiceSnapshot {
@@ -90,13 +98,57 @@ describe("boardHeadline", () => {
 
 describe("documentTitle and serviceAnchor", () => {
   it("prefixes the tab title with the attention count only when there is one", () => {
-    expect(documentTitle(board([service("gcp", "operational")]), "Status Bar")).toBe("Status Bar");
-    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status Bar")).toBe(
-      "(2) Status Bar",
+    expect(documentTitle(board([service("gcp", "operational")]), "Status Page")).toBe("Status Page");
+    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status Page")).toBe(
+      "(2) Status Page",
     );
   });
 
   it("builds a stable element id per service", () => {
     expect(serviceAnchor("cs2-europe")).toBe("service-cs2-europe");
   });
+
+  it("numbers each service by its catalog place, not its place on the board", () => {
+    expect(serviceIndex("gcp")).toBe("01");
+    expect(serviceIndex("cs2-europe")).toBe("04");
+    expect(serviceIndex("apple-os")).toBe("14");
+    expect(serviceIndex("nope" as ServiceId)).toBe("");
+  });
 });
+
+describe("scrolledPast", () => {
+  const entry = (isIntersecting: boolean, top: number) => ({ isIntersecting, boundingClientRect: { top } });
+
+  it("counts an element as gone only once it has left through the top", () => {
+    expect(scrolledPast(entry(false, -120), 64)).toBe(true);
+    // Still under the floating bar's strip counts as gone too.
+    expect(scrolledPast(entry(false, 40), 64)).toBe(true);
+    expect(scrolledPast(entry(true, -10), 64)).toBe(false);
+    // Out of view below the fold is not scrolled past.
+    expect(scrolledPast(entry(false, 900), 64)).toBe(false);
+  });
+});
+
+describe("keyboardFocus", () => {
+  const element = (visible: boolean) => ({ matches: (selector: string) => selector === ":focus-visible" && visible });
+
+  it("holds for keyboard focus and not for a click", () => {
+    expect(keyboardFocus(element(true))).toBe(true);
+    expect(keyboardFocus(element(false))).toBe(false);
+  });
+
+  it("assumes keyboard focus where :focus-visible is unknown, and ignores non-elements", () => {
+    const old = {
+      matches: () => {
+        throw new SyntaxError("unknown pseudo-class");
+      },
+    };
+    expect(keyboardFocus(old)).toBe(true);
+    expect(keyboardFocus(null)).toBe(false);
+    expect(keyboardFocus(notAnElement())).toBe(false);
+  });
+});
+
+function notAnElement(): object {
+  return { matches: "not a function" };
+}

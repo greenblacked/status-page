@@ -4,16 +4,20 @@ import {
   formatAge,
   formatCountdown,
   formatDuration,
+  formatSlotTime,
   formatStaleAge,
   formatUtcTime,
+  freshnessOf,
   incidentStart,
   isStale,
   lastPulseAt,
+  liveState,
   nextPulseAt,
   nextRefetchAt,
   noteSnapshot,
   PULSE_INTERVAL_MS,
   parseTimestamp,
+  periodPhase,
   pickRefetchJitter,
   pulseProgress,
   REFETCH_JITTER_MAX_MS,
@@ -78,6 +82,37 @@ describe("refetch schedule", () => {
       assert.ok(at > now && at - now <= PULSE_INTERVAL_MS);
       assert.equal((at - 12_345) % PULSE_INTERVAL_MS, 0);
     }
+  });
+});
+
+describe("period phase", () => {
+  const noon = Date.parse("2026-09-22T12:00:00.000Z");
+  const jitter = 20_000;
+
+  it("starts at the refetch and ends at the next one", () => {
+    const start = periodPhase(noon + jitter, jitter);
+    assert.equal(start.endsAt, noon + jitter + PULSE_INTERVAL_MS);
+    assert.equal(start.elapsedMs, 0);
+    assert.equal(start.progress, 0);
+    const quarter = periodPhase(noon + jitter + 30_000, jitter);
+    assert.equal(quarter.elapsedMs, 30_000);
+    assert.equal(quarter.progress, 0.25);
+  });
+
+  it("agrees with the countdown at every second", () => {
+    for (let now = noon; now < noon + 2 * PULSE_INTERVAL_MS; now += 999) {
+      const phase = periodPhase(now, jitter);
+      assert.equal(phase.endsAt, nextRefetchAt(now, jitter));
+      assert.equal(phase.elapsedMs + (phase.endsAt - now), PULSE_INTERVAL_MS);
+      assert.ok(phase.progress >= 0 && phase.progress < 1);
+    }
+  });
+
+  it("rounds down to a step for a dial that moves in steps", () => {
+    const phase = periodPhase(noon + jitter + 32_400, jitter, 5_000);
+    assert.equal(phase.elapsedMs, 30_000);
+    assert.equal(phase.progress, 0.25);
+    assert.equal(phase.endsAt, noon + jitter + PULSE_INTERVAL_MS);
   });
 });
 
@@ -158,6 +193,11 @@ describe("incident times", () => {
     assert.equal(parseTimestamp(undefined), null);
   });
 
+  it("labels a board log slot in UTC, whatever the visitor's time zone", () => {
+    assert.equal(formatSlotTime(Date.parse("2026-09-27T17:44:00Z")), "17:44 UTC");
+    assert.equal(formatSlotTime(Date.parse("2026-09-28T00:04:00Z")), "00:04 UTC");
+  });
+
   it("formats a start as UTC clock time, adding the date only when it differs", () => {
     const at = Date.parse("2026-09-22T09:05:00Z");
     assert.equal(formatUtcTime(at), "09:05 UTC");
@@ -201,5 +241,30 @@ describe("incident times", () => {
     assert.deepEqual(incidentStart(checkedAt + 60_000, 0, checkedAt), { upcoming: true, duration: null });
     assert.deepEqual(incidentStart(checkedAt - 60_000, 0, checkedAt), { upcoming: false, duration: null });
     assert.deepEqual(incidentStart(checkedAt - 60_000, 0, Number.NaN), { upcoming: false, duration: null });
+  });
+});
+
+describe("live signal", () => {
+  it("shows a running check first, then a stale board, then live", () => {
+    assert.equal(liveState(true, true), "checking");
+    assert.equal(liveState(true, false), "checking");
+    assert.equal(liveState(false, true), "stale");
+    assert.equal(liveState(false, false), "live");
+  });
+});
+
+describe("freshnessOf", () => {
+  const seenAt = Date.parse("2026-09-27T12:00:00Z");
+  const seen = { generatedAt: "2026-09-27T12:00:00Z", seenAt };
+
+  it("is live and ageless before mount", () => {
+    assert.deepEqual(freshnessOf(null, false, 0), { ageMs: 0, stale: false, state: "live" });
+  });
+
+  it("goes stale after six minutes, unless a check is running", () => {
+    assert.deepEqual(freshnessOf(seen, false, seenAt + 60_000), { ageMs: 60_000, stale: false, state: "live" });
+    const late = seenAt + STALE_AFTER_MS + 1;
+    assert.deepEqual(freshnessOf(seen, false, late), { ageMs: STALE_AFTER_MS + 1, stale: true, state: "stale" });
+    assert.deepEqual(freshnessOf(seen, true, late), { ageMs: STALE_AFTER_MS + 1, stale: false, state: "checking" });
   });
 });

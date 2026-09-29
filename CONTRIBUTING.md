@@ -1,4 +1,4 @@
-# Contributing to Status Bar
+# Contributing to Status Page
 
 Two documents govern how work lands in this repository:
 
@@ -34,7 +34,7 @@ Rules:
 - Subject ≤ 72 characters, no trailing period
 - One logical change per commit
 - Body explains *why* when the diff is not obvious
-- Never commit secrets, `.env` files, or vendor credentials (Status Bar does not need any)
+- Never commit secrets, `.env` files, or vendor credentials (Status Page does not need any)
 
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`.
 
@@ -96,13 +96,15 @@ Rules:
 
 ## CI
 
-Run `npm run check` before you push: lint, typecheck, unit tests, and the hygiene and link checks, the same commands CI runs. For the browser tests, build first and install Chromium once:
+Run `npm run check` before you push: lint, typecheck, unit tests, and the hygiene and link checks, the same commands CI runs. For the browser tests, build first and install Chromium and WebKit once:
 
 ```bash
 npm run build
-npx playwright install chromium
+npx playwright install chromium webkit
 npm run test:e2e
 ```
+
+The tests run in five projects: `desktop` and `mobile` on Chromium, and `Desktop Safari`, `iPhone 17 Pro` and `iPad Pro 11` on WebKit, Safari's engine. Pick some with `--project`, for example `npm run test:e2e -- --project=desktop --project="iPhone 17 Pro"`. On Linux, WebKit needs system libraries: `npx playwright install --with-deps webkit` installs them. `PLAYWRIGHT_PORT` moves the preview the tests start off port 4173.
 
 [`ci.yml`](.github/workflows/ci.yml) splits the work into one job per concern, so a red check names its cause: `lint`, `typecheck`, `test` and `build` (each on the pinned Node and on Node 24), `browser tests`, `commit messages`, `branch name` and `workflow lint`. Every job gets its toolchain from [`.github/actions/setup`](.github/actions/setup/action.yml): Node, the npm version in `packageManager`, `npm ci` and a registry signature check.
 
@@ -118,7 +120,7 @@ Workflows are linted by actionlint and audited by [zizmor](https://docs.zizmor.s
 
 ## Releases
 
-Status Bar uses [Semantic Versioning](https://semver.org/). A version, its `vX.Y.Z` tag and its GitHub Release are made only when work reaches `main`. Before 1.0, a minor version adds services, features or health rules, and a patch fixes behavior without changing them.
+Status Page uses [Semantic Versioning](https://semver.org/). A version, its `vX.Y.Z` tag and its GitHub Release are made only when work reaches `main`. Before 1.0, a minor version adds services, features or health rules, and a patch fixes behavior without changing them.
 
 Pull requests merge into `dev`, which never releases, so several of them can go out as one version. Every pull request with a user-visible change adds its lines under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md). Its title is a [Conventional Commit](#commits), because a squash merge makes the title the commit on `dev`, and that commit's type counts toward the next version.
 
@@ -167,7 +169,7 @@ Other ways in, with the same checks:
 | **Run workflow** with bump `current` | Publishes the `package.json` version as it is, if it has no tag yet. Use it to retry a run that committed the bump but did not publish. |
 | [`scripts/release/bump.sh`](scripts/release/bump.sh) `minor` | Makes the same bump commit locally on `release/vX.Y.Z` for review in a pull request. Merging it releases that version as it is. |
 | **Run workflow** with `version` and `commit` | Backfills an older release: tags that commit on `main` with a version whose section is already in `main`'s changelog, and publishes it without marking it Latest. `gh workflow run release.yml --ref main -f version=0.1.1 -f commit=4cf30fd` |
-| A tag pushed by hand | `git tag -a v0.4.0 -m "Status Bar 0.4.0" && git push origin v0.4.0` publishes that tag, if it matches `package.json` and is on `main`. |
+| A tag pushed by hand | `git tag -a v0.4.0 -m "Status Page 0.4.0" && git push origin v0.4.0` publishes that tag, if it matches `package.json` and is on `main`. |
 
 The bump commit and the tag are pushed with the workflow's `GITHUB_TOKEN`, so they start no other workflow and CI does not run on the bump commit itself. The verify job has already checked the same code.
 
@@ -184,15 +186,13 @@ Never move or reuse a tag that has a published release; release a new patch vers
 | `dev` | `staging` | `status-bar-staging` |
 | `main` | `production` | `status-bar` |
 
-Every push to `dev` or `main` deploys, and `release.yml` also starts a staging deploy after it merges `main` back into `dev` (that merge is pushed with a token that starts no workflow of its own). A pull request builds the Worker and runs `wrangler deploy --dry-run`, with no credentials. Every build, pull request or push, also runs the built Worker in workerd with an empty local KV namespace, fires its Cron Trigger once and checks that the snapshot moves forward (`scripts/ci/smoke.sh --cron`), so a Worker whose scheduled handler throws never reaches a deploy. A deploy whose smoke test fails is rolled back to the previous version automatically, and the job still fails so it shows up. The smoke test first waits until `/healthz` carries the `X-Worker-Version` that `wrangler deploy` reported, so it tests the new version rather than the old one still answering somewhere, and after a rollback the job waits until `/healthz` no longer names the failed version. The page, API and feed checks fail within about half a minute, but `/readyz` gets five minutes to turn `200`: a deploy can be the fix for a board that is already stale (the previous version's cron was broken, say), and it only turns ready once the new version's first cron tick (up to 2 minutes away), its sweep, KV's propagation to other locations (up to about a minute) and the isolate's 5-second memo are behind it, about 3.5 minutes in all. Rolling that deploy back as stale would put the broken version back for good. `deploy.yml`'s smoke-test step has the numbers. The Worker has no secrets of its own: it only reads the public vendor feeds, on a schedule, into its own KV namespace. The staging Worker is public but kept out of search engines: `wrangler.jsonc`'s `env.staging.vars` sets `ROBOTS=noindex`, so every response it makes carries `X-Robots-Tag: noindex, nofollow` and its `/robots.txt` disallows everything; production and the Node build serve `Allow: /`. Every response the Worker makes, on either environment, carries `X-Worker-Version: <version id>` from the `version_metadata` binding (`CF_VERSION_METADATA`, repeated under `env.staging` because bindings are not inherited), so you can see which deployed version answered: `curl -sI https://<your-host>/healthz | grep -i x-worker-version`, against `npx wrangler deployments list`. The Node build sends no such header.
+Every push to `dev` or `main` deploys; pull requests build and dry-run the Worker without credentials. The built Worker is also smoke-tested locally. A deployed version is checked against its `X-Worker-Version` header and rolled back automatically when the post-deploy smoke test fails, if `DEPLOY_URL` is configured. Staging sets `ROBOTS=noindex` and production remains indexable.
 
 ### How the board stays fresh on Workers
 
-Cloudflare runs many isolates across many locations, so a Worker cannot keep the Node build's in-memory cache: each isolate would sweep every vendor itself, and a "Refresh" click would only throttle that one isolate. Instead, a [Cron Trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/) (`wrangler.jsonc`'s `triggers.crons`, every 2 minutes) is the only thing that reads the vendors: it collects the board and writes it to a KV namespace (binding `STATUS_SNAPSHOT`), and every request - the page, `/api/status.json`, `/feed.xml`, the badges, `/metrics` - only ever reads that snapshot (`src/lib/status/board.cloudflare.ts`, `src/lib/status/cron-sweep.ts`). The **Refresh** button reads the same snapshot rather than forcing a sweep: a synchronous sweep of every vendor on the request path risks the CPU-time limit a single request gets, and the cron already runs every two minutes from everywhere the board is opened. A request collects anything itself only in two cases. One is a cold KV namespace right after a fresh deploy, before the first cron tick; that one collection is stored through `ctx.waitUntil` so it is not lost if the Worker is torn down right after the response. The other is KV itself failing (an error, not an empty or unreadable value): the isolate logs `{"event":"kv_read_failed"}` and keeps serving the board it already has for a minute before asking KV again, as long as that board stays under `/readyz`'s ten-minute limit meanwhile. Only an isolate with no board, or one about to go stale, collects the board itself, once for all the requests waiting on it, and never writes it to KV, which the cron owns. If that collect fails too, an isolate that has shown a board keeps showing it, and one that has not answers `503` with `Retry-After` on `/api/status.json`, `/feed.xml`, the badges and `/metrics` (`src/lib/status/board-response.ts`, the same on the Node build).
+Each Worker isolate collects the public vendor feeds on demand, shares a 45-second in-memory cache among its requests, serves a recently expired result while a new collection runs, and throttles forced refreshes to one per 15 seconds. A cold isolate can take several seconds to answer. Isolates do not share their cache, so traffic can cause more vendor requests than a shared store would. There is no persistent 30-day history; `/api/history.json` returns an empty compatible document.
 
-Every cron run ends in one JSON log line in Workers Logs: `{"event":"sweep_completed","durationMs":…,"services":14,"unknown":…,"bytes":…,"skipped":false}`, or `{"event":"sweep_failed","message":…}` (the run then also shows as failed under the Worker's cron events). `skipped: true` is a run that landed within 15 seconds of the last snapshot and reused it. A stream of `sweep_failed`, or `unknown` equal to `services`, is a board that has stopped updating while every request still answers.
-
-This needs its own server entry (`src/server.cloudflare.ts`, named directly in `wrangler.jsonc`'s `main`): Workers module syntax wants a `scheduled` export next to `fetch`, and both need the KV binding and `ExecutionContext.waitUntil` that only workerd's own call to them provides. The Node build (`npm run build` without `DEPLOY_TARGET`) is unaffected: it keeps TanStack Start's default entry and `src/lib/status/board.ts`'s in-memory cache, and never resolves the Workers-only files - `vite.config.ts`'s `resolve.alias` for `@/lib/status/board` is what picks between them, keyed on `DEPLOY_TARGET`.
+The Cloudflare entry in `src/server.cloudflare.ts` only threads the staging robots setting and version metadata into TanStack's request handler. It has no scheduled event or storage binding. The Node and Worker builds both use `src/lib/status/board.ts`.
 
 ### How the token is kept safe
 
@@ -206,48 +206,19 @@ The repository is public, so anyone can read the workflow and open a pull reques
 
 ### One-time setup
 
-1. **Create the token.** In the Cloudflare dashboard, go to **My Profile → API Tokens → Create Token** and start from **Edit Cloudflare Workers**. Trim it to what `wrangler deploy` and `wrangler rollback` need:
-   - **Account resources:** only this account.
-   - **Permissions:** Account · Workers Scripts · Edit, and Account · Account Settings · Read. The Worker's KV binding needs no token permission: `wrangler deploy` only records which namespace to bind. If a deploy is ever refused with a KV authorization error, add Account · Workers KV Storage · Edit.
-   - **Custom domain:** add Zone · Workers Routes · Edit for that zone only, and nothing else.
-   - **TTL:** set an end date, and rotate the token before it.
+1. **Create a Cloudflare API token** scoped to this account and Workers Scripts Edit (plus Account Settings Read if required by wrangler). Add Zone Workers Routes Edit only if deploying to a custom route. Set an expiry and rotate it before then. Check [Cloudflare's token documentation](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) for current permission names.
+2. **Create GitHub environments** `staging` (allow only `dev`) and `production` (allow only `main`) in Settings → Environments.
+3. **Enter two settings in each environment:** `CLOUDFLARE_ACCOUNT_ID` as a variable and `CLOUDFLARE_API_TOKEN` as a secret. The deploy workflow requires these two values. `DEPLOY_URL` is optional but recommended: set it to that Worker's public URL after the first deploy to enable post-deploy smoke tests and automatic rollback. The Worker itself has no API token or account ID binding.
+4. **Monitor production:** optionally set repository variable `PRODUCTION_URL` to its HTTPS address for hourly `/readyz` checks in `source-health.yml`.
 
-   Cloudflare renames these permissions from time to time, so check the list against [Cloudflare's token docs](https://developers.cloudflare.com/fundamentals/api/get-started/create-token/) when you create it.
-2. **Create a KV namespace for each Worker**, signed in as yourself rather than with the CI token, and keep the two ids for step 4:
-
-   ```bash
-   npx wrangler login
-   npx wrangler kv namespace create status-bar-snapshot           # production
-   npx wrangler kv namespace create status-bar-snapshot-staging   # staging
-   ```
-
-   The ids are not secrets, but they are per environment, so they live in GitHub next to the account id rather than in `wrangler.jsonc`, whose placeholder only local previews use. Automatic provisioning (a binding with no `id`, created on first deploy) is experimental in this wrangler version, so this is a one-time step.
-3. **Create the two environments.** In **Settings → Environments**, add `staging` and `production`. For each, set **Deployment branches and tags** to **Selected branches**, and add only `dev` or only `main`. Optionally, add yourself as a **Required reviewer** on `production`, so every production deploy waits for your approval.
-4. **Give each environment its settings.** Add the secret `CLOUDFLARE_API_TOKEN`, the variables `CLOUDFLARE_ACCOUNT_ID` and `KV_NAMESPACE_ID` (that environment's namespace from step 2), and, after the first deploy, `DEPLOY_URL` (the Worker's URL; the job then smoke-tests it with `scripts/ci/smoke.sh --require-ready` and rolls back automatically if it fails, including when `/readyz` still says the board is stale or every source is unreadable five minutes after the new version answers). Without `KV_NAMESPACE_ID` the deploy stops before touching Cloudflare; without `DEPLOY_URL` it logs a warning and skips the smoke test and rollback.
-5. **Watch production between deploys.** Set the *repository* variable `PRODUCTION_URL` (**Settings → Secrets and variables → Actions → Variables**, not an environment's) to the production board's `https://` address. `source-health.yml` then checks its `/readyz` every hour and keeps one issue labelled `deploy-health` open while it is not `200`, closing it on recovery: that catches a Cron Trigger that stopped, or a Worker that cannot reach the vendors, which no deploy-time check sees. Without it the job only logs a notice. `gh variable set PRODUCTION_URL --repo greenblacked/status-page --body "https://<your-host>"` does the same.
-
-The same with the GitHub CLI:
-
-```bash
-repo=greenblacked/status-page
-for pair in staging:dev production:main; do
-  env="${pair%%:*}" branch="${pair##*:}"
-  gh api -X PUT "repos/$repo/environments/$env" \
-    -F 'deployment_branch_policy[protected_branches]=false' \
-    -F 'deployment_branch_policy[custom_branch_policies]=true'
-  gh api -X POST "repos/$repo/environments/$env/deployment-branch-policies" -f name="$branch" -f type=branch
-  gh secret set CLOUDFLARE_API_TOKEN --repo "$repo" --env "$env"   # paste the token when asked
-  gh variable set CLOUDFLARE_ACCOUNT_ID --repo "$repo" --env "$env" --body "<your account id>"
-  gh variable set KV_NAMESPACE_ID --repo "$repo" --env "$env" --body "<this environment's namespace id>"
-done
-```
+No KV namespace or ID is needed. An old namespace can be left in Cloudflare until you decide to delete it; this change does not delete it.
 
 ### Locally
 
 | Command | Runs | What it does |
 | --- | --- | --- |
 | `npm run build:cf` | `DEPLOY_TARGET=cloudflare vite build` | The production Worker in `dist/` |
-| `npm run preview:cf` | `DEPLOY_TARGET=cloudflare vite preview --host 127.0.0.1` | Runs that build in workerd, Cloudflare's runtime, with a local, simulated KV namespace |
+| `npm run preview:cf` | `DEPLOY_TARGET=cloudflare vite preview --host 127.0.0.1` | Runs that build in workerd, Cloudflare's runtime, without storage bindings |
 | `npm run deploy:dry-run` | `WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config dist/server/wrangler.json` | Shows what would upload, as a pull request's CI does |
 | `npm run build:cf:staging` | `DEPLOY_TARGET=cloudflare CLOUDFLARE_ENV=staging vite build` | The staging Worker |
 
@@ -265,14 +236,7 @@ CI and the deploy share one smoke test, [`scripts/ci/smoke.sh`](scripts/ci/smoke
 
 `--expect-version` takes a Worker version id (`npx wrangler deployments list`, or the `Current Version ID:` line `wrangler deploy` prints) and fails if `/healthz` still comes from another version when `--wait` runs out, then requires the same `X-Worker-Version` on every response it checks. `--attempts` retries the page, API and feed checks 10 seconds apart; `--ready-wait` separately gives `/readyz` that many seconds, checked every 10, to turn `200` under `--require-ready`. The deploy job reads the id from the `deploy` line wrangler writes to `WRANGLER_OUTPUT_FILE_PATH`, and stops with an error, before the smoke test, if there is none.
 
-`npm run preview:cf`'s local Worker starts with an empty KV namespace, so the first request collects the board itself (How the board stays fresh on Workers, above) and every request after that reads what it stored. To run the Cron Trigger itself locally rather than waiting up to 2 minutes, use the Local Explorer API it prints on start:
-
-```bash
-curl -X POST "http://127.0.0.1:4173/cdn-cgi/local/explorer/api/local/scheduled?worker=status-bar" \
-  -H 'Content-Type: application/json' -d '{"cron":"*/2 * * * *"}'
-```
-
-For a `CLOUDFLARE_ENV=staging` build, the Worker is `status-bar-staging`. Run `vite preview` without `CLOUDFLARE_ENV` either way: the built `dist/server/wrangler.json` already is that environment's config, and naming it again registers the Worker as `status-bar-staging-staging`. `./scripts/ci/smoke.sh http://127.0.0.1:4173 --cron status-bar` does all of this and checks the result, as the deploy workflow's build job does. The build also leaves `.wrangler/deploy/config.json`, which `vite preview` needs; delete only `.wrangler/state` to start again from an empty KV namespace.
+A cold local Worker collects vendors on its first request. For a staging build, run `vite preview` without `CLOUDFLARE_ENV`: the built configuration already selects staging. Run `./scripts/ci/smoke.sh http://127.0.0.1:4173` against the preview.
 
 ### Rolling back
 
@@ -282,7 +246,7 @@ For a `CLOUDFLARE_ENV=staging` build, the Worker is `status-bar-staging`. Run `v
 npx wrangler rollback --name status-bar          # or status-bar-staging
 ```
 
-You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back only changes which Worker version answers requests: it does not touch the KV namespace, so the board keeps whatever the Cron Trigger last wrote regardless of which version is live. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
+You can also use **Workers & Pages → status-bar → Deployments** in the dashboard, or revert the commit so the next push deploys the fix. A rollback lasts until the next deploy from `main`. Rolling back changes which Worker version answers requests; each isolate collects vendor status again when its cache expires. To see which version is answering, `curl -sI https://<your-host>/healthz | grep -i x-worker-version`; a version from before `X-Worker-Version` sends none.
 
 ## Dependencies
 
@@ -309,6 +273,23 @@ Do not scrape unofficial aggregators.
 - [Biome](https://biomejs.dev/) formats, lints and sorts imports ([`biome.json`](biome.json)); `npm run lint:fix` applies it. A `biome-ignore` comment must say why
 - TypeScript strict, no `any`
 - No unused locals, imports or parameters: `tsconfig.json` sets `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` fails on them. Prefix a parameter that a signature requires but the body ignores with `_`
-- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX
-- Status color is for badges only, not entire panels
+- Tokens live in `src/styles.css`; do not sprinkle raw hex in JSX. Every colour token has a light and a dark value, written with `light-dark()`. The build compiles that into toggles keyed on the system's `prefers-color-scheme`, so the whole page follows the system and `color-scheme` on one element does not switch its tokens
+- Text must clear 4.5:1 on every material's flat fill. A browser test proves it: on a fixture board with every state, incident times and the Stale badge ([`e2e/fixture-board.ts`](e2e/fixture-board.ts)), in light and dark, with and without Increase Contrast, it strips blur, gradients and pseudo-elements and runs axe's colour-contrast rule. It does not measure text over the aurora itself; the light aurora's colours are chosen to stay close to the page's brightness for that reason
+- Design, Lucid Vigil: deep ink in dark (the hero appearance), warm paper in light, and colour rationed to small exact points
+  - Status colour is for badge text, dots and the uptime strip's bad days only, never a fill across a badge, panel or card. Badges share one neutral fill and draw their own tone dot; a quiet day on the uptime strip is a neutral tick
+  - `--color-event`, the warm amber, marks the one thing that just moved (the headline's ping, a card that just changed, the period dial's hand). It never carries a status by itself and never replaces `--color-down` on an Outage badge
+  - Status, event and aurora colours are written once in OKLCH, with no separate Display P3 block. Keep status and text colours inside sRGB, so the contrast the tests measure is the contrast shown. Only the aurora may use colours beyond sRGB, and today one dark stop does
+  - Type: the system faces only, no web font. Mono uppercase with wide tracking for labels, and `font-serif` italic for one short phrase (the empty board), nowhere else
+  - The coordinate grid (`.aurora-grid`) is static: never animate it. It goes with the aurora under Reduce glass and under forced colours
+  - The card index (01 to 14) follows the catalog order and is `aria-hidden`: decoration, never part of a name
+- Three materials, and nothing else is translucent:
+  - `.glass-chrome` for controls that float above the content (the compact header, the settings dialog), one on screen at a time
+  - `.glass` for content panels (the summary, attention cards, the board log), a handful per screen
+  - `.glass-whisper`, with no blur, for anything dense or repeated: tiles, chips, the search box
+- Never glass on glass: inside a `.glass` or `.glass-chrome`, nest only `.glass-whisper` or `.glass-inset`
+- Performance: no `will-change: backdrop-filter`, never animate a blur or a `filter`, and animate `transform` and `opacity` only. The one exception is a registered custom property on a small element, stepped so it repaints rarely, as the period dial does once a second. Blur stays at 24px for `.glass` and 28px for `.glass-chrome`
+- Radii are concentric: a nested shape takes its parent's radius minus the inset between them, rounded down to the nearest `--radius-*` step (`rounded-2xs` to `rounded-xl`). Pills stay `rounded-full`, and Tailwind's default radius scale is switched off
+- New motion goes in the `prefers-reduced-motion` block, and new translucency in the Reduce glass block, in `src/styles.css`
+- Newer CSS is welcome where it degrades to something correct: `@starting-style` and `linear()` easing are used unconditionally, since a browser without them just skips the flourish. Container queries lay out the card grids, which stay a single column without them; every engine the board supports has had them since Safari 16 and Chrome 105. Anything whose absence would break layout or meaning, such as scroll-driven animations, goes behind `@supports` and stays decorative
+- Card internals respond to the card's own width with container-query variants (`@xs:`), not the viewport's (`sm:`), since a card's width depends on the board log beside it
 - Keep fetch timeouts short and failures isolated (`Promise.all` of per-service collectors)

@@ -18,11 +18,9 @@ export function nextPulseAt(now = Date.now()): number {
 }
 
 // The board refetches this long after each two-minute slot rather than on
-// it: on Workers the cron's sweep takes nine seconds or more before its KV
-// write, and a spread keeps every open tab from asking in the same second.
-// A slow sweep can still miss a tab's moment; that tab then shows the
-// slot's snapshot one refetch later. Each page load picks one value and
-// keeps it.
+// it: a spread keeps open tabs from asking the Worker at the same second.
+// Each isolate caches its own collection for 45 seconds; a slow vendor
+// may cause a tab to see a new snapshot on its next refetch.
 export const REFETCH_JITTER_MIN_MS = 15_000;
 export const REFETCH_JITTER_MAX_MS = 30_000;
 
@@ -38,6 +36,28 @@ export function pickRefetchJitter(random: () => number = Math.random): number {
 export function nextRefetchAt(now: number, jitterMs: number): number {
   const candidate = lastPulseAt(now) + jitterMs;
   return candidate > now ? candidate : candidate + PULSE_INTERVAL_MS;
+}
+
+/** Where the board stands in the period that ends at its next refetch. */
+export type PeriodPhase = {
+  /** The next refetch, as `nextRefetchAt` gives it: unique to this period. */
+  endsAt: number;
+  /** How far into the period, in ms, rounded down to `stepMs` when given. */
+  elapsedMs: number;
+  /** `elapsedMs` as a share of the period, from 0 up to (not reaching) 1. */
+  progress: number;
+};
+
+/**
+ * The period the countdown counts down: the same end, the same jitter, so
+ * the period dial and "Next update" never disagree. A `stepMs` coarsens it,
+ * for a dial that must not move more often than that.
+ */
+export function periodPhase(now: number, jitterMs: number, stepMs = 0): PeriodPhase {
+  const endsAt = nextRefetchAt(now, jitterMs);
+  const exact = PULSE_INTERVAL_MS - (endsAt - now);
+  const elapsedMs = stepMs > 0 ? Math.floor(exact / stepMs) * stepMs : exact;
+  return { endsAt, elapsedMs, progress: Math.min(1, Math.max(0, elapsedMs / PULSE_INTERVAL_MS)) };
 }
 
 export function pulseProgress(now = Date.now()): number {
@@ -110,6 +130,37 @@ export function isStale(seenAt: number, now: number): boolean {
   return now - seenAt > STALE_AFTER_MS;
 }
 
+/**
+ * What the live signal shows: a check running, a board that has stopped
+ * updating, or a live one. Checking wins, since it may yet bring a fresh
+ * snapshot, which is also why the board is not called stale while it runs.
+ */
+export type LiveState = "checking" | "stale" | "live";
+
+export function liveState(fetching: boolean, stale: boolean): LiveState {
+  if (fetching) return "checking";
+  return stale ? "stale" : "live";
+}
+
+/** How fresh the board on screen is, shared by the live bar and the live signals. */
+export type Freshness = {
+  /** Timed by this browser's clock, from when it first showed this snapshot. */
+  ageMs: number;
+  stale: boolean;
+  state: LiveState;
+};
+
+/**
+ * The freshness of the snapshot this browser first showed at `seen`. A
+ * check in flight may yet bring it back, so it is not called stale while
+ * one runs.
+ */
+export function freshnessOf(seen: SnapshotSeen | null, fetching: boolean, now: number): Freshness {
+  const seenAt = seen?.seenAt ?? 0;
+  const stale = !fetching && isStale(seenAt, now);
+  return { ageMs: now - seenAt, stale, state: liveState(fetching, stale) };
+}
+
 /** An age in words a screen reader reads well: "7 min ago", "2 hours ago". */
 export function formatStaleAge(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
@@ -120,10 +171,9 @@ export function formatStaleAge(ms: number): string {
 }
 
 export function formatSlotTime(slot: number): string {
-  return new Intl.DateTimeFormat("en", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(slot));
+  // UTC like every other time on the board, and the same text on the server
+  // and in the browser, so the log never disagrees with itself on hydration.
+  return formatUtcTime(slot);
 }
 
 /** A vendor timestamp in ms, or null when it is missing or unreadable. */

@@ -1,16 +1,27 @@
 # Changelog
 
-All notable changes to Status Bar are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to Status Page are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Each release's section becomes its GitHub Release notes, so write entries for someone reading the board, not the diff. [CONTRIBUTING.md](CONTRIBUTING.md#releases) describes how to cut a release.
 
 ## [Unreleased]
 
+### Changed
+
+- Cloudflare Workers now collect status on request with an in-memory cache per isolate. Deployment needs only the Cloudflare account ID and API token.
+
+### Removed
+
+- Workers KV and its Cron Trigger; persistent 30-day uptime history and card strips are unavailable. The history endpoint returns an empty compatibility response.
+
 ### Added
 
-- Each service card shows a 30-day uptime strip from `/api/history.json` (colour by that day's worst health, plus a short uptime percent). A service with no history, or a cold empty document, simply has no strip; the board still loads.
-- A public JSON API at `/api/history.json` with each service's UTC-day uptime for the last 30 days (`date`, `worst`, `samples`, `up`), kept by the Cloudflare cron beside the board snapshot.
-- A **Single-key shortcuts** switch in the keyboard shortcuts list (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Keyboard shortcuts** button at the foot of the page, now shown on every screen size, opens the list again, and the choice is kept in this browser.
+- A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
+- A **Reduce glass** switch in **Settings and shortcuts** turns the frosted panels solid and stops the background moving. Safari does not pass the system's Reduce Transparency setting to web pages, so this is the way to get it on an iPhone, iPad or Mac; browsers that do pass it on get the same result automatically. The choice is kept in this browser.
+- A light appearance. The board now follows your system's light or dark setting and switches when it does.
+- Scroll past the top of the board and a compact bar floats in with the live signal, the headline, **Alerts** and **Refresh**, so you never have to scroll back up to refresh.
+- **Add to Home Screen** on an iPhone or iPad opens the board full screen under its own name and icon.
+- With **Increase Contrast** on, panels turn nearly opaque with solid borders and secondary text gets darker (or lighter, on dark).
 - A **Skip to services** link, the first stop when you press Tab, jumps past the header straight to the cards.
 - Screen readers hear how many services a search or filter leaves, such as "3 of 14 services shown" or "0 of 14 services shown. No services match that filter.", when the headline changes, and when a refresh fails.
 - A card with an incident shows when the vendor says it began and how long it has run, such as "since 14:05 UTC · 2h 10m". Maintenance that has not started yet shows when it is due instead, such as "scheduled for 22:00 UTC".
@@ -20,6 +31,15 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
+- The app is named Status Page across the board, browser metadata, feeds, documentation and release titles.
+- A new look built for Apple devices: glass panels over a slow, drifting aurora, with a live dot that sends out a gentle ripple while the board is live. All text stays readable at WCAG AA contrast even with the glass effect set aside. The layout fits around the notch, the rounded corners and the home indicator.
+- A calmer look for the board: deep ink in dark, warm paper in light, and a faint drafting grid under the glass. Colour is kept for what needs it: every status badge shares one neutral fill with a small coloured dot,.
+- A dial beside the counts ticks through each two-minute check, one tick a second, in step with **Next update**. With Reduce Motion on it stands still and moves on every few seconds.
+- The headline's pulse and a card that has just changed now glow warm amber, the one warm colour on the board, so what moved is easy to spot. Red still always means an outage.
+- Each card and tile shows a small number, 01 to 14, that stays with the service whatever the sort, filter or search.
+- The **Settings and shortcuts** dialog rises into place as it opens, the compact bar slides in more smoothly, and buttons and stars settle with a light spring when you let go.
+- The operational tiles are lighter on the phone: no blur behind each one, so a long board scrolls smoothly, and on a wide screen they sit two to a row so every name fits.
+- The **Keyboard shortcuts** list is now **Settings and shortcuts**, and switched-off shortcuts in it are dimmed in a colour that stays readable instead of fading to half opacity.
 - On the hosted Cloudflare deployment, a scheduled job now collects the board every two minutes into a KV namespace instead of each request's isolate collecting it itself, and **Refresh** shows that snapshot instead of forcing a new sweep.
 - A Cloudflare deploy whose smoke test fails is now rolled back to the previous version automatically. The smoke test waits until the version just deployed is the one answering, so the version before it can neither pass nor fail the test in its place, and gives a deploy that lands on an out-of-date board five minutes for its first scheduled refresh before calling it stale.
 

@@ -161,7 +161,8 @@ jobs:
     name: browser tests
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Five projects, two engines, and WebKit's system libraries to install.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -173,9 +174,10 @@ jobs:
           name: node-build
           path: dist/
 
-      # The browser matching the @playwright/test version in the lockfile.
-      - name: Install Playwright's Chromium
-        run: npx --no-install playwright install --with-deps chromium
+      # The browsers matching the @playwright/test version in the lockfile:
+      # Chromium, and WebKit for the Safari, iPhone and iPad projects.
+      - name: Install Playwright's Chromium and WebKit
+        run: npx --no-install playwright install --with-deps chromium webkit
 
       - name: Browser tests (Playwright)
         run: npm run test:e2e

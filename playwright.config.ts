@@ -7,11 +7,13 @@ import { defineConfig, devices } from "@playwright/test";
 // from run to run (and is all Unknown without network access). The tests
 // only assert what holds either way: the page, its accessibility, keyboard
 // paths and URL state, never a particular vendor's health.
-const port = 4173;
+// PLAYWRIGHT_PORT moves the preview off 4173 when something else holds it.
+const port = Number(process.env.PLAYWRIGHT_PORT) || 4173;
 const baseURL = `http://127.0.0.1:${port}`;
 
 // A browser Playwright did not download, such as a preinstalled Chromium in
-// a container: PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome.
+// a container: PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome. It applies to
+// the Chromium projects only; the WebKit ones always use Playwright's own.
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 
 export default defineConfig({
@@ -26,11 +28,16 @@ export default defineConfig({
   use: {
     baseURL,
     trace: "retain-on-failure",
-    launchOptions: { executablePath },
   },
+  // The board is built for Apple devices first, so Safari's engine runs
+  // every test too: a Mac, an iPhone and an iPad, alongside Chromium on a
+  // desktop and an Android phone. `npx playwright install chromium webkit`.
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], launchOptions: { executablePath } } },
     { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: { executablePath } } },
+    { name: "Desktop Safari", use: { ...devices["Desktop Safari"] } },
+    { name: "iPhone 17 Pro", use: { ...devices["iPhone 17 Pro"] } },
+    { name: "iPad Pro 11", use: { ...devices["iPad Pro 11"] } },
   ],
   webServer: {
     command: `npm run preview -- --port ${port} --strictPort`,
