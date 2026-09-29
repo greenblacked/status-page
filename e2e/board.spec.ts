@@ -276,6 +276,7 @@ for (const colorScheme of ["light", "dark"] as const) {
 }
 
 test("renders cards without requesting persistent uptime history", async ({ page }) => {
+  test.skip(process.env.VITE_STATUS_HISTORY === "1", "a history build requests it");
   let historyRequests = 0;
   await page.route("**/api/history.json", async (route) => {
     historyRequests += 1;
@@ -292,8 +293,9 @@ test("renders cards without requesting persistent uptime history", async ({ page
 });
 
 // The board asks for history only in a build made with VITE_STATUS_HISTORY=1
-// (nothing collects any today), so this runs against such a build and is
-// skipped against the default one, which the test above covers.
+// (nothing collects any today). These two run only when the runner is given
+// the same VITE_STATUS_HISTORY=1 it built with, and are skipped otherwise;
+// the default build is covered by the test above, which a history build skips.
 test("shows an uptime strip on a card once /api/history.json has days", async ({ page }) => {
   test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
   const today = new Date();
@@ -325,5 +327,31 @@ test("shows an uptime strip on a card once /api/history.json has days", async ({
   await expect(page.locator("#service-aws").getByRole("img", { name: /uptime history/i })).toBeVisible();
   // Only the service the document lists gets one.
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(1);
+  expect(problems).toEqual([]);
+});
+
+test("renders cards without a strip when /api/history.json is the empty document", async ({ page }) => {
+  test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
+  let historyRequests = 0;
+  await page.route("**/api/history.json", (route) => {
+    historyRequests += 1;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        schema: 1,
+        updatedAt: new Date().toISOString(),
+        timezone: "UTC",
+        retentionDays: 30,
+        services: {},
+      }),
+    });
+  });
+
+  const problems = watchConsole(page);
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await page.waitForLoadState("networkidle");
+  expect(historyRequests).toBeGreaterThan(0);
+  await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
   expect(problems).toEqual([]);
 });
