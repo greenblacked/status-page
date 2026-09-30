@@ -12,7 +12,7 @@ const BACKGROUND_LABEL: Record<Background, string> = { quiet: "Quiet", glass: "G
 const BACKGROUND_HINT: Record<Background, string> = {
   quiet: "Flat paper. Nothing moves behind the page.",
   glass: "Frosted panels over a still glow.",
-  full: "Adds the slow drift, glass lenses and a light that follows your pointer.",
+  full: "Adds the slow drift, glass lenses and a light that wanders across the cards.",
 };
 
 /**
