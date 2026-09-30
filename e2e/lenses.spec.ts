@@ -239,10 +239,15 @@ test.describe("Settings, Background", () => {
     await page.goto("/");
     await hydrated(page);
     await openSettings(page);
-    await page.evaluate(() => {
-      localStorage.setItem("status-bar:background", "full");
-      window.dispatchEvent(new StorageEvent("storage", { key: "status-bar:background", newValue: "full" }));
-    });
+    // A real second tab in the same browser context: its write makes the browser fire a genuine storage event here.
+    const other = await page.context().newPage();
+    try {
+      await other.goto("/");
+      await hydrated(other);
+      await other.evaluate(() => localStorage.setItem("status-bar:background", "full"));
+    } finally {
+      await other.close();
+    }
     await expect(html(page)).toHaveAttribute("data-background", "full");
     await expect(page.getByRole("radio", { name: "Full" })).toBeChecked();
     await page.getByRole("switch", { name: "Reduce glass" }).click();
