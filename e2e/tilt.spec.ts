@@ -285,7 +285,7 @@ async function open(page: Page): Promise<void> {
 }
 
 async function openSettings(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 }
 

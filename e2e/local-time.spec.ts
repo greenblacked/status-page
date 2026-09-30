@@ -20,7 +20,7 @@ test.describe("in Berlin", () => {
     await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
     const stamp = asOf(page);
-    await expect(stamp).toHaveText(/^\d\d:\d\d CES?T$/);
+    await expect(stamp).toHaveText(/^\d\d:\d\d\sCES?T$/);
     await expect(stamp).toHaveAttribute("title", /^\d{1,2} [A-Z][a-z]{2} \d{4} \d\d:\d\d UTC$/);
 
     // The same moment: the title's UTC clock is the local clock less the zone's offset (1 h in winter, 2 in summer).
@@ -53,7 +53,7 @@ test.describe("in Berlin", () => {
       const page = await context.newPage();
       await page.goto("/");
       const stamp = asOf(page);
-      await expect(stamp).toHaveText(/^\d\d:\d\d UTC$/);
+      await expect(stamp).toHaveText(/^\d\d:\d\d\sUTC$/);
       await expect(stamp).toHaveAttribute("title", /UTC$/);
     } finally {
       await context.close();
@@ -66,6 +66,6 @@ test("in UTC the hydrated text is the server's text, so nothing moves", async ({
   const stamp = asOf(page);
   const before = await stamp.textContent();
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
-  await expect(stamp).toHaveText(/^\d\d:\d\d UTC$/);
+  await expect(stamp).toHaveText(/^\d\d:\d\d\sUTC$/);
   expect(await stamp.textContent()).toBe(before);
 });

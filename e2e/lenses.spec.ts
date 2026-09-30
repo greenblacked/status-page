@@ -173,7 +173,7 @@ test.describe("Settings, Background", () => {
   const stored = (page: Page) => page.evaluate(() => localStorage.getItem("status-bar:background"));
 
   async function openSettings(page: Page): Promise<void> {
-    await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
   }
 
@@ -305,7 +305,7 @@ test.describe("styling", () => {
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     expect(await lenses(page).evaluate((layer) => getComputedStyle(layer).display)).not.toBe("none");
 
-    await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("switch", { name: "Reduce glass" }).click();
     await expect(page.locator("html")).toHaveAttribute("data-reduce-transparency", "true");
     await expect(lenses(page)).toBeHidden();

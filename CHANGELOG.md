@@ -9,12 +9,15 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Added
 
 - Four glass lenses in the background that bend the drafting grid and, with a mouse or trackpad, catch a slow highlight. They stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
-- The page footer links to the source on GitHub and to the MIT License (free to use, copy, modify and share, with the copyright notice kept), and says how often the board is checked: every two minutes in the page, with the server keeping vendor feeds for 45 seconds.
+- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON, the Atom feed and the badges, and is signed "Made and kept by Serhii." It no longer explains how often the board is checked.
+- A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
+- A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings and shortcuts** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. Off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
 - Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, and the field merges into it a little further down the page. The field has its own clear button, a full-size touch target.
 
 ### Changed
 
+- The site is called **Status**, and the words are plainer and in the first person. The headline counts what needs a look ("Two things need a look.") or says "Everything is up."; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.
 - Unknown now ranks above Maintenance, and the order is one everywhere: Outage, Degraded, Unknown, Maintenance. Cards already put Degraded above Unknown (0.5.0); the overall health, `/api/status.json` `overall`, the badge and the history days now follow them, where they used to rank Unknown above Degraded, so a confirmed Degraded no longer reads as Unknown there. This replaces the order listed under 0.5.0.
 - `/feed.xml` entry ids are now stable per service, health and incident, so a reworded incident is not posted again but an escalation, such as Degraded to Outage, is. Feed readers will show the current entries once more after this update. Services whose status is Unknown are no longer in the feed.
 - An alert for a change to or from Unknown now waits for two updates in a row, so a single failed check no longer sends one.

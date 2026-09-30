@@ -207,8 +207,8 @@ function watchConsole(page: Page): string[] {
 test("renders every service with no console errors or hydration warnings", async ({ page }) => {
   const problems = watchConsole(page);
   await page.goto("/");
-  // After hydration the title leads with how many services need attention: "(2) Status Page".
-  await expect(page).toHaveTitle(/^(\(\d+\) )?Status Page$/);
+  // After hydration the title leads with how many services need attention: "(2) Status".
+  await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   await expect(cards(page)).toHaveCount(SERVICES);
   // Hydration runs after the first paint; give React time to complain.
   await page.waitForLoadState("networkidle");
@@ -278,8 +278,8 @@ test("opens with the search from the address and announces a new result count", 
 
   await search.fill("");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await expect(page.getByRole("status").filter({ hasText: "services shown" })).toHaveText(
-    `${SERVICES} of ${SERVICES} services shown`,
+  await expect(page.getByRole("status").filter({ hasText: "Showing" })).toHaveText(
+    `Showing ${SERVICES} of ${SERVICES}`,
   );
   expect(new URL(page.url()).search).toBe("");
 });
@@ -296,7 +296,7 @@ test("carries the Apple device head tags, with the icon and manifest served", as
   await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/);
   await expect(page.locator('meta[name="theme-color"][media*="light"]')).toHaveCount(1);
   await expect(page.locator('meta[name="theme-color"][media*="dark"]')).toHaveCount(1);
-  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Status Page");
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Status");
   for (const rel of ["apple-touch-icon", "manifest"]) {
     const link = page.locator(`link[rel="${rel}"]`);
     await expect(link).toHaveCount(1);
@@ -1273,10 +1273,11 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
     page.locator('#attention-heading, #unread-heading, [id^="up-"][id$="-heading"], #releases-heading'),
   ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*2/]);
 
-  // Issues only leaves the attention cards and the row that could not be read, the highlight among them.
+  // Issues only leaves the three that need a look, the highlight among them: the unreadable
+  // source in the fixture is not an issue, only a source that could not be read.
   const issues = page.getByRole("button", { name: /Issues only/ });
   await issues.click();
-  await expect(cards(page)).toHaveCount(4);
+  await expect(cards(page)).toHaveCount(3);
   await expect(page.locator('article[data-highlight="true"]')).toHaveAttribute("id", "service-aws");
   await issues.click();
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -1527,7 +1528,7 @@ test("keeps Reduce glass across a reload", async ({ page }) => {
   const html = page.locator("html");
   await expect(html).not.toHaveAttribute("data-reduce-transparency");
 
-  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   const toggle = page.getByRole("switch", { name: "Reduce glass" });
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await toggle.click();
@@ -1540,7 +1541,7 @@ test("keeps Reduce glass across a reload", async ({ page }) => {
   await expect(html).toHaveAttribute("data-reduce-transparency", "true");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Reduce glass" })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("switch", { name: "Reduce glass" }).click();
   await expect(html).not.toHaveAttribute("data-reduce-transparency");
@@ -1606,7 +1607,7 @@ for (const background of ["quiet", "glass"] as const) {
         }
         // Shortly after midnight UTC the fixture's incidents began the day
         // before, and the card adds their date: "since 27 Sep 21:52 UTC".
-        await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d UTC/).first()).toBeVisible();
+        await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d\sUTC/).first()).toBeVisible();
         expect(await contrastFailures(page)).toEqual([]);
 
         // Seven minutes on, the same snapshot again: the board says Stale.
@@ -1615,7 +1616,7 @@ for (const background of ["quiet", "glass"] as const) {
         expect(await contrastFailures(page)).toEqual([]);
 
         // And the settings dialog, with the single-key shortcuts dimmed.
-        await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+        await page.getByRole("button", { name: "Settings", exact: true }).click();
         await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
         expect(await contrastFailures(page)).toEqual([]);
       });
@@ -1742,10 +1743,12 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
     "href",
     "https://github.com/greenblacked/status-page/blob/main/LICENSE",
   );
-  await expect(footer).toContainText(
-    "MIT License: free to use, copy, modify and share, with the copyright notice kept.",
-  );
-  await expect(footer).toContainText("This page checks every two minutes; the server reads the official vendor feeds");
+  await expect(footer).toContainText("Not affiliated with any of these vendors");
+  await expect(footer).toContainText("Made and kept by Serhii.");
+  await expect(footer).not.toContainText("every two minutes");
+  await expect(footer.getByRole("link", { name: "JSON" })).toHaveAttribute("href", "/api/status.json");
+  await expect(footer.getByRole("link", { name: "Atom feed" })).toHaveAttribute("href", "/feed.xml");
+  await expect(footer.getByRole("link", { name: "Badges" })).toHaveAttribute("href", "/api/badge/board");
 });
 
 test("puts the footer in a contentinfo landmark outside main, and names the recent changes", async ({ page }) => {
@@ -1754,12 +1757,13 @@ test("puts the footer in a contentinfo landmark outside main, and names the rece
   // The role only exists for a footer that is not inside main, an article or a section.
   const footer = page.getByRole("contentinfo");
   await expect(footer).toHaveCount(1);
-  await expect(footer).toContainText("Status Page reads vendor status feeds only");
+  await expect(footer).toBeVisible();
+  await expect(footer).toContainText("Not affiliated with any of these vendors");
   await expect(page.locator("main footer, main dialog")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Recent changes" })).toHaveCount(1);
   await hydrated(page);
   // The dialog still opens from the footer's button.
-  await footer.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await footer.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
