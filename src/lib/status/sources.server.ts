@@ -11,6 +11,7 @@ import {
 } from "./changelog.ts";
 import {
   googleImpact,
+  healthRank,
   instatusComponent,
   overallSummary,
   statuspageComponent,
@@ -82,6 +83,7 @@ type AwsEvent = {
   status?: string;
   service?: string;
   service_name?: string;
+  impacted_services?: Record<string, { service_name?: string; current?: string | number; max?: string | number }>;
   summary?: string;
   end_time?: string | number | null;
   event_log?: Array<{ summary?: string; message?: string; status?: number; timestamp?: number }>;
@@ -238,11 +240,11 @@ export function parseGoogleProducts(payload: unknown): GoogleProduct[] {
  * One component per catalogue product, in the catalogue's order. A product is
  * as unhealthy as the worst open incident that lists it in
  * `affected_products` (or, for an incident that lists none, names it as its
- * `service_name`), with the same impact mapping as the card. A
- * SERVICE_INFORMATION incident is a notice, not an impairment: the product
- * stays operational and carries the incident's title as its detail. An
- * affected product the catalogue does not list is added after it, because the
- * vendor named it. Pass open incidents only.
+ * `service_name`), with exactly the impact mapping the card uses
+ * (`googleImpact`), so a row never reads healthier than the card's own
+ * badge for the same incident. An affected product the catalogue does not
+ * list is added after it, because the vendor named it. Pass open incidents
+ * only.
  */
 export function googleComponents(products: GoogleProduct[], openIncidents: GoogleIncident[]): ComponentHealth[] {
   type Row = ComponentHealth & { id?: string };
@@ -253,14 +255,12 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
       (row) => (ref.id !== undefined && row.id === ref.id) || (title !== undefined && row.name.toLowerCase() === title),
     );
   };
-  const noticed = new Set<Row>();
   for (const incident of openIncidents) {
     const refs = incident.affected_products?.length
       ? incident.affected_products
       : incident.service_name
         ? [{ title: incident.service_name }]
         : [];
-    const isNotice = (incident.status_impact ?? "").toUpperCase() === "SERVICE_INFORMATION";
     const itemHealth = googleImpact(incident.status_impact, incident.severity);
     const locations = (incident.currently_affected_locations ?? [])
       .map((loc) => loc.title)
@@ -275,14 +275,6 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
         row = { id: ref.id, name, health: "operational" };
         rows.push(row);
       }
-      if (isNotice) {
-        // A notice never overrides a real impairment already on the row.
-        if (row.health === "operational" && !noticed.has(row)) {
-          row.detail = incident.external_desc;
-          noticed.add(row);
-        }
-        continue;
-      }
       // The worst incident wins the row; among equals, the first listed.
       const worse = worseHealth(row.health, itemHealth);
       if (worse !== row.health) {
@@ -294,12 +286,15 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
   return rows.map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
 }
 
-// Non-operational first, then operational, each in source order, capped at
-// MAX_COMPONENTS. `componentCount` is the total the source listed, set only
-// when the cap dropped some, so a card can say how many it is not showing.
+// Non-operational first, worst first (outage, unknown, degraded, maintenance;
+// equals keep source order), then operational in source order, capped at
+// MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
+// the total the source listed, set only when the cap dropped some, so a card
+// can say how many it is not showing.
 function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
   const isUp = (component: ComponentHealth) => component.health === "operational";
-  const ranked = [...components.filter((c) => !isUp(c)), ...components.filter(isUp)].slice(0, MAX_COMPONENTS);
+  const broken = components.filter((c) => !isUp(c)).sort((a, b) => healthRank(b.health) - healthRank(a.health));
+  const ranked = [...broken, ...components.filter(isUp)].slice(0, MAX_COMPONENTS);
   return components.length > MAX_COMPONENTS
     ? { components: ranked, componentCount: components.length }
     : { components: ranked };
@@ -479,34 +474,70 @@ export function epochToIso(value: unknown, unitMs: number): string | undefined {
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 
+// What one impacted service of a multi-service event contributes. AWS
+// reports `current` as 0 (recovered), 1 (informational), 2 (performance
+// issue) or 3 (service disruption). Recovered services contribute no row.
+// A disruption is an outage only where the collector would call the event
+// one: a regional or maintenance event keeps the event's own, milder, health,
+// the same rule the card follows.
+function awsImpactedHealth(current: unknown, eventHealth: Health): Health | null {
+  const level = typeof current === "number" || typeof current === "string" ? Number(current) : Number.NaN;
+  if (level === 0) return null;
+  if (level === 3) return eventHealth;
+  if (level === 1 || level === 2) return eventHealth === "maintenance" ? "maintenance" : "degraded";
+  return eventHealth;
+}
+
 /**
- * The AWS services named by active events, one component each. Several events
- * for a service merge into one row: the worst health wins and the detail is
- * the newest event's summary. Only services the events name appear, so a
- * quiet Health Dashboard yields no list; an event that names no service
- * cannot be a row.
+ * The AWS services named by active events, one component each. A
+ * multi-service event (`impacted_services`) names each service it affects;
+ * any other event names its own `service_name`. Several events for a service
+ * merge into one row: the worst health wins, the detail is the newest event's
+ * summary, prefixed with the regions those events name ("N. Virginia,
+ * Ireland · Increased API Error Rates"). Only services the events name
+ * appear, so a quiet Health Dashboard yields no list; an event that names no
+ * service cannot be a row.
  */
 export function awsComponents(active: AwsEvent[]): ComponentHealth[] {
-  const rows = new Map<string, ComponentHealth & { at: number }>();
+  type Row = ComponentHealth & { at: number; regions: Set<string> };
+  const rows = new Map<string, Row>();
   for (const event of active) {
-    const name = (event.service_name ?? event.service ?? "").trim();
-    if (!name) continue;
     const last = event.event_log?.at(-1);
     const at = Number(last?.timestamp ?? event.date ?? 0) || 0;
-    const health = awsHealthFromEvent(event);
-    const detail = event.summary || last?.summary || undefined;
-    const row = rows.get(name);
-    if (!row) {
-      rows.set(name, { name, health, detail, at });
-      continue;
+    const eventHealth = awsHealthFromEvent(event);
+    const summary = event.summary || last?.summary || undefined;
+    const region = (event.region_name ?? "").trim();
+    const impacted = Object.values(event.impacted_services ?? {}).filter(
+      (entry) => typeof entry?.service_name === "string" && entry.service_name.trim() !== "",
+    );
+    const named: Array<{ name: string; health: Health }> = [];
+    if (impacted.length > 0) {
+      for (const entry of impacted) {
+        const health = awsImpactedHealth(entry.current, eventHealth);
+        if (health) named.push({ name: (entry.service_name as string).trim(), health });
+      }
+    } else {
+      const name = (event.service_name ?? event.service ?? "").trim();
+      if (name) named.push({ name, health: eventHealth });
     }
-    row.health = worseHealth(row.health, health);
-    if (at >= row.at) {
-      row.at = at;
-      row.detail = detail ?? row.detail;
+    for (const { name, health } of named) {
+      const row = rows.get(name);
+      if (!row) {
+        rows.set(name, { name, health, detail: summary, at, regions: new Set(region ? [region] : []) });
+        continue;
+      }
+      row.health = worseHealth(row.health, health);
+      if (region) row.regions.add(region);
+      if (at >= row.at) {
+        row.at = at;
+        row.detail = summary ?? row.detail;
+      }
     }
   }
-  return [...rows.values()].map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
+  return [...rows.values()].map(({ name, health, detail, regions }) => {
+    const text = [regions.size ? [...regions].join(", ") : "", detail ?? ""].filter(Boolean).join(" · ");
+    return text ? { name, health, detail: text } : { name, health };
+  });
 }
 
 async function collectAws(): Promise<ServiceSnapshot> {
@@ -549,16 +580,20 @@ async function collectAws(): Promise<ServiceSnapshot> {
 }
 
 /**
- * How many Steam connection managers a `GetCMListForConnect` answer lists, or
- * 0 when it lists none or is not that shape. Both the socket and the
- * websocket lists count: a client can connect through either.
+ * How many Steam connection managers a `GetCMListForConnect` answer lists:
+ * the `serverlist` entries that are objects with a non-empty string
+ * `endpoint` (`{ endpoint, legacy_endpoint, type, dc, realm, load, ... }`).
+ * 0 when `success` is false, the list is empty, or the payload is not that
+ * shape.
  */
 export function steamCmCount(payload: unknown): number {
-  const response = (payload as { response?: { serverlist?: unknown; serverlist_websockets?: unknown } } | null)
-    ?.response;
-  const size = (list: unknown) =>
-    Array.isArray(list) ? list.filter((row) => typeof row === "string" && row).length : 0;
-  return size(response?.serverlist) + size(response?.serverlist_websockets);
+  const response = (payload as { response?: { success?: unknown; serverlist?: unknown } } | null)?.response;
+  if (!response || response.success === false || !Array.isArray(response.serverlist)) return 0;
+  return response.serverlist.filter(
+    (row: unknown) =>
+      typeof (row as { endpoint?: unknown } | null)?.endpoint === "string" &&
+      (row as { endpoint: string }).endpoint !== "",
+  ).length;
 }
 
 async function collectSteam(): Promise<ServiceSnapshot> {
@@ -595,8 +630,17 @@ async function collectSteam(): Promise<ServiceSnapshot> {
       storeOk
         ? { name: "Steam Store", health: "operational" }
         : { name: "Steam Store", health: "outage", detail: why(store) },
-      steamConnectionManagers(cm),
     ];
+    // A side list: when the directory cannot be read, or lists nothing, the
+    // row is left out rather than shown as Unknown.
+    const managers = cm.status === "fulfilled" ? steamCmCount(cm.value) : 0;
+    if (managers > 0) {
+      components.push({
+        name: "Steam Connection Managers",
+        health: "operational",
+        detail: `${managers} server${managers === 1 ? "" : "s"} listed`,
+      });
+    }
     return {
       ...base("steam", new Date().toISOString(), Date.now() - started),
       health,
@@ -608,18 +652,6 @@ async function collectSteam(): Promise<ServiceSnapshot> {
   } catch (error) {
     return failed("steam", started, error);
   }
-}
-
-// Operational when Valve's directory lists connection managers; Unknown when
-// it cannot be read or lists none. Never an outage: a directory that does not
-// answer from here says little about whether players can connect.
-function steamConnectionManagers(result: PromiseSettledResult<unknown>): ComponentHealth {
-  const name = "Steam Connection Managers";
-  if (result.status === "rejected") return { name, health: "unknown", detail: classifyFailure(result.reason).message };
-  const count = steamCmCount(result.value);
-  return count > 0
-    ? { name, health: "operational", detail: `${count} servers listed` }
-    : { name, health: "unknown", detail: "No servers listed." };
 }
 
 function isEuropePop(code: string, desc: string, geo?: number[]): boolean {
@@ -940,45 +972,43 @@ export function grokItemActive(item: { description: string; pubDate?: string }, 
 
 /**
  * Components from an Instatus `components.json`: the leaf components in page
- * order (a parent's children stand in for it), or nothing when the payload is
- * not that shape. The endpoint is optional, so a shape it does not have is an
- * empty list, not an error.
+ * order (a component with children is replaced by them, at any depth), or
+ * nothing when the payload is not that shape. The endpoint is optional, so a
+ * shape it does not have is an empty list, not an error.
  */
 export function parseInstatusComponents(payload: unknown): ComponentHealth[] {
   const list = (payload as { components?: unknown } | null)?.components;
   if (!Array.isArray(list)) return [];
   type Row = { name?: unknown; status?: unknown; description?: unknown; children?: unknown };
   const out: ComponentHealth[] = [];
-  const add = (row: Row) => {
-    const name = typeof row?.name === "string" ? row.name.trim() : "";
-    if (!name) return;
-    const health = instatusComponent(typeof row.status === "string" ? row.status : undefined);
-    const description = typeof row.description === "string" ? row.description.trim() : "";
-    out.push(description && health !== "operational" ? { name, health, detail: description } : { name, health });
-  };
-  for (const row of list as Row[]) {
-    if (Array.isArray(row?.children) && row.children.length > 0) {
-      for (const child of row.children as Row[]) add(child);
-    } else {
-      add(row);
+  const walk = (rows: Row[], depth: number) => {
+    for (const row of rows) {
+      if (Array.isArray(row?.children) && row.children.length > 0 && depth < 8) {
+        walk(row.children as Row[], depth + 1);
+        continue;
+      }
+      const name = typeof row?.name === "string" ? row.name.trim() : "";
+      if (!name) continue;
+      const health = instatusComponent(typeof row.status === "string" ? row.status : undefined);
+      const description = typeof row.description === "string" ? row.description.trim() : "";
+      out.push(description && health !== "operational" ? { name, health, detail: description } : { name, health });
     }
-  }
+  };
+  walk(list as Row[], 0);
   return out;
 }
 
-const TITLE_LEAD_WORDS =
-  /^(?:update|updated|resolved|investigating|identified|monitoring|scheduled|maintenance|incident)$/i;
-
 /**
- * The service a feed title leads with, for a title written "Service: what
- * happened". A title with no such prefix, or one whose prefix is a status
- * word or too long to be a service name, names no service, and none is guessed.
+ * The service a feed title leads with. status.x.ai writes titles as
+ * "[Service] summary", such as "[Grok (iOS)] Models outage" or
+ * "[API (us-east-1.api.x.ai)] Models outage"; the whole bracket text is the
+ * service. A title without that lead names no service, and none is guessed.
  */
 export function grokTitleService(title: string): { name: string; detail: string } | null {
-  const match = title.match(/^([^:]{2,32}):\s*(\S.*)$/);
+  const match = title.match(/^\[([^\]]{1,64})\]\s*(.+)$/);
   const name = match?.[1]?.trim();
-  if (!match || !name || TITLE_LEAD_WORDS.test(name) || name.split(/\s+/).length > 4) return null;
-  return { name, detail: match[2].trim() };
+  const detail = match?.[2]?.trim();
+  return name && detail ? { name, detail } : null;
 }
 
 /** One component per service the active items' titles lead with; worst health wins, newest item's detail. */
