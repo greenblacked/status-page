@@ -180,3 +180,102 @@ describe("highlighted service card", () => {
     expect(html).not.toContain("col-span-2");
   });
 });
+
+describe("service card truncation", () => {
+  const broken = (count: number): ComponentHealth[] =>
+    Array.from({ length: count }, (_, index) => ({ name: `Broken ${index + 1}`, health: "degraded" }));
+  const incident = (n: number) => ({
+    id: `i${n}`,
+    title: `Incident ${n}`,
+    health: "degraded" as const,
+    url: `https://status.example.com/i${n}`,
+  });
+
+  it("says how many broken rows it cut", () => {
+    const html = render("chatgpt", { health: "degraded", summary: "Partial outage", components: broken(9) });
+    expect(rows(html)).toHaveLength(6);
+    expect(html).toContain("data-more-rows");
+    expect(html).toContain("+3 more");
+    expect(html).toContain("3 more components");
+  });
+
+  it("says nothing when every row fits", () => {
+    const html = render("chatgpt", { health: "degraded", components: broken(6) });
+    expect(rows(html)).toHaveLength(6);
+    expect(html).not.toContain("data-more-rows");
+  });
+
+  it("says how many incidents it cut", () => {
+    const html = render("chatgpt", {
+      health: "degraded",
+      summary: "Partial outage",
+      incidents: [incident(1), incident(2), incident(3), incident(4), incident(5)],
+    });
+    expect(html).toContain(">Incident 1<");
+    expect(html).toContain(">Incident 2<");
+    expect(html).not.toContain(">Incident 3<");
+    expect(html).toContain("data-more-incidents");
+    expect(html).toContain("+3 more");
+    expect(html).toContain("3 more incidents");
+  });
+
+  it("adds no count for two incidents", () => {
+    const html = render("chatgpt", { health: "degraded", incidents: [incident(1), incident(2)] });
+    expect(html).not.toContain("data-more-incidents");
+  });
+});
+
+describe("service card incident labels and links", () => {
+  const link = (html: string) => /href="([^"]+)"[^>]*>\s*<span class="truncate">([^<]+)</.exec(html)?.slice(1);
+
+  it("labels an informational notice a Notice, never Operational", () => {
+    const html = render("claude", {
+      summary: "All reported systems operational.",
+      incidents: [{ id: "n", title: "Database upgrade", health: "operational", informational: true }],
+    });
+    expect(html).toContain(">Notice</span>");
+    expect(html).toContain("Database upgrade");
+  });
+
+  it("links to the worst incident, not the first listed", () => {
+    const html = render("chatgpt", {
+      health: "outage",
+      sourceUrl: "https://status.example.com/",
+      incidents: [
+        { id: "minor", title: "Minor", health: "degraded", url: "https://status.example.com/minor" },
+        { id: "major", title: "Major", health: "outage", url: "https://status.example.com/major" },
+      ],
+    });
+    expect(link(html)).toEqual(["https://status.example.com/major", "View incident"]);
+  });
+
+  it("does not call the vendor's generic dashboard an incident", () => {
+    const html = render("aws", {
+      health: "degraded",
+      sourceName: "AWS Health Dashboard",
+      sourceUrl: "https://health.aws.amazon.com/health/status",
+      incidents: [
+        {
+          id: "a",
+          title: "S3 (Ohio) - Errors",
+          health: "degraded",
+          url: "https://health.aws.amazon.com/health/status",
+        },
+      ],
+    });
+    expect(link(html)).toEqual(["https://health.aws.amazon.com/health/status", "AWS Health Dashboard"]);
+    expect(html).not.toContain("View incident");
+  });
+
+  it("shows upcoming maintenance as Upcoming, apart from the health", () => {
+    const html = render("claude", {
+      summary: "All reported systems operational.",
+      upcomingMaintenance: [{ id: "m", title: "Database upgrade", scheduledFor: "2026-09-28T02:00:00.000Z" }],
+    });
+    expect(html).toContain("data-upcoming-maintenance");
+    expect(html).toContain(">Upcoming</span>");
+    expect(html).toContain("Database upgrade");
+    expect(html).toContain("scheduled for ");
+    expect(html).toContain(">Operational</span>");
+  });
+});
