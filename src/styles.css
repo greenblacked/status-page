@@ -628,6 +628,11 @@
   }
 }
 
+/* The Alerts buttons on a browser that cannot show them: hidden from the first paint (ALERTS_BOOT_SCRIPT), before the hook removes them. */
+:root[data-alerts="unsupported"] [data-alerts-toggle] {
+  display: none;
+}
+
 /*
   A text link or button in running text is one line tall, well short of a
   finger. On a touch screen, padding brings it to 44pt; a mouse keeps the
