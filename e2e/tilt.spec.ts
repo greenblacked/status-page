@@ -578,7 +578,7 @@ test.describe("on a touch device", () => {
     await hydrated(page);
     await openSettings(page);
     await page.waitForTimeout(3500);
-    await expect(page.getByText("No motion readings arrived")).toHaveCount(0);
+    await expect(page.getByText(/No motion readings arrived|sent no motion data/)).toHaveCount(0);
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
   });
 
@@ -619,9 +619,9 @@ test.describe("on a touch device", () => {
     await page.waitForTimeout(3500);
     await openSettings(page);
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
-    await expect(page.getByRole("status").filter({ hasText: /Motion access lapsed|No motion readings/ })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("status").filter({ hasText: /Motion access lapsed|No motion readings|sent no motion data/ }),
+    ).toHaveCount(0);
 
     await page.evaluate(() => {
       (window as unknown as { __hidden: boolean }).__hidden = false;
@@ -629,9 +629,9 @@ test.describe("on a touch device", () => {
     });
     await tiltUntil(page, 0, 0, "--light-y", () => true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
-    await expect(page.getByRole("status").filter({ hasText: /Motion access lapsed|No motion readings/ })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByRole("status").filter({ hasText: /Motion access lapsed|No motion readings|sent no motion data/ }),
+    ).toHaveCount(0);
   });
 
   test("lights a panel that appears after the light is on, and clears it when off", async ({ page }) => {
