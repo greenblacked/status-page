@@ -259,7 +259,11 @@
 .aurora {
   pointer-events: none;
   position: fixed;
-  inset: 0;
+  /* The large viewport, as .lenses and .aurora-grid: an inset: 0 box follows
+     the iOS toolbar, and every collapse would resize it and blur all the glass again. */
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 100lvh;
   z-index: 0;
   overflow: hidden;
   contain: strict;
