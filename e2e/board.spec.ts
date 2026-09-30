@@ -35,22 +35,50 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
 }
 
+// Starring a card and a refresh move cards inside a view transition
+// (withViewTransition in src/components/status/effects.ts). The browser
+// first snapshots every named card and holds the update until then; with the
+// glass blur that can block a software-rendered WebKit for seconds, and the
+// page then plays a transition that takes the pointer. Every transition is
+// recorded here, capture and play alike, so tests can wait for the whole of it.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const tracked = window as Window & { __vts?: Promise<unknown>[] };
+    tracked.__vts = [];
+    if (typeof document.startViewTransition !== "function") return;
+    const start = document.startViewTransition.bind(document);
+    document.startViewTransition = ((...args: Parameters<typeof start>) => {
+      const transition = start(...args);
+      tracked.__vts?.push(transition.finished.catch(() => undefined));
+      return transition;
+    }) as typeof document.startViewTransition;
+  });
+});
+
+/** Waits until every view transition the page has started, including any started meanwhile, has finished. */
+async function transitionsDone(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const tracked = window as Window & { __vts?: Promise<unknown>[] };
+    for (let seen = 0; tracked.__vts && seen < tracked.__vts.length; ) {
+      seen = tracked.__vts.length;
+      await Promise.all(tracked.__vts);
+    }
+  });
+}
+
 /**
- * Waits out a view transition, which a refresh or a star runs. Its snapshot
- * covers the page and takes the pointer until it has played.
+ * Presses a Refresh button and waits for all of it: the forced response, the
+ * button leaving its busy state (which comes after the transition has been
+ * started), then the transition itself.
  */
-async function viewTransitionsSettled(page: Page): Promise<void> {
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((animation) => {
-          const effect = animation.effect as (AnimationEffect & { pseudoElement?: string | null }) | null;
-          return effect?.pseudoElement?.startsWith("::view-transition");
-        })
-        .map((animation) => animation.finished.catch(() => undefined)),
-    ),
+async function pressRefresh(page: Page, button: Locator, press = () => button.click()): Promise<void> {
+  const answered = page.waitForResponse(
+    (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
   );
+  await press();
+  await answered;
+  await expect(button).toHaveAttribute("aria-busy", "false");
+  await transitionsDone(page);
 }
 
 /**
@@ -67,10 +95,8 @@ async function openFixture(
   await expect(cards(page)).toHaveCount(SERVICES);
   // The cards are in the server's markup already; Refresh answers only once hydrated.
   await hydrated(page);
-  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
   await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
-  // Its view transition would otherwise still be playing under the next click.
-  await viewTransitionsSettled(page);
 }
 
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
@@ -216,8 +242,7 @@ test("blurs the glass panels and never the whisper surfaces", async ({ page }) =
 /**
  * The bar has gone: it is `inert` and out of the accessibility tree the moment the hero is back
  * (Playwright's role queries do not see `inert`, so it is found by its markup), then its fade-out
- * plays and it leaves the page. Each step is awaited in turn, so a slow frame cannot pass for
- * the bar still showing.
+ * plays and it leaves the page.
  */
 async function barHidden(page: Page, header: Locator): Promise<void> {
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
@@ -228,6 +253,8 @@ async function barHidden(page: Page, header: Locator): Promise<void> {
 }
 
 test("floats a compact header with the controls once the hero scrolls away", async ({ page, browserName }) => {
+  // Its Refresh press below gets the served board, not a live sweep of the vendors.
+  await serveBoard(page, () => fixtureBoard(Date.now()));
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   // The bar shows and hides from a client-side observer.
@@ -258,7 +285,9 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   await header.evaluate((bar) => Promise.all(bar.getAnimations().map((animation) => animation.finished)));
   const box = await refresh.boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  // The refresh moves the cards in a view transition; the bar's fade-out below
+  // is not judged until that has played out.
+  await pressRefresh(page, refresh, () => page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2));
   // Safari leaves a clicked button unfocused; Chromium focuses it, the case that matters.
   if (browserName === "chromium") await expect(refresh).toBeFocused();
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -326,7 +355,7 @@ test("leads Needs attention with the most urgent service and follows the data", 
 
   // Grok's outage began after AWS's, so it takes the lead on the next refresh.
   board = fixtureBoard(Date.now(), { grok: "outage" });
-  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
   await expect(attention.first()).toHaveAttribute("id", "service-grok");
   await expect(highlight).toHaveCount(1);
   await expect(highlight).toHaveAttribute("id", "service-grok");
@@ -345,7 +374,7 @@ test("leads Needs attention with the most urgent service and follows the data", 
     })),
     counts: { operational: SERVICES, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
   };
-  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
   await expect(attention).toHaveCount(0);
   await expect(highlight).toHaveCount(0);
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -394,6 +423,8 @@ test("keeps keyboard focus on a Star button when its card becomes the most urgen
   await star.focus();
   await expect(star).toBeFocused();
   await page.keyboard.press("Enter");
+  await expect(star).toHaveAttribute("aria-pressed", "true");
+  await transitionsDone(page);
 
   // It is now first and the highlight, and focus never left its button.
   await expect(attention.nth(0)).toHaveAttribute("id", "service-grok");
@@ -415,6 +446,8 @@ test("keeps keyboard focus on a Star button when its card becomes the most urgen
 
   // Unstarring hands the lead back, and focus still stays.
   await page.keyboard.press("Enter");
+  await expect(star).toHaveAttribute("aria-pressed", "false");
+  await transitionsDone(page);
   await expect(attention.nth(0)).toHaveAttribute("id", "service-gcp");
   await expect(highlight).toHaveAttribute("id", "service-gcp");
   await expect(star).toBeFocused();
@@ -453,9 +486,15 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   await expect(cards(page)).toHaveCount(SERVICES);
 
   // A star lifts a healthy card to the head of Operational, but never above a worse service in Needs attention.
-  await page.getByRole("button", { name: "Star Claude", exact: true }).click();
+  const starClaude = page.getByRole("button", { name: "Star Claude", exact: true });
+  await starClaude.click();
+  await expect(starClaude).toHaveAttribute("aria-pressed", "true");
+  await transitionsDone(page);
   await expect(group(page, "operational").first()).toHaveAttribute("id", "service-claude");
-  await page.getByRole("button", { name: "Star Google Cloud", exact: true }).click();
+  const starGoogleCloud = page.getByRole("button", { name: "Star Google Cloud", exact: true });
+  await starGoogleCloud.click();
+  await expect(starGoogleCloud).toHaveAttribute("aria-pressed", "true");
+  await transitionsDone(page);
   await expect(group(page, "attention").first()).toHaveAttribute("id", "service-aws");
   await page.getByRole("button", { name: /^Starred/ }).click();
   await expect(cards(page)).toHaveCount(2);
