@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { alertFor } from "@/lib/status/alerts";
+import { pageAlertsUnsupported } from "@/lib/status/alerts-support";
 import { diffBoards } from "@/lib/status/diff";
 import type { BoardSnapshot } from "@/lib/status/types";
 
@@ -34,6 +35,9 @@ export function useBoardAlerts(board: BoardSnapshot): { state: AlertsState; togg
 
   useEffect(() => {
     if (!("Notification" in window)) return setState("unsupported");
+    // iOS and iPadOS define Notification but never show one from a page.
+    const hasPush = "serviceWorker" in navigator && "PushManager" in window;
+    if (pageAlertsUnsupported(navigator, hasPush)) return setState("unsupported");
     if (Notification.permission === "denied") return setState("blocked");
     setState(readPreference() && Notification.permission === "granted" ? "on" : "off");
   }, []);
