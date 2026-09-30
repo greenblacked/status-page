@@ -282,6 +282,14 @@ describe("createTiltController", () => {
     expect(late).toBeLessThan(0.1);
   });
 
+  it("keeps the resting pose across a pause instead of re-centring on the new hold", () => {
+    const { apply, controller } = setup();
+    controller.sample(0, 0, 0, 0);
+    // A long silence (the device lay still), then it is picked up upright.
+    controller.sample(90, 0, 0, 10_000);
+    expect(apply.mock.lastCall?.[1]).toBeLessThan(-0.9);
+  });
+
   it("resetBaseline makes the current hold neutral; reset forgets everything", () => {
     const { apply, controller } = setup();
     controller.sample(0, 0, 0, 0);

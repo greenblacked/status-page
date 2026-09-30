@@ -103,6 +103,9 @@ export function lightFromTilt(screenVec: Vec2, baseline: Vec2, range = LIGHT_RAN
   };
 }
 
+/** A step over this long is stale: the filter jumps rather than glides. */
+const STALE_MS = 1000;
+
 /**
  * One step of an exponential low-pass filter over `dtMs`. A step that is
  * not forward in time (dt <= 0, or NaN) changes nothing; one after a gap of
@@ -110,7 +113,7 @@ export function lightFromTilt(screenVec: Vec2, baseline: Vec2, range = LIGHT_RAN
  */
 export function lowPass(prev: number, next: number, dtMs: number, tauMs = 120): number {
   if (!(dtMs > 0)) return prev;
-  if (dtMs > 1000) return next;
+  if (dtMs > STALE_MS) return next;
   const a = 1 - Math.exp(-dtMs / tauMs);
   return prev + a * (next - prev);
 }
@@ -188,10 +191,13 @@ export function createTiltController({
       ? { x: lowPass(before.x, target.x, dt), y: lowPass(before.y, target.y, dt) }
       : { x: target.x, y: target.y };
     filtered = current;
+    // The resting pose moves on real time only up to a second at a time: after a
+    // pause (the loop rests when the device does) the light must not be re-centred on the new hold.
+    const baselineDt = Math.min(dt, STALE_MS);
     baseline = baseline
       ? {
-          x: lowPass(baseline.x, current.x, dt, BASELINE_TAU_MS),
-          y: lowPass(baseline.y, current.y, dt, BASELINE_TAU_MS),
+          x: lowPass(baseline.x, current.x, baselineDt, BASELINE_TAU_MS),
+          y: lowPass(baseline.y, current.y, baselineDt, BASELINE_TAU_MS),
         }
       : { x: current.x, y: current.y };
 
