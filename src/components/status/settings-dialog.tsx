@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
+import type { TiltStatus } from "@/components/status/use-tilt-lighting";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { SHORTCUT_HELP } from "@/lib/status/shortcuts";
@@ -17,6 +18,7 @@ export function SettingsDialog({
   onSingleKeyChange,
   reduceGlass,
   onReduceGlassChange,
+  tilt,
 }: {
   open: boolean;
   onClose: () => void;
@@ -24,6 +26,8 @@ export function SettingsDialog({
   onSingleKeyChange: (on: boolean) => void;
   reduceGlass: boolean;
   onReduceGlassChange: (on: boolean) => void;
+  /** Tilt lighting; the row shows only where the device can report its tilt. */
+  tilt: { supported: boolean; enabled: boolean; status: TiltStatus; onChange: (on: boolean) => void };
 }) {
   const ref = useRef<HTMLDialogElement>(null);
 
@@ -64,6 +68,16 @@ export function SettingsDialog({
             checked={reduceGlass}
             onCheckedChange={onReduceGlassChange}
           />
+          {tilt.supported ? (
+            <Setting
+              id="tilt-lighting"
+              label="Tilt lighting"
+              hint="The light on the glass follows how you tilt your phone or tablet. Your device asks for motion access the first time you switch it on. Paused while Reduce glass or Reduce Motion is on."
+              checked={tilt.enabled}
+              onCheckedChange={tilt.onChange}
+              note={TILT_NOTES[tilt.status] ?? ""}
+            />
+          ) : null}
           <Setting
             id="single-key"
             label="Single-key shortcuts"
@@ -106,19 +120,29 @@ export function SettingsDialog({
   );
 }
 
-/** One switch row: the label and hint name and describe the switch. */
+/** What Tilt lighting says when it is not simply on or off. */
+const TILT_NOTES: Partial<Record<TiltStatus, string>> = {
+  denied: "Motion access was declined. To allow it, close Safari completely and reopen this page.",
+  "no-sensor": "This device has no motion sensor.",
+  "needs-permission": "Tap the switch to allow motion access again.",
+  paused: "Paused while Reduce glass or Reduce Motion is on.",
+};
+
+/** One switch row: the label and hint name and describe the switch. `note` is a live line under it. */
 function Setting({
   id,
   label,
   hint,
   checked,
   onCheckedChange,
+  note,
 }: {
   id: string;
   label: string;
   hint: string;
   checked: boolean;
   onCheckedChange: (on: boolean) => void;
+  note?: string;
 }) {
   return (
     // 34px dialog corner minus its 20px padding: the concentric step is 14px.
@@ -130,6 +154,11 @@ function Setting({
         <p id={`${id}-hint`} className="mt-0.5 text-xs text-muted text-pretty">
           {hint}
         </p>
+        {note === undefined ? null : (
+          <p role="status" className="mt-1 text-xs text-fg text-pretty empty:hidden">
+            {note}
+          </p>
+        )}
       </div>
       <Switch
         checked={checked}

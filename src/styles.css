@@ -338,7 +338,10 @@
   box-shadow: var(--shadow-border);
 }
 
-/* The specular sweep: light entering from the upper left. */
+/* The specular sweep: light entering from the upper left. With Tilt lighting
+   on, --light-x (-1..1, set on <html> by use-tilt-lighting.ts) turns the
+   angle by up to 28deg; unset, it is the fixed 125deg it always was. The
+   variable is stepped by script and never transitioned. */
 .glass::before,
 .glass-chrome::before {
   content: "";
@@ -348,7 +351,7 @@
   z-index: 0;
   border-radius: inherit;
   background: linear-gradient(
-    125deg,
+    calc(125deg + var(--light-x, 0) * 28deg),
     var(--glass-sheen) 0%,
     transparent 34%,
     transparent 70%,
@@ -728,6 +731,27 @@
   }
 }
 
+/* On a touch device there is no pointer to follow, so with Tilt lighting on
+   (data-tilt, set only while the light is being driven) the same soft light
+   sits on the card and slides with --light-x/--light-y. Devices with a
+   hover-capable pointer keep the pointer spotlight above. */
+@media not ((hover: hover) and (pointer: fine)) {
+  :root[data-tilt="on"] .spotlight::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: radial-gradient(
+      320px circle at calc(50% + var(--light-x, 0) * 38%) calc(50% + var(--light-y, 0) * 38%),
+      var(--spot-color),
+      transparent 65%
+    );
+    opacity: 0.8;
+  }
+}
+
 /* A card whose status just changed draws the eye once, then settles. */
 .service-card-changed {
   animation: changed-flash 1.4s var(--ease-out) 2;
@@ -933,6 +957,17 @@
   }
 }
 
+/* Solid panels have no light to catch: Tilt lighting stands down (the hook also stops it). */
+:root[data-reduce-transparency="true"][data-tilt="on"] .spotlight::after {
+  display: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-tilt="on"] .spotlight::after {
+    display: none;
+  }
+}
+
 /* No backdrop at all: nothing left to show through solid panels, and nothing to animate. */
 .aurora,
 .aurora-grid {
@@ -1008,7 +1043,8 @@
     transition: none;
   }
 
-  .spotlight::after {
+  .spotlight::after,
+  :root[data-tilt="on"] .spotlight::after {
     display: none;
   }
 

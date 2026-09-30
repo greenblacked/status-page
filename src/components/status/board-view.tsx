@@ -15,6 +15,7 @@ import { useNow } from "@/components/status/use-now";
 import { useReduceGlass } from "@/components/status/use-reduce-glass";
 import { useShortcuts, useSingleKeyShortcuts } from "@/components/status/use-shortcuts";
 import { useStarred } from "@/components/status/use-starred";
+import { useTiltLighting } from "@/components/status/use-tilt-lighting";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -79,6 +80,7 @@ export function BoardView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
+  const tilt = useTiltLighting({ paused: reduceGlass.enabled });
   useSpotlight(mainRef);
   // Chosen once per page load: the tab keeps its own spot in every slot.
   const [refetchJitter] = useState(() => pickRefetchJitter());
@@ -591,6 +593,7 @@ export function BoardView({
             onSingleKeyChange={singleKey.setEnabled}
             reduceGlass={reduceGlass.enabled}
             onReduceGlassChange={reduceGlass.setEnabled}
+            tilt={{ supported: tilt.supported, enabled: tilt.enabled, status: tilt.status, onChange: tilt.setEnabled }}
           />
         </main>
       </div>
