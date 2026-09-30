@@ -1,8 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { HistoryDb } from "./history-store";
 
 export type CloudflareEnv = {
   ROBOTS?: string;
   CF_VERSION_METADATA?: { id: string };
+  /** D1 database of daily uptime history; written only by the cron. */
+  HISTORY_DB?: HistoryDb;
 };
 
 type CloudflareRequestContext = {

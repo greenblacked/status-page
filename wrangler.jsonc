@@ -4,6 +4,10 @@
   // One Worker serves everything: main deploys it to production, and stage
   // becomes a Worker Preview of it named "stage" (deploy.yml), never
   // production traffic. dev, where pull requests land, deploys nothing.
+  // Uptime history: the HISTORY_DB D1 binding holds one row per service per
+  // UTC day, and a Cron Trigger samples the board into it every five minutes
+  // (src/lib/status/history-cron.ts). Only the cron writes; the stage preview
+  // reads the same database. Cron Triggers do not run in previews.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "status-page",
   "main": "./src/server.cloudflare.ts",
@@ -33,6 +37,19 @@
   // (previews_enabled).
   "preview_urls": false,
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  // Every five minutes. The slot is floor(scheduledTime / 300000), so a
+  // retried run of the same tick is counted once.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  // PLACEHOLDER database_id (the zero UUID): replace it with the id printed
+  // by `wrangler d1 create status-page-history` before the first deploy. The
+  // table itself is created by the first cron run.
+  "d1_databases": [
+    {
+      "binding": "HISTORY_DB",
+      "database_name": "status-page-history",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
   // Production claims its own hostname as a Custom Domain on a zone in this
   // account; previews_enabled also serves each Worker Preview one level below
   // it, so the "stage" preview answers on https://stage.status.szolotov.com
@@ -52,6 +69,15 @@
   "previews": {
     // Keeps search engines off the stage preview (src/lib/robots.ts).
     "vars": { "ROBOTS": "noindex" },
-    "version_metadata": { "binding": "CF_VERSION_METADATA" }
+    "version_metadata": { "binding": "CF_VERSION_METADATA" },
+    // The same database as production (same placeholder id, replaced
+    // together). A preview has no cron, so it only reads.
+    "d1_databases": [
+      {
+        "binding": "HISTORY_DB",
+        "database_name": "status-page-history",
+        "database_id": "00000000-0000-0000-0000-000000000000"
+      }
+    ]
   }
 }
