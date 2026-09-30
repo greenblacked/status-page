@@ -395,14 +395,33 @@ const DOCK_FRAMES = 2;
 const DOCK_FRAME_FALLBACK_MS = 1000;
 /** How long a sweep may run inside the page before it gives up and reports how far it got. */
 const DOCK_SWEEP_BUDGET_MS = 30_000;
+/** The share of a sweep's frames that may fall back before its readings can no longer be trusted. */
+const DOCK_MAX_FELL_BACK = 0.1;
 
 /** The one-line summary of a sweep, for a failure message and the log. */
 function dockSummary(sweep: DockSweep): string {
   const frames = sweep.stops.flatMap((stop) => stop.frameMs).sort((a, b) => a - b);
   const median = frames.length ? frames[Math.floor(frames.length / 2)] : 0;
   const max = frames.length ? frames[frames.length - 1] : 0;
-  return `swept ${sweep.stops.length} of ${sweep.total} stops in ${Math.round(sweep.ms)} ms; median frame ${Math.round(median)} ms, max ${Math.round(max)} ms`;
+  const fellBack = sweep.stops.reduce((sum, stop) => sum + stop.fellBack, 0);
+  return `swept ${sweep.stops.length} of ${sweep.total} stops in ${Math.round(sweep.ms)} ms; median frame ${Math.round(median)} ms, max ${Math.round(max)} ms; ${fellBack} of ${frames.length} frames fell back`;
 }
+
+/**
+ * Takes the paint cost out of a page, for a test that reads geometry, focus and hit-testing and never a
+ * pixel. Software-rendered WebKit at iPad size cannot paint the backdrop blur and the lens filters in
+ * anything like a second, so a sweep that waits on frames spends its whole budget on paint. Neither
+ * property is layout: the lenses are position: fixed and out of the flow (and the page already runs
+ * without them under Reduce glass), and the bar, live bar, chips and field keep their boxes, opacity,
+ * pointer-events and stacking (the glass classes isolate on their own, not through the blur).
+ */
+const lightenPaint = (page: Page) =>
+  page.addStyleTag({
+    content: `
+      .lenses { display: none !important; }
+      *, *::before, *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+    `,
+  });
 
 /** The summary of each test's last sweep, printed by afterEach if the test failed. */
 const sweepSummaries = new WeakMap<object, string>();
@@ -421,6 +440,7 @@ test.afterEach(() => {
  * with what it managed.
  */
 async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
+  await lightenPaint(page);
   const sweep = await page.evaluate(
     async ({ stops, frameCount, fallback, budget }) => {
       const started = performance.now();
@@ -516,6 +536,14 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
     contentType: "application/json",
   });
   if (sweep.truncated) throw new Error(`the dock sweep ran out of its ${DOCK_SWEEP_BUDGET_MS} ms budget: ${summary}`);
+  // A frame that fell back may have been read before the page caught up with the scroll.
+  const fellBack = sweep.stops.reduce((sum, stop) => sum + stop.fellBack, 0);
+  const frames = sweep.stops.reduce((sum, stop) => sum + stop.frameMs.length, 0);
+  if (fellBack > frames * DOCK_MAX_FELL_BACK) {
+    throw new Error(
+      `more than ${DOCK_MAX_FELL_BACK * 100}% of the dock sweep's frames fell back, so its readings may be stale: ${summary}`,
+    );
+  }
   const missed = sweep.stops.find((stop) => Math.abs(stop.scrollY - stop.target) > 1);
   if (missed) {
     throw new Error(
