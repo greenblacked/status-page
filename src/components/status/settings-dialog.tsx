@@ -125,7 +125,7 @@ const TILT_NOTES: Partial<Record<TiltStatus, string>> = {
   denied: "Motion access was declined. To allow it, close your browser completely and reopen this page.",
   "no-sensor": "This device has no motion sensor.",
   "no-readings": "No motion readings arrived from this device.",
-  "needs-permission": "Tap the switch to allow motion access again, or leave it off to stop this note.",
+  "needs-permission": "Motion access needs allowing again. Tap the switch to turn Tilt lighting back on.",
   paused: "Paused while Reduce glass or Reduce Motion is on.",
 };
 

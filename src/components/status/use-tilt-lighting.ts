@@ -22,14 +22,17 @@ const NO_READING_MS = 3000;
 
 /**
  * Writes --light-x and --light-y inline on every glass panel (the elements
- * TILT_LIGHT_SELECTOR names); their ::before and ::after inherit them.
+ * TILT_LIGHT_SELECTOR names); their ::before and ::after take them from the
+ * panel (src/styles.css).
  *
  * Not on <html>, and not through a rule of a style sheet: a change to a rule
- * makes WebKit rebuild its rule sets and re-style the document. An inline
- * write re-styles only the panel it is on and what is inside it. A custom
- * property is inherited, so that is still most of a full board (about 8 ms
- * for 18 panels in Chromium, against 9 ms on <html>); the frame cap and the
- * deadband in the controller are what keep it affordable.
+ * makes WebKit rebuild its rule sets and re-style the document. The
+ * properties are registered in CSS as non-inherited, so an inline write
+ * re-styles the panel and its two pseudo-elements and not what is inside it
+ * (about 8 ms a write for 18 panels in Chromium unregistered, well under a
+ * third of that registered). A browser without @property (Safari before
+ * 16.4) inherits them the plain way: the same picture at the higher cost,
+ * which the frame cap and the deadband in the controller keep affordable.
  *
  * Panels come and go when a refresh re-renders the board, so a new one gets
  * the current value from a MutationObserver, before it paints. It watches
@@ -211,7 +214,12 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       // silence after a tap, or anywhere else, means no motion is coming at all.
       if (gotReading) return;
       if (!viaTap && needsPermission(window)) {
-        permissionTimer = window.setTimeout(() => setProblem("needs-permission"), NO_PERMISSION_MS);
+        permissionTimer = window.setTimeout(() => {
+          // Saved "on" but no motion: forget it, so the next load does not ask again. A tap turns it back on.
+          writeTiltLighting(storage, false);
+          setPreferred(false);
+          setProblem("needs-permission");
+        }, NO_PERMISSION_MS);
       }
       readingTimer = window.setTimeout(() => setProblem("no-readings"), NO_READING_MS);
     };
