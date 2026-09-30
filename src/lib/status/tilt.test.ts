@@ -8,8 +8,10 @@ import {
   LIGHT_SIGN,
   lightFromTilt,
   lowPass,
+  MAX_APPLY_INTERVAL_MS,
   MIN_APPLY_INTERVAL_MS,
   needsPermission,
+  nextApplyInterval,
   parseTiltPreference,
   readTiltLighting,
   screenAngle,
@@ -354,5 +356,41 @@ describe("screenAngle", () => {
     expect(screenAngle({})).toBe(0);
     expect(screenAngle({ orientation: "landscape" })).toBe(0);
     expect(screenAngle({ orientation: Number.NaN })).toBe(0);
+  });
+});
+
+describe("nextApplyInterval", () => {
+  it("backs off when frames overrun, up to a limit", () => {
+    let interval = MIN_APPLY_INTERVAL_MS;
+    interval = nextApplyInterval(interval, 66);
+    expect(interval).toBeGreaterThan(MIN_APPLY_INTERVAL_MS);
+    for (let i = 0; i < 20; i++) interval = nextApplyInterval(interval, 100);
+    expect(interval).toBe(MAX_APPLY_INTERVAL_MS);
+  });
+
+  it("recovers once frames are on time, never below the floor", () => {
+    let interval = MAX_APPLY_INTERVAL_MS;
+    for (let i = 0; i < 100; i++) interval = nextApplyInterval(interval, 16.7);
+    expect(interval).toBe(MIN_APPLY_INTERVAL_MS);
+  });
+
+  it("holds through in-between frames, and ignores a rest or a bad time", () => {
+    expect(nextApplyInterval(80, 33)).toBe(80);
+    expect(nextApplyInterval(80, 900)).toBe(80);
+    expect(nextApplyInterval(80, 0)).toBe(80);
+    expect(nextApplyInterval(80, Number.NaN)).toBe(80);
+  });
+
+  it("is honoured by the controller", () => {
+    let interval = 200;
+    const apply = vi.fn();
+    const controller = createTiltController({ apply, now: () => 0, minIntervalMs: () => interval });
+    controller.sample(0, 0, 0, 0);
+    controller.sample(90, 0, 0, 100);
+    controller.sample(90, 0, 0, 190);
+    expect(apply).toHaveBeenCalledTimes(1);
+    interval = 33;
+    controller.sample(90, 0, 0, 230);
+    expect(apply).toHaveBeenCalledTimes(2);
   });
 });

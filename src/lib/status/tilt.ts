@@ -133,6 +133,23 @@ export const BASELINE_TAU_MS = 5000;
 export const DEADBAND = 0.004;
 /** About 30 writes a second: the sheen repaints every glass panel. */
 export const MIN_APPLY_INTERVAL_MS = 33;
+/** The slowest the light is written when frames are dropping: about 4 a second. */
+export const MAX_APPLY_INTERVAL_MS = 250;
+
+/**
+ * The write interval for the next frame, given the last one. Every write
+ * re-styles the panels, which on a slow device takes longer than a frame; a
+ * frame that overran means the writes are too frequent, so they back off,
+ * and they speed up again once frames are back on time. A gap of over half a
+ * second is the loop having rested, not a slow frame.
+ */
+export function nextApplyInterval(current: number, frameMs: number): number {
+  if (frameMs > 500 || !(frameMs > 0)) return current;
+  if (frameMs > 45) return Math.min(MAX_APPLY_INTERVAL_MS, current * 1.5);
+  if (frameMs < 24) return Math.max(MIN_APPLY_INTERVAL_MS, current * 0.9);
+  return current;
+}
+
 /** The filter counts as caught up with the device within this distance. */
 const SETTLED = 0.001;
 
@@ -155,9 +172,12 @@ export type TiltController = {
 export function createTiltController({
   apply,
   now,
+  minIntervalMs = () => MIN_APPLY_INTERVAL_MS,
 }: {
   apply: (x: number, y: number) => void;
   now: () => number;
+  /** How long to leave between writes; see nextApplyInterval. */
+  minIntervalMs?: () => number;
 }): TiltController {
   let filtered: Vec2 | null = null;
   let baseline: Vec2 | null = null;
@@ -214,7 +234,7 @@ export function createTiltController({
     const moved = !applied || Math.abs(light.x - applied.x) >= DEADBAND || Math.abs(light.y - applied.y) >= DEADBAND;
     if (!moved) {
       dirty = false;
-    } else if (t - appliedAt >= MIN_APPLY_INTERVAL_MS) {
+    } else if (t - appliedAt >= minIntervalMs()) {
       applied = light;
       appliedAt = t;
       dirty = false;
