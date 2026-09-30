@@ -3,7 +3,7 @@ import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AlertsButton, FilterBar, RefreshButton, SearchField, WhileBarUp } from "@/components/status/board-controls";
 import { BoardSections } from "@/components/status/board-sections";
 import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
-import { prefersReducedMotion, useSpotlight, withCardMotion } from "@/components/status/effects";
+import { prefersReducedMotion, useWanderLight, withCardMotion } from "@/components/status/effects";
 import { Hero } from "@/components/status/hero";
 import { LensField } from "@/components/status/lens-field";
 import { LiveBar, nextInText, useFreshness } from "@/components/status/live-bar";
@@ -79,7 +79,7 @@ export function BoardView({
   const background = useBackground();
   // The light only draws on Glass and Full, and Reduce glass takes it away everywhere.
   const tilt = useTiltLighting({ paused: reduceGlass.enabled || background.value === "quiet" });
-  useSpotlight(mainRef);
+  useWanderLight(mainRef);
   // Chosen once per page load: the tab keeps its own spot in every slot.
   const [refetchJitter] = useState(() => pickRefetchJitter());
 
@@ -302,7 +302,6 @@ export function BoardView({
   return (
     <div className="liquid-stage text-fg">
       <div className="aurora" aria-hidden />
-      <div className="aurora-grid" aria-hidden />
       <LensField />
       <div className="liquid-content">
         {/*

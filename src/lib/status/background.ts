@@ -3,7 +3,7 @@ import { type AttributeTarget, type PreferenceStorage, REDUCE_GLASS_BOOT_SCRIPT 
 /**
  * The page behind the board: Quiet (flat paper, the default), Glass (frosted
  * panels over a still glow) or Full (adds the drift, the glass lenses and a
- * light that follows the pointer). The choice is a preference kept in this
+ * light that wanders across the cards). The choice is a preference kept in this
  * browser; the CSS answers to a `data-background` attribute on <html>
  * (src/background.css), which is absent for Quiet. Reduce glass sits above it:
  * with that on, the page stays solid whatever is chosen.

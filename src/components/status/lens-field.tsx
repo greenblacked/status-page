@@ -2,8 +2,8 @@
 
 /**
  * The liquid-glass lenses behind the board: four static glass discs, each
- * drawing a copy of the drafting grid bent through thick-glass refraction with
- * a coloured fringe at its rim (the aurora itself is not bent). Static markup,
+ * drawing a copy of the aurora's colour and a soft caustic bent through
+ * thick-glass refraction, with a coloured fringe at its rim. Static markup,
  * no state, and always rendered, so the server's HTML and the hydrated page
  * agree: src/background.css places and sizes them, and shows them only on the
  * Full background (Quiet and Glass hide the layer). Reduced motion stops only

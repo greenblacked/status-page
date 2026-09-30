@@ -14,7 +14,7 @@
   the system, for the whole page; setting color-scheme on one element does
   not switch the tokens inside it.
 
-  The glass, aurora, lenses and pointer light are not here. They live in
+  The glass, aurora, lenses and card light are not here. They live in
   background.css and only apply on the Glass and Full backgrounds
   (Settings, Background); nothing in this file refers to them.
 */
@@ -896,7 +896,6 @@ article[id^="service-"],
   .board-chips,
   .no-print,
   .aurora,
-  .aurora-grid,
   .lenses {
     /* biome-ignore lint/complexity/noImportantStyles: print hides these whatever else set their display */
     display: none !important;
