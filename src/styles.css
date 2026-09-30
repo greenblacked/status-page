@@ -629,6 +629,17 @@
 }
 
 /*
+  A text link or button in running text is one line tall, well short of a
+  finger. On a touch screen, padding brings it to 44pt; a mouse keeps the
+  line.
+*/
+@utility touch-target {
+  @media (pointer: coarse) {
+    padding-block: 0.75rem;
+  }
+}
+
+/*
   Press feedback for touch, where there is no hover and the tap highlight
   is off. The document has React's touch listeners, which is what lets
   iOS Safari apply :active at all.

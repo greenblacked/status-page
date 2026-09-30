@@ -588,7 +588,7 @@ export function BoardView({
               </p>
               <p>
                 <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                   href="https://github.com/greenblacked/status-page"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -598,7 +598,7 @@ export function BoardView({
                 </a>
                 {" · "}
                 <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                   href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
                   target="_blank"
                   rel="noopener noreferrer license"
@@ -611,21 +611,21 @@ export function BoardView({
               <p>
                 Use the board elsewhere:{" "}
                 <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                   href="/api/status.json"
                 >
                   JSON API
                 </a>
                 {" · "}
                 <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                   href="/feed.xml"
                 >
                   Atom feed
                 </a>{" "}
                 for Slack, Teams and feed readers ·{" "}
                 <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                   href="/api/badge/board"
                 >
                   status badges
@@ -641,7 +641,7 @@ export function BoardView({
               <p>
                 <button
                   type="button"
-                  className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  className="focus-ring pressable touch-target rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
                   onClick={() => setSettingsOpen(true)}
                 >
                   Settings and shortcuts
@@ -759,7 +759,7 @@ function SummaryPanel({
                   <a
                     href={`#${serviceAnchor(service.id)}`}
                     onClick={(event) => onReveal(service, event)}
-                    className="focus-ring pressable inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted hover:text-fg"
+                    className="focus-ring pressable inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset pointer-coarse:min-h-11 px-3 text-xs text-muted hover:text-fg"
                   >
                     <HealthDot health={service.health} />
                     {service.name}

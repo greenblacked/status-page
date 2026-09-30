@@ -1670,6 +1670,42 @@ test("drops the Operational placeholder from release cards and names a fresh rel
   await expect(apple.getByRole("button", { name: /^Star / })).toBeVisible();
 });
 
+test("gives every control on the page a 44pt target on a touch screen", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  test.skip(!coarse, "the touch sizes are for a coarse pointer, which this project does not have");
+  // The fixture board has services that need attention, so their chips are on screen.
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const small = await page.evaluate(() => {
+    const targets = [
+      ...document.querySelectorAll<HTMLElement>(
+        [
+          "header button",
+          '[role="group"][aria-label="Filter services"] button',
+          '[aria-label="Services that need attention"] a',
+          "footer a",
+          "footer button",
+        ].join(","),
+      ),
+    ];
+    return {
+      count: targets.length,
+      small: targets
+        .map((element) => ({
+          name: element.textContent?.trim() || element.ariaLabel,
+          box: element.getBoundingClientRect(),
+        }))
+        .filter(({ box }) => box.height > 0 && (box.height < 43.5 || box.width < 43.5))
+        .map(({ name, box }) => `${name}: ${Math.round(box.width)}x${Math.round(box.height)}`),
+    };
+  });
+  // Not vacuous: two hero buttons (one on an iPhone), the chips, the attention chips and the footer's links.
+  expect(small.count).toBeGreaterThan(12);
+  expect(small.small).toEqual([]);
+});
+
 test("keeps the live bar the same height while checking and live at phone widths", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
   const board = fixtureBoard(Date.now());
