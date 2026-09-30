@@ -31,6 +31,24 @@ export type Incident = {
   startedAt?: string;
   updatedAt?: string;
   url?: string;
+  /**
+   * True for an active vendor notice that reports no impact (a Statuspage
+   * incident with impact "none", a Google SERVICE_INFORMATION item). It stays
+   * in the list, labelled a notice rather than a health, and never counts as
+   * a problem: `health` is then "operational" and only describes its impact.
+   */
+  informational?: boolean;
+};
+
+/** Maintenance the vendor has scheduled but not started. It never changes health. */
+export type UpcomingMaintenance = {
+  id: string;
+  title: string;
+  /** When it is due to start, as ISO 8601. */
+  scheduledFor?: string;
+  /** When it is due to end, as ISO 8601. */
+  scheduledUntil?: string;
+  url?: string;
 };
 
 export type ServiceSnapshot = {
@@ -52,6 +70,8 @@ export type ServiceSnapshot = {
    */
   componentCount?: number;
   incidents: Incident[];
+  /** Scheduled, not yet started maintenance, soonest first. Absent when the vendor lists none. */
+  upcomingMaintenance?: UpcomingMaintenance[];
   meta?: Record<string, string | number>;
   /** Set only when the collector itself failed; health is then "unknown". */
   failure?: SourceFailure;
