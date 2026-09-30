@@ -4,12 +4,12 @@
     Quiet  flat paper. The default, and the only thing the base file
            (styles.css) knows about. Nothing here applies.
     Glass  frosted panels over a still glow.
-    Full   adds the slow drift, the glass lenses that bend the grid, the
+    Full   adds the slow drift, the glass lenses that bend the aurora's colour, the
            light that follows the pointer and the period dial's sweep.
 
   The choice is `data-background` on <html> (glass or full; Quiet is no
   attribute), set before paint by APPEARANCE_BOOT_SCRIPT and kept in step by
-  useBackground. The markup for every layer (the aurora, the grid, the lens
+  useBackground. The markup for every layer (the aurora, the lens
   field and its filter) is always rendered, so the server's HTML and the
   hydrated page never differ; Quiet only hides it.
 
@@ -45,7 +45,7 @@
   /* Rim light: the bevel every glass surface shares. */
   --rim-top: light-dark(rgb(255 255 255 / 0.9), rgb(255 255 255 / 0.22));
   --rim-top-strong: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.32));
-  --rim-bottom: light-dark(rgb(16 24 40 / 0.04), rgb(255 255 255 / 0.05));
+  --rim-bottom: light-dark(rgb(16 24 40 / 0.04), rgb(255 255 255 / 0.02));
   --rim-outline: light-dark(rgb(16 24 40 / 0.11), rgb(255 255 255 / 0.13));
   --rim-outline-strong: light-dark(rgb(16 24 40 / 0.16), rgb(255 255 255 / 0.22));
   --drop: light-dark(rgb(38 52 84 / 0.32), rgb(0 0 0 / 0.6));
@@ -102,22 +102,24 @@
   --aurora-2: light-dark(oklch(0.95 0.05 255 / 0.55), oklch(0.5 0.16 265 / 0.14));
   --aurora-3: light-dark(oklch(0.955 0.04 300 / 0.45), oklch(0.42 0.15 305 / 0.1));
   --aurora-4: light-dark(oklch(0.96 0.04 40 / 0.35), oklch(0.5 0.07 240 / 0.08));
-  /* The coordinate grid under everything: texture, not a spreadsheet. */
-  --grid-line: light-dark(rgb(10 15 25 / 0.04), rgb(255 255 255 / 0.035));
-  --grid-size: 64px;
   --grain-opacity: 0.025;
 
   /*
-    The glass lenses over the grid. Contrast budget: --color-subtle and
+    The glass lenses over the aurora. Contrast budget: --color-subtle and
     --color-muted (the two weakest text colours) stay at 4.5:1 or better on
     every pixel of a lens more than 3px inside its rim, in light and dark,
-    grid lines included. Only the rim hairline itself (the outer 3px, where
+    the caustic included. Only the rim hairline itself (the outer 3px, where
     the bevel, fringe and rim light sit) is exempt: a glyph crosses that edge
     for a pixel or two. The lenses spec measures this pixel by pixel, on the
     Full background; when a token below changes, that test is the check. Dark
     is the tight side, so its alphas stay low.
   */
-  --lens-grid-line: light-dark(rgb(10 15 25 / 0.025), rgb(255 255 255 / 0.025));
+  --lens-caustic: light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.02));
+  /* The aurora's currents as the lens draws them: Full's colours, at half the alpha in dark, where the copy lands on the original. */
+  --lens-tint-1: light-dark(oklch(0.96 0.05 165 / 0.55), oklch(0.55 0.14 175 / 0.06));
+  --lens-tint-2: light-dark(oklch(0.95 0.05 255 / 0.55), oklch(0.5 0.16 265 / 0.06));
+  --lens-tint-3: light-dark(oklch(0.955 0.04 300 / 0.45), oklch(0.42 0.15 305 / 0.05));
+  --lens-tint-4: light-dark(oklch(0.96 0.04 40 / 0.35), oklch(0.5 0.07 240 / 0.04));
   --lens-body-hi: light-dark(rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.02));
   --lens-body-lo: light-dark(rgb(70 90 150 / 0.01), rgb(0 0 0 / 0.22));
   --lens-rim-hi: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.2));
@@ -174,7 +176,7 @@
     display: none;
     pointer-events: none;
     position: fixed;
-    /* The large viewport, as .lenses and .aurora-grid: an inset: 0 box follows
+    /* The large viewport, as .lenses: an inset: 0 box follows
        the iOS toolbar, and every collapse would resize it and blur all the glass again. */
     inset: 0 auto auto 0;
     width: 100%;
@@ -209,34 +211,12 @@
   }
 
   /*
-    The ruled grid the board is drafted on. Static on purpose: one fixed
-    layer, painted once, never animated, so it costs nothing per frame or
-    per scroll. Behind the content and in front of the aurora.
-  */
-  .aurora-grid {
-    display: none;
-    pointer-events: none;
-    position: fixed;
-    /* Sized like .lenses (see there), so the holes below stay put with the lenses. */
-    inset: 0 auto auto 0;
-    width: 100%;
-    height: 100lvh;
-    z-index: 0;
-    contain: strict;
-    background-image:
-      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
-    background-size: var(--grid-size) var(--grid-size);
-    background-position: 50% 0;
-  }
-
-  /*
-    Four glass lenses that bend the drafting grid. Painted only: no
+    Four glass lenses that bend the aurora's colour like drops of water. Painted only: no
     backdrop-filter, nothing above the content. Each lens draws its own copy
-    of the grid (.lens-fx) through the lens-refract SVG filter, and the real
-    grid has a matching hole under it so the two never double. The geometry
+    of the aurora's colour and a soft caustic (.lens-fx) through the
+    lens-refract SVG filter, over the aurora it copies. The geometry
     is static; the only motion is the rim light turning (transform only),
-    and only where a pointer can hover. Same z-index as the grid, so the
+    and only where a pointer can hover. Same z-index as the aurora, so the
     later DOM order puts it on top.
   */
   .lenses {
@@ -338,9 +318,10 @@
   }
 
   /*
-    The bent grid: the page grid drawn again, aligned to it (a 64px tile
-    centred on the viewport, as .aurora-grid sets it) and pushed through the
-    refraction filter. Oversized so the filter never shows an edge.
+    The bent colour: the aurora's four currents drawn again, aligned to it
+    (a viewport-sized field, as .aurora::before paints it, at rest) plus a
+    soft caustic highlight and a faint dark pool opposite it, pushed through
+    the refraction filter. Oversized so the filter never shows an edge.
   */
   .lens-fx {
     position: absolute;
@@ -348,12 +329,24 @@
     z-index: -1;
     filter: url(#lens-refract);
     background-image:
-      linear-gradient(to right, var(--lens-grid-line) 1px, transparent 1px),
-      linear-gradient(to bottom, var(--lens-grid-line) 1px, transparent 1px);
-    background-size: 64px 64px;
+      radial-gradient(34% 30% at 32% 24%, var(--lens-caustic), transparent 70%),
+      radial-gradient(38% 30% at 22% 18%, var(--lens-tint-1), transparent 70%),
+      radial-gradient(34% 28% at 78% 22%, var(--lens-tint-2), transparent 70%),
+      radial-gradient(30% 26% at 58% 60%, var(--lens-tint-3), transparent 72%),
+      radial-gradient(40% 30% at 26% 82%, var(--lens-tint-4), transparent 70%);
+    background-size:
+      calc(var(--d) * 1.3) calc(var(--d) * 1.3),
+      160cqw 160cqh,
+      160cqw 160cqh,
+      160cqw 160cqh,
+      160cqw 160cqh;
+    background-repeat: no-repeat;
     background-position:
-      calc(50cqw - 32px - var(--x) * 1cqw + var(--d) * 0.65)
-      calc(var(--d) * 0.65 - var(--y) * 1cqh);
+      0 0,
+      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh);
   }
 
   @keyframes aurora-drift {
@@ -382,8 +375,7 @@
     GLASS: the layers that show in Glass and Full. The aurora is still here;
     it only drifts in Full (below).
   */
-  :root:is([data-background="glass"], [data-background="full"]) .aurora,
-  :root:is([data-background="glass"], [data-background="full"]) .aurora-grid {
+  :root:is([data-background="glass"], [data-background="full"]) .aurora {
     display: block;
   }
 
@@ -530,25 +522,6 @@
   */
   :root[data-background="full"] .lenses {
     display: block;
-  }
-
-  /*
-    The hole in the real grid under each lens. Four radial masks, intersected.
-    Both spellings, written out: the minifier folds a lone prefixed pair.
-  */
-  :root[data-background="full"] .aurora-grid {
-    -webkit-mask-image:
-      radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1lvh), transparent 99%, #000 100%),
-      radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1lvh), transparent 99%, #000 100%),
-      radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1lvh), transparent 99%, #000 100%),
-      radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1lvh), transparent 99%, #000 100%);
-    mask-image:
-      radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1lvh), transparent 99%, #000 100%),
-      radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1lvh), transparent 99%, #000 100%),
-      radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1lvh), transparent 99%, #000 100%),
-      radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1lvh), transparent 99%, #000 100%);
-    -webkit-mask-composite: source-in;
-    mask-composite: intersect;
   }
 
   @media (hover: hover) and (pointer: fine) {
@@ -758,7 +731,7 @@
 }
 
 @layer components {
-  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.aurora, .aurora-grid, .lenses) {
+  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.aurora, .lenses) {
     display: none;
   }
 
@@ -780,7 +753,7 @@
   }
 
   @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
-    :root:root:is([data-background="glass"], [data-background="full"]) :is(.aurora, .aurora-grid, .lenses) {
+    :root:root:is([data-background="glass"], [data-background="full"]) :is(.aurora, .lenses) {
       display: none;
     }
 
@@ -799,12 +772,6 @@
     :root:root[data-background="full"] .spotlight::after,
     :root:root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {
       display: none;
-    }
-
-    /* The grid, whole again, is no longer drawn at all; a lens-less mask has nothing to hole. */
-    :root:root[data-background="full"] .aurora-grid {
-      mask-image: none;
-      -webkit-mask-image: none;
     }
   }
 }

@@ -302,7 +302,6 @@ export function BoardView({
   return (
     <div className="liquid-stage text-fg">
       <div className="aurora" aria-hidden />
-      <div className="aurora-grid" aria-hidden />
       <LensField />
       <div className="liquid-content">
         {/*

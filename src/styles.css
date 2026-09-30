@@ -896,7 +896,6 @@ article[id^="service-"],
   .board-chips,
   .no-print,
   .aurora,
-  .aurora-grid,
   .lenses {
     /* biome-ignore lint/complexity/noImportantStyles: print hides these whatever else set their display */
     display: none !important;
