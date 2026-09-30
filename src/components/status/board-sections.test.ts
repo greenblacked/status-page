@@ -96,7 +96,9 @@ describe("BoardSections", () => {
     for (const entry of CATALOG) expect(html.match(new RegExp(`id="service-${entry.id}"`, "g"))).toHaveLength(1);
     // Healthy and release rows sit in list items of a card list; attention cards do not.
     expect(
-      html.match(/<ul aria-describedby="[^"]*" class="surface card-list">|<ul class="surface card-list">/g),
+      html.match(
+        /<ul aria-describedby="[^"]*" class="surface spotlight card-list">|<ul class="surface spotlight card-list">/g,
+      ),
     ).toHaveLength(5);
     expect(html.match(/<li><article/g)).toHaveLength(CATALOG.length - 1);
   });

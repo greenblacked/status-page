@@ -89,13 +89,17 @@ export function AttentionCard({
       // Focusable by script and by its #service-<id> link, never by Tab, so
       // a chip in the headline leaves the keyboard on the card it jumped to.
       tabIndex={-1}
-      className={cn(
-        "surface focus-ring relative scroll-mt-6 p-4",
-        // Changed: a 2px accent bar on the inline-start edge, fading in once. It has no hue of its own.
-        emphasized &&
-          "before:absolute before:inset-y-4 before:left-0 before:w-0.5 before:bg-accent before:opacity-100 before:transition-opacity before:duration-(--t-reveal) before:ease-(--ease-out) before:content-[''] before:starting:opacity-0 motion-reduce:before:transition-none",
-      )}
+      className="surface spotlight focus-ring relative scroll-mt-6 p-4"
     >
+      {emphasized ? (
+        // Changed: a 2px accent bar on the inline-start edge, fading in once. It has no hue of its own. A real
+        // element, not a pseudo-element: ::before and ::after carry the Glass and Full sheen and glint. The
+        // important position outweighs the Glass rule that makes a panel's children relative.
+        <span
+          aria-hidden
+          className="absolute! inset-y-4 left-0 w-0.5 bg-accent opacity-100 transition-opacity duration-(--t-reveal) ease-(--ease-out) starting:opacity-0 motion-reduce:transition-none"
+        />
+      ) : null}
       <div data-card-header className="flex items-start gap-3">
         <span className="relative mt-px shrink-0">
           <StatusGlyph health={service.health} size={22} className={cn("block", STATUS_TEXT[service.health])} />
@@ -108,7 +112,12 @@ export function AttentionCard({
             {startedIncident ? (
               <>
                 {" "}
-                <IncidentSince startedAt={startedIncident.startedAt} reference={checkedAt} now={now} />
+                <IncidentSince
+                  startedAt={startedIncident.startedAt}
+                  reference={checkedAt}
+                  now={now}
+                  className="text-muted"
+                />
               </>
             ) : null}
             {emphasized ? (

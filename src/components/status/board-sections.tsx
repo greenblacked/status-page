@@ -89,7 +89,7 @@ function RowList({
   now,
 }: Handlers & { services: ServiceSnapshot[]; describedBy?: string }) {
   return (
-    <ul aria-describedby={describedBy} className="surface card-list">
+    <ul aria-describedby={describedBy} className="surface spotlight card-list">
       {services.map((service) => (
         <li key={service.id}>
           <ServiceCard

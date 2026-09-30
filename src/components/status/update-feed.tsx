@@ -23,9 +23,9 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
 
       <div className="board-main">
         {rows.length === 0 ? (
-          <p className="surface px-4 py-4 text-body text-muted">Waiting for the first check.</p>
+          <p className="surface spotlight px-4 py-4 text-body text-muted">Waiting for the first check.</p>
         ) : (
-          <ol className="surface card-list">
+          <ol className="surface spotlight card-list">
             {rows.map((row) => (
               <li key={row.key}>
                 <div className="row grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 px-4 py-3">
