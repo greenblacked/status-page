@@ -10,6 +10,11 @@ describe("securityHeaders", () => {
     expect(csp).not.toMatch(/https?:|\*/);
   });
 
+  it("does not deny the motion sensors Tilt lighting reads", () => {
+    const policy = securityHeaders({ dev: false })["Permissions-Policy"] ?? "";
+    for (const feature of ["accelerometer", "gyroscope", "magnetometer"]) expect(policy).not.toContain(feature);
+  });
+
   it("leaves the policy out in development, where Vite injects its client", () => {
     expect(securityHeaders({ dev: true })).not.toHaveProperty("Content-Security-Policy");
     expect(securityHeaders({ dev: true })["X-Content-Type-Options"]).toBe("nosniff");
