@@ -3,17 +3,6 @@
   specificity these win.
 */
 
-/*
-  Hold the "from" keyframe during the delay only. "both" also kept the
-  finished transform on every card for good, and each of those becomes its own
-  compositing layer behind a backdrop blur, which Safari pays for. The end
-  keyframe (opacity 1, translateY(0)) is the card's natural style, so nothing
-  changes visually.
-*/
-.stagger-in {
-  animation-fill-mode: backwards;
-}
-
 /* In the base layer, so a Tailwind utility on an element can still override these. */
 @layer base {
   /* No double-tap zoom delay on anything tappable. */
