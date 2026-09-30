@@ -669,7 +669,7 @@ test("renders cards without requesting persistent uptime history", async ({ page
 });
 
 // The board asks for history only in a build made with VITE_STATUS_HISTORY=1
-// (nothing collects any today). These two run only when the runner is given
+// (only the Cloudflare Workers build has a history source). These two run only when the runner is given
 // the same VITE_STATUS_HISTORY=1 it built with, and are skipped otherwise;
 // the default build is covered by the test above, which a history build skips.
 // CI's history job builds with the flag and runs them by their @history tag.
