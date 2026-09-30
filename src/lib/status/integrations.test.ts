@@ -103,11 +103,128 @@ describe("atomFeed", () => {
     expect(xml).toContain("<updated>2026-09-24T23:00:00.000Z</updated>");
   });
 
-  it("gives an entry a new id when its message changes, so readers post it again", () => {
-    const id = (summary: string) =>
-      atomFeed(board([gcp({ health: "degraded", summary })]), "https://s").match(/<id>(urn:[^<]+)<\/id>/)?.[1];
-    expect(id("Investigating")).not.toBe(id("Mitigated"));
-    expect(id("Investigating")).toBe(id("Investigating"));
+  const ids = (xml: string) => [...xml.matchAll(/<entry>\s*<id>([^<]+)<\/id>/g)].map((match) => match[1]);
+
+  it("keeps an entry's id when its message changes, and changes it for a different incident", () => {
+    const feed = (summary: string, incidentId: string) =>
+      atomFeed(
+        board([gcp({ health: "degraded", summary, incidents: [{ id: incidentId, title: "t", health: "degraded" }] })]),
+        "https://s",
+      );
+    expect(ids(feed("Investigating", "inc-1"))).toEqual(["urn:status-bar:gcp:inc-1"]);
+    // A reworded summary is the same incident: same id, so no repost.
+    expect(ids(feed("Mitigated", "inc-1"))).toEqual(["urn:status-bar:gcp:inc-1"]);
+    // A new incident is a new entry.
+    expect(ids(feed("Investigating", "inc-2"))).toEqual(["urn:status-bar:gcp:inc-2"]);
+  });
+
+  it("keys the entry on the worst incident, whatever order the incidents arrive in", () => {
+    const xml = atomFeed(
+      board([
+        gcp({
+          health: "outage",
+          incidents: [
+            { id: "note", title: "FYI", health: "operational", informational: true },
+            { id: "minor", title: "Minor", health: "degraded" },
+            { id: "major", title: "Major", health: "outage" },
+          ],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(ids(xml)).toEqual(["urn:status-bar:gcp:major"]);
+  });
+
+  it("keys an entry with no incident on its health, and escapes an id with special characters", () => {
+    expect(ids(atomFeed(board([gcp({ health: "maintenance" })]), "https://s"))).toEqual([
+      "urn:status-bar:gcp:maintenance",
+    ]);
+    const arn = "arn:aws:health:us-east-1::event/EC2/X 1";
+    expect(
+      ids(
+        atomFeed(
+          board([gcp({ health: "degraded", incidents: [{ id: arn, title: "t", health: "degraded" }] })]),
+          "https://s",
+        ),
+      ),
+    ).toEqual(["urn:status-bar:gcp:arn%3Aaws%3Ahealth%3Aus-east-1%3A%3Aevent%2FEC2%2FX%201"]);
+  });
+
+  it("dates an entry by the latest real vendor time across its incidents, not the sweep time", () => {
+    const xml = atomFeed(
+      board([
+        gcp({
+          health: "degraded",
+          incidents: [
+            { id: "a", title: "a", health: "degraded", startedAt: "2026-09-24T08:00:00Z" },
+            {
+              id: "b",
+              title: "b",
+              health: "degraded",
+              startedAt: "2026-09-24T06:00:00Z",
+              updatedAt: "2026-09-24T09:30:00Z",
+            },
+          ],
+        }),
+        service("aws", {
+          health: "outage",
+          name: "AWS",
+          incidents: [{ id: "c", title: "c", health: "outage", startedAt: "2026-09-23T01:00:00Z" }],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(xml.match(/<updated>([^<]+)<\/updated>/g)).toEqual([
+      // the feed: the latest entry time
+      "<updated>2026-09-24T09:30:00.000Z</updated>",
+      "<updated>2026-09-24T09:30:00.000Z</updated>",
+      "<updated>2026-09-23T01:00:00.000Z</updated>",
+    ]);
+  });
+
+  it("titles the feed with the app name", () => {
+    const xml = atomFeed(board([gcp({ health: "degraded" })]), "https://s");
+    expect(xml).toContain("  <title>Status Page</title>");
+    expect(xml).toContain("<author><name>Status Page</name></author>");
+  });
+
+  it("leaves unreadable services out: one failed sweep cannot be told from a blackout without history", () => {
+    const xml = atomFeed(
+      board([
+        gcp({ health: "unknown", summary: "Status could not be confirmed from the official source." }),
+        service("aws", { health: "degraded", name: "AWS" }),
+      ]),
+      "https://s",
+    );
+    expect(ids(xml)).toEqual(["urn:status-bar:aws:degraded"]);
+    expect(xml).not.toContain("Google Cloud");
+  });
+
+  it("links an entry to the worst incident page, and to the source when that is only a dashboard", () => {
+    const linked = atomFeed(
+      board([
+        gcp({
+          health: "outage",
+          incidents: [
+            { id: "minor", title: "Minor", health: "degraded", url: "https://x/minor" },
+            { id: "major", title: "Major", health: "outage", url: "https://x/major" },
+          ],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(linked).toContain('<link rel="alternate" href="https://x/major"/>');
+    const dashboard = atomFeed(
+      board([
+        gcp({
+          health: "outage",
+          sourceUrl: "https://health.example.com/status",
+          incidents: [{ id: "a", title: "A", health: "outage", url: "https://health.example.com/status" }],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(dashboard).toContain('<link rel="alternate" href="https://health.example.com/status"/>');
   });
 
   it("falls back to the board time when a vendor timestamp does not parse", () => {
@@ -117,6 +234,11 @@ describe("atomFeed", () => {
       ]),
       "https://s",
     );
+    expect(xml).toContain("<updated>2026-09-25T00:00:00.000Z</updated>");
+  });
+
+  it("dates an empty feed by the board time", () => {
+    const xml = atomFeed(board([service("aws", { health: "operational" })]), "https://s");
     expect(xml).toContain("<updated>2026-09-25T00:00:00.000Z</updated>");
   });
 

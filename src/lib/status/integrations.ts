@@ -1,7 +1,8 @@
+import { APP_NAME } from "./catalog.ts";
 import { overallHealth } from "./diff.ts";
 import { healthLabel } from "./health.ts";
-import { boardHeadline } from "./layout.ts";
-import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "./types.ts";
+import { boardHeadline, incidentLink, sortIncidents } from "./layout.ts";
+import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot, UpcomingMaintenance } from "./types.ts";
 
 // Everything here is a pure function of one board snapshot, so the JSON API,
 // the Atom feed and the badges always agree with the page they sit beside.
@@ -21,7 +22,9 @@ export type PublicService = {
   health: Health;
   summary: string;
   source: string;
-  incidents: Array<{ title: string; health: Health; url?: string; startedAt?: string }>;
+  incidents: Array<{ title: string; health: Health; url?: string; startedAt?: string; informational?: true }>;
+  /** Scheduled, not yet started maintenance. Present only when the vendor lists some; never affects `health`. */
+  upcomingMaintenance?: UpcomingMaintenance[];
 };
 
 export type PublicStatus = {
@@ -51,7 +54,9 @@ export function publicStatus(board: BoardSnapshot): PublicStatus {
         health: incident.health,
         url: incident.url,
         startedAt: incident.startedAt,
+        ...(incident.informational ? { informational: true as const } : {}),
       })),
+      ...(service.upcomingMaintenance?.length ? { upcomingMaintenance: service.upcomingMaintenance } : {}),
     })),
   };
 }
@@ -110,32 +115,51 @@ function escapeXml(value: string): string {
     .replace(/'/g, "&apos;");
 }
 
-// FNV-1a: a short, stable fingerprint. An entry's id changes when what it
-// says changes, so feed readers (Slack, Feedly, Discord bots) post it again.
-function fingerprint(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
+/** The latest real vendor time among a service's incidents (last update, else start), as epoch ms, or NaN. */
+function latestVendorTime(service: ServiceSnapshot): number {
+  let latest = Number.NaN;
+  for (const incident of service.incidents) {
+    for (const text of [incident.updatedAt, incident.startedAt]) {
+      // Vendor timestamps are not always parseable; toISOString would throw.
+      const at = Date.parse(text ?? "");
+      if (Number.isFinite(at) && (Number.isNaN(latest) || at > latest)) latest = at;
+    }
   }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+  return latest;
 }
 
 /**
  * An Atom feed with one entry per service that needs attention. Subscribing
  * to it is the no-code way to get alerts: Slack's `/feed subscribe`, Microsoft
  * Teams' RSS connector, Discord feed bots and any feed reader all take it.
+ *
+ * An entry's id is the service plus its worst incident's id (or, with no
+ * incident, its health), so it stays the same while the incident's wording
+ * changes and a reader posts an incident once; a reworded or updated
+ * incident is signalled by `<updated>` instead, which is the latest time the
+ * vendor itself gave (never the time of this sweep, which would make every
+ * poll look like news). A service with no vendor time at all (a card built
+ * from components alone) falls back to the snapshot time.
+ *
+ * Unreadable (`unknown`) services are left out. A single failed sweep is
+ * usually a vendor hiccup, and telling a hiccup from a real blackout needs
+ * to know how many sweeps in a row have failed, which this stateless
+ * function (one snapshot in, one document out) does not have. The board and
+ * `/api/status.json` still show them.
  */
 export function atomFeed(board: BoardSnapshot, origin: string): string {
   const base = origin.replace(/\/$/, "");
-  const affected = board.services.filter((service) => service.health !== "operational");
+  const affected = board.services.filter((service) => service.health !== "operational" && service.health !== "unknown");
+  const stamps: number[] = [];
   const entries = affected
     .map((service) => {
-      const incident = service.incidents.find((item) => item.url);
-      const link = incident?.url ?? service.sourceUrl;
-      const id = `urn:status-bar:${service.id}:${service.health}:${fingerprint(service.summary)}`;
-      // Vendor timestamps are not always parseable; toISOString would throw.
-      const stamp = Date.parse(service.incidents[0]?.updatedAt ?? service.incidents[0]?.startedAt ?? "");
+      const worst = sortIncidents(service.incidents).find((incident) => !incident.informational);
+      const key = worst ? worst.id : service.health;
+      const id = `urn:status-bar:${service.id}:${encodeURIComponent(key)}`;
+      const link = incidentLink(service) ?? service.sourceUrl;
+      const vendorTime = latestVendorTime(service);
+      const stamp = Number.isFinite(vendorTime) ? vendorTime : Date.parse(board.generatedAt);
+      if (Number.isFinite(stamp)) stamps.push(stamp);
       const updated = Number.isFinite(stamp) ? new Date(stamp).toISOString() : board.generatedAt;
       return [
         "  <entry>",
@@ -149,17 +173,18 @@ export function atomFeed(board: BoardSnapshot, origin: string): string {
       ].join("\n");
     })
     .join("\n");
+  const feedUpdated = stamps.length ? new Date(Math.max(...stamps)).toISOString() : board.generatedAt;
 
   return [
     '<?xml version="1.0" encoding="utf-8"?>',
     '<feed xmlns="http://www.w3.org/2005/Atom">',
-    "  <title>Status Page</title>",
+    `  <title>${escapeXml(APP_NAME)}</title>`,
     `  <subtitle>${escapeXml(boardHeadline(board).title)}</subtitle>`,
     `  <id>${escapeXml(`${base}/`)}</id>`,
     `  <link rel="self" href="${escapeXml(`${base}/feed.xml`)}"/>`,
     `  <link rel="alternate" href="${escapeXml(`${base}/`)}"/>`,
-    `  <updated>${escapeXml(board.generatedAt)}</updated>`,
-    "  <author><name>Status Page</name></author>",
+    `  <updated>${escapeXml(feedUpdated)}</updated>`,
+    `  <author><name>${escapeXml(APP_NAME)}</name></author>`,
     entries,
     "</feed>",
     "",
