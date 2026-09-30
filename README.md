@@ -173,7 +173,7 @@ The board publishes current status in four open formats. Responses allow cross-o
 | --- | --- | --- |
 | `/api/status.json` | JSON: overall health, headline, counts, and each service's health, summary, source and incidents | Scripts, dashboards, chat bots |
 | `/api/history.json` | JSON: empty `services` map (compatibility only) | Existing clients checking the history schema |
-| `/feed.xml` | Atom, one entry per service that needs attention | Alerts in Slack, Teams, Discord or a feed reader |
+| `/feed.xml` | Atom, one entry per service that needs attention (a source the board could not read is left out) | Alerts in Slack, Teams, Discord or a feed reader |
 | `/api/badge/<service>` | [Shields.io endpoint badge](https://shields.io/badges/endpoint-badge) | A live status badge in a README or wiki |
 | `/metrics` | [Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-based-format): each service's state, incidents and source reachability | Prometheus, Grafana and Alertmanager |
 | `/healthz` | `ok` | Liveness probes. It never reads the board, so a slow vendor cannot fail it |
@@ -199,7 +199,7 @@ Subscribe a chat tool to the feed:
 - Microsoft Teams: the RSS connector, pointed at the same URL
 - Discord: any RSS feed bot
 
-An entry's id includes the service's health and a fingerprint of its summary, so a feed reader posts again when an incident gets worse, better or reworded, and stays quiet otherwise.
+An entry's id is the service plus its worst incident's id (its health when it has no incident), so a feed reader posts an incident once and stays quiet when its wording changes; the entry's `updated` time is the latest time the vendor itself reported, so a reader can show it as changed. A source the board could not read is not in the feed: one failed check is usually a vendor hiccup, and telling that from a real blackout takes a history of checks that a stateless feed does not have. It still shows on the board and in `/api/status.json`.
 
 </details>
 
