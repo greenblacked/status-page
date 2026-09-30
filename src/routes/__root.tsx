@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import { useState } from "react";
 import { ALERTS_BOOT_SCRIPT } from "@/lib/status/alerts-support";
+import { APPEARANCE_BOOT_SCRIPT } from "@/lib/status/background";
 import { APP_NAME } from "@/lib/status/catalog";
-import { REDUCE_GLASS_BOOT_SCRIPT } from "@/lib/status/glass";
 import appleCss from "../apple.css?url";
 import appCss from "../styles.css?url";
 
@@ -18,8 +18,8 @@ function RootDocument() {
   );
 
   return (
-    // suppressHydrationWarning, <html> only: the Reduce glass boot script
-    // (scripts, below) may add data-reduce-transparency and data-alerts to this element
+    // suppressHydrationWarning, <html> only: the boot scripts (below) may add
+    // data-reduce-transparency, data-background and data-alerts to this element
     // before React hydrates it, which the server could not know about.
     <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
@@ -34,8 +34,8 @@ function RootDocument() {
           dark pair: that matches the icon, and is what a launch screen
           built from the manifest shows before the page paints.
         */}
-        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f2ec" />
-        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#05070d" />
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1eb" />
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
       </head>
       <body className="bg-bg font-sans text-fg">
         <QueryClientProvider client={queryClient}>
@@ -91,9 +91,9 @@ export const Route = createRootRoute({
       // After appCss, so its rules win ties on equal specificity.
       { rel: "stylesheet", href: appleCss },
     ],
-    // Applies a stored Reduce glass choice, and marks a browser that cannot
-    // show page alerts, before the first paint.
-    scripts: [{ children: REDUCE_GLASS_BOOT_SCRIPT }, { children: ALERTS_BOOT_SCRIPT }],
+    // Applies the stored Reduce glass and Background choices, and marks a
+    // browser that cannot show page alerts, before the first paint.
+    scripts: [{ children: APPEARANCE_BOOT_SCRIPT }, { children: ALERTS_BOOT_SCRIPT }],
   }),
   component: RootDocument,
 });

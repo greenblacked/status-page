@@ -2,8 +2,9 @@ import { expect, type Page, test } from "@playwright/test";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 
 // The liquid-glass lens layer (src/components/status/lens-field.tsx and the
-// .lens rules in src/styles.css): its markup and asset, the rules that hide,
-// still or place it, and a per-pixel contrast check.
+// .lens rules in src/background.css): its markup and asset, the rules that hide,
+// still or place it, and a per-pixel contrast check. The layer is Full's: the
+// default Quiet background and Glass hide it, and the markup is there either way.
 //
 // Contrast: board.spec.ts's contrastFailures strips pseudo-elements and every
 // background-image before it runs axe, so it cannot see the lens layer. The
@@ -11,10 +12,25 @@ import { fixtureBoard, serveBoard } from "./fixture-board";
 // it screenshots each lens disc and checks --color-subtle and --color-muted
 // against every pixel more than 3px inside the rim, in light and dark. The
 // budget is 4.5:1 there, grid lines included; only the rim hairline (the outer
-// 3px) is exempt. The lens colours are alpha tokens in src/styles.css, so
+// 3px) is exempt. The lens colours are alpha tokens in src/background.css, so
 // this is the test to run whenever one of them changes.
 
 const lenses = (page: Page) => page.locator(".lenses");
+
+/** Chooses the page's background before it loads, the way Settings would have: Quiet is no choice at all. */
+async function chooseBackground(page: Page, background: "quiet" | "glass" | "full"): Promise<void> {
+  await page.addInitScript((value) => {
+    try {
+      localStorage.setItem("status-bar:background", value);
+    } catch {
+      // Storage can refuse; the page then stays Quiet.
+    }
+  }, background);
+}
+
+/** Whether a layer is drawn: its computed display. */
+const shown = (page: Page, selector: string) =>
+  page.locator(selector).evaluate((node) => getComputedStyle(node).display !== "none");
 
 /** Waits until React has hydrated the page (a copy of the helper in board.spec.ts). */
 async function hydrated(page: Page): Promise<void> {
@@ -97,7 +113,167 @@ test.describe("markup", () => {
   }
 });
 
+test.describe("background", () => {
+  const layers = [".aurora", ".aurora-grid", ".lenses"];
+
+  test("Quiet, the default, draws none of it and sets no attribute", async ({ page }) => {
+    await page.goto("/");
+    await hydrated(page);
+    expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+    await expect(page.locator("html")).not.toHaveAttribute("data-background");
+    for (const layer of layers) expect(await shown(page, layer), layer).toBe(false);
+    // The markup is there all the same: the server and the browser render one page.
+    await expect(page.locator(".lenses > .lens")).toHaveCount(4);
+  });
+
+  test("Glass shows the still glow and the grid, and no lenses", async ({ page }) => {
+    await chooseBackground(page, "glass");
+    await page.goto("/");
+    await hydrated(page);
+    await expect(page.locator("html")).toHaveAttribute("data-background", "glass");
+    expect(await shown(page, ".aurora")).toBe(true);
+    expect(await shown(page, ".aurora-grid")).toBe(true);
+    expect(await shown(page, ".lenses")).toBe(false);
+    // Still: the drift belongs to Full.
+    const drift = await page.locator(".aurora").evaluate((node) => getComputedStyle(node, "::before").animationName);
+    expect(drift).toBe("none");
+    // The grid is whole in Glass: only the lenses hole it.
+    const mask = await page.locator(".aurora-grid").evaluate((node) => getComputedStyle(node).maskImage || "none");
+    expect(mask).toBe("none");
+  });
+
+  test("Full shows all three", async ({ page }) => {
+    await chooseBackground(page, "full");
+    await page.goto("/");
+    await hydrated(page);
+    await expect(page.locator("html")).toHaveAttribute("data-background", "full");
+    for (const layer of layers) expect(await shown(page, layer), layer).toBe(true);
+  });
+
+  test("an unknown stored value is Quiet", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("status-bar:background", "neon"));
+    await page.goto("/");
+    await hydrated(page);
+    await expect(page.locator("html")).not.toHaveAttribute("data-background");
+    expect(await shown(page, ".lenses")).toBe(false);
+  });
+
+  test("Reduce glass wins over Full: nothing of the layers is drawn", async ({ page }) => {
+    await chooseBackground(page, "full");
+    await page.addInitScript(() => localStorage.setItem("status-bar:reduce-glass", "on"));
+    await page.goto("/");
+    await hydrated(page);
+    await expect(page.locator("html")).toHaveAttribute("data-reduce-transparency", "true");
+    for (const layer of layers) expect(await shown(page, layer), layer).toBe(false);
+  });
+});
+
+test.describe("Settings, Background", () => {
+  const html = (page: Page) => page.locator("html");
+  const stored = (page: Page) => page.evaluate(() => localStorage.getItem("status-bar:background"));
+
+  async function openSettings(page: Page): Promise<void> {
+    await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+  }
+
+  test("offers Quiet, Glass and Full, Quiet first and chosen, and says what each is", async ({ page }) => {
+    await page.goto("/");
+    await hydrated(page);
+    await openSettings(page);
+    const group = page.getByRole("group", { name: "Background" });
+    await expect(group).toBeVisible();
+    await expect(group.getByRole("radio")).toHaveCount(3);
+    await expect(group.getByRole("radio", { name: "Quiet" })).toBeChecked();
+    await expect(group.getByRole("status")).toHaveText("Flat paper. Nothing moves behind the page.");
+    // The first thing in the dialog, above the switches.
+    const order = await page
+      .getByRole("dialog")
+      .evaluate((dialog) => [...dialog.querySelectorAll("legend, [role=switch]")].map((node) => node.tagName));
+    expect(order[0]).toBe("LEGEND");
+  });
+
+  test("sets the choice at once, keeps it across a reload, and puts Quiet back", async ({ page }) => {
+    const problems = watchConsole(page);
+    await page.goto("/");
+    await hydrated(page);
+    await openSettings(page);
+    const group = page.getByRole("group", { name: "Background" });
+
+    await page.locator("label", { hasText: "Glass" }).click();
+    await expect(html(page)).toHaveAttribute("data-background", "glass");
+    await expect(group.getByRole("status")).toHaveText("Frosted panels over a still glow.");
+    expect(await stored(page)).toBe("glass");
+
+    await page.reload();
+    await hydrated(page);
+    await expect(html(page)).toHaveAttribute("data-background", "glass");
+    await openSettings(page);
+    await expect(page.getByRole("radio", { name: "Glass" })).toBeChecked();
+
+    await page.locator("label", { hasText: "Full" }).click();
+    await expect(html(page)).toHaveAttribute("data-background", "full");
+    await expect(page.getByRole("group", { name: "Background" }).getByRole("status")).toContainText("glass lenses");
+    expect(await stored(page)).toBe("full");
+
+    await page.locator("label", { hasText: "Quiet" }).click();
+    await expect(html(page)).not.toHaveAttribute("data-background");
+    expect(await stored(page)).toBe("quiet");
+    expect(problems).toEqual([]);
+  });
+
+  test("moves with the arrow keys, like any radio group", async ({ page }) => {
+    await page.goto("/");
+    await hydrated(page);
+    await openSettings(page);
+    await page.getByRole("radio", { name: "Quiet" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(html(page)).toHaveAttribute("data-background", "glass");
+    await page.keyboard.press("ArrowRight");
+    await expect(html(page)).toHaveAttribute("data-background", "full");
+    await page.keyboard.press("ArrowLeft");
+    await expect(html(page)).toHaveAttribute("data-background", "glass");
+  });
+
+  test("follows another tab, and says when Reduce glass keeps the page solid", async ({ page }) => {
+    await page.goto("/");
+    await hydrated(page);
+    await openSettings(page);
+    await page.evaluate(() => {
+      localStorage.setItem("status-bar:background", "full");
+      window.dispatchEvent(new StorageEvent("storage", { key: "status-bar:background", newValue: "full" }));
+    });
+    await expect(html(page)).toHaveAttribute("data-background", "full");
+    await expect(page.getByRole("radio", { name: "Full" })).toBeChecked();
+    await page.getByRole("switch", { name: "Reduce glass" }).click();
+    await expect(page.getByRole("group", { name: "Background" }).getByRole("status")).toContainText(
+      "Reduce glass is on, so the page stays solid.",
+    );
+  });
+
+  test("a stored Full sets the attribute before React hydrates, with no hydration warning", async ({ page }) => {
+    const problems = watchConsole(page);
+    await chooseBackground(page, "full");
+    // Read the attribute the moment the document exists: the boot script in <head> has run, React has not.
+    await page.addInitScript(() => {
+      document.addEventListener("DOMContentLoaded", () => {
+        (window as unknown as { __early: string | null }).__early =
+          document.documentElement.getAttribute("data-background");
+      });
+    });
+    await page.goto("/");
+    await hydrated(page);
+    expect(await page.evaluate(() => (window as unknown as { __early: string | null }).__early)).toBe("full");
+    await page.waitForLoadState("networkidle");
+    expect(problems).toEqual([]);
+  });
+});
+
 test.describe("styling", () => {
+  test.beforeEach(async ({ page }) => {
+    await chooseBackground(page, "full");
+  });
+
   test("the layer takes no click, tap or hover from the board", async ({ page }) => {
     await page.goto("/");
     await hydrated(page);
@@ -187,6 +363,10 @@ test.describe("styling", () => {
 });
 
 test.describe("contrast", () => {
+  test.beforeEach(async ({ page }) => {
+    await chooseBackground(page, "full");
+  });
+
   /**
    * The lens discs are painted layers behind the content, so axe cannot see
    * them. With the content hidden and motion off (the aurora and the rim
@@ -328,7 +508,7 @@ test.describe("contrast", () => {
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
           const element = node.parentElement;
           const text = node.textContent?.trim();
-          if (!element || !text || !element.closest(".glass") || element.closest(".sr-only")) continue;
+          if (!element || !text || !element.closest(".surface, .glass") || element.closest(".sr-only")) continue;
           const color =
             getComputedStyle(element)
               .color.match(/[\d.]+/g)

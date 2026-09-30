@@ -10,7 +10,8 @@ import type { PreferenceStorage } from "@/lib/status/glass";
  * --light-x and --light-y, each from -1 to 1, set inline on the glass
  * elements whose ::before and ::after draw it (TILT_LIGHT_SELECTOR). They are
  * plain custom properties that those pseudo-elements inherit from their panel. Nothing may depend on them: unset, the board looks
- * exactly as it did before this existed.
+ * exactly as it did before this existed. They only draw on the Glass and Full backgrounds (src/background.css), so
+ * the hook stands down on Quiet.
  */
 export const TILT_STORAGE_KEY = "status-bar:tilt-lighting";
 /** Set on <html> while the light is really being driven, and only then. */
@@ -23,7 +24,8 @@ export const TILT_VAR_Y = "--light-y";
  * about 30 times a second, and only when it moved: each write re-styles these
  * panels and what is inside them.
  */
-export const TILT_LIGHT_SELECTOR = ".glass, .glass-chrome, .spotlight";
+// Also the transitional .glass and .glass-chrome that src/legacy.css maps to .surface and .float.
+export const TILT_LIGHT_SELECTOR = ".surface, .float, .sheet, .spotlight, .glass, .glass-chrome";
 
 /**
  * Which way the light moves for a given tilt. The one place to flip it: 1

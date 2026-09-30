@@ -8,9 +8,9 @@ export function prefersReducedMotion(): boolean {
 
 /** The name of a card glide, so the next one (and the tests) can find it. */
 const GLIDE_ID = "card-move";
-/** The values of the CSS tokens --motion-fast and --ease-smooth-out, which the cards' own motion uses. */
+/** The values of the CSS tokens --t-reveal and --ease-out (src/styles.css), which the board's other reveals use: keep them equal. */
 const GLIDE_MS = 250;
-const GLIDE_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
+const GLIDE_EASING = "cubic-bezier(0.23, 1, 0.32, 1)";
 /**
  * How long to wait for an update that never commits (or moves no card) before
  * letting go. A slow phone takes a good part of a second over a frame, and a

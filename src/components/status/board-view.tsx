@@ -17,11 +17,13 @@ import { HealthDot } from "@/components/status/health-dot";
 import { LensField } from "@/components/status/lens-field";
 import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
+import { LocalTime } from "@/components/status/local-time";
 import { PeriodDial } from "@/components/status/period-dial";
 import { ServiceCard } from "@/components/status/service-card";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
+import { useBackground } from "@/components/status/use-background";
 import { useNow } from "@/components/status/use-now";
 import { useReduceGlass } from "@/components/status/use-reduce-glass";
 import { useShortcuts, useSingleKeyShortcuts } from "@/components/status/use-shortcuts";
@@ -49,7 +51,6 @@ import {
   CACHE_TTL_MS,
   everyInterval,
   type Freshness,
-  formatUtcTime,
   lastPulseAt,
   nextRefetchAt,
   PULSE_INTERVAL_MS,
@@ -109,7 +110,9 @@ export function BoardView({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
-  const tilt = useTiltLighting({ paused: reduceGlass.enabled });
+  const background = useBackground();
+  // The light only draws on Glass and Full, and Reduce glass takes it away everywhere.
+  const tilt = useTiltLighting({ paused: reduceGlass.enabled || background.value === "quiet" });
   useSpotlight(mainRef);
   // Chosen once per page load: the tab keeps its own spot in every slot.
   const [refetchJitter] = useState(() => pickRefetchJitter());
@@ -667,6 +670,7 @@ export function BoardView({
             onSingleKeyChange={singleKey.setEnabled}
             reduceGlass={reduceGlass.enabled}
             onReduceGlassChange={reduceGlass.setEnabled}
+            background={{ value: background.value, onChange: background.setValue }}
             tilt={{
               supported: tilt.supported,
               enabled: tilt.enabled,
@@ -750,11 +754,11 @@ function SummaryPanel({
           </h2>
           <p className="mt-1.5 font-mono text-[11px] tabular-nums text-subtle">
             {attention ? attentionBreakdown(board.counts) : `All ${total} official sources report normal operation`}
-            {/* UTC, so the server and the browser agree on the text. */}
+            {/* UTC on the server and while hydrating, the viewer's own zone after (LocalTime). */}
             {generatedAt === null ? null : (
               <>
                 {" · as of "}
-                <time dateTime={board.generatedAt}>{formatUtcTime(generatedAt)}</time>
+                <LocalTime at={generatedAt} />
               </>
             )}
           </p>

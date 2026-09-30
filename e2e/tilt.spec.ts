@@ -12,6 +12,18 @@ import { LIGHT_SIGN, TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
 // tests run there too; the no-switch test for non-touch devices never uses it.
 
 const SERVICES = 14;
+
+// The light only draws on the Glass and Full backgrounds, and the default is Quiet, so every test here
+// starts on Glass, the way a visitor who chose it would. One test starts on Quiet.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem("status-bar:background", "glass");
+    } catch {
+      // Storage can refuse; the page then stays Quiet and the tests say so.
+    }
+  });
+});
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const html = (page: Page) => page.locator("html");
 
@@ -403,7 +415,7 @@ test.describe("on a touch device", () => {
     await openSettings(page);
     await tiltSwitch(page).click();
     await expect(page.getByRole("status").filter({ hasText: "Motion access was declined" })).toContainText(
-      "close your browser completely and reopen this page",
+      "Quit the browser and reopen this page to be asked again",
     );
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     expect(await permissionCalls(page)).toBe(1);
@@ -472,9 +484,7 @@ test.describe("on a touch device", () => {
     await page.reload();
     await hydrated(page);
     await openSettings(page);
-    await expect(
-      page.getByText("Motion access needs allowing again. Tap the switch to turn Tilt lighting back on."),
-    ).toBeVisible();
+    await expect(page.getByText("Motion access lapsed. Turn the switch off and on to allow it again.")).toBeVisible();
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     expect(await permissionCalls(page)).toBe(0);
     // The saved choice is dropped when the note first shows, so the next load does not ask again.
@@ -486,7 +496,7 @@ test.describe("on a touch device", () => {
     expect(await storedChoice(page)).toBe("on");
     await tiltUntil(page, 0, 0, "--light-y", () => true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
-    await expect(page.getByText("Motion access needs allowing again")).toHaveCount(0);
+    await expect(page.getByText("Motion access lapsed")).toHaveCount(0);
   });
 
   test("does not ask again on the next load, and stays off when the retry is declined", async ({ page }) => {
@@ -494,14 +504,14 @@ test.describe("on a touch device", () => {
     await page.reload();
     await hydrated(page);
     await openSettings(page);
-    await expect(page.getByText("Motion access needs allowing again")).toBeVisible();
+    await expect(page.getByText("Motion access lapsed")).toBeVisible();
     expect(await storedChoice(page)).toBe("off");
 
     await page.reload();
     await hydrated(page);
     await openSettings(page);
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
-    await expect(page.getByText("Motion access needs allowing again")).toHaveCount(0);
+    await expect(page.getByText("Motion access lapsed")).toHaveCount(0);
 
     // A tap the user declines leaves it off, with the note for that.
     await stubMotionPermission(page, "denied");
@@ -527,7 +537,7 @@ test.describe("on a touch device", () => {
     // Motion is allowed for the session, so a slow sensor is not a missing permission.
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
     expect(await storedChoice(page)).toBe("on");
-    await expect(page.getByText("Motion access needs allowing again")).toHaveCount(0);
+    await expect(page.getByText("Motion access lapsed")).toHaveCount(0);
   });
 
   test("asks again, and stores off, when Safari was closed since motion was allowed", async ({ page }) => {
@@ -543,7 +553,7 @@ test.describe("on a touch device", () => {
     await page.reload();
     await hydrated(page);
     await openSettings(page);
-    await expect(page.getByText("Motion access needs allowing again")).toBeVisible();
+    await expect(page.getByText("Motion access lapsed")).toBeVisible();
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     expect(await storedChoice(page)).toBe("off");
     expect(await permissionCalls(page)).toBe(0);
@@ -556,7 +566,7 @@ test.describe("on a touch device", () => {
     await hydrated(page);
     await openSettings(page);
     // The note comes 3 s after the page starts listening (its silence timer), too close to the default 5 s.
-    await expect(page.getByText("No motion readings arrived from this device, so Tilt lighting is off.")).toBeVisible({
+    await expect(page.getByText("Your device sent no motion data, so I switched tilt lighting off.")).toBeVisible({
       timeout: 10_000,
     });
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
@@ -582,7 +592,7 @@ test.describe("on a touch device", () => {
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     await expect(html(page)).not.toHaveAttribute("data-tilt");
     // Not the note for a saved choice: this one was just allowed.
-    await expect(page.getByText("Motion access needs allowing again")).toHaveCount(0);
+    await expect(page.getByText("Motion access lapsed")).toHaveCount(0);
 
     await tiltSwitch(page).click();
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
@@ -608,9 +618,9 @@ test.describe("on a touch device", () => {
     await page.waitForTimeout(3500);
     await openSettings(page);
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
-    await expect(
-      page.getByRole("status").filter({ hasText: /Motion access needs allowing|No motion readings/ }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: /Motion access lapsed|No motion readings/ })).toHaveCount(
+      0,
+    );
 
     await page.evaluate(() => {
       (window as unknown as { __hidden: boolean }).__hidden = false;
@@ -618,9 +628,9 @@ test.describe("on a touch device", () => {
     });
     await tiltUntil(page, 0, 0, "--light-y", () => true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
-    await expect(
-      page.getByRole("status").filter({ hasText: /Motion access needs allowing|No motion readings/ }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: /Motion access lapsed|No motion readings/ })).toHaveCount(
+      0,
+    );
   });
 
   test("lights a panel that appears after the light is on, and clears it when off", async ({ page }) => {
@@ -686,6 +696,31 @@ test.describe("on a touch device", () => {
     await page.getByRole("switch", { name: "Reduce glass" }).click();
     await tiltFromRest(page);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
+  });
+
+  test("stands down in Quiet with the note, and lights the panels once Glass is chosen", async ({ page }) => {
+    // Registered after this file's start-on-Glass script, so it runs after it on every load.
+    await page.addInitScript(() => localStorage.removeItem("status-bar:background"));
+    await page.reload();
+    await hydrated(page);
+    await expect(html(page)).not.toHaveAttribute("data-background");
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("status").filter({ hasText: "Needs the Glass or Full background." })).toBeVisible();
+    await tilt(page, 0, 0);
+    await tilt(page, 90, 0);
+    await page.waitForTimeout(300);
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightHolders(page)).toBe(0);
+
+    // The choice is kept, and Glass wakes it.
+    await page.locator("label", { hasText: "Glass" }).click();
+    await expect(html(page)).toHaveAttribute("data-background", "glass");
+    await expect(page.getByRole("status").filter({ hasText: "Needs the Glass or Full background." })).toHaveCount(0);
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+    expect(await lightHolders(page)).toBeGreaterThan(0);
   });
 
   test("stands down under Reduce Motion, and comes back without it", async ({ page }) => {

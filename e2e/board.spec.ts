@@ -321,12 +321,39 @@ function backdropFilters(page: Page, selector: string): Promise<string[]> {
   );
 }
 
-test("blurs the glass panels and never the whisper surfaces", async ({ page }) => {
+// The panel classes are .surface, .control and .float; .glass, .glass-whisper and .glass-chrome are their old
+// names, still on the cards and controls that have not moved over (src/legacy.css).
+const PANELS = ".surface, .glass";
+const CONTROLS = ".control, .glass-whisper";
+const BARS = ".float, .glass-chrome";
+
+test("Quiet, the default background, blurs no panel and no control, only the floating bar", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  const glass = await backdropFilters(page, ".glass");
+  await hydrated(page);
+  const panels = await backdropFilters(page, PANELS);
+  expect(panels.length).toBeGreaterThan(0);
+  expect(panels.filter((value) => value !== "none")).toEqual([]);
+  const controls = await backdropFilters(page, CONTROLS);
+  expect(controls.length).toBeGreaterThan(0);
+  expect(controls.filter((value) => value !== "none")).toEqual([]);
+  // The bar is the one translucent layer: hidden it holds no blur, up it blurs.
+  const bar = page.locator('section[aria-label="Board controls"]');
+  expect((await backdropFilters(page, BARS)).filter((value) => value !== "none")).toEqual([]);
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  expect((await backdropFilters(page, BARS)).some((value) => value.includes("blur("))).toBe(true);
+});
+
+test("Glass blurs the panels and never the whisper surfaces", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("status-bar:background", "glass"));
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await expect(page.locator("html")).toHaveAttribute("data-background", "glass");
+  const glass = await backdropFilters(page, PANELS);
   expect(glass.some((value) => value.includes("blur("))).toBe(true);
-  const whisper = await backdropFilters(page, ".glass-whisper");
+  const whisper = await backdropFilters(page, CONTROLS);
   expect(whisper.length).toBeGreaterThan(0);
   expect(whisper.filter((value) => value !== "none")).toEqual([]);
 });
@@ -1554,36 +1581,40 @@ async function contrastFailures(page: Page): Promise<string[]> {
 
 // On the fixture board, so every status colour, badge, incident time and
 // the Stale state are on screen, whatever the vendors say during the run.
-for (const colorScheme of ["light", "dark"] as const) {
-  for (const contrast of ["no-preference", "more"] as const) {
-    const name = `${colorScheme}${contrast === "more" ? ", Increase Contrast" : ""}`;
-    test(`keeps every text colour at AA on the flat fills alone (${name})`, async ({ page }) => {
-      await page.clock.install();
-      const board = fixtureBoard(Date.now());
-      await serveBoard(page, () => board);
-      await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
-      await page.goto("/");
-      await expect(cards(page)).toHaveCount(SERVICES);
-      await hydrated(page);
-      await page.getByRole("button", { name: "Refresh status now" }).first().click();
-      for (const label of ["Outage", "Degraded", "Maintenance", "Unknown", "Operational"]) {
-        await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
-      }
-      // Shortly after midnight UTC the fixture's incidents began the day
-      // before, and the card adds their date: "since 27 Sep 21:52 UTC".
-      await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d UTC/).first()).toBeVisible();
-      expect(await contrastFailures(page)).toEqual([]);
+// Quiet is the default; Glass makes the panels translucent, so its flat fills are the ones under test too.
+for (const background of ["quiet", "glass"] as const) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    for (const contrast of ["no-preference", "more"] as const) {
+      const name = `${colorScheme}${contrast === "more" ? ", Increase Contrast" : ""}${background === "glass" ? ", Glass" : ""}`;
+      test(`keeps every text colour at AA on the flat fills alone (${name})`, async ({ page }) => {
+        await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), background);
+        await page.clock.install();
+        const board = fixtureBoard(Date.now());
+        await serveBoard(page, () => board);
+        await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
+        await page.goto("/");
+        await expect(cards(page)).toHaveCount(SERVICES);
+        await hydrated(page);
+        await page.getByRole("button", { name: "Refresh status now" }).first().click();
+        for (const label of ["Outage", "Degraded", "Maintenance", "Unknown", "Operational"]) {
+          await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
+        }
+        // Shortly after midnight UTC the fixture's incidents began the day
+        // before, and the card adds their date: "since 27 Sep 21:52 UTC".
+        await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d UTC/).first()).toBeVisible();
+        expect(await contrastFailures(page)).toEqual([]);
 
-      // Seven minutes on, the same snapshot again: the board says Stale.
-      await page.clock.fastForward("07:00");
-      await expect(page.getByText("Stale", { exact: true })).toBeVisible();
-      expect(await contrastFailures(page)).toEqual([]);
+        // Seven minutes on, the same snapshot again: the board says Stale.
+        await page.clock.fastForward("07:00");
+        await expect(page.getByText("Stale", { exact: true })).toBeVisible();
+        expect(await contrastFailures(page)).toEqual([]);
 
-      // And the settings dialog, with the single-key shortcuts dimmed.
-      await page.getByRole("button", { name: "Settings and shortcuts" }).click();
-      await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
-      expect(await contrastFailures(page)).toEqual([]);
-    });
+        // And the settings dialog, with the single-key shortcuts dimmed.
+        await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+        await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
+        expect(await contrastFailures(page)).toEqual([]);
+      });
+    }
   }
 }
 
