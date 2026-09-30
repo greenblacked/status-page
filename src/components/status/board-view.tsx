@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
+import { ArrowUpRight, Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
 import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CompactHeader, useScrolledPast } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
@@ -512,7 +512,32 @@ export function BoardView({
               Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
               Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
             </p>
-            <p>Cached server snapshots update every two minutes from official vendor feeds.</p>
+            <p>
+              This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45
+              seconds.
+            </p>
+            <p>
+              <a
+                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Source on GitHub
+                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+              </a>
+              {" · "}
+              <a
+                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
+                target="_blank"
+                rel="noopener noreferrer license"
+              >
+                MIT License
+                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+              </a>
+              : free to use, copy, modify and share, with the copyright notice kept.
+            </p>
             <p>
               Use the board elsewhere:{" "}
               <a

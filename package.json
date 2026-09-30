@@ -1,6 +1,7 @@
 {
   "name": "status-page",
   "version": "0.5.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "packageManager": "npm@11.9.0",

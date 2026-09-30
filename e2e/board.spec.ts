@@ -756,3 +756,20 @@ test("keeps a long component name whole beside its badge on a narrow card", asyn
   expect(overflows).toBe(false);
   expect(ellipsis).toBe(false);
 });
+
+test("footer links the source on GitHub and states the MIT License", async ({ page }) => {
+  await page.goto("/");
+  const footer = page.locator("footer");
+  const source = footer.getByRole("link", { name: "Source on GitHub" });
+  await expect(source).toHaveAttribute("href", "https://github.com/greenblacked/status-page");
+  await expect(source).toHaveAttribute("target", "_blank");
+  await expect(source).toHaveAttribute("rel", /noopener/);
+  await expect(footer.getByRole("link", { name: "MIT License" })).toHaveAttribute(
+    "href",
+    "https://github.com/greenblacked/status-page/blob/main/LICENSE",
+  );
+  await expect(footer).toContainText(
+    "MIT License: free to use, copy, modify and share, with the copyright notice kept.",
+  );
+  await expect(footer).toContainText("This page checks every two minutes; the server reads the official vendor feeds");
+});

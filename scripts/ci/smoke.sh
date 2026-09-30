@@ -30,7 +30,7 @@ set -euo pipefail
 
 SERVICES=14
 TITLE='<title>Status Page</title>'
-FOOTER='Cached server snapshots update every two minutes from official vendor feeds.'
+FOOTER='This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45 seconds.'
 usage() {
   echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
 }

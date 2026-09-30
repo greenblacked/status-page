@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Added
+
+- The page footer links to the source on GitHub and to the MIT License (free to use, copy, modify and share, with the copyright notice kept), and says how often the board is checked: every two minutes in the page, with the server keeping vendor feeds for 45 seconds.
+
 ## [0.5.0] - 2026-09-30
 
 ### Changed
