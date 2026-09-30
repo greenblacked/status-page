@@ -57,16 +57,16 @@ Fourteen services, each read from one official source. This table is the contrac
 
 | Group | Service | Official source |
 | --- | --- | --- |
-| Cloud | Google Cloud | [status.cloud.google.com](https://status.cloud.google.com/) |
+| Cloud | Google Cloud | [status.cloud.google.com](https://status.cloud.google.com/) (`incidents.json` and `products.json`) |
 | Cloud | AWS | [AWS Health Dashboard](https://health.aws.amazon.com/health/status) |
-| Gaming | Steam | [Steam Web API](https://api.steampowered.com/) and Store |
+| Gaming | Steam | [Steam Web API](https://api.steampowered.com/) (including its connection-manager directory) and Store |
 | Gaming | CS2 Europe | Valve SDR config for app `730`, plus the live player count |
 | Gaming | Epic Games | [status.epicgames.com](https://status.epicgames.com/) |
 | Gaming | Fortnite | [status.epicgames.com](https://status.epicgames.com/), Fortnite components only |
 | Platforms | Spotify | [spotify.statuspage.io](https://spotify.statuspage.io/) |
 | Platforms | Apple | [Apple System Status](https://www.apple.com/support/systemstatus/) |
-| Platforms | Android / Google Play | [Play Status](https://status.play.google.com/summary) |
-| AI | Grok | [status.x.ai](https://status.x.ai/) |
+| Platforms | Android / Google Play | [Play Status](https://status.play.google.com/summary) (`incidents.json` and `products.json`) |
+| AI | Grok | [status.x.ai](https://status.x.ai/) (RSS feed, plus its component list when readable) |
 | AI | ChatGPT | [status.openai.com](https://status.openai.com/) |
 | AI | Claude | [status.claude.com](https://status.claude.com/) |
 | Updates | MikroTik RouterOS | [MikroTik changelogs](https://mikrotik.com/download/changelogs) |
@@ -97,16 +97,16 @@ The two Updates services track releases, not incidents. They stay Operational an
 
 | Service | How it is read |
 | --- | --- |
-| Google Cloud | `incidents.json`; only incidents without an end time count |
-| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days. Single-region or single-zone events are Degraded, not Outage |
-| Steam | `GetServerInfo` plus the Store featured API. Both answering with the expected data is Operational, only one is Degraded and its component says why. If neither can be read, the card is Unknown |
+| Google Cloud | `incidents.json`; only incidents without an end time count. The components are the products in `products.json`: a product is Degraded or Outage while an open incident lists it, worst one wins, and an information-only notice leaves it Operational with the notice as its detail. Without a readable `products.json`, the components are the services the open incidents name |
+| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days. Single-region or single-zone events are Degraded, not Outage. The components are only the AWS services those events name, one each, with the worst state and the newest summary; a quiet dashboard lists none |
+| Steam | `GetServerInfo` plus the Store featured API. Both answering with the expected data is Operational, only one is Degraded and its component says why. If neither can be read, the card is Unknown. A **Steam Connection Managers** component is Operational when Valve's connection-manager directory (`GetCMListForConnect`) lists servers and Unknown when it cannot be read; it never changes the card's health |
 | CS2 Europe | European relay points of presence. Outage when the relay config reports failure or lists no European points. Degraded when fewer than 3, or fewer than 40%, of them publish relays. An Operational card shows the player count when it is available; the count never affects health |
 | Epic Games | Statuspage summary, worst component, excluding Fortnite components |
 | Fortnite | Same page, only components whose name contains "Fortnite" |
 | Spotify, ChatGPT, Claude | Statuspage summary indicator |
 | Apple | `system_status_en_US.js`, services with an active event |
-| Android / Google Play | Play `incidents.json`; only incidents without an end time count |
-| Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days |
+| Android / Google Play | Play `incidents.json`; only incidents without an end time count. The components come from the dashboard's `products.json` the same way as Google Cloud's, when it is published |
+| Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days. The components are the status page's `v2/components.json` when it answers, otherwise only the services that active items' titles lead with (`API: Elevated errors`); they add detail and never change the card's health |
 | MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus the newest version's `CHANGELOG` |
 | Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS |
 
@@ -363,7 +363,7 @@ Valve's game-server status API needs an API key, and Status Page uses none. The 
 
 <br>
 
-The status page's JSON API sits behind a Cloudflare challenge, so the official RSS feed is the readable source. It carries the whole incident history, which is why only items from the last 14 days count.
+The status page's JSON API sits behind a Cloudflare challenge, so the official RSS feed is the readable source. It carries the whole incident history, which is why only items from the last 14 days count. The board also tries the page's component list (`v2/components.json`) with a short timeout; when the challenge blocks it, the card lists only the services the feed's titles name, and never an invented row.
 
 </details>
 
