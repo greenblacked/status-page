@@ -433,13 +433,23 @@
 }
 
 /*
-  A text link or button in running text is one line tall, well short of a
-  finger. On a touch screen, padding brings it to 44pt; a mouse keeps the
-  line.
+  A text link in running text is one line tall, well short of a finger, and
+  padding would push the lines of the sentence apart. On a touch screen, an
+  invisible box around the link takes the taps instead: 44pt tall, a little
+  wider than the words, and out of the flow, so nothing moves. Links a comma
+  apart stay well over 24px between their centres (WCAG 2.5.8); the sideways
+  reach is small so two neighbours never overlap. A mouse keeps the line.
 */
-@utility touch-target {
+@utility hit-extend {
+  position: relative;
+
   @media (pointer: coarse) {
-    padding-block: 0.75rem;
+    &::after {
+      content: "";
+      position: absolute;
+      inset-block: -0.8rem;
+      inset-inline: -0.125rem;
+    }
   }
 }
 

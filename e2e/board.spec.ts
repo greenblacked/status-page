@@ -1838,6 +1838,33 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   // Not vacuous: two hero buttons (one on an iPhone), the segments and toggles, and the footer's links.
   expect(small.count).toBeGreaterThan(12);
   expect(small.small).toEqual([]);
+
+  // The links in the verdict's sub line sit in running text, so their reach is an invisible box round them
+  // (hit-extend), not their own box: a tap 22px above or below the words still lands on the link.
+  const sentence = await page.evaluate(() => {
+    const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
+    const boxes = links.map((link) => {
+      link.scrollIntoView({ block: "center" });
+      const box = link.getBoundingClientRect();
+      const x = box.left + box.width / 2;
+      const y = box.top + box.height / 2;
+      return {
+        name: link.textContent?.trim() ?? "",
+        x: x + window.scrollX,
+        y: y + window.scrollY,
+        reaches: [-21.8, 21.8].map((dy) => document.elementFromPoint(x, y + dy) === link),
+      };
+    });
+    return boxes;
+  });
+  expect(sentence.length, "the sub line names services").toBeGreaterThan(1);
+  for (const link of sentence) expect(link.reaches, `${link.name} reaches 44px tall`).toEqual([true, true]);
+  // Neighbours on one line are well apart (WCAG 2.5.8: 24px between centres).
+  for (const [index, link] of sentence.entries()) {
+    const next = sentence[index + 1];
+    if (next && Math.abs(next.y - link.y) < 4)
+      expect(next.x - link.x, `${link.name} to ${next.name}`).toBeGreaterThan(24);
+  }
 });
 
 test("lays the hero out at 200% root text on a phone: no overflow, no overlap", async ({ page }, testInfo) => {

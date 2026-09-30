@@ -76,7 +76,7 @@ export function Hero({
                     key={at}
                     href={`#${serviceAnchor(part.id)}`}
                     onClick={(event) => part.id && onReveal(part.id, event)}
-                    className="focus-ring rounded-sm text-fg underline decoration-subtle underline-offset-4 hover:decoration-fg"
+                    className="focus-ring hit-extend rounded-sm text-fg underline decoration-subtle underline-offset-4 hover:decoration-fg"
                   >
                     {part.text}
                   </a>
