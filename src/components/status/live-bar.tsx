@@ -52,7 +52,7 @@ export function LiveBar({
   const age = mounted ? formatAge(ageMs) : "…";
 
   return (
-    <div className={className}>
+    <div data-testid="live-bar" className={className}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 font-mono text-[11px] tabular-nums text-subtle">
         <p className="flex items-center gap-2">
           <Radio className={cn("size-3.5", isFetching || stale ? "text-muted" : "live-dot text-ok")} aria-hidden />

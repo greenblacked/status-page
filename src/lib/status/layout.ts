@@ -142,18 +142,6 @@ export function documentTitle(board: BoardSnapshot, appName: string): string {
 }
 
 /**
- * Whether an observed element has scrolled up out of view, from an
- * IntersectionObserver entry: gone and above the viewport, where
- * `topInset` is how far down a floating bar covers the screen.
- */
-export function scrolledPast(
-  entry: { isIntersecting: boolean; boundingClientRect: { top: number } },
-  topInset: number,
-): boolean {
-  return !entry.isIntersecting && entry.boundingClientRect.top < topInset;
-}
-
-/**
  * Whether focus arrived the way :focus-visible marks it, by keyboard
  * rather than a click. A browser without :focus-visible throws on the
  * selector; focus then counts as keyboard focus, the safe side for a
@@ -168,4 +156,15 @@ export function keyboardFocus(target: unknown): boolean {
   } catch {
     return true;
   }
+}
+
+/**
+ * How far a sticky search field has travelled into the bar, 0 to 1. `top` is its
+ * current distance from the viewport top, `stick` where it comes to rest, and
+ * `range` how many pixels of scrolling the move takes. Clamped, so an overscroll
+ * bounce at either end never moves it past its two poses.
+ */
+export function dockProgress(top: number, stick: number, range: number): number {
+  const linear = Math.min(1, Math.max(0, 1 - (top - stick) / range));
+  return linear * linear * (3 - 2 * linear);
 }

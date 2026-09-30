@@ -126,6 +126,8 @@
 
   --chrome-filter: blur(28px) saturate(1.9);
   --chrome-fill: light-dark(rgb(255 255 255 / 0.8), rgb(18 21 29 / 0.66));
+  /* The floating bar holds the search field once docked: denser, so the field stays legible over the cards. */
+  --bar-fill: light-dark(rgb(255 255 255 / 0.9), rgb(18 21 29 / 0.86));
   --chrome-tint-top: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.08));
   --chrome-tint-bottom: light-dark(rgb(255 255 255 / 0.1), rgb(255 255 255 / 0));
 
@@ -856,6 +858,7 @@
   margin-inline: auto;
   /* Its own height: it floats over the hero instead of pushing it down. */
   margin-bottom: -3rem;
+  background-color: var(--bar-fill);
   transition:
     opacity var(--motion-quick) var(--ease-out),
     transform var(--motion-fast) var(--ease-smooth-out),
@@ -863,28 +866,46 @@
 }
 
 /*
-  Once the fade has finished it leaves the page altogether (display:
-  none, held back by allow-discrete until then), so a hidden bar costs no
-  compositing. Coming back from none, it has no previous style to
-  transition from, and @starting-style supplies one: the hidden pose.
-  Without allow-discrete, a browser just hides it at once.
+  Hidden, it stays in layout (visibility, not display: none): the search
+  field docks into its middle slot, which must stay measurable. It is
+  invisible, inert and out of the accessibility tree once the fade ends.
 */
 .compact-header[data-shown="false"] {
-  display: none;
   opacity: 0;
   transform: translateY(-0.75rem) scale(0.98);
   visibility: hidden;
   transition:
     opacity var(--motion-quick) var(--ease-out),
     transform var(--motion-fast) var(--ease-smooth-out),
-    visibility 0s linear var(--motion-fast),
-    display var(--motion-fast) allow-discrete;
+    visibility 0s linear var(--motion-fast);
 }
 
-@starting-style {
-  .compact-header[data-shown="true"] {
-    opacity: 0;
-    transform: translateY(-0.75rem) scale(0.98);
+/* The search field: sticky, so the browser docks it; --dock (0 to 1) is written by useSearchDock. */
+.search-dock {
+  position: sticky;
+  top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
+  z-index: 41;
+  height: 2.75rem;
+  min-width: 0;
+  pointer-events: none;
+  --dock: 0;
+  --dock-x: 0px;
+  --dock-w: 12rem;
+}
+
+.search-field {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  contain: layout style;
+  pointer-events: auto;
+  width: calc(100% - (100% - var(--dock-w)) * var(--dock));
+  transform: translateX(calc(var(--dock-x) * var(--dock)));
+}
+
+@media (pointer: coarse) {
+  .search-field input {
+    font-size: 16px;
   }
 }
 
@@ -931,8 +952,8 @@
 /*
   Scroll-driven, decoration only: the hero's title block recedes as it
   scrolls away under the compact bar. The bar's own showing and hiding
-  (and its inert state) stays with the IntersectionObserver in
-  compact-header.tsx; this only softens the handoff where the browser
+  (and its inert state) stays with useSearchDock in compact-header.tsx;
+  this only softens the handoff where the browser
   can drive an animation from scrolling, and changes nothing elsewhere.
 */
 @supports (animation-timeline: view()) {
@@ -977,6 +998,7 @@
     --glass-tint-bottom: transparent;
     --glass-sheen: transparent;
     --chrome-fill: light-dark(#f9f8f4, #0f1218);
+    --bar-fill: light-dark(#f9f8f4, #0f1218);
     --chrome-tint-top: transparent;
     --chrome-tint-bottom: transparent;
     --whisper-fill: light-dark(#f9f8f4, #0e1117);
@@ -1020,6 +1042,7 @@
     --tilt-glint: transparent;
     --tilt-shade: transparent;
     --chrome-fill: light-dark(rgb(251 250 246 / 0.96), rgb(15 18 25 / 0.96));
+    --bar-fill: light-dark(rgb(251 250 246 / 0.96), rgb(15 18 25 / 0.96));
     --whisper-fill: light-dark(rgb(255 255 255 / 0.9), rgb(17 20 27 / 0.9));
     --inset-fill: light-dark(rgb(15 20 35 / 0.07), rgb(0 0 0 / 0.4));
     /* The solid border below replaces the 1px ring the shadows draw, so the edge stays one pixel. */

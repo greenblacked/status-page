@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   boardHeadline,
+  dockProgress,
   documentTitle,
   groupServices,
   keyboardFocus,
-  scrolledPast,
   serviceAnchor,
   serviceIndex,
   sortByUrgency,
@@ -181,19 +181,6 @@ describe("documentTitle and serviceAnchor", () => {
   });
 });
 
-describe("scrolledPast", () => {
-  const entry = (isIntersecting: boolean, top: number) => ({ isIntersecting, boundingClientRect: { top } });
-
-  it("counts an element as gone only once it has left through the top", () => {
-    expect(scrolledPast(entry(false, -120), 64)).toBe(true);
-    // Still under the floating bar's strip counts as gone too.
-    expect(scrolledPast(entry(false, 40), 64)).toBe(true);
-    expect(scrolledPast(entry(true, -10), 64)).toBe(false);
-    // Out of view below the fold is not scrolled past.
-    expect(scrolledPast(entry(false, 900), 64)).toBe(false);
-  });
-});
-
 describe("keyboardFocus", () => {
   const element = (visible: boolean) => ({ matches: (selector: string) => selector === ":focus-visible" && visible });
 
@@ -217,3 +204,37 @@ describe("keyboardFocus", () => {
 function notAnElement(): object {
   return { matches: "not a function" };
 }
+
+describe("dockProgress", () => {
+  it("rests at 0 until the field reaches the point it starts to move", () => {
+    expect(dockProgress(400, 10, 48)).toBe(0);
+    expect(dockProgress(58, 10, 48)).toBe(0);
+  });
+
+  it("is 1 once the field sits at its stick point", () => {
+    expect(dockProgress(10, 10, 48)).toBe(1);
+  });
+
+  it("clamps an overscroll bounce at both ends", () => {
+    expect(dockProgress(-30, 10, 48)).toBe(1);
+    expect(dockProgress(9000, 10, 48)).toBe(0);
+  });
+
+  it("is halfway at the middle of the range, eased at both ends", () => {
+    expect(dockProgress(34, 10, 48)).toBeCloseTo(0.5, 5);
+    // Smoothstep: slower than linear near each pose.
+    expect(dockProgress(58 - 4.8, 10, 48)).toBeLessThan(0.1);
+    expect(dockProgress(10 + 4.8, 10, 48)).toBeGreaterThan(0.9);
+  });
+
+  it("only ever rises as the field climbs", () => {
+    let last = -1;
+    for (let top = 80; top >= -10; top -= 1) {
+      const p = dockProgress(top, 10, 48);
+      expect(p).toBeGreaterThanOrEqual(last);
+      expect(p).toBeGreaterThanOrEqual(0);
+      expect(p).toBeLessThanOrEqual(1);
+      last = p;
+    }
+  });
+});

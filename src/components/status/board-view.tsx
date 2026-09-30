@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
 import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
-import { CompactHeader, useScrolledPast } from "@/components/status/compact-header";
+import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveBar, useFreshness } from "@/components/status/live-bar";
@@ -75,8 +75,9 @@ export function BoardView({
   const manualRefreshInFlight = useRef(false);
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const heroRef = useRef<HTMLDivElement>(null);
-  const heroGone = useScrolledPast(heroRef);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
+  const docked = useSearchDock(dockRef, slotRef);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
@@ -315,12 +316,12 @@ export function BoardView({
         >
           Skip to services
         </a>
-        <CompactHeader shown={heroGone} name={APP_NAME} live={freshness.state} headline={headline}>
-          <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
-          <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
+        <CompactHeader shown={docked} slotRef={slotRef} name={APP_NAME} live={freshness.state} headline={headline}>
+          <AlertsButton bar state={alerts.state} onToggle={alerts.toggle} />
+          <RefreshButton bar fetching={fetching} onRefresh={() => void handleRefresh()} />
         </CompactHeader>
-        <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-4 sm:pt-12">
-          <div ref={heroRef} className="flex items-start justify-between gap-4">
+        <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-3 sm:pt-12">
+          <div className="flex items-start justify-between gap-4">
             <div className="hero-recede min-w-0">
               <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
                 <LiveSignal state={freshness.state} />
@@ -349,253 +350,269 @@ export function BoardView({
             onReveal={revealService}
           />
 
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <label className="relative block min-w-0 flex-1">
-              <span className="sr-only">Search services</span>
-              <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-subtle" />
-              <Input
-                ref={searchRef}
-                value={query}
-                onChange={(event) => updateFilters({ query: event.target.value })}
-                placeholder="Search GCP, CS2 Europe, RouterOS…"
-                className="pl-10 sm:pr-10"
-              />
-              {singleKey.enabled ? (
-                <kbd
-                  aria-hidden
-                  className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
-                >
-                  /
-                </kbd>
-              ) : null}
-            </label>
-            {/* One scrolling row on phones instead of three wrapped ones. */}
-            {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
-            <div
-              className="page-bleed flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
-              role="group"
-              aria-label="Filter services"
-            >
-              {FILTERS.map((filter) => (
-                <Button
-                  key={filter.id}
-                  variant={category === filter.id ? "default" : "outline"}
-                  size="sm"
-                  className="shrink-0"
-                  aria-pressed={category === filter.id}
-                  onClick={() => updateFilters({ category: filter.id })}
-                >
-                  {filter.label}
-                  <span className="font-mono text-[11px] tabular-nums opacity-70">{categoryCount(filter.id)}</span>
-                </Button>
-              ))}
-              <Button
-                variant={issuesOnly ? "default" : "outline"}
-                size="sm"
-                className="shrink-0"
-                aria-pressed={issuesOnly}
-                onClick={() => updateFilters({ issuesOnly: !issuesOnly })}
-              >
-                Issues only
-                <span className="font-mono text-[11px] tabular-nums opacity-70">{issueCount}</span>
-              </Button>
-              <Button
-                variant={starredOnly ? "default" : "outline"}
-                size="sm"
-                className="shrink-0"
-                aria-pressed={starredOnly}
-                onClick={() => updateFilters({ starredOnly: !starredOnly })}
-              >
-                <Star className={cn("size-3.5", starredOnly && "fill-current")} />
-                Starred
-                <span className="font-mono text-[11px] tabular-nums opacity-70">{starred.size}</span>
-              </Button>
-            </div>
-          </div>
           <p role="status" className="sr-only">
             {announcement}
           </p>
         </header>
-
-        {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
-        <main
-          ref={mainRef}
-          id="services"
-          tabIndex={-1}
-          className="page-gutter relative mx-auto max-w-6xl scroll-mt-4 pb-20 outline-none"
-        >
-          {boardQuery.isError ? (
-            <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
-              Could not refresh official sources. Showing the last successful snapshot.
-            </p>
-          ) : null}
-
-          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
-            <div className="flex min-w-0 flex-col gap-8">
-              {fetching && !board.services.length ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
-                    <Skeleton key={index} className="h-56 rounded-lg" />
-                  ))}
-                </div>
-              ) : visible.length === 0 ? (
-                // Stars load after hydration; until then an empty Starred view proves nothing.
-                // Not a live region: the results announcement already says this.
-                starredOnly && !starsReady ? null : (
-                  // The board's one serif phrase: a caption for the quiet, not a UI label.
-                  <p className="rounded-lg glass px-5 py-10 text-center font-serif text-lg text-muted italic">
-                    {emptyMessage}
-                  </p>
-                )
-              ) : (
-                <>
-                  <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
-                    {/* items-start: a short card keeps its own height instead of stretching to its row's tallest. */}
-                    <div className="grid grid-cols-1 items-start gap-3 @xl:grid-cols-2">
-                      {groups.attention.map((service, index) => (
-                        // One element type at every position, so a card that moves in or out of
-                        // first place is moved, not remounted: keyboard focus stays on its Star
-                        // button and the fade-in does not replay.
-                        <ServiceCard
-                          key={service.id}
-                          service={service}
-                          index={index}
-                          highlight={index === 0 && service.id === mostUrgentId}
-                          emphasized={changedIds.has(service.id)}
-                          starred={starred.has(service.id)}
-                          onToggleStar={onToggleStar}
-                          now={now}
-                        />
-                      ))}
-                    </div>
-                  </ServiceSection>
-                  <ServiceSection id="operational" title="Operational" services={groups.operational}>
-                    {/* The full card, healthy or not, in the attention grid's columns. */}
-                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                      {groups.operational.map((service, index) => (
-                        <ServiceCard
-                          key={service.id}
-                          service={service}
-                          index={index}
-                          emphasized={changedIds.has(service.id)}
-                          starred={starred.has(service.id)}
-                          onToggleStar={onToggleStar}
-                          now={now}
-                        />
-                      ))}
-                    </div>
-                  </ServiceSection>
-                  <ServiceSection id="releases" title="Releases" services={groups.releases}>
-                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                      {groups.releases.map((service, index) => (
-                        <ServiceCard
-                          key={service.id}
-                          service={service}
-                          index={index}
-                          emphasized={changedIds.has(service.id)}
-                          starred={starred.has(service.id)}
-                          onToggleStar={onToggleStar}
-                          now={now}
-                        />
-                      ))}
-                    </div>
-                  </ServiceSection>
-                </>
-              )}
+        <div className="board-body page-gutter relative mx-auto flex max-w-6xl flex-wrap items-start gap-x-4 gap-y-3">
+          {/* biome-ignore lint/a11y/useSemanticElements: <search> is Safari 17+; role="search" on a div names the same landmark everywhere. */}
+          <div ref={dockRef} role="search" className="search-dock basis-full lg:flex-1 lg:basis-0">
+            <div className="search-field">
+              <label className="relative block min-w-0 flex-1">
+                <span className="sr-only">Search services</span>
+                <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-subtle" />
+                <Input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(event) => updateFilters({ query: event.target.value })}
+                  placeholder={docked ? "Search…" : "Search GCP, CS2 Europe, RouterOS…"}
+                  type="search"
+                  enterKeyHint="search"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="pl-10 sm:pr-10"
+                />
+                {singleKey.enabled ? (
+                  <kbd
+                    aria-hidden
+                    className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
+                  >
+                    /
+                  </kbd>
+                ) : null}
+              </label>
             </div>
-            {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
-            <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
+          </div>
+          {/* One scrolling row on phones instead of three wrapped ones. */}
+          {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
+          <div
+            className="page-bleed flex max-sm:basis-[calc(100%+2*var(--gutter))] sm:basis-full lg:basis-auto gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
+            role="group"
+            aria-label="Filter services"
+          >
+            {FILTERS.map((filter) => (
+              <Button
+                key={filter.id}
+                variant={category === filter.id ? "default" : "outline"}
+                size="sm"
+                className="shrink-0"
+                aria-pressed={category === filter.id}
+                onClick={() => updateFilters({ category: filter.id })}
+              >
+                {filter.label}
+                <span className="font-mono text-[11px] tabular-nums opacity-70">{categoryCount(filter.id)}</span>
+              </Button>
+            ))}
+            <Button
+              variant={issuesOnly ? "default" : "outline"}
+              size="sm"
+              className="shrink-0"
+              aria-pressed={issuesOnly}
+              onClick={() => updateFilters({ issuesOnly: !issuesOnly })}
+            >
+              Issues only
+              <span className="font-mono text-[11px] tabular-nums opacity-70">{issueCount}</span>
+            </Button>
+            <Button
+              variant={starredOnly ? "default" : "outline"}
+              size="sm"
+              className="shrink-0"
+              aria-pressed={starredOnly}
+              onClick={() => updateFilters({ starredOnly: !starredOnly })}
+            >
+              <Star className={cn("size-3.5", starredOnly && "fill-current")} />
+              Starred
+              <span className="font-mono text-[11px] tabular-nums opacity-70">{starred.size}</span>
+            </Button>
           </div>
 
-          {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
-          <footer className="mt-14 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] text-sm text-subtle">
-            <p>
-              Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
-              Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
-            </p>
-            <p>
-              This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45
-              seconds.
-            </p>
-            <p>
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="https://github.com/greenblacked/status-page"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Source on GitHub
-                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-              </a>
-              {" · "}
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
-                target="_blank"
-                rel="noopener noreferrer license"
-              >
-                MIT License
-                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-              </a>
-              : free to use, copy, modify and share, with the copyright notice kept.
-            </p>
-            <p>
-              Use the board elsewhere:{" "}
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/api/status.json"
-              >
-                JSON API
-              </a>
-              {" · "}
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/feed.xml"
-              >
-                Atom feed
-              </a>{" "}
-              for Slack, Teams and feed readers ·{" "}
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/api/badge/board"
-              >
-                status badges
-              </a>
-              .
-            </p>
-            {/*
+          {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
+          <main
+            ref={mainRef}
+            id="services"
+            tabIndex={-1}
+            className="relative basis-full scroll-mt-4 pb-20 pt-2 outline-none"
+          >
+            {boardQuery.isError ? (
+              <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
+                Could not refresh official sources. Showing the last successful snapshot.
+              </p>
+            ) : null}
+
+            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+              <div className="flex min-w-0 flex-col gap-8">
+                {fetching && !board.services.length ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
+                      <Skeleton key={index} className="h-56 rounded-lg" />
+                    ))}
+                  </div>
+                ) : visible.length === 0 ? (
+                  // Stars load after hydration; until then an empty Starred view proves nothing.
+                  // Not a live region: the results announcement already says this.
+                  starredOnly && !starsReady ? null : (
+                    // The board's one serif phrase: a caption for the quiet, not a UI label.
+                    <p className="rounded-lg glass px-5 py-10 text-center font-serif text-lg text-muted italic">
+                      {emptyMessage}
+                    </p>
+                  )
+                ) : (
+                  <>
+                    <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
+                      {/* items-start: a short card keeps its own height instead of stretching to its row's tallest. */}
+                      <div className="grid grid-cols-1 items-start gap-3 @xl:grid-cols-2">
+                        {groups.attention.map((service, index) => (
+                          // One element type at every position, so a card that moves in or out of
+                          // first place is moved, not remounted: keyboard focus stays on its Star
+                          // button and the fade-in does not replay.
+                          <ServiceCard
+                            key={service.id}
+                            service={service}
+                            index={index}
+                            highlight={index === 0 && service.id === mostUrgentId}
+                            emphasized={changedIds.has(service.id)}
+                            starred={starred.has(service.id)}
+                            onToggleStar={onToggleStar}
+                            now={now}
+                          />
+                        ))}
+                      </div>
+                    </ServiceSection>
+                    <ServiceSection id="operational" title="Operational" services={groups.operational}>
+                      {/* The full card, healthy or not, in the attention grid's columns. */}
+                      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
+                        {groups.operational.map((service, index) => (
+                          <ServiceCard
+                            key={service.id}
+                            service={service}
+                            index={index}
+                            emphasized={changedIds.has(service.id)}
+                            starred={starred.has(service.id)}
+                            onToggleStar={onToggleStar}
+                            now={now}
+                          />
+                        ))}
+                      </div>
+                    </ServiceSection>
+                    <ServiceSection id="releases" title="Releases" services={groups.releases}>
+                      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
+                        {groups.releases.map((service, index) => (
+                          <ServiceCard
+                            key={service.id}
+                            service={service}
+                            index={index}
+                            emphasized={changedIds.has(service.id)}
+                            starred={starred.has(service.id)}
+                            onToggleStar={onToggleStar}
+                            now={now}
+                          />
+                        ))}
+                      </div>
+                    </ServiceSection>
+                  </>
+                )}
+              </div>
+              {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
+              <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
+            </div>
+
+            {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
+            <footer className="mt-14 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] text-sm text-subtle">
+              <p>
+                Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
+                Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
+              </p>
+              <p>
+                This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45
+                seconds.
+              </p>
+              <p>
+                <a
+                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  href="https://github.com/greenblacked/status-page"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Source on GitHub
+                  <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+                </a>
+                {" · "}
+                <a
+                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
+                  target="_blank"
+                  rel="noopener noreferrer license"
+                >
+                  MIT License
+                  <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+                </a>
+                : free to use, copy, modify and share, with the copyright notice kept.
+              </p>
+              <p>
+                Use the board elsewhere:{" "}
+                <a
+                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  href="/api/status.json"
+                >
+                  JSON API
+                </a>
+                {" · "}
+                <a
+                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  href="/feed.xml"
+                >
+                  Atom feed
+                </a>{" "}
+                for Slack, Teams and feed readers ·{" "}
+                <a
+                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  href="/api/badge/board"
+                >
+                  status badges
+                </a>
+                .
+              </p>
+              {/*
               On every screen width: with the single-key shortcuts off, ? no
               longer opens the list, and this button is the way back to the
               switches, including on a desktop zoomed to a phone's width, and
               the only way to them on a touch screen.
             */}
-            <p>
-              <button
-                type="button"
-                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                onClick={() => setSettingsOpen(true)}
-              >
-                Settings and shortcuts
-              </button>
-              {singleKey.enabled ? (
-                <span className="hidden sm:inline">
-                  {" "}
-                  (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
-                </span>
-              ) : null}
-            </p>
-          </footer>
-          <SettingsDialog
-            open={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
-            singleKey={singleKey.enabled}
-            onSingleKeyChange={singleKey.setEnabled}
-            reduceGlass={reduceGlass.enabled}
-            onReduceGlassChange={reduceGlass.setEnabled}
-            tilt={{ supported: tilt.supported, enabled: tilt.enabled, status: tilt.status, onChange: tilt.setEnabled }}
-          />
-        </main>
+              <p>
+                <button
+                  type="button"
+                  className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                  onClick={() => setSettingsOpen(true)}
+                >
+                  Settings and shortcuts
+                </button>
+                {singleKey.enabled ? (
+                  <span className="hidden sm:inline">
+                    {" "}
+                    (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
+                  </span>
+                ) : null}
+              </p>
+            </footer>
+            <SettingsDialog
+              open={settingsOpen}
+              onClose={() => setSettingsOpen(false)}
+              singleKey={singleKey.enabled}
+              onSingleKeyChange={singleKey.setEnabled}
+              reduceGlass={reduceGlass.enabled}
+              onReduceGlassChange={reduceGlass.setEnabled}
+              tilt={{
+                supported: tilt.supported,
+                enabled: tilt.enabled,
+                status: tilt.status,
+                onChange: tilt.setEnabled,
+              }}
+            />
+          </main>
+        </div>
       </div>
     </div>
   );
@@ -744,14 +761,14 @@ const ALERT_LABEL: Record<AlertsState, string> = {
 /**
  * Rendered twice, in the hero and in the compact header, both driven by
  * the board's one handleRefresh. It carries no id, so the copies never
- * collide.
+ * collide. The bar's copy (`bar`) is a full 44pt touch target.
  */
-function RefreshButton({ fetching, onRefresh }: { fetching: boolean; onRefresh: () => void }) {
+function RefreshButton({ bar, fetching, onRefresh }: { bar?: boolean; fetching: boolean; onRefresh: () => void }) {
   return (
     <Button
       variant="outline"
-      size="sm"
-      className="shrink-0"
+      size={bar ? "default" : "sm"}
+      className={cn("shrink-0", bar && "max-sm:w-11 max-sm:px-0")}
       onClick={onRefresh}
       // Not `disabled`: every background refetch would drop keyboard
       // focus to <body>. handleRefresh ignores a press while its own
@@ -766,7 +783,7 @@ function RefreshButton({ fetching, onRefresh }: { fetching: boolean; onRefresh: 
   );
 }
 
-function AlertsButton({ state, onToggle }: { state: AlertsState; onToggle: () => void }) {
+function AlertsButton({ bar, state, onToggle }: { bar?: boolean; state: AlertsState; onToggle: () => void }) {
   // Two copies render, one in the compact header, so the hint's id is per copy.
   const hintId = useId();
   if (state === "unsupported") return null;
@@ -776,7 +793,8 @@ function AlertsButton({ state, onToggle }: { state: AlertsState; onToggle: () =>
     <>
       <Button
         variant={state === "on" ? "default" : "outline"}
-        size="sm"
+        size={bar ? "default" : "sm"}
+        className={cn(bar && "max-sm:w-11 max-sm:px-0")}
         // aria-disabled, not disabled: a disabled button drops out of the Tab
         // order, so a keyboard or screen reader user never learns why alerts
         // are off. This one stays reachable, does nothing, and says why.
