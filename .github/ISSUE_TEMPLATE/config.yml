@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/greenblacked/status-page/security/advisories/new
+    about: Privately, never in a public issue. SECURITY.md has the details.
+  - name: A vendor is down
+    url: https://github.com/greenblacked/status-page#what-it-watches
+    about: Status Page relays vendor status; outages themselves go to the vendor. Each card links to its official page.

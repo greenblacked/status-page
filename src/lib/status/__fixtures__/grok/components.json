@@ -1,0 +1,26 @@
+{
+  "page": { "name": "xAI Status", "url": "https://status.x.ai", "status": "HASISSUES" },
+  "components": [
+    {
+      "id": "cmp-chat",
+      "name": "Chat",
+      "status": "PARTIALOUTAGE",
+      "description": "grok.com and the mobile apps",
+      "isParent": true,
+      "children": [
+        { "id": "cmp-web", "name": "grok.com", "status": "PARTIALOUTAGE", "description": null, "isParent": false },
+        { "id": "cmp-ios", "name": "iOS app", "status": "OPERATIONAL", "description": null, "isParent": false }
+      ]
+    },
+    { "id": "cmp-api", "name": "API", "status": "OPERATIONAL", "description": null, "isParent": false, "children": [] },
+    {
+      "id": "cmp-img",
+      "name": "Image generation",
+      "status": "UNDERMAINTENANCE",
+      "description": "Maintenance window",
+      "isParent": false,
+      "children": []
+    },
+    { "id": "cmp-voice", "name": "Voice mode", "status": "MAJOROUTAGE", "description": null, "isParent": false }
+  ]
+}

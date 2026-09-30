@@ -13,7 +13,7 @@ name: CI triage
 # starts working once it is merged to main.
 
 on:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers] never checks out or runs PR code, see above
     workflows: [CI, CodeQL, Dependency review]
     types: [completed]
 

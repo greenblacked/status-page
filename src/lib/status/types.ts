@@ -45,6 +45,12 @@ export type ServiceSnapshot = {
   checkedAt: string;
   latencyMs: number;
   components: ComponentHealth[];
+  /**
+   * Total components the source listed before the list was capped. Set only
+   * when components were capped, so it is always greater than
+   * `components.length`; absent means `components` is the whole list.
+   */
+  componentCount?: number;
   incidents: Incident[];
   meta?: Record<string, string | number>;
   /** Set only when the collector itself failed; health is then "unknown". */

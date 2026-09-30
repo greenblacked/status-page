@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attentionBreakdown } from "./health";
+import { attentionBreakdown, instatusComponent } from "./health";
 
 const none = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
 
@@ -16,5 +16,20 @@ describe("attentionBreakdown", () => {
 
   it("has nothing to list on an all-clear board", () => {
     expect(attentionBreakdown({ ...none, operational: 14 })).toBe("nothing to watch");
+  });
+});
+
+describe("instatusComponent", () => {
+  it("maps Instatus component statuses, ignoring case", () => {
+    expect(instatusComponent("OPERATIONAL")).toBe("operational");
+    expect(instatusComponent("degradedperformance")).toBe("degraded");
+    expect(instatusComponent("PARTIALOUTAGE")).toBe("degraded");
+    expect(instatusComponent("MAJOROUTAGE")).toBe("outage");
+    expect(instatusComponent("UNDERMAINTENANCE")).toBe("maintenance");
+  });
+
+  it("reads anything else, or nothing, as unknown", () => {
+    expect(instatusComponent("HASISSUES")).toBe("unknown");
+    expect(instatusComponent(undefined)).toBe("unknown");
   });
 });

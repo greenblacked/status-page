@@ -1,0 +1,12 @@
+{
+  "products": [
+    { "title": "Google Compute Engine", "id": "L3ahVnSNoyBFW33hCzNv" },
+    { "title": "Google Cloud Storage", "id": "UFXaM2fW2wPS6FeH2ByW" },
+    { "title": "Cloud Run", "id": "9D7AzRfuvAGkXX4BKTqL" },
+    { "title": "Cloud Build", "id": "QhAPYCM3eNvFtg3Wj7Hu" },
+    { "title": "Cloud SQL", "id": "hV8Pq2ETtQ3A6ndSg7Yc" },
+    { "title": "BigQuery", "id": "bCLb4zfPFyGb9MQ9f6MP" },
+    { "title": "Google Cloud Pub/Sub", "id": "wG5nUkYcJp2b5mXr8LtD" },
+    { "title": "Vertex AI", "id": "Xy3rNfE7cKqZ1sVw4HdB" }
+  ]
+}

@@ -1,14 +1,19 @@
 version: 2
 updates:
-  # Version updates land on dev with the rest of the work, and reach main
-  # with the next merge from dev. Security updates ignore target-branch and
-  # open against the default branch, without the groups and ignores below;
-  # a merge into main reaches dev through release.yml's sync.
+  # Version updates land on dev with the rest of the work, and reach stage
+  # and main when the owner promotes dev. Security updates ignore
+  # target-branch and open against the default branch, without the groups and
+  # ignores below: retarget one at dev, since main takes only stage.
   - package-ecosystem: npm
     directory: /
     target-branch: dev
     schedule:
       interval: weekly
+    # Propose a release only once it has been public for a week. Most
+    # hijacked npm releases are found and pulled within days; waiting
+    # keeps them out of the lockfile. Security updates are not delayed.
+    cooldown:
+      default-days: 7
     groups:
       development-dependencies:
         dependency-type: development
@@ -25,6 +30,10 @@ updates:
     target-branch: dev
     schedule:
       interval: weekly
+    # The same, shorter: Actions are pinned by SHA and reviewed, but a
+    # retagged or compromised release still deserves a few days to surface.
+    cooldown:
+      default-days: 3
     groups:
       github-actions:
         patterns:

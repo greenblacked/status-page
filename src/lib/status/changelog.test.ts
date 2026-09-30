@@ -1,10 +1,11 @@
-import { describe, it } from "vitest";
 import assert from "node:assert/strict";
+import { describe, it } from "vitest";
 import {
   describeVersionChanges,
   formatVersionMap,
   isFreshRelease,
   latestAppleOsByFamily,
+  mikrotikChangelogUrl,
   parseAppleOsTitle,
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
@@ -15,6 +16,29 @@ describe("parseMikrotikNewest", () => {
     const parsed = parseMikrotikNewest("7.24.4 1789558341\n");
     assert.equal(parsed?.version, "7.24.4");
     assert.equal(parsed?.releasedAt, "2026-09-16T11:32:21.000Z");
+  });
+
+  it("accepts beta and rc versions", () => {
+    assert.equal(parseMikrotikNewest("7.17beta4 1789558341")?.version, "7.17beta4");
+    assert.equal(parseMikrotikNewest("7.17rc1")?.version, "7.17rc1");
+  });
+
+  it("refuses a version that could reshape the changelog URL or the card", () => {
+    for (const body of ["../../evil 1789558341", "7.1/../../x", "7.1?x=1", "<b>7</b>", "v7.1", "7..1", "%2e%2e"]) {
+      assert.equal(parseMikrotikNewest(body), null, body);
+    }
+  });
+});
+
+describe("mikrotikChangelogUrl", () => {
+  it("builds the official changelog URL for a valid version", () => {
+    assert.equal(mikrotikChangelogUrl("7.24.4"), "https://download.mikrotik.com/routeros/7.24.4/CHANGELOG");
+  });
+
+  it("returns null for anything that is not a version", () => {
+    assert.equal(mikrotikChangelogUrl("../7.1"), null);
+    assert.equal(mikrotikChangelogUrl("7.1/x"), null);
+    assert.equal(mikrotikChangelogUrl(""), null);
   });
 });
 

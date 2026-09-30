@@ -1,0 +1,35 @@
+{
+  "response": {
+    "serverlist": [
+      {
+        "endpoint": "cmp1-fra2.steamserver.net:27021",
+        "legacy_endpoint": "155.133.248.39:27021",
+        "type": "websockets",
+        "dc": "fra2",
+        "realm": "steamglobal",
+        "load": 12,
+        "wtd_load": 3.4
+      },
+      {
+        "endpoint": "cmp2-ams1.steamserver.net:27022",
+        "legacy_endpoint": "162.254.198.133:27022",
+        "type": "websockets",
+        "dc": "ams1",
+        "realm": "steamglobal",
+        "load": 18,
+        "wtd_load": 4.1
+      },
+      {
+        "endpoint": "155.133.248.39:27019",
+        "legacy_endpoint": "155.133.248.39:27019",
+        "type": "netfilter",
+        "dc": "fra2",
+        "realm": "steamglobal",
+        "load": 12,
+        "wtd_load": 3.4
+      }
+    ],
+    "success": true,
+    "message": ""
+  }
+}

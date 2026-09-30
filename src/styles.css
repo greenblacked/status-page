@@ -1,61 +1,183 @@
 @import "tailwindcss";
 
+/*
+  Lucid Vigil: deep ink and warm paper, glass panels over a slow aurora,
+  and colour rationed to small exact points. Every colour the board uses
+  is a token here, in a light and a dark value written with light-dark().
+  JSX names the tokens (text-muted, bg-ok, rounded-lg) and never a raw
+  colour.
+
+  What ships is not light-dark() itself: the build (Lightning CSS) turns
+  each one into a pair of custom-property toggles that a
+  prefers-color-scheme media query flips on :root. The appearance follows
+  the system, for the whole page; setting color-scheme on one element does
+  not switch the tokens inside it.
+*/
 @theme {
   --font-display: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  /* One short phrase only (the empty board). New York on Apple devices, no font download. */
+  --font-serif: ui-serif, "New York", Georgia, "Times New Roman", serif;
 
-  --color-bg: #0c1018;
-  --color-surface: color-mix(in oklab, white 10%, transparent);
-  --color-surface-2: color-mix(in oklab, white 14%, transparent);
-  --color-fg: #f4f6fa;
-  --color-muted: color-mix(in oklab, var(--color-fg) 68%, transparent);
-  /* 50%: 46% measured 4.42:1 on --color-bg, under the 4.5:1 WCAG AA floor. */
-  --color-subtle: color-mix(in oklab, var(--color-fg) 50%, transparent);
-  --color-border: color-mix(in oklab, white 16%, transparent);
-  --color-accent: #e8eef6;
-  --color-ok: #7dcea0;
-  --color-warn: #e0c086;
-  --color-down: #e08b84;
+  /*
+    Text tokens are opaque so their contrast does not depend on what is
+    behind them. Each pair clears 4.5:1 (WCAG AA) on the flat fill of every
+    material below, before any blur or backdrop is considered; the browser
+    tests check it with the backdrop stripped (e2e/board.spec.ts).
+  */
+  --color-bg: light-dark(#f4f2ec, #05070d);
+  --color-fg: light-dark(#12141a, #eef1f7);
+  --color-muted: light-dark(#3c414d, #b7bfcc);
+  /* Subtle stays over 5.5:1 on every flat fill, light or dark. */
+  --color-subtle: light-dark(#4b5160, #8e97a8);
+  --color-surface: light-dark(rgb(16 24 40 / 0.06), rgb(255 255 255 / 0.1));
+  --color-surface-2: light-dark(rgb(16 24 40 / 0.1), rgb(255 255 255 / 0.14));
+  --color-border: light-dark(rgb(16 24 40 / 0.12), rgb(255 255 255 / 0.15));
+  --color-accent: light-dark(#172033, #e6ecf5);
+  /*
+    Status points: badge text and dots only, never a whole panel. Written
+    in OKLCH, one declaration for every screen; each value sits inside
+    sRGB, so the contrast the browser tests measure is the contrast shown.
+  */
+  --color-ok: light-dark(oklch(44.68% 0.1065 155), oklch(83.19% 0.113 173.79));
+  --color-warn: light-dark(oklch(46.25% 0.1014 68.19), oklch(83.15% 0.1003 82.55));
+  --color-down: light-dark(oklch(46.72% 0.1669 28.65), oklch(76.51% 0.1126 26.69));
+  /*
+    The one warm point: the mark that says "look here" (the headline's
+    ping, a card that just changed, the period dial's hand). Never the
+    only carrier of a status, and never on the Outage badge, which stays
+    --color-down so red always means broken.
+  */
+  --color-event: light-dark(oklch(47.9% 0.1124 59.93), oklch(82.38% 0.1408 70.17));
+  /* Fine strokes: the period dial's ticks and the quiet days of the uptime strip,
+     which exists only in a build made with VITE_STATUS_HISTORY=1. */
+  --color-hairline: light-dark(rgb(10 15 25 / 0.14), rgb(255 255 255 / 0.16));
+  --color-tick: light-dark(rgb(10 15 25 / 0.22), rgb(255 255 255 / 0.28));
 
-  --radius-xs: 6px;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 28px;
+  /*
+    Concentric radii. A shape nested in another takes the parent's radius
+    minus the inset between them, rounded down to the nearest step, never
+    under --radius-2xs: a card at --radius-lg (28px) with 16px of padding
+    holds rows at --radius-xs (10px). Pills stay rounded-full. The default
+    scale is cleared so an ad hoc rounded-2xl cannot creep back in.
+  */
+  --radius-*: initial;
+  --radius-2xs: 6px;
+  --radius-xs: 10px;
+  --radius-sm: 14px;
+  --radius-md: 20px;
+  --radius-lg: 28px;
+  --radius-xl: 34px;
 
   --shadow-border:
-    inset 0 1px 0 color-mix(in oklab, white 55%, transparent),
-    inset 0 -1px 0 color-mix(in oklab, white 8%, transparent),
-    0 0 0 1px color-mix(in oklab, white 16%, transparent),
-    0 18px 40px -24px rgba(0, 0, 0, 0.65);
+    inset 0 1px 0 var(--rim-top), inset 0 -1px 0 var(--rim-bottom), 0 0 0 1px var(--rim-outline),
+    0 18px 40px -24px var(--drop);
   --shadow-border-hover:
-    inset 0 1px 0 color-mix(in oklab, white 70%, transparent),
-    inset 0 -1px 0 color-mix(in oklab, white 10%, transparent),
-    0 0 0 1px color-mix(in oklab, white 24%, transparent),
-    0 22px 48px -22px rgba(0, 0, 0, 0.7);
+    inset 0 1px 0 var(--rim-top-strong), inset 0 -1px 0 var(--rim-bottom), 0 0 0 1px var(--rim-outline-strong),
+    0 22px 48px -22px var(--drop-strong);
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-stagger: 40ms;
   --motion-quick: 150ms;
   --motion-fast: 250ms;
-  --glass-blur: 40px;
+  /*
+    A light spring, for a release: past the mark and back, without a
+    library. Transform only, never colour, where an overshoot means nothing.
+  */
+  --ease-spring: linear(0, 0.24 6%, 0.62 13%, 0.9 21%, 1.04 29%, 1.07 35%, 1.05 42%, 1.01 52%, 0.995 62%, 1);
+  --motion-spring: 480ms;
 }
 
-/* Native scrollbars and form controls render dark to match the page. */
+/*
+  Light and dark follow the system. This declaration is also what the
+  build keys its light-dark() toggles on (see the top of this file), and
+  it switches native scrollbars and form controls.
+*/
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
+
+  /* Page gutters, widened by the safe area on a notched or rounded screen. */
+  --gutter: 1rem;
+
+  /* Rim light: the bevel every glass surface shares. */
+  --rim-top: light-dark(rgb(255 255 255 / 0.9), rgb(255 255 255 / 0.22));
+  --rim-top-strong: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.32));
+  --rim-bottom: light-dark(rgb(16 24 40 / 0.04), rgb(255 255 255 / 0.05));
+  --rim-outline: light-dark(rgb(16 24 40 / 0.11), rgb(255 255 255 / 0.13));
+  --rim-outline-strong: light-dark(rgb(16 24 40 / 0.16), rgb(255 255 255 / 0.22));
+  --drop: light-dark(rgb(38 52 84 / 0.32), rgb(0 0 0 / 0.6));
+  --drop-strong: light-dark(rgb(38 52 84 / 0.34), rgb(0 0 0 / 0.7));
+
+  /*
+    Three materials, from most to least expensive:
+    chrome   floating controls (the compact header, the dialog), blurred
+    glass    content panels (summary, attention cards, board log), blurred
+    whisper  dense or repeated surfaces (chips, search box), no blur
+    The fills alone keep text at AA; the blur is a bonus on top of them.
+  */
+  --glass-blur: 24px;
+  --glass-filter: blur(var(--glass-blur)) saturate(1.8);
+  --glass-fill: light-dark(rgb(255 255 255 / 0.56), rgb(255 255 255 / 0.085));
+  --glass-tint-top: light-dark(rgb(255 255 255 / 0.72), rgb(255 255 255 / 0.12));
+  --glass-tint-bottom: light-dark(rgb(255 255 255 / 0.14), rgb(255 255 255 / 0.02));
+  --glass-sheen: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.3));
+
+  --chrome-filter: blur(28px) saturate(1.9);
+  --chrome-fill: light-dark(rgb(255 255 255 / 0.8), rgb(18 21 29 / 0.66));
+  --chrome-tint-top: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.08));
+  --chrome-tint-bottom: light-dark(rgb(255 255 255 / 0.1), rgb(255 255 255 / 0));
+
+  /* On light, whisper is visibly the flattest: thinner fill, no highlight, a hairline. */
+  --whisper-fill: light-dark(rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.055));
+  --whisper-fill-hover: light-dark(rgb(255 255 255 / 0.62), rgb(255 255 255 / 0.1));
+  --whisper-rim: light-dark(transparent, rgb(255 255 255 / 0.08));
+  --whisper-edge: light-dark(rgb(16 24 40 / 0.11), rgb(255 255 255 / 0.15));
+
+  --inset-fill: light-dark(rgb(15 20 35 / 0.05), rgb(0 0 0 / 0.26));
+  --inset-rim: light-dark(rgb(15 20 35 / 0.06), rgb(255 255 255 / 0.06));
+
+  --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.1));
+
+  /*
+    The backdrop: four slow currents of light, cool teal, indigo and a
+    breath of violet, with a faint warm-to-blue fourth. OKLCH, so a Display
+    P3 screen shows them with more chroma than sRGB can, from the same
+    declaration. On light they are pale, close to the paper's own
+    brightness, so they add colour without darkening what sits on them.
+  */
+  --aurora-1: light-dark(oklch(0.9 0.05 165 / 0.55), oklch(0.55 0.14 175 / 0.22));
+  --aurora-2: light-dark(oklch(0.88 0.05 255 / 0.55), oklch(0.5 0.16 265 / 0.24));
+  --aurora-3: light-dark(oklch(0.89 0.04 300 / 0.45), oklch(0.42 0.15 305 / 0.16));
+  --aurora-4: light-dark(oklch(0.9 0.04 40 / 0.35), oklch(0.5 0.07 240 / 0.14));
+  /* The coordinate grid under everything: texture, not a spreadsheet. */
+  --grid-line: light-dark(rgb(10 15 25 / 0.04), rgb(255 255 255 / 0.035));
+  --grid-size: 64px;
+  --grain-opacity: 0.08;
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --gutter: 1.5rem;
+  }
 }
 
 @layer base {
   html {
-    background: var(--color-bg);
+    /* Safari 26 tints its toolbars from the page's background colour. */
+    background-color: var(--color-bg);
     color: var(--color-fg);
+    /*
+      Tailwind's preflight already sets -webkit-text-size-adjust and turns
+      the tap highlight off (replaced here by .pressable); this is the
+      unprefixed property it leaves out.
+    */
+    text-size-adjust: 100%;
   }
 
   body {
-    background: transparent;
+    background-color: var(--color-bg);
   }
 
   button:not(:disabled),
@@ -78,32 +200,94 @@
   position: relative;
   isolation: isolate;
   min-height: 100dvh;
-  background: var(--color-bg);
-  overflow-x: hidden;
+  background-color: var(--color-bg);
+  /* clip, not hidden: hidden makes this a scroll container, and the
+     compact header would then stick to it instead of to the viewport. */
+  overflow-x: clip;
 }
 
-.liquid-stage::before {
-  content: "";
+/*
+  One fixed layer behind everything. The field inside it is larger than
+  the screen, and its own overflow is clipped here rather than widening
+  the page. The glass panels' saturate() picks up whichever current is
+  behind them.
+
+  It drifts only with a mouse or trackpad (a Mac). A moving backdrop makes
+  every blurred panel above it re-render its blur each frame, which on an
+  iPhone or iPad costs battery for a page left open for hours, so there
+  it holds still. Browsers already stop animating a hidden tab.
+*/
+.aurora {
   pointer-events: none;
   position: fixed;
   inset: 0;
   z-index: 0;
+  overflow: hidden;
+  contain: strict;
+}
+
+.aurora::before {
+  content: "";
+  position: absolute;
+  inset: -30%;
   background:
-    radial-gradient(90% 55% at 12% -4%, rgba(198, 220, 248, 0.48), transparent 58%),
-    radial-gradient(60% 40% at 88% 8%, rgba(146, 176, 216, 0.26), transparent 52%),
-    radial-gradient(50% 36% at 30% 42%, rgba(110, 140, 180, 0.16), transparent 60%),
-    radial-gradient(70% 45% at 72% 88%, rgba(78, 104, 140, 0.22), transparent 58%);
+    radial-gradient(38% 30% at 22% 18%, var(--aurora-1), transparent 70%),
+    radial-gradient(34% 28% at 78% 22%, var(--aurora-2), transparent 70%),
+    radial-gradient(30% 26% at 58% 60%, var(--aurora-3), transparent 72%),
+    radial-gradient(40% 30% at 26% 82%, var(--aurora-4), transparent 70%);
 }
 
-.liquid-stage::after {
+@media (hover: hover) and (pointer: fine) {
+  .aurora::before {
+    animation: aurora-drift 84s linear infinite;
+  }
+}
+
+/*
+  Grain that breaks up banding in the blur: neutral grey specks with their
+  own alpha, painted normally. A blend mode here would make the whole
+  screen a blended layer.
+*/
+.aurora::after {
   content: "";
+  position: absolute;
+  inset: 0;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 2 0 0 0 -0.8'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes aurora-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+  }
+  25% {
+    transform: translate3d(4%, -3%, 0) rotate(5deg) scale(1.05);
+  }
+  50% {
+    transform: translate3d(-3%, 4%, 0) rotate(-4deg) scale(1.08);
+  }
+  75% {
+    transform: translate3d(-4%, -2%, 0) rotate(3deg) scale(1.03);
+  }
+}
+
+/*
+  The ruled grid the board is drafted on. Static on purpose: one fixed
+  layer, painted once, never animated, so it costs nothing per frame or
+  per scroll. Behind the content and in front of the aurora.
+*/
+.aurora-grid {
   pointer-events: none;
   position: fixed;
   inset: 0;
   z-index: 0;
-  opacity: 0.04;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  contain: strict;
+  background-image:
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+  background-position: 50% 0;
 }
 
 .liquid-content {
@@ -111,21 +295,52 @@
   z-index: 1;
 }
 
+/* The page's side padding, never less than the safe area on that side. */
+@utility page-gutter {
+  padding-left: max(var(--gutter), env(safe-area-inset-left));
+  padding-right: max(var(--gutter), env(safe-area-inset-right));
+}
+
+/* A row that scrolls edge to edge on a phone while its content lines up with the gutter. */
+@utility page-bleed {
+  margin-left: calc(-1 * max(var(--gutter), env(safe-area-inset-left)));
+  margin-right: calc(-1 * max(var(--gutter), env(safe-area-inset-right)));
+  padding-left: max(var(--gutter), env(safe-area-inset-left));
+  padding-right: max(var(--gutter), env(safe-area-inset-right));
+}
+
+/*
+  Every blurred material names -webkit-backdrop-filter first. The other
+  way round, the build's CSS minifier folded the pair into the prefixed
+  property alone, which Chromium and Firefox ignore, so nothing blurred
+  there. The browser tests check the blur survives (e2e/board.spec.ts).
+*/
+
+/* Level 1, chrome: controls that float above the content. One at a time. */
+.glass-chrome {
+  position: relative;
+  isolation: isolate;
+  background-color: var(--chrome-fill);
+  background-image: linear-gradient(180deg, var(--chrome-tint-top), var(--chrome-tint-bottom));
+  -webkit-backdrop-filter: var(--chrome-filter);
+  backdrop-filter: var(--chrome-filter);
+  box-shadow: var(--shadow-border-hover);
+}
+
+/* Level 2, glass: the content panels. A handful per screen. */
 .glass {
   position: relative;
   isolation: isolate;
-  background-color: color-mix(in oklab, white 12%, transparent);
-  background-image: linear-gradient(
-    180deg,
-    color-mix(in oklab, white 24%, transparent),
-    color-mix(in oklab, white 6%, transparent)
-  );
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.8);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.8);
+  background-color: var(--glass-fill);
+  background-image: linear-gradient(180deg, var(--glass-tint-top), var(--glass-tint-bottom));
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
   box-shadow: var(--shadow-border);
 }
 
-.glass::before {
+/* The specular sweep: light entering from the upper left. */
+.glass::before,
+.glass-chrome::before {
   content: "";
   pointer-events: none;
   position: absolute;
@@ -134,50 +349,137 @@
   border-radius: inherit;
   background: linear-gradient(
     125deg,
-    color-mix(in oklab, white 40%, transparent) 0%,
+    var(--glass-sheen) 0%,
     transparent 34%,
     transparent 70%,
-    color-mix(in oklab, white 10%, transparent) 100%
+    color-mix(in oklab, var(--glass-sheen) 30%, transparent) 100%
   );
-  opacity: 0.7;
+  opacity: 0.55;
 }
 
-.glass > * {
+.glass > *,
+.glass-chrome > * {
   position: relative;
   z-index: 1;
 }
 
-.glass-thin {
-  position: relative;
-  background-color: color-mix(in oklab, white 10%, transparent);
-  backdrop-filter: blur(20px) saturate(1.45);
-  -webkit-backdrop-filter: blur(20px) saturate(1.45);
+/*
+  Level 3, whisper: no backdrop-filter at all, so a row of seven chips
+  or a search box costs nothing to scroll. The only surface, with
+  .glass-inset, that may sit inside a blurred one: never glass on glass.
+*/
+.glass-whisper {
+  background-color: var(--whisper-fill);
   box-shadow:
-    inset 0 1px 0 color-mix(in oklab, white 32%, transparent),
-    0 0 0 1px color-mix(in oklab, white 14%, transparent);
+    inset 0 1px 0 var(--whisper-rim),
+    0 0 0 1px var(--whisper-edge);
 }
 
+@media (hover: hover) {
+  :is(a, button).glass-whisper:hover {
+    background-color: var(--whisper-fill-hover);
+  }
+}
+
+/* A recess inside a panel: icon chips, rows, <kbd>. */
 .glass-inset {
-  background: color-mix(in oklab, black 28%, transparent);
+  background-color: var(--inset-fill);
   box-shadow:
-    inset 0 1px 0 color-mix(in oklab, white 8%, transparent),
-    inset 0 0 0 1px color-mix(in oklab, white 6%, transparent);
+    inset 0 1px 0 var(--inset-rim),
+    inset 0 0 0 1px var(--inset-rim);
+}
+
+/* One focus ring for every control. An outline rather than a box-shadow
+   ring: forced-colors mode (Windows High Contrast) drops box-shadows, so
+   the old ring vanished there, while an outline stays and takes the
+   system's own colour. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+    outline-offset: 0;
+  }
+
+  @media (forced-colors: active) {
+    &:focus-visible {
+      outline-color: Highlight;
+      outline-offset: 2px;
+    }
+  }
+}
+
+/*
+  Press feedback for touch, where there is no hover and the tap highlight
+  is off. The document has React's touch listeners, which is what lets
+  iOS Safari apply :active at all.
+*/
+@utility pressable {
+  transition-property: transform, opacity, color, background-color;
+  /* Pressed in quickly, released on the spring. */
+  transition-duration: var(--motion-spring), var(--motion-quick), var(--motion-quick), var(--motion-quick);
+  transition-timing-function: var(--ease-spring), var(--ease-out), var(--ease-out), var(--ease-out);
+
+  &:active:not(:disabled, [aria-disabled="true"]) {
+    transform: scale(0.96);
+    transition-duration: var(--motion-quick);
+    transition-timing-function: var(--ease-out);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &:active:not(:disabled, [aria-disabled="true"]) {
+      transform: none;
+      opacity: 0.7;
+    }
+  }
+}
+
+/*
+  A star turns one point, 72 degrees, when it is toggled, and lands on the
+  spring: the same star at rest, so only the toggle itself moves. Only
+  while the pointer or focus is on it, so stars that load already set do
+  not spin when the page opens.
+*/
+.star-toggle svg {
+  transform-origin: 50% 52%;
+}
+
+.star-toggle[aria-pressed="true"] svg {
+  rotate: 72deg;
+}
+
+.star-toggle:is(:hover, :focus, :active) svg {
+  transition: rotate var(--motion-spring) var(--ease-spring);
+}
+
+/*
+  Dynamic Type: on an iPhone or iPad, reading text follows the text size
+  chosen in Settings. Only where text wraps freely inside a card, so the
+  largest sizes grow the card instead of breaking the layout, and only on
+  touch screens: on a Mac the same keyword resolves to a fixed small size.
+*/
+@supports (font: -apple-system-body) {
+  @media (pointer: coarse) {
+    .dynamic-text {
+      /* biome-ignore lint/a11y/useGenericFontNames: a system text style keyword that carries the Dynamic Type size, not a family; the family is set on the next line. */
+      font: -apple-system-subheadline;
+      font-family: var(--font-sans);
+      line-height: 1.5;
+    }
+  }
 }
 
 .stagger-in {
   animation: rise-in var(--motion-fast) var(--ease-smooth-out) both;
 }
 
+/* Transform and opacity only: a filter here would re-render every card's blur each frame. */
 @keyframes rise-in {
   from {
     opacity: 0;
     transform: translateY(8px);
-    filter: blur(2px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
   }
 }
 
@@ -197,22 +499,217 @@
   }
 }
 
-.service-card-changed {
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklab, white 38%, transparent),
-    0 0 0 1px color-mix(in oklab, var(--color-warn) 55%, transparent),
-    0 18px 40px -24px rgba(0, 0, 0, 0.65);
+/*
+  The live signal: a dot that sends out a current, two rings a beat apart,
+  while the board is live. Checking slows it to a pulse; stale stills it.
+*/
+.live-signal {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border-radius: 9999px;
+  background-color: var(--color-ok);
+  color: var(--color-ok);
 }
 
-.service-card-changed.is-down {
+.live-signal::before,
+.live-signal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: 0 0 0 1.5px currentColor;
+  opacity: 0;
+  animation: live-current 3.2s var(--ease-out) infinite;
+}
+
+.live-signal::after {
+  animation-delay: 1.1s;
+}
+
+.live-signal[data-state="checking"] {
+  background-color: var(--color-accent);
+  color: var(--color-accent);
+  animation: live-pulse 1.4s var(--ease-out) infinite;
+}
+
+.live-signal[data-state="checking"]::before,
+.live-signal[data-state="checking"]::after,
+.live-signal[data-state="stale"]::before,
+.live-signal[data-state="stale"]::after {
+  display: none;
+}
+
+.live-signal[data-state="stale"] {
+  background-color: var(--color-subtle);
+}
+
+@keyframes live-current {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  70%,
+  100% {
+    /*
+      1.7: the dot and its 1.5px ring are 5px in radius, so at full size the
+      ring ends 5px past the 3.5px dot and stays 3px clear of the 8px gap to
+      its label.
+    */
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+/*
+  The period dial (period-dial.tsx): a ring of 120 ticks, one per second
+  between refetches. The lit copy of the ring is masked to the part of the
+  period that has run; --period-progress is registered so it can animate,
+  in 120 steps, which repaints this small element once a second and never
+  more. The hand is a transform, which the compositor turns on its own.
+  Both start at the right moment from a negative delay set by the page.
+*/
+@property --period-progress {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.period-dial {
+  position: relative;
+  flex-shrink: 0;
+  aspect-ratio: 1;
+  /* Layout only: paint containment would clip the mark's glow at twelve. */
+  contain: layout;
+}
+
+.period-ring,
+.period-motion,
+.period-sweep,
+.period-hand {
+  position: absolute;
+  inset: 0;
+}
+
+.period-ring {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.period-orbit {
+  stroke: var(--color-hairline);
+  stroke-width: 1;
+}
+
+.period-tick {
+  stroke: var(--color-tick);
+  stroke-width: 1;
+}
+
+.period-tick-major {
+  stroke: color-mix(in oklab, var(--color-fg) 38%, transparent);
+  stroke-width: 1;
+}
+
+.period-tick-quarter {
+  stroke: color-mix(in oklab, var(--color-fg) 60%, transparent);
+  stroke-width: 1.5;
+}
+
+.period-ring[data-lit] .period-orbit {
+  stroke: color-mix(in oklab, var(--color-fg) 45%, transparent);
+}
+
+.period-ring[data-lit] :is(.period-tick, .period-tick-major) {
+  stroke: color-mix(in oklab, var(--color-fg) 82%, transparent);
+}
+
+.period-ring[data-lit] .period-tick-quarter {
+  stroke: var(--color-fg);
+}
+
+.period-sweep {
+  --period-progress: var(--period-at, 0);
+  /* Half a tick past the edge, so the tick for the second under way is lit. */
+  mask-image: conic-gradient(#000 calc(var(--period-progress) * 360deg + 1.5deg), transparent 0);
+}
+
+.period-hand {
+  transform: rotate(calc(var(--period-at, 0) * 1turn));
+}
+
+/* The warm point: on the orbit, at the moment the period has reached. */
+.period-mark {
+  position: absolute;
+  top: 14%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 9999px;
+  background-color: var(--color-event);
   box-shadow:
-    inset 0 1px 0 color-mix(in oklab, white 38%, transparent),
-    0 0 0 1px color-mix(in oklab, var(--color-down) 60%, transparent),
-    0 18px 40px -24px rgba(0, 0, 0, 0.65);
+    0 0 0 3px oklch(from var(--color-event) l c h / 0.16),
+    0 0 12px 1px oklch(from var(--color-event) l c h / 0.45);
+}
+
+/* The lens at the centre, holding the board's health point. */
+.period-lens {
+  position: absolute;
+  inset: 31%;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  background-image: radial-gradient(circle at 34% 28%, var(--glass-tint-top), transparent 70%);
+  box-shadow:
+    inset 0 1px 0 var(--rim-top),
+    0 0 0 1px var(--color-hairline);
+}
+
+.period-motion[data-running] > .period-sweep {
+  animation: period-fill var(--period-length) steps(120, end) var(--period-delay) both;
+}
+
+.period-motion[data-running] > .period-hand {
+  animation: period-turn var(--period-length) linear var(--period-delay) both;
+}
+
+@keyframes period-fill {
+  from {
+    --period-progress: 0;
+  }
+  to {
+    --period-progress: 1;
+  }
+}
+
+@keyframes period-turn {
+  from {
+    transform: rotate(0turn);
+  }
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/*
+  A card whose status just changed takes the warm event rim: the one
+  thing on the board that says "this moved". Not a status colour, which
+  belongs to the badge and the dot, and the badge already says which way
+  it changed.
+*/
+.service-card-changed {
+  box-shadow:
+    inset 0 1px 0 var(--rim-top),
+    0 0 0 1.5px color-mix(in oklab, var(--color-event) 45%, transparent),
+    0 18px 40px -24px var(--drop);
 }
 
 /* A soft light that follows the pointer across a card (see useSpotlight).
-   Neutral white, never a status colour; hover-capable pointers only. */
+   Neutral, never a status colour; hover-capable pointers only. */
 @media (hover: hover) and (pointer: fine) {
   .spotlight::after {
     content: "";
@@ -221,11 +718,7 @@
     inset: 0;
     z-index: 0;
     border-radius: inherit;
-    background: radial-gradient(
-      280px circle at var(--spot-x, 50%) var(--spot-y, 50%),
-      color-mix(in oklab, white 11%, transparent),
-      transparent 65%
-    );
+    background: radial-gradient(280px circle at var(--spot-x, 50%) var(--spot-y, 50%), var(--spot-color), transparent 65%);
     opacity: 0;
     transition: opacity var(--motion-fast) var(--ease-out);
   }
@@ -242,7 +735,7 @@
 
 @keyframes changed-flash {
   0% {
-    outline: 2px solid color-mix(in oklab, var(--color-warn) 70%, transparent);
+    outline: 2px solid color-mix(in oklab, var(--color-event) 55%, transparent);
     outline-offset: 6px;
   }
   100% {
@@ -265,6 +758,11 @@
   animation: ping 1.8s var(--ease-out) infinite;
 }
 
+/* The headline's ping when the board needs attention: the warm point. */
+.ping-event::after {
+  background: var(--color-event);
+}
+
 @keyframes ping {
   0% {
     transform: scale(1);
@@ -274,6 +772,96 @@
   100% {
     transform: scale(2.8);
     opacity: 0;
+  }
+}
+
+/*
+  The compact header slides in once the hero has scrolled away. Hidden, it
+  is also `inert` (compact-header.tsx), and visibility waits for the fade
+  to finish before taking it out of the accessibility tree.
+*/
+.compact-header {
+  /* Here, not as a utility: the material's own position: relative would win over one. */
+  position: sticky;
+  top: calc(env(safe-area-inset-top) + 0.5rem);
+  z-index: 40;
+  /* Lined up with the page content, inside the safe area on both sides. */
+  width: min(
+    calc(72rem - 2 * var(--gutter)),
+    calc(100% - max(var(--gutter), env(safe-area-inset-left)) - max(var(--gutter), env(safe-area-inset-right)))
+  );
+  margin-inline: auto;
+  /* Its own height: it floats over the hero instead of pushing it down. */
+  margin-bottom: -3rem;
+  transition:
+    opacity var(--motion-quick) var(--ease-out),
+    transform var(--motion-fast) var(--ease-smooth-out),
+    visibility 0s linear 0s;
+}
+
+/*
+  Once the fade has finished it leaves the page altogether (display:
+  none, held back by allow-discrete until then), so a hidden bar costs no
+  compositing. Coming back from none, it has no previous style to
+  transition from, and @starting-style supplies one: the hidden pose.
+  Without allow-discrete, a browser just hides it at once.
+*/
+.compact-header[data-shown="false"] {
+  display: none;
+  opacity: 0;
+  transform: translateY(-0.75rem) scale(0.98);
+  visibility: hidden;
+  transition:
+    opacity var(--motion-quick) var(--ease-out),
+    transform var(--motion-fast) var(--ease-smooth-out),
+    visibility 0s linear var(--motion-fast),
+    display var(--motion-fast) allow-discrete;
+}
+
+@starting-style {
+  .compact-header[data-shown="true"] {
+    opacity: 0;
+    transform: translateY(-0.75rem) scale(0.98);
+  }
+}
+
+/*
+  The settings dialog rises into place as it opens, from @starting-style,
+  and its dimmed backdrop fades in. Transform only on the dialog itself:
+  opacity below 1 on it would cut its glass off from the page behind, and
+  the blur would pop in at the end. It closes at once: carrying a closing
+  dialog in the top layer needs the overlay property, which not every
+  engine has, and without it the dialog would flash in the page.
+*/
+.settings-dialog[open] {
+  transform: none;
+  transition: transform var(--motion-fast) var(--ease-smooth-out);
+}
+
+.settings-dialog[open]::backdrop {
+  opacity: 1;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+@starting-style {
+  .settings-dialog[open] {
+    transform: translateY(0.5rem) scale(0.97);
+  }
+
+  .settings-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/*
+  The board log stays pinned beside the cards on a wide screen, clear of
+  the compact bar. Here, not as a utility, for the same reason as the
+  compact bar: the material's own position: relative would win over one.
+*/
+@media (min-width: 80rem) {
+  .board-log-pin {
+    position: sticky;
+    top: calc(env(safe-area-inset-top) + 4.5rem);
   }
 }
 
@@ -289,22 +877,111 @@
   animation-timing-function: var(--ease-smooth-out);
 }
 
-@media (max-width: 640px) {
-  .glass {
-    --glass-blur: 24px;
+/*
+  Scroll-driven, decoration only: the hero's title block recedes as it
+  scrolls away under the compact bar. The bar's own showing and hiding
+  (and its inert state) stays with the IntersectionObserver in
+  compact-header.tsx; this only softens the handoff where the browser
+  can drive an animation from scrolling, and changes nothing elsewhere.
+*/
+@supports (animation-timeline: view()) {
+  .hero-recede {
+    animation: hero-recede linear both;
+    animation-timeline: view();
+    animation-range: exit 0% exit 100%;
   }
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  .glass,
-  .glass-thin {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    background: #1a212c;
+@keyframes hero-recede {
+  to {
+    opacity: 0.2;
+    transform: translateY(-0.75rem) scale(0.985);
+  }
+}
+
+/*
+  Reduce glass. Safari does not report the system's Reduce Transparency
+  to web pages, so the board has its own switch (Settings and shortcuts),
+  which sets data-reduce-transparency on <html>; browsers that do report
+  it get the same result from the media query. Panels turn solid, nothing
+  is blurred, and the backdrop goes. The reduce-glass variant writes each
+  rule once for both.
+*/
+@custom-variant reduce-glass {
+  &:where([data-reduce-transparency="true"], [data-reduce-transparency="true"] *) {
+    @slot;
   }
 
-  .glass-inset {
-    background: #12171f;
+  @media (prefers-reduced-transparency: reduce) {
+    @slot;
+  }
+}
+
+:root {
+  @variant reduce-glass {
+    --glass-filter: none;
+    --chrome-filter: none;
+    --glass-fill: light-dark(#fcfbf8, #13161d);
+    --glass-tint-top: transparent;
+    --glass-tint-bottom: transparent;
+    --glass-sheen: transparent;
+    --chrome-fill: light-dark(#f9f8f4, #0f1218);
+    --chrome-tint-top: transparent;
+    --chrome-tint-bottom: transparent;
+    --whisper-fill: light-dark(#f9f8f4, #0e1117);
+    --whisper-fill-hover: light-dark(#ffffff, #171a22);
+  }
+}
+
+/* No backdrop at all: nothing left to show through solid panels, and nothing to animate. */
+.aurora,
+.aurora-grid {
+  @variant reduce-glass {
+    display: none;
+  }
+}
+
+/*
+  Increase Contrast (iOS and macOS Accessibility settings): solid hairline
+  borders, stronger secondary text, and panels that are nearly opaque.
+*/
+@media (prefers-contrast: more) {
+  :root {
+    --color-muted: light-dark(#262a33, #dde2ea);
+    --color-subtle: light-dark(#3a3f4b, #c0c6d1);
+    --color-border: light-dark(rgb(16 24 40 / 0.5), rgb(255 255 255 / 0.55));
+    --glass-fill: light-dark(rgb(255 255 255 / 0.92), rgb(17 20 27 / 0.92));
+    --glass-tint-top: transparent;
+    --glass-tint-bottom: transparent;
+    --glass-sheen: transparent;
+    --chrome-fill: light-dark(rgb(251 250 246 / 0.96), rgb(15 18 25 / 0.96));
+    --whisper-fill: light-dark(rgb(255 255 255 / 0.9), rgb(17 20 27 / 0.9));
+    --inset-fill: light-dark(rgb(15 20 35 / 0.07), rgb(0 0 0 / 0.4));
+    /* The solid border below replaces the 1px ring the shadows draw, so the edge stays one pixel. */
+    --rim-outline: transparent;
+    --rim-outline-strong: transparent;
+    --whisper-edge: transparent;
+    --color-hairline: light-dark(rgb(10 15 25 / 0.3), rgb(255 255 255 / 0.34));
+    --color-tick: light-dark(rgb(10 15 25 / 0.42), rgb(255 255 255 / 0.48));
+  }
+
+  .glass,
+  .glass-chrome,
+  .glass-whisper {
+    border: 1px solid var(--color-border);
+  }
+}
+
+/* Forced colours drop backgrounds and shadows; a border keeps each panel drawn. */
+@media (forced-colors: active) {
+  .glass,
+  .glass-chrome,
+  .glass-whisper {
+    border: 1px solid CanvasText;
+  }
+
+  .aurora-grid {
+    display: none;
   }
 }
 
@@ -312,12 +989,31 @@
   .stagger-in,
   .live-dot,
   .service-card-changed,
-  .ping::after {
+  .ping::after,
+  .live-signal,
+  .live-signal::before,
+  .live-signal::after,
+  .aurora::before,
+  .hero-recede,
+  .period-motion[data-running] > .period-sweep,
+  .period-motion[data-running] > .period-hand {
     animation: none;
+  }
+
+  .compact-header,
+  .compact-header[data-shown="false"],
+  .settings-dialog[open],
+  .settings-dialog[open]::backdrop {
+    transform: none;
+    transition: none;
   }
 
   .spotlight::after {
     display: none;
+  }
+
+  .star-toggle:is(:hover, :focus, :active) svg {
+    transition: none;
   }
 
   ::view-transition-group(*),

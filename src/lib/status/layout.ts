@@ -1,17 +1,55 @@
+import { CATALOG } from "./catalog.ts";
 import type { BoardSnapshot, Health, ServiceSnapshot } from "./types.ts";
 
-// Worst first. Unknown ranks above degraded: a source that cannot be read
-// may be hiding anything, and it is also the one the board cannot vouch for.
-const SEVERITY: Record<Health, number> = {
+// Most urgent first: a confirmed outage, then a confirmed degradation, then
+// maintenance, and last a source the board cannot read (it may be hiding
+// anything, but it is not a confirmed problem). The board's headline names
+// confirmed breakage before an unreadable source for the same reason.
+const URGENCY: Record<Health, number> = {
   outage: 0,
-  unknown: 1,
-  degraded: 2,
-  maintenance: 3,
+  degraded: 1,
+  maintenance: 2,
+  unknown: 3,
   operational: 4,
 };
 
+/** How urgent a state is on the board: 0 (outage) is most urgent, then degraded, maintenance, unknown, operational. */
+export function urgencyOf(health: Health): number {
+  return URGENCY[health];
+}
+
+/** When a service's most recently started incident began, as epoch ms; -Infinity if none has a readable start. */
+function latestIncidentStart(service: ServiceSnapshot): number {
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const incident of service.incidents) {
+    const at = incident.startedAt ? Date.parse(incident.startedAt) : Number.NaN;
+    if (Number.isFinite(at) && at > latest) latest = at;
+  }
+  return latest;
+}
+
+/** Newer first; two services with no readable start tie (subtracting two -Infinity values would be NaN). */
+function newerFirst(a: number, b: number): number {
+  if (a === b) return 0;
+  return b > a ? 1 : -1;
+}
+
+/**
+ * Services by urgency: severity first (outage, degraded, maintenance,
+ * unknown, operational), then the most recently started incident. Anything
+ * still tied keeps the order it came in (a stable sort): catalog order, with
+ * starred services first, as the board passes them. A pure sort of a copy,
+ * run on every snapshot, so the first entry is always the current most
+ * urgent service.
+ */
+export function sortByUrgency(services: ServiceSnapshot[]): ServiceSnapshot[] {
+  return [...services].sort(
+    (a, b) => URGENCY[a.health] - URGENCY[b.health] || newerFirst(latestIncidentStart(a), latestIncidentStart(b)),
+  );
+}
+
 export type BoardGroups = {
-  /** Anything not operational, worst first, then in catalog order. */
+  /** Anything not operational, most urgent first (see `sortByUrgency`); its first entry is the board's highlight. */
   attention: ServiceSnapshot[];
   /** Operational status services. */
   operational: ServiceSnapshot[];
@@ -20,10 +58,7 @@ export type BoardGroups = {
 };
 
 export function groupServices(services: ServiceSnapshot[]): BoardGroups {
-  const attention = services
-    .filter((service) => service.health !== "operational")
-    // Array.prototype.sort is stable, so equal severities keep catalog order.
-    .sort((a, b) => SEVERITY[a.health] - SEVERITY[b.health]);
+  const attention = sortByUrgency(services.filter((service) => service.health !== "operational"));
   const healthy = services.filter((service) => service.health === "operational");
   return {
     attention,
@@ -34,6 +69,16 @@ export function groupServices(services: ServiceSnapshot[]): BoardGroups {
 
 export function serviceAnchor(id: ServiceSnapshot["id"]): string {
   return `service-${id}`;
+}
+
+/**
+ * A service's two-digit index, "01" to "14", by its place in the catalog:
+ * the same number wherever the board sorts or filters the card. A
+ * decorative label, never part of a name.
+ */
+export function serviceIndex(id: ServiceSnapshot["id"]): string {
+  const at = CATALOG.findIndex((entry) => entry.id === id);
+  return at < 0 ? "" : String(at + 1).padStart(2, "0");
 }
 
 function names(services: ServiceSnapshot[]): string {
@@ -48,7 +93,9 @@ function names(services: ServiceSnapshot[]): string {
  * the cards. Confirmed breakage (outage, then degraded) is named before an
  * unreadable source, so `tone` is the health of what the title names, which
  * can differ from the board's overall health (where unknown outranks
- * degraded).
+ * degraded). The cards below are ordered by `sortByUrgency` (outage,
+ * degraded, maintenance, unknown), so the headline's tone is always that of
+ * the first card unless only maintenance and unreadable sources are left.
  */
 export function boardHeadline(board: BoardSnapshot): { tone: Health; title: string } {
   const by = (health: Health) => board.services.filter((service) => service.health === health);
@@ -73,9 +120,7 @@ export function boardHeadline(board: BoardSnapshot): { tone: Health; title: stri
     return {
       tone: "unknown",
       title:
-        unknown.length === 1
-          ? `${unknown[0].name} could not be read`
-          : `${unknown.length} sources could not be read`,
+        unknown.length === 1 ? `${unknown[0].name} could not be read` : `${unknown.length} sources could not be read`,
     };
   }
   if (maintenance.length) {
@@ -94,4 +139,33 @@ export function boardHeadline(board: BoardSnapshot): { tone: Health; title: stri
 export function documentTitle(board: BoardSnapshot, appName: string): string {
   const attention = board.services.filter((service) => service.health !== "operational").length;
   return attention ? `(${attention}) ${appName}` : appName;
+}
+
+/**
+ * Whether an observed element has scrolled up out of view, from an
+ * IntersectionObserver entry: gone and above the viewport, where
+ * `topInset` is how far down a floating bar covers the screen.
+ */
+export function scrolledPast(
+  entry: { isIntersecting: boolean; boundingClientRect: { top: number } },
+  topInset: number,
+): boolean {
+  return !entry.isIntersecting && entry.boundingClientRect.top < topInset;
+}
+
+/**
+ * Whether focus arrived the way :focus-visible marks it, by keyboard
+ * rather than a click. A browser without :focus-visible throws on the
+ * selector; focus then counts as keyboard focus, the safe side for a
+ * keyboard user.
+ */
+export function keyboardFocus(target: unknown): boolean {
+  if (typeof target !== "object" || target === null || !("matches" in target)) return false;
+  const { matches } = target as { matches: unknown };
+  if (typeof matches !== "function") return false;
+  try {
+    return matches.call(target, ":focus-visible") === true;
+  } catch {
+    return true;
+  }
 }

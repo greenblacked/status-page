@@ -2,8 +2,9 @@ name: Release
 
 # Publishes a GitHub Release whose notes are that version's CHANGELOG.md
 # section, and creates its vX.Y.Z tag. Only main is released: pull requests
-# merge into dev, which never releases, and dev reaches main in a merge
-# commit (CONTRIBUTING.md#releases). Ways in:
+# merge into dev, which never releases, the owner promotes dev to stage (a
+# preview) and stage to main, each in a merge commit
+# (CONTRIBUTING.md#releases). Ways in:
 #   - Merging a pull request into main. The Conventional Commits merged since
 #     the last release pick the next version (scripts/release/next.sh): a
 #     breaking change is major, feat minor, fix, perf or revert patch, and
@@ -21,8 +22,12 @@ name: Release
 # The release has to be on main, have a changelog section and pass the same
 # checks as CI. If any check fails, nothing is committed, tagged or
 # published. After every run for main, released or not, main is merged back
-# into dev, so dev carries the release commit and any fix merged into main
-# directly. CONTRIBUTING.md#releases has the details.
+# into stage and then dev, so both carry the release commit and any fix
+# merged into main directly. Those merges are pushed with GITHUB_TOKEN, which
+# starts no workflow of its own, so when one actually moved stage this also
+# starts deploy.yml on stage by hand, or the stage preview would keep running
+# the pre-release code until an unrelated push to stage updated it (dev
+# deploys nothing). CONTRIBUTING.md#releases has the details.
 
 on:
   push:
@@ -174,12 +179,14 @@ jobs:
           # The code being released: before any bump commit, which changes
           # only the version and the changelog.
           ref: ${{ needs.plan.outputs.sha }}
+      # No package cache: a cache entry saved by any other run could reach
+      # the code that gets tagged. A release is rare; a cold install is fine.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          cache: npm
+          package-manager-cache: false
       - name: Pin npm
-        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
+        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")" # zizmor: ignore[adhoc-packages] exact version from packageManager
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
@@ -274,16 +281,16 @@ jobs:
           fi
           # A re-run updates the existing release instead of failing on it.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Status Bar $TAG" --notes-file "$notes" --latest="$latest"
+            gh release edit "$TAG" --title "Status Page $TAG" --notes-file "$notes" --latest="$latest"
           else
             # Creates the tag on target. A tag pushed by hand already points
             # there and is used as it is. Neither the tag nor a bump pushed
             # with GITHUB_TOKEN starts this workflow again.
-            gh release create "$TAG" --target "$target" --title "Status Bar $TAG" --notes-file "$notes" --latest="$latest"
+            gh release create "$TAG" --target "$target" --title "Status Page $TAG" --notes-file "$notes" --latest="$latest"
           fi
 
-  sync-dev:
-    name: merge main into dev
+  sync-branches:
+    name: merge main into stage and dev
     needs: [plan, verify, publish]
     # After every push to main or bump run that did not fail, released or not.
     # A backfill or a tag pushed by hand leaves main as it was.
@@ -297,58 +304,127 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+    outputs:
+      stage_pushed: ${{ steps.merge.outputs.stage_pushed }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keeps the token: this job pushes the merges to stage and dev.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 # zizmor: ignore[artipacked]
         with:
           fetch-depth: 0
           ref: main
 
-      - name: Merge main into dev
+      - name: Merge main into stage and dev
+        id: merge
         env:
           ACTOR: ${{ github.actor }}
           ACTOR_ID: ${{ github.actor_id }}
         run: |
-          if ! git ls-remote --exit-code --heads origin dev >/dev/null; then
-            echo "::notice::no dev branch; nothing to sync"
-            exit 0
-          fi
+          # GITHUB_TOKEN pushes below start no workflow (deploy.yml included),
+          # so this output tells the redeploy-stage job whether stage's tip
+          # actually moved and the stage preview needs waking up by hand. dev
+          # deploys nothing, so its push needs no follow-up.
+          failed=0
           git config user.name "$ACTOR"
           git config user.email "$ACTOR_ID+$ACTOR@users.noreply.github.com"
-          # main's copy: dev's may predate it.
+          # main's copy: a branch's own may predate it.
           merge_changelog="$RUNNER_TEMP/merge-changelog.sh"
           cp scripts/release/merge-changelog.sh "$merge_changelog"
 
-          # A pull request merged into dev meanwhile rejects the push; fetch
-          # and merge again rather than fail the release run.
-          for attempt in 1 2 3; do
-            git fetch --quiet origin dev
-            if git merge-base --is-ancestor origin/main origin/dev; then
-              echo "::notice::dev already has everything on main"
-              exit 0
+          # stage first, then dev. A problem that stops one branch does not
+          # stop the other, but fails the job at the end. The script runs under
+          # bash -e, so the steps that can fail for reasons outside the merge
+          # (network, checkout) are guarded: a failure sets failed=1 instead of
+          # ending the script, and stage_pushed is written the moment stage's
+          # push succeeds, before dev is touched.
+          for branch in stage dev; do
+            listed=0
+            git ls-remote --exit-code --heads origin "$branch" >/dev/null || listed=$?
+            if [ "$listed" = 2 ]; then
+              echo "::notice::no $branch branch; nothing to sync"
+              continue
+            elif [ "$listed" != 0 ]; then
+              echo "::error::could not look up $branch on origin; re-run this job"
+              failed=1
+              continue
             fi
-            git checkout --quiet -B dev origin/dev
-            # A plain merge, never a rebase or force-push: dev is shared.
-            if ! git merge --no-edit -m "Merge branch 'main' into dev" origin/main; then
-              # A release on main while dev has Unreleased lines conflicts on
-              # CHANGELOG.md alone. merge-changelog.sh resolves exactly that
-              # case and refuses anything else.
-              if [ "$(git diff --name-only --diff-filter=U)" = CHANGELOG.md ] &&
-                "$merge_changelog" <(git show :1:CHANGELOG.md) <(git show :2:CHANGELOG.md) <(git show :3:CHANGELOG.md) >"$RUNNER_TEMP/CHANGELOG.md"; then
-                cp "$RUNNER_TEMP/CHANGELOG.md" CHANGELOG.md
-                git add CHANGELOG.md
-                git commit --quiet --no-edit
-                echo "::notice::kept main's release in CHANGELOG.md and dev's lines under Unreleased"
-              else
-                git merge --abort
-                echo "::error::main and dev conflict. Branch from dev (git switch -c chore/sync-main origin/dev), run git merge origin/main, resolve, push, and merge a pull request into dev with a merge commit. Do not resolve it on a pull request from main: that commits dev's work to main and releases it."
-                exit 1
+            synced=false
+            # A pull request merged into the branch meanwhile rejects the
+            # push; fetch and merge again rather than fail the release run.
+            for attempt in 1 2 3; do
+              if ! git fetch --quiet origin "$branch"; then
+                echo "::error::could not fetch $branch; re-run this job"
+                failed=1
+                synced=true
+                break
               fi
+              if git merge-base --is-ancestor origin/main "origin/$branch"; then
+                echo "::notice::$branch already has everything on main"
+                synced=true
+                break
+              fi
+              if ! git checkout --quiet -B "$branch" "origin/$branch"; then
+                echo "::error::could not check out $branch; re-run this job"
+                failed=1
+                synced=true
+                break
+              fi
+              # A plain merge, never a rebase or force-push: the branch is shared.
+              if ! git merge --no-edit -m "Merge branch 'main' into $branch" origin/main; then
+                # A release on main while the branch has Unreleased lines
+                # conflicts on CHANGELOG.md alone. merge-changelog.sh resolves
+                # exactly that case and refuses anything else.
+                if [ "$(git diff --name-only --diff-filter=U)" = CHANGELOG.md ] &&
+                  "$merge_changelog" <(git show :1:CHANGELOG.md) <(git show :2:CHANGELOG.md) <(git show :3:CHANGELOG.md) >"$RUNNER_TEMP/CHANGELOG.md" &&
+                  cp "$RUNNER_TEMP/CHANGELOG.md" CHANGELOG.md &&
+                  git add CHANGELOG.md &&
+                  git commit --quiet --no-edit; then
+                  echo "::notice::kept main's release in CHANGELOG.md and $branch's lines under Unreleased"
+                else
+                  git merge --abort
+                  echo "::error::main and $branch conflict. Branch from $branch (git switch -c chore/sync-main origin/$branch), run git merge origin/main, resolve, push, and merge a pull request into $branch with a merge commit. Do not resolve it on a pull request from main: that commits $branch's work to main and releases it."
+                  failed=1
+                  synced=true
+                  break
+                fi
+              fi
+              if git push origin "HEAD:refs/heads/$branch"; then
+                if [ "$branch" = stage ]; then
+                  echo "stage_pushed=true" >>"$GITHUB_OUTPUT"
+                fi
+                synced=true
+                break
+              fi
+              echo "::warning::$branch moved during the merge (attempt $attempt); trying again"
+              git checkout --quiet --detach origin/main || true
+            done
+            if [ "$synced" = false ]; then
+              echo "::error::$branch kept moving; re-run this job"
+              failed=1
             fi
-            if git push origin HEAD:refs/heads/dev; then
-              exit 0
-            fi
-            echo "::warning::dev moved during the merge (attempt $attempt); trying again"
-            git checkout --quiet --detach origin/main
+            git checkout --quiet --detach origin/main || true
           done
-          echo "::error::dev kept moving; re-run this job"
-          exit 1
+          exit "$failed"
+
+  redeploy-stage:
+    name: redeploy stage preview
+    needs: sync-branches
+    # sync-branches pushes the merge with GITHUB_TOKEN, which starts no
+    # workflow (GitHub's own loop guard), so deploy.yml never sees stage move
+    # and the stage preview is left running the pre-release code until
+    # something else deploys. Only start it when stage's tip actually
+    # changed, even if dev's sync failed after it.
+    if: ${{ !cancelled() && needs.sync-branches.outputs.stage_pushed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Only scope beyond the workflow default (contents: read): to start
+      # deploy.yml by hand, the same way `gh workflow run` would from a
+      # maintainer's machine.
+      actions: write
+    steps:
+      - name: Start deploy.yml on stage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run deploy.yml --ref stage

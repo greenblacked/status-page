@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Enforce the Conventional Commits rules from CONTRIBUTING.md on a commit range.
 # Run locally: ./scripts/ci/commits.sh origin/dev..HEAD
-#   (origin/main..HEAD for a fix branched from main)
 #   ./scripts/ci/commits.sh --subject "feat: add a feed"
 #     Checks one subject, such as a pull request title: a squash merge makes
-#     it the commit on dev or main, and release.yml reads its type.
+#     it the commit on dev, and release.yml reads its type once it reaches main.
 set -euo pipefail
 
 types='feat|fix|docs|refactor|test|chore|perf|ci|build|style|revert'

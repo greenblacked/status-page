@@ -1,0 +1,57 @@
+{
+  // Cloudflare Workers config. The account ID and API token are supplied by
+  // GitHub environment settings to wrangler at deploy time, not to the Worker.
+  // One Worker serves everything: main deploys it to production, and stage
+  // becomes a Worker Preview of it named "stage" (deploy.yml), never
+  // production traffic. dev, where pull requests land, deploys nothing.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "status-page",
+  "main": "./src/server.cloudflare.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  // Workers Logs and traces, kept in Cloudflare (persist) and sampled in
+  // full. The top-level switch stays off because logs and traces are each
+  // enabled on their own.
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "redact_query_string": false,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": true,
+      "persist": true
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true
+    }
+  },
+  // Governs the workers.dev preview URLs only, so they stay off. The preview
+  // is served on the Custom Domain below, which has its own switch
+  // (previews_enabled).
+  "preview_urls": false,
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
+  // Production claims its own hostname as a Custom Domain on a zone in this
+  // account; previews_enabled also serves each Worker Preview one level below
+  // it, so the "stage" preview answers on https://stage.status.szolotov.com
+  // (Cloudflare adds the *.status.szolotov.com wildcard itself). The first
+  // deploy creates the DNS records and certificates; a CI deploy replaces any
+  // record already at that name, and replaces the Worker's whole set of
+  // Custom Domains, so one added only in the dashboard is detached.
+  "routes": [
+    {
+      "pattern": "status.szolotov.com",
+      "custom_domain": true,
+      "previews_enabled": true
+    }
+  ],
+  // What a Worker Preview (`wrangler preview`) runs with. Previews take
+  // their bindings from this block, not from the top level.
+  "previews": {
+    // Keeps search engines off the stage preview (src/lib/robots.ts).
+    "vars": { "ROBOTS": "noindex" },
+    "version_metadata": { "binding": "CF_VERSION_METADATA" }
+  }
+}

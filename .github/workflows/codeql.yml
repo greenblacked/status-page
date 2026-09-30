@@ -2,9 +2,9 @@ name: CodeQL
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, stage, dev]
   pull_request:
-    branches: [main, dev]
+    branches: [main, stage, dev]
   schedule:
     # Weekly, so a newly published rule still finds this repository.
     - cron: '17 4 * * 1'
@@ -15,22 +15,34 @@ permissions:
 
 jobs:
   analyze:
-    name: analyze
+    name: analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
       actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # `actions` scans .github/workflows itself (untrusted input in run:,
+        # over-broad permissions, unpinned actions), which is where the
+        # deploy token lives.
+        language: [javascript-typescript, actions]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           # No build step exists yet, so CodeQL scans the sources directly.
-          languages: javascript-typescript
+          languages: ${{ matrix.language }}
           queries: security-and-quality
 
-      - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
-          category: /language:javascript-typescript
+          # One job and one category per language. The TypeScript category
+          # keeps the name earlier analyses used, so its alert history and
+          # the pull request comparison against the base branch carry on.
+          category: /language:${{ matrix.language }}
