@@ -590,6 +590,17 @@
   }
 }
 
+/* On a phone the short verdict sits where the field docks; it gives way as the field merges in. */
+@media (width < 40rem) {
+  [data-bar-verdict] {
+    transition: opacity var(--t-quick) var(--ease-out);
+  }
+
+  .compact-header[data-docking] [data-bar-verdict] {
+    opacity: 0;
+  }
+}
+
 /*
   Hidden, it stays in layout (visibility, not display: none): the search
   field docks into its middle slot, which must stay measurable. It is
@@ -630,11 +641,13 @@
   top, centred in its 48px. --dock (0 to 1, written by useSearchDock) lives on
   the search dock, so a write restyles the field and nothing else. Below 64rem
   the bar comes up on its own before the field merges into it, and it must not
-  cover the live line, so the field sits 4.5rem under the live line: the bar's
-  3rem, the 8px it slides in from, and 1rem of clear page between the bar and
+  cover the live line, so the field sits 5rem under the live line: the bar's
+  3rem, the 8px it slides in from, and 24px of clear page between the bar and
   the field when the bar appears, at the moment the live line has just scrolled
-  out from under it. The hero's own bottom padding is part of the 4.5rem (1rem,
-  then 1.5rem from 48rem), so the dock adds the rest. See dockGeometry.
+  out from under it (dockGeometry). The hero's own bottom padding is part of
+  that (1rem, then 1.5rem from 48rem), so the dock adds the rest. The 24px is
+  px, not rem: it is scrolling the bar has to itself, and that does not grow
+  with the text.
 */
 .search-dock {
   position: sticky;
@@ -642,7 +655,7 @@
   z-index: 41;
   height: 2.75rem;
   min-width: 0;
-  margin-top: 3.5rem;
+  margin-top: calc(2rem + 32px);
   pointer-events: none;
   --dock: 0;
   --dock-x: 0px;
@@ -666,7 +679,18 @@
 
 @media (min-width: 48rem) {
   .search-dock {
-    margin-top: 3rem;
+    margin-top: calc(1.5rem + 32px);
+  }
+}
+
+/*
+  Below 64rem the bar is fixed and z 40. Until the field merges (data-docking),
+  it stays under it, so it can never cover the bar's buttons: not even under
+  Reduce Motion, where it snaps into the bar and rises through its place first.
+*/
+@media not all and (min-width: 64rem) {
+  .search-dock:not([data-docking]) {
+    z-index: 39;
   }
 }
 

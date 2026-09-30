@@ -8,7 +8,6 @@ import {
   type DockStore,
   dockFrame,
   dockGeometry,
-  PHONE_RANGE,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
@@ -50,9 +49,12 @@ const WIDE = "(min-width: 64rem)";
  * the field is still that far below it and the hero's last line (the live line)
  * has just scrolled out from under the bar's slide-in. The page's spacing puts
  * them at the same scroll position. The field then scrolls on up at the page's
- * pace, alone with the bar, and over the last PHONE_RANGE px before it pins it
- * merges into the bar (its x and width follow --dock). Nothing is ever pinned
- * over the page without the bar behind it, and the field never covers the bar.
+ * pace, alone with the bar for PHONE_GAP px, until its top reaches the bar's
+ * bottom edge; over the rest of the way to its pin it merges into the bar (its
+ * x and width follow --dock). Nothing is ever pinned over the page without the
+ * bar behind it, and the field is under the bar (see .search-dock) until it
+ * merges, so under Reduce Motion, where it only snaps at the end, it never
+ * covers the bar's buttons.
  * On a wide screen the field shares its row with the
  * chips, so it is a single move, and the bar comes up 67% of the way through it
  * (only once it is done under Reduce Motion, where the field snaps).
@@ -85,7 +87,7 @@ export function useSearchDock({
     let docking = false;
     let merging = false;
     let state: DockState = DOCK_REST;
-    let geometry: DockGeometry = { start: 0, range: PHONE_RANGE, barStart: 0, hysteresis: 8 };
+    let geometry: DockGeometry = { start: 0, range: 1, barStart: 0, hysteresis: 8 };
     const measure = () => {
       const hostStyle = getComputedStyle(host);
       const contentTop =
@@ -126,7 +128,7 @@ export function useSearchDock({
       const nextMerging = p > 0 && p < 1;
       if (nextDocking !== docking) {
         docking = nextDocking;
-        for (const element of [dock, chips]) {
+        for (const element of [dock, chips, bar]) {
           if (docking) element?.setAttribute("data-docking", "");
           else element?.removeAttribute("data-docking");
         }
@@ -242,9 +244,18 @@ export function CompactHeader({
     >
       <p data-bar-lead data-state={live} className="flex shrink-0 items-center gap-2.5">
         <StatusGlyph health={verdict.tone} size={20} className={STATUS_TEXT[verdict.tone]} cut="card" />
-        <span className="max-sm:sr-only">
+        {/*
+          From 640px the verdict and the check time sit in the flow, before the field's slot. On a phone the
+          slot needs the room, so the short verdict is laid over it, between the glyph and the buttons, and
+          fades out as the field merges in (data-docking, written by useSearchDock); "checked" stays for
+          screen readers only.
+        */}
+        <span
+          data-bar-verdict
+          className="max-sm:pointer-events-none max-sm:absolute max-sm:top-1/2 max-sm:right-[6.75rem] max-sm:left-11 max-sm:-translate-y-1/2 max-sm:overflow-hidden max-sm:text-ellipsis max-sm:whitespace-nowrap"
+        >
           <span className="block text-row leading-[18px]">{verdict.short}</span>
-          <span className="block text-footnote tabular-nums text-subtle">
+          <span className="block text-footnote tabular-nums text-subtle max-sm:sr-only">
             {live === "checking" ? (
               "Checking…"
             ) : live === "stale" ? (

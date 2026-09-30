@@ -656,7 +656,7 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
 }
 
 /** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up (PHONE_GAP in dock.ts). */
-const PHONE_GAP = 16;
+const PHONE_GAP = 24;
 
 /** The scroll offsets at which the dock changes, worked out from the page the way useSearchDock does. */
 type DockOffsets = {
@@ -691,9 +691,10 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
   }
   // The bar is fixed and comes up on its own while the field is still PHONE_GAP px below its bottom edge (the
   // page's spacing puts the live line just out from under the sliding bar at the same moment: a test of its own
-  // checks that). The field then rises 1:1 with the page and merges into the bar over its last 56px before the pin.
+  // checks that). The field then rises 1:1 with the page and merges into the bar once it has risen to the bar's
+  // bottom edge, over what is left of the way to its pin.
   const barStart = moveEnd - (barHeight + PHONE_GAP - (dockStick - barStick));
-  return { wide, natural, barStart, moveStart: moveEnd - 56, moveEnd };
+  return { wide, natural, barStart, moveStart: moveEnd - (barHeight - (dockStick - barStick)), moveEnd };
 }
 
 /**
@@ -741,6 +742,9 @@ test("brings the bar up on its own first, then merges the field into it", async 
   await hydrated(page);
   const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field shares a row with the chips and moves in one go");
+
+  // The bar has scrolling to itself, long enough for its fade (250ms) to be well under way before the merge.
+  expect(moveStart - barStart, "the stretch the bar is alone").toBeGreaterThanOrEqual(PHONE_GAP - 0.5);
 
   const { up } = await dockPath(page, 2);
   const stops = await sweepDock(page, up);
@@ -806,20 +810,33 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
   test.slow();
-  for (const width of [375, 390, 412, 430, 768, 900]) {
-    const at = `at ${width}px`;
+  for (const { width, rootPx } of [
+    { width: 375, rootPx: 16 },
+    { width: 390, rootPx: 16 },
+    { width: 412, rootPx: 16 },
+    { width: 430, rootPx: 16 },
+    { width: 768, rootPx: 16 },
+    { width: 900, rootPx: 16 },
+    { width: 430, rootPx: 32 },
+  ]) {
+    const at = `at ${width}px, ${rootPx}px text`;
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/");
     await expect(cards(page)).toHaveCount(SERVICES);
     await hydrated(page);
+    if (rootPx !== 16) {
+      await page.evaluate((px) => {
+        document.documentElement.style.fontSize = `${px}px`;
+      }, rootPx);
+      // The dock measures again when the hero and the bar change size.
+      await page.waitForTimeout(400);
+    }
     // The field is sticky: measure it at the top of the page, not where the last width left the scroll.
     await page.evaluate(() => window.scrollTo(0, 0));
     const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
-    // (c) The merge takes the last 56px before the pin, as it always has.
-    expect(moveEnd - moveStart, at).toBe(56);
     // The spacing under the hero's last line (the live line on a phone) is the bar's height, the 8px it slides
     // in from and PHONE_GAP: the smallest gap at which the bar can come up clear of that line with the field
-    // still PHONE_GAP below it.
+    // still PHONE_GAP below it, and about 80px at a 16px root.
     const { gap, barHeight } = await page.evaluate(() => {
       const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
       const field = document.querySelector(".search-field") as HTMLElement;
@@ -829,6 +846,10 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
     });
     expect(gap, at).toBeGreaterThanOrEqual(barHeight + 8 + PHONE_GAP - 1);
     expect(gap, at).toBeLessThanOrEqual(barHeight + 8 + PHONE_GAP + 2);
+    if (rootPx === 16) expect(gap, at).toBeLessThanOrEqual(88);
+    // The bar is alone for at least 24px of scrolling, and the merge has at least 46px.
+    expect(moveStart - barStart, at).toBeGreaterThanOrEqual(24 - 0.5);
+    expect(moveEnd - moveStart, at).toBeGreaterThanOrEqual(46 - 0.5);
 
     const { up } = await dockPath(page, 2);
     const stops = await sweepDock(page, up);
@@ -838,24 +859,78 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
     // (a) It comes up with only itself on screen: the field entirely below its bottom edge, with a visible gap,
     // the hero's last line already out from under it, and the field not yet moving.
     expect(first?.dock, at).toBe(0);
-    expect(first?.fieldTop ?? 0, at).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 8);
+    expect(first?.fieldTop ?? 0, at).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 16);
     for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
     for (const stop of shown.filter((stop) => stop.dock === 0)) {
       expect(stop.fieldTop, `${at}, ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
     }
-    // The bar has a stretch of scrolling to itself before the merge starts.
-    expect(moveStart, at).toBeGreaterThan(barStart);
-    // (b) Until then the field rises 1:1 with the page.
-    for (const stop of stops.filter((stop) => stop.scrollY <= moveStart + 0.5)) {
+    // Measured off the sweep, not worked out: the bar is up and the field still at 0 for a real stretch.
+    const firstMoving = stops.find((stop) => stop.dock > 0);
+    const docked = stops.find((stop) => stop.dock === 1);
+    expect(
+      firstMoving && first ? firstMoving.scrollY - first.scrollY : 0,
+      `${at}: the bar alone`,
+    ).toBeGreaterThanOrEqual(22);
+    // (b) The field rises 1:1 with the page the whole way, merging or not, until it reaches its pin.
+    for (const stop of stops.filter((stop) => stop.scrollY <= moveEnd)) {
       expect(stop.fieldTop, `${at}, ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
     }
-    // (c) The merge takes about 56px of scrolling: --dock leaves 0 within a step of moveStart and reaches 1 at moveEnd.
+    // (c) The merge is a real stretch of scrolling: --dock leaves 0 within a few px of moveStart, and reaches 1
+    // within a few px of moveEnd, never after it.
     const merging = stops.filter((stop) => stop.dock > 0 && stop.dock < 1);
     expect(merging.length, at).toBeGreaterThan(10);
-    expect(merging[0]?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
-    expect(merging[0]?.scrollY ?? 0, at).toBeLessThanOrEqual(moveStart + 6);
-    expect(stops.find((stop) => stop.dock === 1)?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveEnd - 6);
+    expect(firstMoving?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
+    expect(firstMoving?.scrollY ?? 0, at).toBeLessThanOrEqual(moveStart + 6);
+    expect(docked?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveEnd - 6);
+    expect(docked?.scrollY ?? Number.POSITIVE_INFINITY, at).toBeLessThanOrEqual(moveEnd + 2);
+    expect((docked?.scrollY ?? 0) - (firstMoving?.scrollY ?? 0), `${at}: the merge`).toBeGreaterThanOrEqual(46 - 6);
   }
+});
+
+test("keeps the bar's buttons clear of the field under Reduce Motion on a phone", async ({ page }) => {
+  test.slow();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field shares a row with the chips");
+  // Under Reduce Motion the field snaps into the bar at moveEnd, so until then it is full width and rises
+  // through the bar's own place: it must be under the bar, not over its buttons.
+  const stops = await page.evaluate(
+    async ({ from, to }) => {
+      const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+      const field = document.querySelector(".search-field") as HTMLElement;
+      const refresh = [...bar.querySelectorAll("button")].find((button) =>
+        /^Refresh/.test(button.getAttribute("aria-label") ?? button.textContent ?? ""),
+      );
+      if (!refresh) throw new Error("no Refresh button in the bar");
+      const seen: { y: number; shown: string | null; hits: boolean; overlaps: boolean; docked: boolean }[] = [];
+      for (let y = from; y <= to; y += 2) {
+        window.scrollTo(0, y);
+        await frame();
+        await frame();
+        const box = refresh.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        const fieldBox = field.getBoundingClientRect();
+        seen.push({
+          y,
+          shown: bar.getAttribute("data-shown"),
+          hits: Boolean(hit && refresh.contains(hit)),
+          overlaps: fieldBox.top < bar.getBoundingClientRect().bottom && fieldBox.right > box.left,
+          docked: document.querySelector(".search-dock")?.hasAttribute("data-docking") ?? false,
+        });
+      }
+      return seen;
+    },
+    { from: Math.round(moveEnd - 120), to: Math.round(moveEnd + 30) },
+  );
+  const shown = stops.filter((stop) => stop.shown === "true");
+  expect(shown.length).toBeGreaterThan(20);
+  // Not vacuous: the full-width field does rise through the bar's place before it snaps in.
+  expect(stops.filter((stop) => stop.overlaps && !stop.docked).length).toBeGreaterThan(5);
+  for (const stop of shown) expect(stop.hits, `Refresh at ${stop.y}`).toBe(true);
 });
 
 test("keeps the bar up while the page hovers just above where it appears", async ({ page }) => {
@@ -1931,7 +2006,8 @@ test("keeps the tap areas of the verdict's links apart when the sentence wraps",
     { width: 390, rootPx: 32 },
   ]) {
     const at = `at ${width}px, ${rootPx}px text`;
-    await page.setViewportSize({ width, height: 800 });
+    // Tall, so the whole sentence is on screen at 200% text: elementFromPoint only answers for what is.
+    await page.setViewportSize({ width, height: 2400 });
     await page.evaluate((px) => {
       document.documentElement.style.fontSize = `${px}px`;
     }, rootPx);
@@ -2104,9 +2180,9 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
   await expect(sub).toContainText("The other ten are running normally.");
-  await expect(sub).toContainText("I couldn't read 1.");
+  await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
-  await expect(links).toHaveText(["AWS", "GCP", "Epic"]);
+  await expect(links).toHaveText(["AWS", "GCP", "Epic", "Android"]);
   await expect(links.first()).toHaveAttribute("href", "#service-aws");
   // Nothing hand-written while there is something to look at.
   await expect(page.getByText("all quiet")).toHaveCount(0);

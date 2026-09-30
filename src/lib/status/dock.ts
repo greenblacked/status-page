@@ -42,9 +42,11 @@ export function createDockStore(): DockStore {
   };
 }
 
-/** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up, and the scrolling the merge takes. */
-export const PHONE_GAP = 16;
-export const PHONE_RANGE = 56;
+/**
+ * On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up. It is
+ * also the scrolling the bar has to itself: the field merges only once it has risen to the bar's bottom edge.
+ */
+export const PHONE_GAP = 24;
 /** How far above its place the hidden bar sits, in px (the translateY of .compact-header[data-shown="false"] in styles.css): the bar slides down this far as it comes up. */
 export const BAR_RISE = 8;
 /** On a wide screen: the scrolling the one move takes, and where in it (0 to 1) the bar comes up. */
@@ -68,6 +70,12 @@ export type DockGeometry = {
  * scroll position at which the field reaches its pin; every other offset is
  * worked out from it. `pin` and `barTop` are the field's and the bar's `top`,
  * `barHeight` the bar's height (phone only).
+ *
+ * On a phone the bar is fixed and comes up first, alone: PHONE_GAP px above
+ * where the field's top would meet its bottom edge. The merge starts only when
+ * the field has risen to that edge, so the field never sits over the bar before
+ * it merges, whatever the bar's height (a larger text size makes it taller).
+ * At a 16px root that is a bar alone for 24px of scrolling, then a merge over 46.
  *
  * `contentBottom` (phone only) is where the hero's last line ends in the page.
  * The bar is never raised over it. The page's spacing is sized so this never
@@ -107,7 +115,7 @@ export function dockGeometry({
     };
   }
   const barStart = Math.max(end - (barHeight + PHONE_GAP - (pin - barTop)), contentBottom - (barTop - BAR_RISE));
-  const start = Math.max(end - PHONE_RANGE, barStart);
+  const start = Math.max(end - (barHeight - (pin - barTop)), barStart);
   return { start, range: Math.max(1, end - start), barStart, hysteresis: 8 };
 }
 
