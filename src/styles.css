@@ -340,10 +340,39 @@
   box-shadow: var(--shadow-border);
 }
 
+/*
+  Tilt lighting's light: --light-x and --light-y, each -1..1, set inline on
+  the glass panels by use-tilt-lighting.ts. Registered as numbers that are
+  NOT inherited, so a write re-styles the panel and its two pseudo-elements
+  and not everything inside it (an unregistered custom property is inherited,
+  which measured about 8 ms a write on a full board). The pseudo-elements,
+  which draw the light, take the value from their panel with an explicit
+  `inherit`. A browser without @property (Safari before 16.4) ignores the
+  registration and inherits the plain way: the same picture, at the higher
+  cost. Unset, both are 0, and the board looks as it did without this.
+*/
+@property --light-x {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --light-y {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.glass::before,
+.glass-chrome::before,
+.spotlight::after {
+  --light-x: inherit;
+  --light-y: inherit;
+}
+
 /* The specular sweep: light entering from the upper left. With Tilt lighting
-   on, --light-x (-1..1, set inline on the glass panels by use-tilt-lighting.ts) turns the
-   angle by up to 28deg; unset, it is the fixed 125deg it always was. The
-   variable is stepped by script and never transitioned. */
+   on, --light-x turns the angle by up to 28deg; unset, it is the fixed 125deg
+   it always was. The variable is stepped by script and never transitioned. */
 .glass::before,
 .glass-chrome::before {
   content: "";
