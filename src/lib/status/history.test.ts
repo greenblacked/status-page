@@ -21,14 +21,14 @@ function board(generatedAt: string, services: Array<Pick<ServiceSnapshot, "id" |
 }
 
 describe("worseHistoryHealth", () => {
-  it("ranks outage > degraded > maintenance > unknown > operational", () => {
-    expect(worseHistoryHealth("operational", "unknown")).toBe("unknown");
-    expect(worseHistoryHealth("unknown", "maintenance")).toBe("maintenance");
-    expect(worseHistoryHealth("maintenance", "degraded")).toBe("degraded");
+  it("ranks outage > degraded > unknown > maintenance > operational, the board's one order", () => {
+    expect(worseHistoryHealth("operational", "maintenance")).toBe("maintenance");
+    expect(worseHistoryHealth("maintenance", "unknown")).toBe("unknown");
+    expect(worseHistoryHealth("unknown", "degraded")).toBe("degraded");
     expect(worseHistoryHealth("degraded", "outage")).toBe("outage");
     expect(worseHistoryHealth("outage", "operational")).toBe("outage");
-    // unknown must not beat degraded: that is the board attention order, not history.
-    expect(worseHistoryHealth("unknown", "degraded")).toBe("degraded");
+    // A real degradation is never masked by an unreadable source.
+    expect(worseHistoryHealth("degraded", "unknown")).toBe("degraded");
   });
 });
 

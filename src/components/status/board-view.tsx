@@ -4,19 +4,14 @@ import {
   type ComponentProps,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useId,
   useMemo,
   useRef,
   useState,
 } from "react";
-import {
-  CompactHeader,
-  createDockStore,
-  type DockStore,
-  useDockState,
-  useSearchDock,
-} from "@/components/status/compact-header";
+import { CompactHeader, useDockState, useSearchDock } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
 import { LensField } from "@/components/status/lens-field";
@@ -37,6 +32,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
 import { APP_NAME, CATEGORIES } from "@/lib/status/catalog";
+import { createDockStore, type DockStore } from "@/lib/status/dock";
 import {
   type BoardFilters,
   DEFAULT_FILTERS,
@@ -47,21 +43,32 @@ import {
 } from "@/lib/status/filters";
 import { attentionBreakdown } from "@/lib/status/health";
 import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
+import { canvasFont, placeholderFits } from "@/lib/status/placeholder";
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import {
   CACHE_TTL_MS,
+  everyInterval,
   type Freshness,
   formatUtcTime,
   lastPulseAt,
   nextRefetchAt,
+  PULSE_INTERVAL_MS,
   parseTimestamp,
   pickRefetchJitter,
+  spokenDuration,
 } from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
 const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [{ id: "all", label: "All" }, ...CATEGORIES];
+
+/**
+ * One string, so server rendering emits one text node. Interpolated JSX children would come out as
+ * "checks <!-- -->every two minutes<!-- -->; ...", which breaks any text match on the served HTML
+ * (scripts/ci/smoke.sh matches this sentence).
+ */
+const CADENCE_NOTE = `This page checks ${everyInterval(PULSE_INTERVAL_MS)}; the server reads the official vendor feeds and keeps them for ${spokenDuration(CACHE_TTL_MS)}.`;
 
 // Long enough for a search to settle between keystrokes.
 const ANNOUNCE_DELAY_MS = 700;
@@ -339,8 +346,9 @@ export function BoardView({
           Skip to services
         </a>
         <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-3 sm:pt-12">
-          <div className="flex items-start justify-between gap-4">
-            <div className="hero-recede min-w-0">
+          {/* Wraps, so at a large text size the buttons drop under the text instead of squeezing it to a word a line. */}
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="hero-recede min-w-[min(10rem,100%)] flex-1">
               <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
                 <LiveSignal state={freshness.state} />
                 Live status board
@@ -349,7 +357,7 @@ export function BoardView({
                 {APP_NAME}
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted text-pretty sm:text-base">
-                Official vendor status for {board.services.length} services, checked every two minutes.
+                Official vendor status for {board.services.length} services, checked {everyInterval(PULSE_INTERVAL_MS)}.
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -404,6 +412,7 @@ export function BoardView({
                 <SearchInput
                   ref={searchRef}
                   store={dock}
+                  dockRef={dockRef}
                   value={query}
                   onChange={(event) => updateFilters({ query: event.target.value })}
                   type="search"
@@ -491,14 +500,14 @@ export function BoardView({
           </section>
 
           {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
-          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-3 basis-full pb-20 pt-2 outline-none">
+          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-3 basis-full pt-2 outline-none">
             {boardQuery.isError ? (
               <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
                 Could not refresh official sources. Showing the last successful snapshot.
               </p>
             ) : null}
 
-            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
               <div className="flex min-w-0 flex-col gap-8">
                 {fetching && !board.services.length ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -575,100 +584,96 @@ export function BoardView({
               {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
               <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
             </div>
-
-            {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
-            <footer className="mt-14 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] text-sm text-subtle">
-              <p>
-                Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
-                Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
-              </p>
-              <p>
-                This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45
-                seconds.
-              </p>
-              <p>
-                <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="https://github.com/greenblacked/status-page"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Source on GitHub
-                  <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-                </a>
-                {" · "}
-                <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
-                  target="_blank"
-                  rel="noopener noreferrer license"
-                >
-                  MIT License
-                  <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-                </a>
-                : free to use, copy, modify and share, with the copyright notice kept.
-              </p>
-              <p>
-                Use the board elsewhere:{" "}
-                <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="/api/status.json"
-                >
-                  JSON API
-                </a>
-                {" · "}
-                <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="/feed.xml"
-                >
-                  Atom feed
-                </a>{" "}
-                for Slack, Teams and feed readers ·{" "}
-                <a
-                  className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="/api/badge/board"
-                >
-                  status badges
-                </a>
-                .
-              </p>
-              {/*
+          </main>
+          {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
+          <footer className="mt-14 flex basis-full flex-col gap-2 pb-[calc(5rem+env(safe-area-inset-bottom))] text-sm text-subtle">
+            <p>
+              Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
+              Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
+            </p>
+            <p>{CADENCE_NOTE}</p>
+            <p>
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Source on GitHub
+                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+              </a>
+              {" · "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
+                target="_blank"
+                rel="noopener noreferrer license"
+              >
+                MIT License
+                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+              </a>
+              : free to use, copy, modify and share, with the copyright notice kept.
+            </p>
+            <p>
+              Use the board elsewhere:{" "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/api/status.json"
+              >
+                JSON API
+              </a>
+              {" · "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/feed.xml"
+              >
+                Atom feed
+              </a>{" "}
+              for Slack, Teams and feed readers ·{" "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/api/badge/board"
+              >
+                status badges
+              </a>
+              .
+            </p>
+            {/*
               On every screen width: with the single-key shortcuts off, ? no
               longer opens the list, and this button is the way back to the
               switches, including on a desktop zoomed to a phone's width, and
               the only way to them on a touch screen.
             */}
-              <p>
-                <button
-                  type="button"
-                  className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  onClick={() => setSettingsOpen(true)}
-                >
-                  Settings and shortcuts
-                </button>
-                {singleKey.enabled ? (
-                  <span className="hidden sm:inline">
-                    {" "}
-                    (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
-                  </span>
-                ) : null}
-              </p>
-            </footer>
-            <SettingsDialog
-              open={settingsOpen}
-              onClose={() => setSettingsOpen(false)}
-              singleKey={singleKey.enabled}
-              onSingleKeyChange={singleKey.setEnabled}
-              reduceGlass={reduceGlass.enabled}
-              onReduceGlassChange={reduceGlass.setEnabled}
-              tilt={{
-                supported: tilt.supported,
-                enabled: tilt.enabled,
-                status: tilt.status,
-                onChange: tilt.setEnabled,
-              }}
-            />
-          </main>
+            <p>
+              <button
+                type="button"
+                className="focus-ring pressable touch-target rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                onClick={() => setSettingsOpen(true)}
+              >
+                Settings and shortcuts
+              </button>
+              {singleKey.enabled ? (
+                <span className="hidden sm:inline">
+                  {" "}
+                  (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
+                </span>
+              ) : null}
+            </p>
+          </footer>
+          <SettingsDialog
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            singleKey={singleKey.enabled}
+            onSingleKeyChange={singleKey.setEnabled}
+            reduceGlass={reduceGlass.enabled}
+            onReduceGlassChange={reduceGlass.setEnabled}
+            tilt={{
+              supported: tilt.supported,
+              enabled: tilt.enabled,
+              status: tilt.status,
+              onChange: tilt.setEnabled,
+            }}
+          />
         </div>
       </div>
     </div>
@@ -727,7 +732,8 @@ function SummaryPanel({
 
   return (
     <section aria-labelledby="board-headline" className="glass rounded-xl p-5 sm:p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+      {/* A size container: below lg, whether the counts fit beside the dial is a question of this row's width in rem, so a large text size stacks them. */}
+      <div className="@container flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <h2
             id="board-headline"
@@ -759,7 +765,7 @@ function SummaryPanel({
                   <a
                     href={`#${serviceAnchor(service.id)}`}
                     onClick={(event) => onReveal(service, event)}
-                    className="focus-ring pressable inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted hover:text-fg"
+                    className="focus-ring pressable inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset pointer-coarse:min-h-11 px-3 text-xs text-muted hover:text-fg"
                   >
                     <HealthDot health={service.health} />
                     {service.name}
@@ -770,8 +776,8 @@ function SummaryPanel({
           ) : null}
         </div>
         {/* On a phone the counts stack into a specimen table beside the dial; wider, they sit in a row. */}
-        <div className="flex items-center justify-between gap-5 sm:gap-10 lg:shrink-0 lg:justify-end">
-          <dl className="flex min-w-0 flex-1 flex-col gap-1.5 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
+        <div className="flex flex-col gap-5 @min-[15rem]:flex-row @min-[15rem]:items-center @min-[15rem]:max-lg:justify-between sm:gap-10 lg:shrink-0 lg:justify-end">
+          <dl className="flex min-w-0 flex-col gap-1.5 @min-[15rem]:max-sm:flex-1 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
             <Stat label="Operational" value={board.counts.operational} of={total} />
             <Stat label="Attention" value={attention} />
             <Stat label="Sources" value={total - board.counts.unknown} of={total} />
@@ -780,7 +786,7 @@ function SummaryPanel({
             now={now}
             jitterMs={refetchJitter}
             tone={headline.tone}
-            className="size-20 min-[380px]:size-24 sm:size-28 lg:size-32"
+            className="mx-auto size-[80px] min-[380px]:size-[96px] @min-[15rem]:mx-0 sm:size-[112px] lg:size-[128px]"
           />
         </div>
       </div>
@@ -823,14 +829,53 @@ function WhileBarUp({ store, children }: { store: DockStore; children: (barUp: b
   return children(useDockState(store).barShown);
 }
 
+const LONG_PLACEHOLDER = "Search GCP, CS2 Europe, RouterOS…";
+const SHORT_PLACEHOLDER = "Search…";
+
+/**
+ * Whether `text` fits the field as a placeholder, unclipped. The field at rest
+ * is as wide as its dock (`dockRef`, which the merge into the bar never
+ * resizes), so this measures the text against that width less the input's own
+ * padding, and again when either changes. True until measured, which is what
+ * the server rendered, so hydration sees the same placeholder.
+ */
+function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null>): boolean {
+  const [fits, setFits] = useState(true);
+  useEffect(() => {
+    const dock = dockRef.current;
+    const input = dock?.querySelector("input");
+    const canvas = document.createElement("canvas").getContext("2d");
+    if (!dock || !input || !canvas) return;
+    const measure = () => {
+      const style = getComputedStyle(input);
+      canvas.font = canvasFont(style);
+      setFits(placeholderFits(dock.clientWidth, canvas.measureText(text).width, style));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(dock);
+    // The system font can arrive after the first measure.
+    void document.fonts?.ready.then(measure);
+    return () => observer.disconnect();
+  }, [text, dockRef]);
+  return fits;
+}
+
 /**
  * The search field's input. Its placeholder is the long one in the hero and the
  * short one once the field is fully in the bar, and changes only there (never
- * while the field is part way), in this component rather than the board's.
+ * while the field is part way), in this component rather than the board's. The
+ * short one also stands in wherever the field, at rest, is too narrow to show
+ * the long one whole (a small phone, or beside the chips just past 1024px).
  */
-function SearchInput({ store, ...props }: { store: DockStore } & ComponentProps<typeof Input>) {
+function SearchInput({
+  store,
+  dockRef,
+  ...props
+}: { store: DockStore; dockRef: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
   const { docked } = useDockState(store);
-  return <Input placeholder={docked ? "Search…" : "Search GCP, CS2 Europe, RouterOS…"} {...props} />;
+  const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
+  return <Input placeholder={docked || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
 }
 
 /**
@@ -863,7 +908,7 @@ function RefreshButton({
       aria-busy={fetching}
       aria-label="Refresh status now"
     >
-      <RefreshCw className={cn("size-3.5", fetching && "animate-spin")} />
+      <RefreshCw className={cn("size-3.5", fetching && "motion-safe:animate-spin")} />
       <span className="hidden sm:inline">Refresh</span>
     </Button>
   );
@@ -902,6 +947,7 @@ function AlertsButton({
         // title explains the current state to pointer users.
         aria-pressed={state === "on"}
         aria-label="Browser alerts"
+        data-alerts-toggle
         title={ALERT_LABEL[state]}
       >
         <Icon className="size-3.5" />

@@ -110,8 +110,8 @@ async function traceGlides(page: Page): Promise<void> {
     tracked.__glideTrace = [];
     const note = (entry: Record<string, unknown>) =>
       tracked.__glideTrace?.push({ ...entry, t: Math.round(performance.now()) });
-    for (const type of ["pointerdown", "keydown", "input"]) {
-      window.addEventListener(type, (event) => note({ type, trusted: event.isTrusted }), true);
+    for (const type of ["pointerdown", "keydown", "input", "resize", "orientationchange"]) {
+      window.addEventListener(type, (event) => note({ type, trusted: event.isTrusted, width: innerWidth }), true);
     }
     let section: string | null | undefined;
     new MutationObserver(() => {
@@ -814,6 +814,40 @@ test("changes the search placeholder only where the field is at rest", async ({ 
   }
 });
 
+test("never clips the search placeholder, at any width", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const search = page.getByRole("searchbox", { name: "Search services" }).or(page.getByLabel("Search services"));
+  const long = "Search GCP, CS2 Europe, RouterOS…";
+  for (const [width, placeholder] of [
+    [1280, long],
+    [1100, "Search…"],
+    [1024, "Search…"],
+    [768, long],
+    [412, long],
+    [320, "Search…"],
+  ] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(search, `placeholder at ${width}px`).toHaveAttribute("placeholder", placeholder);
+    const { text, room } = await search.evaluate((input: HTMLInputElement) => {
+      const style = getComputedStyle(input);
+      const probe = document.createElement("span");
+      probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${style.font}`;
+      probe.textContent = input.placeholder;
+      document.body.appendChild(probe);
+      const text = probe.getBoundingClientRect().width;
+      probe.remove();
+      return {
+        text,
+        room: input.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight),
+      };
+    });
+    expect(text, `the placeholder fits the field at ${width}px`).toBeLessThanOrEqual(room);
+  }
+});
+
 test("keeps one search input, focus, text and caret intact through the dock", async ({ page }) => {
   test.slow();
   await page.goto("/");
@@ -1068,12 +1102,12 @@ test("leads Needs attention with the most urgent service and follows the data", 
   await openFixture(page, () => board);
 
   const attention = group(page, "attention");
-  // AWS is an outage, Google Cloud is degraded, Epic is in maintenance, Android is unknown.
+  // AWS is an outage, Google Cloud is degraded, Android is unknown, Epic is in maintenance.
   await expect(attention).toHaveCount(4);
   await expect(attention.nth(0)).toHaveAttribute("id", "service-aws");
   await expect(attention.nth(1)).toHaveAttribute("id", "service-gcp");
-  await expect(attention.nth(2)).toHaveAttribute("id", "service-epic");
-  await expect(attention.nth(3)).toHaveAttribute("id", "service-android");
+  await expect(attention.nth(2)).toHaveAttribute("id", "service-android");
+  await expect(attention.nth(3)).toHaveAttribute("id", "service-epic");
 
   // Exactly one card is the highlight, and it is the first.
   const highlight = page.locator('article[data-highlight="true"]');
@@ -1379,6 +1413,7 @@ test("does not glide a filter that follows a star which moved nothing", async ({
 
 test("does not glide a resize that follows a star which moved nothing", async ({ page }) => {
   await recordAnimations(page);
+  await traceGlides(page);
   await openFixture(page, () => fixtureBoard(Date.now()));
   const before = await cardGlides(page);
 
@@ -1394,6 +1429,34 @@ test("does not glide a resize that follows a star which moved nothing", async ({
     () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
   );
   // ...and the next unrelated change to the board must not glide the cards across against the old layout.
+  await page.evaluate(() => document.getElementById("services")?.appendChild(document.createTextNode(" ")));
+  await motionDone(page);
+  try {
+    expect(await longGlides(page, before)).toEqual([]);
+  } catch (error) {
+    console.log(`[glide] ${JSON.stringify({ before, ...(await glideTrace(page)) })}`);
+    throw error;
+  }
+});
+
+test("does not glide a resize whose event the board has not seen", async ({ page }) => {
+  // The page's resize event is dispatched with the next frame, after a change to the board can already have
+  // been seen against the new layout. Swallowing it stands in for that order.
+  await page.addInitScript(() => {
+    window.addEventListener("resize", (event) => event.stopImmediatePropagation(), true);
+  });
+  await recordAnimations(page);
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const before = await cardGlides(page);
+
+  const lead = group(page, "attention").first();
+  await toggleStar(page, () => lead.locator("button[aria-pressed]").first().click());
+  await expect(lead.locator("button[aria-pressed]").first()).toHaveAttribute("aria-pressed", "true");
+
+  const size = page.viewportSize();
+  if (!size) throw new Error("no viewport size");
+  await page.setViewportSize({ width: size.width > 800 ? 700 : 900, height: size.height });
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).not.toBe(size.width);
   await page.evaluate(() => document.getElementById("services")?.appendChild(document.createTextNode(" ")));
   await motionDone(page);
   expect(await longGlides(page, before)).toEqual([]);
@@ -1649,6 +1712,21 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
   await expect(footer).toContainText("This page checks every two minutes; the server reads the official vendor feeds");
 });
 
+test("puts the footer in a contentinfo landmark outside main, and names the board log", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  // The role only exists for a footer that is not inside main, an article or a section.
+  const footer = page.getByRole("contentinfo");
+  await expect(footer).toHaveCount(1);
+  await expect(footer).toContainText("Status Page reads vendor status feeds only");
+  await expect(page.locator("main footer, main dialog")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Board log" })).toHaveCount(1);
+  await hydrated(page);
+  // The dialog still opens from the footer's button.
+  await footer.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
 test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   // The fixture has a fresh channel on both cards; make Apple OS's plain, as
@@ -1668,4 +1746,130 @@ test("drops the Operational placeholder from release cards and names a fresh rel
   await expect(apple.locator("[data-card-header]").getByText("Operational")).toHaveCount(0);
   await expect(apple.locator("[data-card-header]").getByText("New release")).toHaveCount(0);
   await expect(apple.getByRole("button", { name: /^Star / })).toBeVisible();
+});
+
+test("gives every control on the page a 44pt target on a touch screen", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  test.skip(!coarse, "the touch sizes are for a coarse pointer, which this project does not have");
+  // The fixture board has services that need attention, so their chips are on screen.
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const small = await page.evaluate(() => {
+    const targets = [
+      ...document.querySelectorAll<HTMLElement>(
+        [
+          "header button",
+          '[role="group"][aria-label="Filter services"] button',
+          '[aria-label="Services that need attention"] a',
+          "footer a",
+          "footer button",
+        ].join(","),
+      ),
+    ];
+    return {
+      count: targets.length,
+      small: targets
+        .map((element) => ({
+          name: element.textContent?.trim() || element.ariaLabel,
+          box: element.getBoundingClientRect(),
+        }))
+        .filter(({ box }) => box.height > 0 && (box.height < 43.5 || box.width < 43.5))
+        .map(({ name, box }) => `${name}: ${Math.round(box.width)}x${Math.round(box.height)}`),
+    };
+  });
+  // Not vacuous: two hero buttons (one on an iPhone), the chips, the attention chips and the footer's links.
+  expect(small.count).toBeGreaterThan(12);
+  expect(small.small).toEqual([]);
+});
+
+test("lays the hero out at 200% root text on a phone: no overflow, no overlap", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = "html { font-size: 32px !important; }";
+      document.head.appendChild(style);
+    });
+  });
+  const board = fixtureBoard(Date.now());
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await openFixture(page, () => board);
+    const layout = await page.evaluate(() => {
+      const box = (selector: string) => {
+        const rect = document.querySelector(selector)?.getBoundingClientRect();
+        if (!rect) throw new Error(`no ${selector}`);
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
+      };
+      return {
+        rootPx: getComputedStyle(document.documentElement).fontSize,
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+        dial: box(".period-dial"),
+        counts: box("section[aria-labelledby='board-headline'] dl"),
+        blurb: box("header p.max-w-xl"),
+        buttons: box("header .shrink-0"),
+        viewport: window.innerWidth,
+      };
+    });
+    const at = `at ${width}px`;
+    expect(layout.rootPx).toBe("32px");
+    expect(layout.overflow, `horizontal overflow ${at}`).toBeLessThanOrEqual(0);
+    // The counts keep their width, and the dial sits below them rather than over them.
+    expect(layout.counts.width, `counts ${at}`).toBeGreaterThan(120);
+    expect(layout.dial.top, `dial under the counts ${at}`).toBeGreaterThanOrEqual(layout.counts.bottom - 1);
+    // The blurb keeps a readable measure, and stays inside the screen with the buttons under it.
+    expect(layout.blurb.width, `blurb ${at}`).toBeGreaterThan(200);
+    expect(layout.blurb.right, `blurb inside the screen ${at}`).toBeLessThanOrEqual(layout.viewport);
+    expect(layout.buttons.top, `buttons under the blurb ${at}`).toBeGreaterThanOrEqual(layout.blurb.bottom - 1);
+  }
+});
+
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+  test(`${reducedMotion === "reduce" ? "stills" : "pulses"} an outage dot ${reducedMotion === "reduce" ? "under" : "without"} reduced motion`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion });
+    await openFixture(page, () => fixtureBoard(Date.now()));
+    const dot = page.locator('[aria-label="Services that need attention"] .bg-down').first();
+    await expect(dot).toBeVisible();
+    const animation = await dot.evaluate((element) => getComputedStyle(element).animationName);
+    expect(animation).toBe(reducedMotion === "reduce" ? "none" : "pulse");
+  });
+}
+
+test("keeps the live bar the same height while checking and live at phone widths", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  const board = fixtureBoard(Date.now());
+  await page.setViewportSize({ width: 390, height: 800 });
+  await openFixture(page, () => board);
+  const bar = page.getByTestId("live-bar");
+  const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
+  // A later route wins: it holds the forced refresh back, then hands it on to the fixture's route.
+  let release: () => void = () => undefined;
+  let held: Promise<void> = Promise.resolve();
+  await page.route("**/_serverFn/**", async (route) => {
+    if (route.request().method() === "POST") await held;
+    await route.fallback();
+  });
+  try {
+    for (const width of [320, 375, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(bar).toContainText("Live");
+      const live = (await bar.boundingBox())?.height ?? 0;
+      held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await refresh.click();
+      await expect(bar).toContainText("Checking");
+      const checking = (await bar.boundingBox())?.height ?? 0;
+      release();
+      await expect(refresh).toHaveAttribute("aria-busy", "false");
+      expect(checking, `checking against live at ${width}px`).toBe(live);
+      expect(live, `a measured bar at ${width}px`).toBeGreaterThan(0);
+    }
+  } finally {
+    release();
+  }
 });

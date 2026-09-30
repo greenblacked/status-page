@@ -15,11 +15,16 @@
 # answer. Sigstore outages have lasted over a minute, so the four attempts
 # span 90 seconds (AUDIT_SIGNATURES_BACKOFF=0 makes the waits zero, for tests).
 #
-# Run locally: ./scripts/ci/audit-signatures.sh (after `npm ci`)
+# With a directory argument it audits the install in that directory instead
+# of the project's (npm-pin.sh passes tools/npm).
+#
+# Run locally: ./scripts/ci/audit-signatures.sh [dir] (after `npm ci`)
 set -uo pipefail
 
 attempts=4
 backoff="${AUDIT_SIGNATURES_BACKOFF:-15}"
+prefix=()
+[ -n "${1:-}" ] && prefix=(--prefix "$1")
 tuf_cache="$(npm config get cache)/_tuf"
 
 for attempt in $(seq 1 "$attempts"); do
@@ -27,7 +32,7 @@ for attempt in $(seq 1 "$attempts"); do
   [ "$attempt" -gt 1 ] && extra="--prefer-online"
   # $extra unquoted on purpose: empty on the first attempt, one flag after.
   # shellcheck disable=SC2086
-  if output="$(npm audit signatures $extra 2>&1)"; then
+  if output="$(npm audit signatures ${prefix[@]+"${prefix[@]}"} $extra 2>&1)"; then
     printf '%s\n' "$output"
     exit 0
   fi

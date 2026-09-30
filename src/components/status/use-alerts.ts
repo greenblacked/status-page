@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { alertFor } from "@/lib/status/alerts";
+import { type AlertDebounce, alertChanges, alertFor, emptyAlertDebounce } from "@/lib/status/alerts";
 import { pageAlertsUnsupported } from "@/lib/status/alerts-support";
-import { diffBoards } from "@/lib/status/diff";
 import type { BoardSnapshot } from "@/lib/status/types";
 
 const STORAGE_KEY = "status-bar:alerts";
@@ -32,6 +31,8 @@ function writePreference(on: boolean): void {
 export function useBoardAlerts(board: BoardSnapshot): { state: AlertsState; toggle: () => void } {
   const [state, setState] = useState<AlertsState>("off");
   const previous = useRef<BoardSnapshot | null>(null);
+  // What a change to or from Unknown must survive before it alerts (see alertChanges).
+  const debounce = useRef<AlertDebounce>(emptyAlertDebounce());
 
   useEffect(() => {
     if (!("Notification" in window)) return setState("unsupported");
@@ -44,9 +45,14 @@ export function useBoardAlerts(board: BoardSnapshot): { state: AlertsState; togg
   useEffect(() => {
     const before = previous.current;
     previous.current = board;
-    if (state !== "on" || !before || before.generatedAt === board.generatedAt) return;
+    if (!before || before.generatedAt === board.generatedAt) return;
+    // Every update advances the Unknown debounce, whether or not it may alert,
+    // so "two updates in a row" counts updates and not alerts.
+    const settled = alertChanges(debounce.current, before, board);
+    debounce.current = settled.state;
+    if (state !== "on") return;
     if (document.visibilityState === "visible" && document.hasFocus()) return;
-    for (const change of diffBoards(before, board)) {
+    for (const change of settled.changes) {
       const message = alertFor(change);
       try {
         new Notification(message.title, { body: message.body, tag: message.tag, icon: "/favicon.svg" });

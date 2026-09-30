@@ -30,17 +30,25 @@ export const norm = (text: string) => text.trim().toLowerCase();
  * "scheduled for 22:00 UTC" instead. The start is the same text on the
  * server and the client; the duration needs the visitor's clock, so it
  * waits for `now`.
+ *
+ * With `scheduled`, the item is one the vendor still reports as not started
+ * (upcoming maintenance). It never reads "since" or shows a running
+ * duration, which would contradict its label: once the time has passed it
+ * reads "was due 22:00 UTC".
  */
 export function IncidentSince({
   startedAt,
   reference,
   now,
+  scheduled = false,
   className,
 }: {
   startedAt: string | undefined;
   /** When the card was checked; a start on another day shows its date. */
   reference: number;
   now: number;
+  /** The vendor has not started this yet: no "since", no running duration. */
+  scheduled?: boolean;
   className?: string;
 }) {
   const at = parseTimestamp(startedAt);
@@ -48,11 +56,11 @@ export function IncidentSince({
   const { upcoming, duration } = incidentStart(at, now, reference);
   return (
     <span className={cn("block font-mono text-[11px] tabular-nums text-subtle", className)}>
-      {upcoming ? "scheduled for " : "since "}
+      {upcoming ? "scheduled for " : scheduled ? "was due " : "since "}
       <time dateTime={new Date(at).toISOString()}>
         {formatUtcTime(at, Number.isFinite(reference) ? reference : at)}
       </time>
-      {duration ? (
+      {duration && !scheduled ? (
         <>
           {" · "}
           <time dateTime={duration.iso}>

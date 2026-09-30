@@ -25,6 +25,16 @@ updates:
       # this major by hand together with engines.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+  # The npm CLI that CI installs by hash (tools/npm, scripts/ci/npm-pin.sh).
+  # A bump here stays red until packageManager in package.json moves to the
+  # same version: `npm-pin.sh check` says so.
+  - package-ecosystem: npm
+    directory: /tools/npm
+    target-branch: dev
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev

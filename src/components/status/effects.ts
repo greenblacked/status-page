@@ -20,11 +20,12 @@ const GLIDE_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
  */
 const GLIDE_WAIT_MS = 1500;
 
-/** Where every card is in the viewport, and how far the page was scrolled when that was measured. */
+/** Where every card is in the viewport, how far the page was scrolled, and how wide the window was when that was measured. */
 interface Layout {
   boxes: Map<string, Box>;
   scrollX: number;
   scrollY: number;
+  viewportWidth: number;
 }
 
 function measureCards(): Layout {
@@ -33,7 +34,7 @@ function measureCards(): Layout {
     const { left, top, width, height } = card.getBoundingClientRect();
     boxes.set(card.id, { left, top, width, height });
   }
-  return { boxes, scrollX: window.scrollX, scrollY: window.scrollY };
+  return { boxes, scrollX: window.scrollX, scrollY: window.scrollY, viewportWidth: window.innerWidth };
 }
 
 /**
@@ -144,6 +145,14 @@ export function withCardMotion(update: () => void): void {
   // write does. So the wait goes on until a card has moved, and lets go on
   // the person's input or a resize.
   const glide = () => {
+    // A window that has resized or turned since the measurement has relaid the cards out, and the change to
+    // the board that follows is not what moved them. The resize event ends the wait too, but it is dispatched
+    // with the next frame, and a change can be seen before that, so the width is compared as well. (Only the
+    // width: a phone's height changes as its address bar comes and goes while the page scrolls.)
+    if (window.innerWidth !== before.viewportWidth) {
+      stop();
+      return false;
+    }
     if (!glideCards(before)) return false;
     performance.mark("card-motion:glide");
     stop();

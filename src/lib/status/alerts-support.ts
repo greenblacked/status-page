@@ -18,3 +18,16 @@ export interface AlertsNavigator {
 export function pageAlertsUnsupported(nav: AlertsNavigator): boolean {
   return "standalone" in nav && (nav.maxTouchPoints ?? 0) > 0;
 }
+
+export const ALERTS_UNSUPPORTED_ATTRIBUTE = "data-alerts";
+
+/**
+ * Runs in <head> before the body paints and marks <html> when this browser
+ * cannot show page alerts (no Notification, or an iPhone or iPad), the same
+ * test as `pageAlertsUnsupported` and the alerts hook, written out because
+ * it has to run as a string. The board still renders the Alerts button, so
+ * every other browser gets it in the first paint; a CSS rule hides it where
+ * the attribute is set, so an iPhone never shows it and nothing moves when
+ * the hook takes it out after hydration. Inline, as the Reduce glass script.
+ */
+export const ALERTS_BOOT_SCRIPT = `try{var n=navigator;if(!("Notification" in window)||("standalone" in n&&(n.maxTouchPoints||0)>0))document.documentElement.setAttribute(${JSON.stringify(ALERTS_UNSUPPORTED_ATTRIBUTE)},"unsupported")}catch(e){}`;

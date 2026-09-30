@@ -28,9 +28,14 @@
   */
   --color-bg: light-dark(#f4f2ec, #05070d);
   --color-fg: light-dark(#12141a, #eef1f7);
-  --color-muted: light-dark(#3c414d, #b7bfcc);
-  /* Subtle stays over 5.5:1 on every flat fill, light or dark. */
-  --color-subtle: light-dark(#4b5160, #8e97a8);
+  --color-muted: light-dark(#3c414d, #ccd3df);
+  /*
+    Subtle stays over 5.5:1 on every flat fill, light or dark. In dark it is
+    also 4.5:1 or better on the top of a glass panel, where the tint and the
+    sheen lighten the backdrop most (the glass spec measures it pixel by pixel).
+    Muted sits a step above it.
+  */
+  --color-subtle: light-dark(#4b5160, #b3bccc);
   --color-surface: light-dark(rgb(16 24 40 / 0.06), rgb(255 255 255 / 0.1));
   --color-surface-2: light-dark(rgb(16 24 40 / 0.1), rgb(255 255 255 / 0.14));
   --color-border: light-dark(rgb(16 24 40 / 0.12), rgb(255 255 255 / 0.15));
@@ -120,9 +125,9 @@
   --glass-blur: 24px;
   --glass-filter: blur(var(--glass-blur)) saturate(1.8);
   --glass-fill: light-dark(rgb(255 255 255 / 0.56), rgb(255 255 255 / 0.085));
-  --glass-tint-top: light-dark(rgb(255 255 255 / 0.72), rgb(255 255 255 / 0.12));
+  --glass-tint-top: light-dark(rgb(255 255 255 / 0.72), rgb(255 255 255 / 0.1));
   --glass-tint-bottom: light-dark(rgb(255 255 255 / 0.14), rgb(255 255 255 / 0.02));
-  --glass-sheen: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.3));
+  --glass-sheen: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.16));
 
   --chrome-filter: blur(28px) saturate(1.9);
   --chrome-fill: light-dark(rgb(255 255 255 / 0.8), rgb(18 21 29 / 0.66));
@@ -625,6 +630,22 @@
       outline-color: Highlight;
       outline-offset: 2px;
     }
+  }
+}
+
+/* The Alerts buttons on a browser that cannot show them: hidden from the first paint (ALERTS_BOOT_SCRIPT), before the hook removes them. */
+:root[data-alerts="unsupported"] [data-alerts-toggle] {
+  display: none;
+}
+
+/*
+  A text link or button in running text is one line tall, well short of a
+  finger. On a touch screen, padding brings it to 44pt; a mouse keeps the
+  line.
+*/
+@utility touch-target {
+  @media (pointer: coarse) {
+    padding-block: 0.75rem;
   }
 }
 
@@ -1364,6 +1385,7 @@ article[id^="service-"],
   .service-card-changed,
   .ping::after,
   .live-signal,
+  .live-signal[data-state="checking"],
   .live-signal::before,
   .live-signal::after,
   .aurora::before,

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { googleImpact } from "./health.ts";
 import { PayloadError, SourceError } from "./http.ts";
 import {
   awsComponents,
   awsEventActive,
+  awsEventSubject,
+  awsIncidentTitle,
+  awsLatestLog,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
@@ -397,12 +399,18 @@ describe("googleComponents", () => {
     assert.deepEqual(rows[0], { name: "Cloud Run", health: "outage", detail: "Down" });
   });
 
-  it("reads an information-only notice like the card does: Degraded, with its description", () => {
+  it("leaves a product operational, with no detail, for an information-only notice", () => {
     const rows = googleComponents(products, [
       { id: "n", status_impact: "SERVICE_INFORMATION", external_desc: "FYI", affected_products: [{ id: "run" }] },
     ]);
-    assert.deepEqual(rows[0], { name: "Cloud Run", health: googleImpact("SERVICE_INFORMATION"), detail: "FYI" });
-    assert.equal(rows[0].health, "degraded");
+    assert.deepEqual(rows[0], { name: "Cloud Run", health: "operational" });
+  });
+
+  it("reads an unrecognised impact as unknown, not as a degradation", () => {
+    const rows = googleComponents(products, [
+      { id: "n", status_impact: "SOMETHING_NEW", external_desc: "Odd", affected_products: [{ id: "run" }] },
+    ]);
+    assert.deepEqual(rows[0], { name: "Cloud Run", health: "unknown", detail: "Odd" });
   });
 
   it("falls back to service_name when an incident lists no products", () => {
@@ -567,7 +575,7 @@ describe("awsComponents", () => {
     assert.deepEqual(awsComponents([event({ service_name: undefined }), event({ service_name: "  " })] as never), []);
   });
 
-  it("merges by service: worst health, and the newest event's summary with that event's region", () => {
+  it("merges by service: worst health, every region, and the newest event's summary", () => {
     const rows = awsComponents([
       event({ region_name: "Ireland", summary: "Newer", event_log: [{ timestamp: 200 }] }),
       event({ region_name: "", summary: "Older outage", event_log: [{ timestamp: 100, message: "outage" }] }),
@@ -575,7 +583,7 @@ describe("awsComponents", () => {
       event({ service_name: "Amazon S3", summary: "Errors", region_name: "Ohio" }),
     ] as never);
     assert.deepEqual(rows, [
-      { name: "AWS Lambda", health: "outage", detail: "Ireland · Newer" },
+      { name: "AWS Lambda", health: "outage", detail: "Ireland, N. Virginia · Newer" },
       { name: "Amazon S3", health: "degraded", detail: "Ohio · Errors" },
     ]);
   });
@@ -603,23 +611,43 @@ describe("awsComponents", () => {
     ]);
   });
 
-  it("names the region of the newest event only, whether that event is regional or global", () => {
+  it("unions the regions of every event for a service, whichever event is newest", () => {
     const older = { service_name: "Amazon S3", summary: "Older", event_log: [{ timestamp: 100 }] };
     const newer = { service_name: "Amazon S3", summary: "Newer", event_log: [{ timestamp: 200 }] };
+    // The newest event is global (no region); the older one's region is kept.
     assert.deepEqual(
       awsComponents([
         { ...older, region_name: "Ohio" },
         { ...newer, region_name: "" },
       ] as never),
-      [{ name: "Amazon S3", health: "degraded", detail: "Newer" }],
+      [{ name: "Amazon S3", health: "degraded", detail: "Ohio · Newer" }],
     );
+    // The newest event is regional: both regions are named, in the order met.
     assert.deepEqual(
       awsComponents([
         { ...newer, region_name: "Ohio" },
-        { ...older, region_name: "" },
+        { ...older, region_name: "Ireland" },
       ] as never),
-      [{ name: "Amazon S3", health: "degraded", detail: "Ohio · Newer" }],
+      [{ name: "Amazon S3", health: "degraded", detail: "Ohio, Ireland · Newer" }],
     );
+  });
+
+  it("reads the newest log entry by timestamp, not by position, for the summary", () => {
+    const rows = awsComponents([
+      {
+        service_name: "Amazon S3",
+        region_name: "Ohio",
+        event_log: [
+          { summary: "Newest update", timestamp: 300 },
+          { summary: "Oldest update", timestamp: 100 },
+        ],
+      },
+    ] as never);
+    assert.deepEqual(rows, [{ name: "Amazon S3", health: "degraded", detail: "Ohio · Newest update" }]);
+  });
+
+  it("never lists the umbrella name 'Multiple services' as a row", () => {
+    assert.deepEqual(awsComponents([{ service_name: "Multiple services", summary: "Errors" }] as never), []);
   });
 
   it("does not read a blank or missing `current` as recovered", () => {
@@ -644,19 +672,111 @@ describe("awsComponents", () => {
     assert.ok(rows.every((row) => row.health === "degraded"));
   });
 
-  it("keeps a regional disruption at Degraded, as the card does, and falls back when impacted_services is empty", () => {
+  it("reports a regional disruption as an outage, and falls back to the event when impacted_services is empty", () => {
     const rows = awsComponents([
       {
         service_name: "Multiple services",
         summary: "Elevated errors",
         region_name: "Ohio",
+        status: "3",
         impacted_services: { a: { service_name: "Amazon S3", current: "3" } },
       },
       { service_name: "Amazon EC2", summary: "Slow", region_name: "Ohio", impacted_services: {} },
     ] as never);
     assert.deepEqual(rows, [
-      { name: "Amazon S3", health: "degraded", detail: "Ohio · Elevated errors" },
+      { name: "Amazon S3", health: "outage", detail: "Ohio · Elevated errors" },
       { name: "Amazon EC2", health: "degraded", detail: "Ohio · Slow" },
     ]);
+  });
+});
+
+describe("AWS event severity", () => {
+  const recent = Math.floor(Date.now() / 1000) - 600;
+  const log = [{ summary: "Update", message: "Investigating.", timestamp: recent }];
+
+  it("awsLatestLog takes the maximum timestamp, wherever it sits in the list", () => {
+    const newest = { summary: "newest", timestamp: 300 };
+    assert.deepEqual(
+      awsLatestLog({ event_log: [newest, { summary: "old", timestamp: 100 }, { summary: "mid", timestamp: 200 }] }),
+      newest,
+    );
+    assert.equal(awsLatestLog({ event_log: [{ summary: "a" }, { summary: "b" }] })?.summary, "b");
+    assert.equal(awsLatestLog({}), undefined);
+  });
+
+  it("awsEventActive uses the newest entry, so a fresh update listed first keeps the event live", () => {
+    const now = Date.now();
+    const stale = Math.floor((now - 30 * 24 * 60 * 60 * 1000) / 1000);
+    assert.equal(
+      awsEventActive(
+        {
+          status: "1",
+          event_log: [
+            { timestamp: recent, message: "Still investigating" },
+            { timestamp: stale, message: "First look" },
+          ],
+        },
+        now,
+      ),
+      true,
+    );
+  });
+
+  it("a service disruption (status 3) is an outage even in one region; a performance issue (2) is degraded", () => {
+    const rows = (status: string, summary = "Errors") =>
+      awsComponents([{ service_name: "Amazon S3", summary, region_name: "Ohio", status, event_log: log }] as never)[0]
+        ?.health;
+    assert.equal(rows("3"), "outage");
+    assert.equal(rows("2"), "degraded");
+    // The vendor's status beats the wording: a performance issue that says
+    // "unavailable" is still a performance issue.
+    assert.equal(rows("2", "Bucket unavailable"), "degraded");
+    // Informational or unreported: the wording decides, as before.
+    assert.equal(rows("1"), "degraded");
+    assert.equal(rows("1", "Scheduled maintenance"), "maintenance");
+  });
+
+  it("an impacted service's own level sets its row, and a recovered one has none", () => {
+    const rows = awsComponents([
+      {
+        service_name: "Multiple services",
+        summary: "Errors",
+        region_name: "Ohio",
+        status: "3",
+        impacted_services: {
+          a: { service_name: "Amazon S3", current: "3" },
+          b: { service_name: "AWS Lambda", current: "2" },
+          c: { service_name: "Amazon SQS", current: "0" },
+        },
+      },
+    ] as never);
+    assert.deepEqual(
+      rows.map((row) => [row.name, row.health]),
+      [
+        ["Amazon S3", "outage"],
+        ["AWS Lambda", "degraded"],
+      ],
+    );
+  });
+
+  it("names the region in the incident title, and the services instead of 'Multiple services'", () => {
+    assert.equal(
+      awsIncidentTitle({ service_name: "Amazon S3", summary: "Errors", region_name: "Ohio" }),
+      "Amazon S3 (Ohio) — Errors",
+    );
+    assert.equal(awsIncidentTitle({ service_name: "Amazon S3", summary: "Errors" }), "Amazon S3 — Errors");
+    const multi = (names: string[], region = "Ohio") => ({
+      service_name: "Multiple services",
+      summary: "Errors",
+      region_name: region,
+      impacted_services: Object.fromEntries(names.map((name, i) => [`k${i}`, { service_name: name, current: "2" }])),
+    });
+    assert.equal(awsEventSubject(multi(["Amazon S3"])), "Amazon S3");
+    assert.equal(awsEventSubject(multi(["Amazon S3", "AWS Lambda"])), "Amazon S3 and AWS Lambda");
+    assert.equal(awsEventSubject(multi(["Amazon S3", "AWS Lambda", "Amazon SQS"])), "3 AWS services");
+    assert.equal(awsIncidentTitle(multi(["Amazon S3", "AWS Lambda", "Amazon SQS"])), "3 AWS services (Ohio) — Errors");
+    // Nothing named: still not the bare placeholder.
+    assert.equal(awsEventSubject({ service_name: "Multiple services" }), "Multiple AWS services");
+    assert.equal(awsEventSubject({}), "AWS");
   });
 });

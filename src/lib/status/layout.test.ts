@@ -5,12 +5,14 @@ import {
   dockProgress,
   documentTitle,
   groupServices,
+  incidentLink,
   keyboardFocus,
   serviceAnchor,
   serviceIndex,
   sortByUrgency,
+  sortIncidents,
 } from "./layout";
-import type { BoardSnapshot, CategoryId, Health, ServiceId, ServiceSnapshot } from "./types";
+import type { BoardSnapshot, CategoryId, Health, Incident, ServiceId, ServiceSnapshot } from "./types";
 
 function service(id: ServiceId, health: Health, category: CategoryId = "cloud", name: string = id): ServiceSnapshot {
   return {
@@ -46,7 +48,7 @@ describe("groupServices", () => {
       service("fortnite", "degraded", "gaming"),
       service("mikrotik", "operational", "updates"),
     ]);
-    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "gcp", "fortnite", "steam", "grok"]);
+    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "gcp", "fortnite", "grok", "steam"]);
     expect(groups.operational.map((s) => s.id)).toEqual(["aws"]);
     expect(groups.releases.map((s) => s.id)).toEqual(["mikrotik"]);
   });
@@ -71,14 +73,14 @@ describe("sortByUrgency", () => {
     incidents: starts.map(incident),
   });
 
-  it("orders outage, degraded, maintenance, unknown", () => {
+  it("orders outage, degraded, unknown, maintenance", () => {
     const sorted = sortByUrgency([
       service("grok", "unknown"),
       service("steam", "maintenance"),
       service("gcp", "degraded"),
       service("apple", "outage"),
     ]);
-    expect(sorted.map((s) => s.id)).toEqual(["apple", "gcp", "steam", "grok"]);
+    expect(sorted.map((s) => s.id)).toEqual(["apple", "gcp", "grok", "steam"]);
   });
 
   it("puts the most recently started incident first within a severity", () => {
@@ -260,5 +262,106 @@ describe("barShownAt", () => {
       seen.push(shown);
     }
     expect(seen).toEqual([false, true, true, true, true, true, true]);
+  });
+});
+
+describe("sortIncidents", () => {
+  const incident = (id: string, health: Health, startedAt?: string, extra: Partial<Incident> = {}): Incident => ({
+    id,
+    title: id,
+    health,
+    startedAt,
+    ...extra,
+  });
+
+  it("orders by severity, then most recent first", () => {
+    const sorted = sortIncidents([
+      incident("old-degraded", "degraded", "2026-09-25T06:00:00Z"),
+      incident("outage", "outage", "2026-09-25T01:00:00Z"),
+      incident("new-degraded", "degraded", "2026-09-25T09:00:00Z"),
+      incident("maintenance", "maintenance", "2026-09-25T10:00:00Z"),
+      incident("unknown", "unknown", "2026-09-25T10:00:00Z"),
+    ]);
+    expect(sorted.map((item) => item.id)).toEqual(["outage", "new-degraded", "old-degraded", "unknown", "maintenance"]);
+  });
+
+  it("puts informational notices after every real problem, whatever their health", () => {
+    const sorted = sortIncidents([
+      incident("notice", "operational", "2026-09-25T12:00:00Z", { informational: true }),
+      incident("maintenance", "maintenance", "2026-09-25T01:00:00Z"),
+    ]);
+    expect(sorted.map((item) => item.id)).toEqual(["maintenance", "notice"]);
+  });
+
+  it("falls back to the update time, keeps the vendor's order on a tie, and does not mutate", () => {
+    const input = [
+      incident("a", "degraded"),
+      { ...incident("b", "degraded"), updatedAt: "2026-09-25T05:00:00Z" },
+      incident("c", "degraded"),
+    ];
+    expect(sortIncidents(input).map((item) => item.id)).toEqual(["b", "a", "c"]);
+    expect(input.map((item) => item.id)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("incidentLink", () => {
+  const withIncidents = (sourceUrl: string, incidents: Incident[]): ServiceSnapshot => ({
+    ...service("aws", "degraded"),
+    sourceUrl,
+    incidents,
+  });
+
+  it("points at the worst incident that has a page, not the first listed", () => {
+    const link = incidentLink(
+      withIncidents("https://status.example.com/", [
+        { id: "minor", title: "Minor", health: "degraded", url: "https://status.example.com/minor" },
+        { id: "major", title: "Major", health: "outage", url: "https://status.example.com/major" },
+      ]),
+    );
+    expect(link).toBe("https://status.example.com/major");
+  });
+
+  it("skips a worse incident that has no url", () => {
+    const link = incidentLink(
+      withIncidents("https://status.example.com/", [
+        { id: "major", title: "Major", health: "outage" },
+        { id: "minor", title: "Minor", health: "degraded", url: "https://status.example.com/minor" },
+      ]),
+    );
+    expect(link).toBe("https://status.example.com/minor");
+  });
+
+  it("offers no incident link when the url is the card's own source page", () => {
+    const dashboard = "https://health.aws.amazon.com/health/status";
+    expect(incidentLink(withIncidents(dashboard, [{ id: "1", title: "T", health: "degraded", url: dashboard }]))).toBe(
+      undefined,
+    );
+    // A trailing slash or a fragment is still the same page.
+    expect(
+      incidentLink(
+        withIncidents(`${dashboard}/`, [{ id: "1", title: "T", health: "degraded", url: `${dashboard}#x` }]),
+      ),
+    ).toBe(undefined);
+  });
+
+  it("is undefined with no incidents", () => {
+    expect(incidentLink(withIncidents("https://status.example.com/", []))).toBe(undefined);
+  });
+});
+
+describe("release trackers and the board's attention", () => {
+  it("a fresh release marks a component, never the tracker: not attention, not the title, not the headline", () => {
+    const tracker: ServiceSnapshot = {
+      ...service("mikrotik", "operational", "updates"),
+      components: [
+        { name: "RouterOS 7 stable", health: "maintenance", detail: "7.20.2 · Sep 15" },
+        { name: "RouterOS 7 long-term", health: "operational", detail: "7.18.4 · Jul 22" },
+      ],
+    };
+    const snapshot = board([service("gcp", "operational"), tracker]);
+    expect(groupServices(snapshot.services).attention).toEqual([]);
+    expect(groupServices(snapshot.services).releases.map((item) => item.id)).toEqual(["mikrotik"]);
+    expect(documentTitle(snapshot, "Status Page")).toBe("Status Page");
+    expect(boardHeadline(snapshot)).toEqual({ tone: "operational", title: "All systems operational" });
   });
 });

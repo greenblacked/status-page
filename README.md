@@ -97,8 +97,8 @@ The two Updates services track releases, not incidents. Their cards carry no sta
 
 | Service | How it is read |
 | --- | --- |
-| Google Cloud | `incidents.json`; only incidents without an end time count. The components are the products in `products.json`: a product takes the state of the worst open incident that lists it, mapped exactly as the card maps it (an information-only notice reads as Degraded, as it does for the card). Without a readable `products.json`, the components are the services the open incidents name |
-| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days. Single-region or single-zone events are Degraded, not Outage. The components are only the AWS services those events name (a "Multiple services" event contributes one row per impacted service), one each, with the worst state and the newest event's summary and region; a quiet dashboard lists none |
+| Google Cloud | `incidents.json`; only incidents without an end time count. The components are the products in `products.json`: a product takes the state of the worst open incident that lists it, mapped exactly as the card maps it (an information-only notice, such as `SERVICE_INFORMATION`, is listed on the card as a notice but changes neither the card's health nor any product's row; an impact the board does not recognise reads Unknown). Without a readable `products.json`, the components are the services the open incidents name, except information-only notices, which add no row |
+| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days. The vendor's own status comes first: 3 (service disruption) is Outage in any region. Otherwise an event whose text mentions maintenance is Maintenance, and 2 (performance issue) is Degraded. Only an informational or missing status falls back to the event text: a regional or availability-zone event is Degraded, and outage or unavailable wording is Outage. For a "Multiple services" event, each impacted service takes its own current reading: 3 is Outage, 1 or 2 is Degraded (Maintenance during maintenance), and a recovered service contributes no row. The components are only the AWS services those events name, one each, with the worst state across its events, the regions of every event, and the newest event's summary; a quiet dashboard lists none |
 | Steam | `GetServerInfo` plus the Store featured API. Both answering with the expected data is Operational, only one is Degraded and its component says why. If neither can be read, the card is Unknown. A **Steam Connection Managers** component appears, Operational, when Valve's connection-manager directory (`GetCMListForConnect`) returns a non-empty `serverlist` of server objects; when it cannot be read there is simply no such row, and it never changes the card's health |
 | CS2 Europe | European relay points of presence. Outage when the relay config reports failure or lists no European points. Degraded when fewer than 3, or fewer than 40%, of them publish relays. An Operational card shows the player count when it is available; the count never affects health |
 | Epic Games | Statuspage summary, worst component, excluding Fortnite components |
@@ -130,7 +130,7 @@ Collection runs on the server, so the browser never deals with vendor CORS. Each
 
 ## Quick start
 
-You need Node 22.13.0 (pinned in `.nvmrc`), npm 11.9.0, and outbound HTTPS to the vendors above.
+You need Node 22.13.0 (pinned in `.nvmrc`), npm 11.19.1, and outbound HTTPS to the vendors above.
 
 ```bash
 git clone https://github.com/greenblacked/status-page.git
@@ -146,7 +146,7 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 
 ### On the board
 
-- **Every service is a full card**, healthy or not, in three groups: **Needs attention**, **Operational** and **Releases**. Needs attention is ordered by urgency (Outage, then Degraded, then Maintenance, then Unknown, and within one state the incident that began most recently first), and the most urgent service leads it as a card marked **Most urgent** that spans the width on wide screens. It changes with each snapshot, and it is absent when nothing needs attention or when a filter or search hides that service. The order is Outage, Degraded, Maintenance, then Unknown, while the headline names a source it could not read ahead of maintenance, so with only those two left the headline and the **Most urgent** card can point at different services.
+- **Every service is a full card**, healthy or not, in three groups: **Needs attention**, **Operational** and **Releases**. Needs attention is ordered by urgency (Outage, then Degraded, then Unknown, then Maintenance, and within one state the incident that began most recently first), and the most urgent service leads it as a card marked **Most urgent** that spans the width on wide screens. It changes with each snapshot, and it is absent when nothing needs attention or when a filter or search hides that service. That is the one severity order the whole board uses: the headline, the overall health in `/api/status.json`, the badge colour and a history day's worst state all rank Outage, Degraded, Unknown, Maintenance, Operational, so a real degradation is never hidden behind a source that could not be read, and the headline and the **Most urgent** card always agree.
 - **Filter** by Cloud, Gaming, Platforms, AI or Updates, search by name, or switch on **Issues only**.
 - **Star** the services you care about: they sort first in their group, though never above a more urgent service in Needs attention, and **Starred** shows only them.
 - **Share a view:** search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered.
@@ -173,7 +173,7 @@ The board publishes current status in four open formats. Responses allow cross-o
 | --- | --- | --- |
 | `/api/status.json` | JSON: overall health, headline, counts, and each service's health, summary, source and incidents | Scripts, dashboards, chat bots |
 | `/api/history.json` | JSON: empty `services` map (compatibility only) | Existing clients checking the history schema |
-| `/feed.xml` | Atom, one entry per service that needs attention | Alerts in Slack, Teams, Discord or a feed reader |
+| `/feed.xml` | Atom, one entry per service that needs attention (a source the board could not read is left out) | Alerts in Slack, Teams, Discord or a feed reader |
 | `/api/badge/<service>` | [Shields.io endpoint badge](https://shields.io/badges/endpoint-badge) | A live status badge in a README or wiki |
 | `/metrics` | [Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-based-format): each service's state, incidents and source reachability | Prometheus, Grafana and Alertmanager |
 | `/healthz` | `ok` | Liveness probes. It never reads the board, so a slow vendor cannot fail it |
@@ -199,7 +199,7 @@ Subscribe a chat tool to the feed:
 - Microsoft Teams: the RSS connector, pointed at the same URL
 - Discord: any RSS feed bot
 
-An entry's id includes the service's health and a fingerprint of its summary, so a feed reader posts again when an incident gets worse, better or reworded, and stays quiet otherwise.
+An entry's id is the service, its health and its worst incident's id (just the health when it has no incident), so a feed reader posts an incident once, stays quiet when its wording changes, and posts it again when the service escalates or eases; the entry's `updated` time is the latest time the vendor itself reported, so a reader can show it as changed. A source the board could not read is not in the feed: one failed check is usually a vendor hiccup, and telling that from a real blackout takes a history of checks that a stateless feed does not have. It still shows on the board and in `/api/status.json`.
 
 </details>
 
