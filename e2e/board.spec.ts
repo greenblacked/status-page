@@ -1649,6 +1649,21 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
   await expect(footer).toContainText("This page checks every two minutes; the server reads the official vendor feeds");
 });
 
+test("puts the footer in a contentinfo landmark outside main, and names the board log", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  // The role only exists for a footer that is not inside main, an article or a section.
+  const footer = page.getByRole("contentinfo");
+  await expect(footer).toHaveCount(1);
+  await expect(footer).toContainText("Status Page reads vendor status feeds only");
+  await expect(page.locator("main footer, main dialog")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Board log" })).toHaveCount(1);
+  await hydrated(page);
+  // The dialog still opens from the footer's button.
+  await footer.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+});
+
 test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   // The fixture has a fresh channel on both cards; make Apple OS's plain, as
