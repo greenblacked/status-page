@@ -478,10 +478,11 @@ const LOOSE_TIMESTAMP = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?
 
 /**
  * A timestamp string from a vendor payload as an ISO string, or undefined
- * when it is missing or unreadable. Vendors send "2026-09-16 11:32", with a
- * space and no zone, which Safari's Date refuses (Invalid Date) where Chrome
- * accepts it, so the browser only ever receives ISO 8601. A value without a
- * zone is read as UTC.
+ * when it is missing or unreadable. A payload that wrote a time like
+ * "2026-09-16 11:32", with a space and no zone, would be Invalid Date in
+ * Safari where Chrome accepts it; the vendors read today send ISO already,
+ * so this is a guard, and the browser only ever receives ISO 8601. A value
+ * without a zone is read as UTC.
  */
 export function isoTimestamp(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
