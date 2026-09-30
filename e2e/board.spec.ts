@@ -2206,6 +2206,11 @@ test("writes all quiet by hand, and says so in words, when all fourteen are up",
 });
 
 test("keeps Alerts and Refresh as icon buttons with a name and a tooltip", async ({ page }) => {
+  // Not yet asked: headless Chromium (CI's) reports notifications as denied unless told otherwise, which would
+  // make the button the blocked one with another tooltip. Set before the page's scripts read it.
+  await page.addInitScript(() => {
+    if ("Notification" in window) Object.defineProperty(Notification, "permission", { get: () => "default" });
+  });
   await page.goto("/");
   await hydrated(page);
   const refresh = page.locator("header").getByRole("button", { name: "Refresh status now" });
