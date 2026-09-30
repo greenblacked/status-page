@@ -36,7 +36,10 @@ describe("LiveBar", () => {
 
   it("says a check is running, and not Live, while it runs", () => {
     const html = render({ ageMs: 45_000, stale: false, state: "checking" }, { isFetching: true });
-    expect(html).toContain("Checking official sources");
+    // "Checking…" on a phone; the rest of the words stay for a screen reader and wider screens.
+    expect(html).toContain(
+      'Checking<span class="sm:hidden">…</span><span class="max-sm:sr-only"> official sources</span>',
+    );
     expect(html).not.toContain(">Live<");
   });
 

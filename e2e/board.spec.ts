@@ -1698,3 +1698,38 @@ test("drops the Operational placeholder from release cards and names a fresh rel
   await expect(apple.locator("[data-card-header]").getByText("New release")).toHaveCount(0);
   await expect(apple.getByRole("button", { name: /^Star / })).toBeVisible();
 });
+
+test("keeps the live bar the same height while checking and live at phone widths", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  const board = fixtureBoard(Date.now());
+  await page.setViewportSize({ width: 390, height: 800 });
+  await openFixture(page, () => board);
+  const bar = page.getByTestId("live-bar");
+  const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
+  // A later route wins: it holds the forced refresh back, then hands it on to the fixture's route.
+  let release: () => void = () => undefined;
+  let held: Promise<void> = Promise.resolve();
+  await page.route("**/_serverFn/**", async (route) => {
+    if (route.request().method() === "POST") await held;
+    await route.fallback();
+  });
+  try {
+    for (const width of [320, 375, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(bar).toContainText("Live");
+      const live = (await bar.boundingBox())?.height ?? 0;
+      held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await refresh.click();
+      await expect(bar).toContainText("Checking");
+      const checking = (await bar.boundingBox())?.height ?? 0;
+      release();
+      await expect(refresh).toHaveAttribute("aria-busy", "false");
+      expect(checking, `checking against live at ${width}px`).toBe(live);
+      expect(live, `a measured bar at ${width}px`).toBeGreaterThan(0);
+    }
+  } finally {
+    release();
+  }
+});
