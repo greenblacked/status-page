@@ -12,12 +12,12 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - **Background** in **Settings**: **Quiet** (the default) is flat paper, **Glass** brings back the frosted panels over a still glow, and **Full** adds the slow drift, the lenses, a light that follows your pointer and the small period dial beside the live line. Reduce glass still turns any of them solid.
 - Times show in your own time zone once the page has loaded (UTC before that, and in the tooltip).
 - The live line under the headline reads "Checked 12:04 CET · next in 1:52", and says "Stale" when a check has been missed for too long.
-- Four glass lenses in the background that bend the drafting grid and, with a mouse or trackpad, catch a slow highlight. They stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
+- Four glass lenses on the **Full** background that bend the drafting grid and, with a mouse or trackpad, catch a slow highlight. They are not drawn on Quiet or Glass, they stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
 - The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON, the Atom feed and the badges, and is signed "Made and kept by Serhii." It no longer explains how often the board is checked.
 - A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
 - A link preview image, canonical address and a maskable app icon of their own.
-- **Tilt lighting** switch in **Settings and shortcuts** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. Off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
-- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, and the field merges into it a little further down the page. The field has its own clear button, a full-size touch target.
+- **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
+- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in once the live line has scrolled clear of it, and the field merges into it over the last stretch of the scroll. The field has its own clear button, a full-size touch target.
 
 ### Changed
 
@@ -30,7 +30,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - AWS uses the vendor's own severity and merges every region, so a single-region service disruption can now show as Outage.
 - `/api/status.json` adds the `informational` and `upcomingMaintenance` fields.
 - Starring and refresh move cards with a light glide instead of a page snapshot, so they respond at once on iPhone, iPad and Safari.
-- The MikroTik RouterOS and Apple OS cards no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and an Unknown badge only when the source cannot be read.
+- The MikroTik RouterOS and Apple OS trackers no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and a tracker whose source cannot be read is listed with the other sources that could not be read, as No data.
 
 ### Fixed
 
