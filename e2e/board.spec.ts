@@ -773,3 +773,24 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
   );
   await expect(footer).toContainText("This page checks every two minutes; the server reads the official vendor feeds");
 });
+
+test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
+  const board = fixtureBoard(Date.now());
+  // The fixture has a fresh channel on both cards; make Apple OS's plain, as
+  // it reads on a normal day, and keep MikroTik's fresh Stable channel.
+  const appleOs = board.services.find((service) => service.id === "apple-os");
+  if (!appleOs) throw new Error("the fixture has no apple-os");
+  appleOs.components = appleOs.components.map((component) => ({ ...component, health: "operational" }));
+  await openFixture(page, () => board);
+
+  const mikrotik = page.locator("article#service-mikrotik");
+  await expect(mikrotik.locator("[data-card-header]").getByText("New release", { exact: true })).toBeVisible();
+  await expect(mikrotik.locator("[data-card-header]").getByText("Operational")).toHaveCount(0);
+  await expect(mikrotik.getByRole("button", { name: /^Star / })).toBeVisible();
+
+  const apple = page.locator("article#service-apple-os");
+  await expect(apple.getByRole("heading", { level: 3 })).toBeVisible();
+  await expect(apple.locator("[data-card-header]").getByText("Operational")).toHaveCount(0);
+  await expect(apple.locator("[data-card-header]").getByText("New release")).toHaveCount(0);
+  await expect(apple.getByRole("button", { name: /^Star / })).toBeVisible();
+});

@@ -13,8 +13,24 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { healthLabel } from "@/lib/status/health";
 import { serviceAnchor, serviceIndex } from "@/lib/status/layout";
-import type { ServiceSnapshot } from "@/lib/status/types";
+import type { Health, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
+
+/**
+ * The badge in a card's header, or none. A changelog has no operational
+ * state, so a release feed that read fine says nothing ("Operational" would
+ * be a placeholder) and one with a release from the last two weeks says
+ * "New release". Anything else (an unreadable source, or a health the feed
+ * never sets today) is real information and keeps the ordinary badge.
+ */
+function headerBadgeFor(service: ServiceSnapshot): { tone: Health; label: string } | null {
+  if (service.category === "updates" && (service.health === "operational" || service.health === "maintenance")) {
+    // The collectors mark the fresh channel or OS on its component row and keep the feed itself operational.
+    const fresh = service.health === "maintenance" || service.components.some((c) => c.health === "maintenance");
+    return fresh ? { tone: "maintenance", label: "New release" } : null;
+  }
+  return { tone: service.health, label: healthLabel(service.health) };
+}
 
 /**
  * The full card, for every service and the release trackers. A service that
@@ -70,6 +86,7 @@ export function ServiceCard({
     : service.incidents.find((incident) => norm(incident.title) === summary);
   const incidentUrl = changelog ? undefined : service.incidents.find((incident) => incident.url)?.url;
   const checkedAt = Date.parse(service.checkedAt);
+  const headerBadge = headerBadgeFor(service);
 
   return (
     <article
@@ -115,7 +132,7 @@ export function ServiceCard({
           </div>
         </div>
         <div className="flex shrink-0 items-center">
-          <Badge tone={service.health}>{healthLabel(service.health)}</Badge>
+          {headerBadge ? <Badge tone={headerBadge.tone}>{headerBadge.label}</Badge> : null}
           <StarButton
             name={service.name}
             starred={starred}

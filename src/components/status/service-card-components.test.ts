@@ -121,6 +121,34 @@ describe("release trackers and CS2 pops", () => {
   });
 });
 
+describe("release tracker header badge", () => {
+  const header = (html: string) => html.slice(html.indexOf("data-card-header"), html.indexOf("</h3>"));
+  const badge = (html: string) => html.slice(html.indexOf("</h3>"), html.indexOf("Star "));
+  const fresh: ComponentHealth[] = [{ name: "Stable", health: "maintenance" }, ...up(1)];
+
+  it("says nothing while no release is new", () => {
+    const html = render("mikrotik", { category: "updates", components: up(2) });
+    expect(header(html)).toBeTruthy();
+    expect(badge(html)).not.toContain("Operational");
+    expect(badge(html)).not.toContain('<span class="inline-flex');
+  });
+
+  it("says New release when a channel is fresh", () => {
+    const html = render("apple-os", { category: "updates", components: fresh });
+    expect(badge(html)).toContain(">New release</span>");
+    expect(badge(html)).not.toContain("Operational");
+  });
+
+  it("keeps the ordinary badge for a source that could not be read", () => {
+    const html = render("mikrotik", { category: "updates", health: "unknown" });
+    expect(badge(html)).toContain(">Unknown</span>");
+  });
+
+  it("still labels a status service Operational", () => {
+    expect(badge(render("aws"))).toContain(">Operational</span>");
+  });
+});
+
 describe("highlighted service card", () => {
   const renderCard = (highlight: boolean) =>
     renderToStaticMarkup(

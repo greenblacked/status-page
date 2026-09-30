@@ -10,6 +10,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 - The page footer links to the source on GitHub and to the MIT License (free to use, copy, modify and share, with the copyright notice kept), and says how often the board is checked: every two minutes in the page, with the server keeping vendor feeds for 45 seconds.
 
+### Changed
+
+- The MikroTik RouterOS and Apple OS cards no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and an Unknown badge only when the source cannot be read.
+
 ## [0.5.0] - 2026-09-30
 
 ### Changed

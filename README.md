@@ -88,7 +88,7 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 
 The overall card shows the worst state on the board: **All clear** when everything is Operational, **Outage** if anything is out, and **Attention** for everything in between.
 
-The two Updates services track releases, not incidents. They stay Operational and highlight any channel or OS released in the last 14 days.
+The two Updates services track releases, not incidents. Their cards carry no status badge while nothing is new, and a **New release** badge when a channel or OS was released in the last 14 days, which is also marked on its row. A source that could not be read still shows Unknown. In the summary, the API and the badges they still count as Operational.
 
 <details>
 <summary><strong>The rule behind every card</strong></summary>
