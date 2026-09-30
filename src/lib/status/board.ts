@@ -19,6 +19,12 @@ const boardCache = createTtlCache(collectBoard, CACHE_TTL_MS, {
  */
 export const getStatusBoard = createServerOnlyFn((): Promise<BoardSnapshot> => boardCache.get({ allowStale: true }));
 
+/**
+ * A board no older than the cache TTL, never a stale one: the history cron
+ * samples it. Server-only for the same reason as getStatusBoard.
+ */
+export const getFreshStatusBoard = createServerOnlyFn((): Promise<BoardSnapshot> => boardCache.get());
+
 export const fetchStatusBoard = createServerFn({ method: "GET" }).handler(async () => {
   return boardCache.get();
 });
