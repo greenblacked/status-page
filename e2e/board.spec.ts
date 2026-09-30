@@ -882,6 +882,46 @@ test("glides the cards a refresh moves", async ({ page }) => {
   expect(await cardGlides(page)).toBeGreaterThan(before);
 });
 
+test("does not count a scroll between measuring and the commit as cards moving", async ({ page }) => {
+  await recordAnimations(page);
+  let grok: Health = "operational";
+  await openFixture(page, () => fixtureBoard(Date.now(), { grok }));
+  const before = await cardGlides(page);
+  const first = await group(page, "attention").first().getAttribute("id");
+
+  // withCardMotion cancels running glides right after measuring the cards, ahead of the update. Scrolling
+  // then is a page scrolling on its own (a tap focusing a control, WebKit's do) before a deferred commit.
+  await page.evaluate(() => {
+    const getAnimations = document.getAnimations.bind(document);
+    document.getAnimations = () => {
+      document.getAnimations = getAnimations;
+      window.scrollTo({ top: window.scrollY + 150, behavior: "instant" });
+      return getAnimations();
+    };
+  });
+  grok = "degraded";
+  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+  await expect(page.locator('section[aria-labelledby="attention-heading"] #service-grok')).toHaveCount(1);
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
+
+  // The scroll moved every card in the viewport by the same amount and none on the page. The first attention
+  // card shifts by a few pixels at most (the hero above it changes), never by the 150 px the page scrolled.
+  const glides = await page.evaluate(() =>
+    ((window as Window & { __animations?: Animation[] }).__animations ?? [])
+      .filter((animation) => animation.id === "card-move")
+      .map((animation) => {
+        const effect = animation.effect as KeyframeEffect;
+        return { id: effect.target?.id, from: String(effect.getKeyframes()[0].transform) };
+      }),
+  );
+  const fromRefresh = glides.slice(before);
+  expect(fromRefresh.length).toBeGreaterThan(0);
+  for (const glide of fromRefresh.filter((item) => item.id === first)) {
+    const dy = Number(/,\s*(-?[\d.]+)px\)/.exec(glide.from)?.[1]);
+    expect(Math.abs(dy)).toBeLessThan(100);
+  }
+});
+
 test("does not glide a filter that follows a star which moved nothing", async ({ page }) => {
   await recordAnimations(page);
   await openFixture(page, () => fixtureBoard(Date.now()));

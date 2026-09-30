@@ -14,13 +14,35 @@ const GLIDE_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
 /** How long to wait for an update that never commits (or changes nothing in the board) before letting go. */
 const GLIDE_WAIT_MS = 400;
 
-function measureCards(): Map<string, Box> {
+/** Where every card is in the viewport, and how far the page was scrolled when that was measured. */
+interface Layout {
+  boxes: Map<string, Box>;
+  scrollX: number;
+  scrollY: number;
+}
+
+function measureCards(): Layout {
   const boxes = new Map<string, Box>();
   for (const card of document.querySelectorAll<HTMLElement>('article[id^="service-"]')) {
     const { left, top, width, height } = card.getBoundingClientRect();
     boxes.set(card.id, { left, top, width, height });
   }
-  return boxes;
+  return { boxes, scrollX: window.scrollX, scrollY: window.scrollY };
+}
+
+/**
+ * The earlier layout as it would read at the current scroll position. The
+ * page can scroll between the measurement and a deferred commit (a tap that
+ * focuses a control does), and that shifts every card in the viewport without
+ * moving any of them on the page, so it must not count as movement.
+ */
+function atCurrentScroll(before: Layout): Map<string, Box> {
+  const shiftX = window.scrollX - before.scrollX;
+  const shiftY = window.scrollY - before.scrollY;
+  if (shiftX === 0 && shiftY === 0) return before.boxes;
+  const shifted = new Map<string, Box>();
+  for (const [id, box] of before.boxes) shifted.set(id, { ...box, left: box.left - shiftX, top: box.top - shiftY });
+  return shifted;
 }
 
 /** A card still fading in carries a few pixels of `rise-in` offset, which would fight the glide over `transform`. */
@@ -31,13 +53,13 @@ function settleRiseIn(card: Element): void {
 }
 
 /** Glides every card that moved from where it was to where it is now. */
-function glideCards(before: ReadonlyMap<string, Box>): void {
+function glideCards(before: Layout): void {
   // Settled first, so the measurement below is where each card really is.
-  for (const id of before.keys()) {
+  for (const id of before.boxes.keys()) {
     const card = document.getElementById(id);
     if (card) settleRiseIn(card);
   }
-  for (const { id, dx, dy } of cardMoves(before, measureCards(), window.innerHeight)) {
+  for (const { id, dx, dy } of cardMoves(atCurrentScroll(before), measureCards().boxes, window.innerHeight)) {
     // A card that crossed sections is a new node, so look it up by id.
     const card = document.getElementById(id);
     if (!card) continue;
@@ -49,8 +71,12 @@ function glideCards(before: ReadonlyMap<string, Box>): void {
   }
 }
 
-/** What the person does that moves the page or the board themselves, and so ends the wait for an update. */
-const INTERACTIONS = ["scroll", "wheel", "touchstart", "pointerdown", "keydown", "input"] as const;
+/**
+ * What the person does to the board itself, which ends the wait for an
+ * update. Not scrolling: a scroll leaves every card where it is on the page,
+ * and a tap can scroll on its own before the update commits.
+ */
+const INTERACTIONS = ["pointerdown", "keydown", "input"] as const;
 
 /** Lets go of the call in progress, if it is still waiting for its update to commit. */
 let pending: (() => void) | undefined;
@@ -113,7 +139,7 @@ export function withCardMotion(update: () => void): void {
   });
   pending = stop;
   // An update that changes nothing in the board leaves the observer waiting, and whatever the person does
-  // next (a scroll, a filter) would be measured against this call's start. Their input ends the wait.
+  // next (a filter) would be measured against this call's start. Their input ends the wait.
   for (const type of INTERACTIONS) window.addEventListener(type, stop, { capture: true, passive: true });
   // The bound on an update that never reaches the DOM, set first so nothing below can leave the observer attached.
   timer = window.setTimeout(stop, GLIDE_WAIT_MS);
