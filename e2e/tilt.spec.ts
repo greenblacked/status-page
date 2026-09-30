@@ -62,8 +62,24 @@ async function stubMotionPermission(
         (window as unknown as { DeviceOrientationEvent: unknown }).DeviceOrientationEvent =
           class DeviceOrientationEvent extends Event {};
       }
-      if (!screen.orientation) Object.defineProperty(screen, "orientation", { value: {}, configurable: true });
-      Object.defineProperty(screen.orientation, "angle", { get: () => angle, configurable: true });
+      // Pinned on the prototypes, not on the screen.orientation object: WebKit may drop an
+      // unreferenced wrapper and hand back a fresh one, and a property set on it goes with it.
+      if (typeof ScreenOrientation !== "undefined") {
+        Object.defineProperty(ScreenOrientation.prototype, "angle", { get: () => angle, configurable: true });
+      }
+      if (typeof Screen !== "undefined") {
+        // One fixed object for the page, for any engine whose own angle the getter above does not reach.
+        const orientation = {
+          angle,
+          type: angle % 180 === 0 ? "portrait-primary" : "landscape-primary",
+          addEventListener() {},
+          removeEventListener() {},
+        };
+        Object.defineProperty(Screen.prototype, "orientation", { get: () => orientation, configurable: true });
+      } else if (!screen.orientation) {
+        Object.defineProperty(screen, "orientation", { value: { angle }, configurable: true });
+      }
+      Object.defineProperty(window, "orientation", { get: () => angle, configurable: true });
       // A browser with no sensor fires one empty reading of its own as soon as
       // something listens. Only the tests' readings should count.
       window.addEventListener(
@@ -102,6 +118,22 @@ async function stubMotionPermission(
     },
     [answer, angle] as const,
   );
+}
+
+/**
+ * The page sees the angle the stub pinned, from both sources. A stub that does
+ * not apply in some engine fails here at once, not after a ten second wait for
+ * a light that moves along the wrong axis.
+ */
+async function angleIs(page: Page, angle: number): Promise<void> {
+  const seen = await page.evaluate(() => ({
+    angle: window.screen.orientation ? window.screen.orientation.angle : "none",
+    legacy: (window as unknown as { orientation?: number }).orientation,
+  }));
+  expect(seen, "screen.orientation.angle and window.orientation as the page sees them").toEqual({
+    angle,
+    legacy: angle,
+  });
 }
 
 const permissionCalls = (page: Page) => page.evaluate(() => (window as unknown as { __permCalls: number }).__permCalls);
@@ -277,6 +309,7 @@ test.describe("on a touch device", () => {
   test.beforeEach(async ({ page }) => {
     await stubMotionPermission(page);
     await page.goto("/");
+    await angleIs(page, 0);
     // Tests seed localStorage on this page before reloading it. A page that has not hydrated yet
     // would read the seed when it does, act on it (forget an "on" it cannot keep) and undo it.
     await hydrated(page);
@@ -354,6 +387,7 @@ test.describe("on a touch device", () => {
     await stubMotionPermission(page, "granted", 90);
     await page.reload();
     await hydrated(page);
+    await angleIs(page, 90);
     await openSettings(page);
     await tiltSwitch(page).click();
     await tiltUntil(page, 0, 0, "--light-x", () => true);
