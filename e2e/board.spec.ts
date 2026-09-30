@@ -1735,6 +1735,48 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   expect(small.small).toEqual([]);
 });
 
+test("lays the hero out at 200% root text on a phone: no overflow, no overlap", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = "html { font-size: 32px !important; }";
+      document.head.appendChild(style);
+    });
+  });
+  const board = fixtureBoard(Date.now());
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    await openFixture(page, () => board);
+    const layout = await page.evaluate(() => {
+      const box = (selector: string) => {
+        const rect = document.querySelector(selector)?.getBoundingClientRect();
+        if (!rect) throw new Error(`no ${selector}`);
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
+      };
+      return {
+        rootPx: getComputedStyle(document.documentElement).fontSize,
+        overflow: document.documentElement.scrollWidth - window.innerWidth,
+        dial: box(".period-dial"),
+        counts: box("section[aria-labelledby='board-headline'] dl"),
+        blurb: box("header p.max-w-xl"),
+        buttons: box("header .shrink-0"),
+        viewport: window.innerWidth,
+      };
+    });
+    const at = `at ${width}px`;
+    expect(layout.rootPx).toBe("32px");
+    expect(layout.overflow, `horizontal overflow ${at}`).toBeLessThanOrEqual(0);
+    // The counts keep their width, and the dial sits below them rather than over them.
+    expect(layout.counts.width, `counts ${at}`).toBeGreaterThan(120);
+    expect(layout.dial.top, `dial under the counts ${at}`).toBeGreaterThanOrEqual(layout.counts.bottom - 1);
+    // The blurb keeps a readable measure, and stays inside the screen with the buttons under it.
+    expect(layout.blurb.width, `blurb ${at}`).toBeGreaterThan(200);
+    expect(layout.blurb.right, `blurb inside the screen ${at}`).toBeLessThanOrEqual(layout.viewport);
+    expect(layout.buttons.top, `buttons under the blurb ${at}`).toBeGreaterThanOrEqual(layout.blurb.bottom - 1);
+  }
+});
+
 test("keeps the live bar the same height while checking and live at phone widths", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
   const board = fixtureBoard(Date.now());

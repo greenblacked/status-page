@@ -337,8 +337,9 @@ export function BoardView({
           Skip to services
         </a>
         <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-3 sm:pt-12">
-          <div className="flex items-start justify-between gap-4">
-            <div className="hero-recede min-w-0">
+          {/* Wraps, so at a large text size the buttons drop under the text instead of squeezing it to a word a line. */}
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="hero-recede min-w-[min(10rem,100%)] flex-1">
               <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
                 <LiveSignal state={freshness.state} />
                 Live status board
@@ -496,7 +497,7 @@ export function BoardView({
               </p>
             ) : null}
 
-            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
               <div className="flex min-w-0 flex-col gap-8">
                 {fetching && !board.services.length ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -725,7 +726,8 @@ function SummaryPanel({
 
   return (
     <section aria-labelledby="board-headline" className="glass rounded-xl p-5 sm:p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+      {/* A size container: below lg, whether the counts fit beside the dial is a question of this row's width in rem, so a large text size stacks them. */}
+      <div className="@container flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <h2
             id="board-headline"
@@ -768,8 +770,8 @@ function SummaryPanel({
           ) : null}
         </div>
         {/* On a phone the counts stack into a specimen table beside the dial; wider, they sit in a row. */}
-        <div className="flex items-center justify-between gap-5 sm:gap-10 lg:shrink-0 lg:justify-end">
-          <dl className="flex min-w-0 flex-1 flex-col gap-1.5 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
+        <div className="flex flex-col gap-5 @min-[15rem]:flex-row @min-[15rem]:items-center @min-[15rem]:max-lg:justify-between sm:gap-10 lg:shrink-0 lg:justify-end">
+          <dl className="flex min-w-0 flex-col gap-1.5 @min-[15rem]:max-sm:flex-1 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
             <Stat label="Operational" value={board.counts.operational} of={total} />
             <Stat label="Attention" value={attention} />
             <Stat label="Sources" value={total - board.counts.unknown} of={total} />
@@ -778,7 +780,7 @@ function SummaryPanel({
             now={now}
             jitterMs={refetchJitter}
             tone={headline.tone}
-            className="size-20 min-[380px]:size-24 sm:size-28 lg:size-32"
+            className="mx-auto size-[80px] min-[380px]:size-[96px] @min-[15rem]:mx-0 sm:size-[112px] lg:size-[128px]"
           />
         </div>
       </div>
