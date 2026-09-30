@@ -324,9 +324,9 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
   return rows.map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
 }
 
-// Non-operational first, in the board's urgency order (outage, degraded,
-// maintenance, then unknown: not a confirmed problem; equals keep source order), then operational in source order, capped at
-// MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
+// Non-operational first, in the board's urgency order (SEVERITY_ORDER: outage,
+// degraded, unknown, maintenance; equals keep source order), then operational
+// in source order, capped at MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
 // the total the source listed, set only when the cap dropped some, so a card
 // can say how many it is not showing.
 function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
