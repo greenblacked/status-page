@@ -901,6 +901,7 @@ function AlertsButton({
         // title explains the current state to pointer users.
         aria-pressed={state === "on"}
         aria-label="Browser alerts"
+        data-alerts-toggle
         title={ALERT_LABEL[state]}
       >
         <Icon className="size-3.5" />
