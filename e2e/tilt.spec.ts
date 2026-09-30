@@ -189,7 +189,7 @@ const lightVar = (page: Page, name: "--light-x" | "--light-y") =>
  * What the first card's pseudo-elements draw: the sheen's and the glint's
  * background as the browser computes them. Their gradients hold var(--light-x)
  * and var(--light-y), so the strings change when the value reaches them and
- * not otherwise, whatever the engine does with registered properties.
+ * not otherwise. WebKit once reported the value on the pseudo-element yet drew as if it were unset.
  */
 const paintedLight = (page: Page) =>
   page.evaluate(() => {

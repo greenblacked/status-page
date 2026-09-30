@@ -25,12 +25,11 @@ const NO_READING_MS = 3000;
  *
  * Not on <html>, and not through a rule of a style sheet: a change to a rule
  * makes WebKit rebuild its rule sets and re-style the document. The
- * properties are registered in CSS as non-inherited, so an inline write
- * re-styles the panel and its two pseudo-elements and not what is inside it
- * (about 8 ms a write for 18 panels in Chromium unregistered, well under a
- * third of that registered). A browser without @property (Safari before
- * 16.4) inherits them the plain way: the same picture at the higher cost,
- * which the frame cap and the deadband in the controller keep affordable.
+ * properties are plain, inherited custom properties, so an inline write
+ * re-styles the panel and what is inside it (about 8 ms for 18 panels in
+ * Chromium, which the frame cap and the deadband in the controller keep
+ * affordable). Registering them as non-inherited would save most of that but
+ * WebKit then draws the pseudo-elements as if they were unset; see src/styles.css.
  *
  * Panels come and go when a refresh re-renders the board, so a new one gets
  * the current value from a MutationObserver, before it paints. It watches
