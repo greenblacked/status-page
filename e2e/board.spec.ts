@@ -814,6 +814,40 @@ test("changes the search placeholder only where the field is at rest", async ({ 
   }
 });
 
+test("never clips the search placeholder, at any width", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const search = page.getByRole("searchbox", { name: "Search services" }).or(page.getByLabel("Search services"));
+  const long = "Search GCP, CS2 Europe, RouterOS…";
+  for (const [width, placeholder] of [
+    [1280, long],
+    [1100, "Search…"],
+    [1024, "Search…"],
+    [768, long],
+    [412, long],
+    [320, "Search…"],
+  ] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(search, `placeholder at ${width}px`).toHaveAttribute("placeholder", placeholder);
+    const { text, room } = await search.evaluate((input: HTMLInputElement) => {
+      const style = getComputedStyle(input);
+      const probe = document.createElement("span");
+      probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${style.font}`;
+      probe.textContent = input.placeholder;
+      document.body.appendChild(probe);
+      const text = probe.getBoundingClientRect().width;
+      probe.remove();
+      return {
+        text,
+        room: input.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight),
+      };
+    });
+    expect(text, `the placeholder fits the field at ${width}px`).toBeLessThanOrEqual(room);
+  }
+});
+
 test("keeps one search input, focus, text and caret intact through the dock", async ({ page }) => {
   test.slow();
   await page.goto("/");

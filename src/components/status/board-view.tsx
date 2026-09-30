@@ -4,6 +4,7 @@ import {
   type ComponentProps,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useId,
   useMemo,
@@ -403,6 +404,7 @@ export function BoardView({
                 <SearchInput
                   ref={searchRef}
                   store={dock}
+                  dockRef={dockRef}
                   value={query}
                   onChange={(event) => updateFilters({ query: event.target.value })}
                   type="search"
@@ -822,14 +824,55 @@ function WhileBarUp({ store, children }: { store: DockStore; children: (barUp: b
   return children(useDockState(store).barShown);
 }
 
+const LONG_PLACEHOLDER = "Search GCP, CS2 Europe, RouterOS…";
+const SHORT_PLACEHOLDER = "Search…";
+
+/**
+ * Whether `text` fits the field as a placeholder, unclipped. The field at rest
+ * is as wide as its dock (`dockRef`, which the merge into the bar never
+ * resizes), so this measures the text against that width less the input's own
+ * padding, and again when either changes. True until measured, which is what
+ * the server rendered, so hydration sees the same placeholder.
+ */
+function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null>): boolean {
+  const [fits, setFits] = useState(true);
+  useEffect(() => {
+    const dock = dockRef.current;
+    const input = dock?.querySelector("input");
+    const canvas = document.createElement("canvas").getContext("2d");
+    if (!dock || !input || !canvas) return;
+    const measure = () => {
+      const style = getComputedStyle(input);
+      canvas.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const needed =
+        canvas.measureText(text).width + Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+      setFits(dock.clientWidth >= needed);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(dock);
+    // The system font can arrive after the first measure.
+    void document.fonts?.ready.then(measure);
+    return () => observer.disconnect();
+  }, [text, dockRef]);
+  return fits;
+}
+
 /**
  * The search field's input. Its placeholder is the long one in the hero and the
  * short one once the field is fully in the bar, and changes only there (never
- * while the field is part way), in this component rather than the board's.
+ * while the field is part way), in this component rather than the board's. The
+ * short one also stands in wherever the field, at rest, is too narrow to show
+ * the long one whole (a small phone, or beside the chips just past 1024px).
  */
-function SearchInput({ store, ...props }: { store: DockStore } & ComponentProps<typeof Input>) {
+function SearchInput({
+  store,
+  dockRef,
+  ...props
+}: { store: DockStore; dockRef: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
   const { docked } = useDockState(store);
-  return <Input placeholder={docked ? "Search…" : "Search GCP, CS2 Europe, RouterOS…"} {...props} />;
+  const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
+  return <Input placeholder={docked || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
 }
 
 /**
