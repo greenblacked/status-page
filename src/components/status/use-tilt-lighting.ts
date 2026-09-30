@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createTiltController,
+  MIN_APPLY_INTERVAL_MS,
   needsPermission,
+  nextApplyInterval,
   readTiltLighting,
   screenAngle,
   TILT_ATTRIBUTE,
@@ -27,8 +29,10 @@ const NO_READING_MS = 3000;
  * makes WebKit rebuild its rule sets and re-style the document. The
  * properties are plain, inherited custom properties, so an inline write
  * re-styles the panel and what is inside it (about 8 ms for 18 panels in
- * Chromium, which the frame cap and the deadband in the controller keep
- * affordable). Registering them as non-inherited would save most of that but
+ * Chromium, and several times that on a throttled CPU). The deadband and the
+ * frame cap in the controller keep it affordable, and the cap widens by itself
+ * while frames overrun (nextApplyInterval), so a slow device writes less often
+ * instead of dropping frames. Registering them as non-inherited would save most of that but
  * WebKit then draws the pseudo-elements as if they were unset; see src/styles.css.
  *
  * Panels come and go when a refresh re-renders the board, so a new one gets
@@ -176,6 +180,8 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
     let cancelled = false;
     let gotReading = false;
     let driving = false;
+    let interval = MIN_APPLY_INTERVAL_MS;
+    let lastFrame = 0;
 
     const controller = createTiltController({
       apply: (x, y) => {
@@ -186,13 +192,18 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
         }
       },
       now: () => performance.now(),
+      minIntervalMs: () => interval,
     });
 
     const tick = (time: number) => {
       frame = 0;
       if (!latest) return;
+      // Frames that overrun mean the writes cost more than the device can spare: write less often.
+      if (lastFrame) interval = nextApplyInterval(interval, time - lastFrame);
+      lastFrame = time;
       const result = controller.sample(latest.beta, latest.gamma, latest.angle, time);
-      if (!result.settled) frame = requestAnimationFrame(tick);
+      if (result.settled) lastFrame = 0;
+      else frame = requestAnimationFrame(tick);
     };
 
     const onReading = (event: DeviceOrientationEvent) => {
