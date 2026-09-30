@@ -23,7 +23,7 @@ describe("createHistoryResponder", () => {
     expect(await response.json()).toEqual(value);
   });
 
-  it("reuses one read within 60 seconds and refreshes after", async () => {
+  it("reuses one read within five minutes and refreshes after", async () => {
     let now = 0;
     const read = vi.fn(async () => doc(`t${now}`));
     const respond = createHistoryResponder(read, () => now);
@@ -38,11 +38,13 @@ describe("createHistoryResponder", () => {
     expect(((await fresh.json()) as PublicHistory).updatedAt).toBe(`t${HISTORY_MEMO_MS}`);
   });
 
-  it("shares one in-flight read between concurrent requests", async () => {
+  it("reads once per concurrent request, then serves the memo", async () => {
     const read = vi.fn(async () => doc("x"));
     const respond = createHistoryResponder(read, () => 0);
-    await Promise.all([respond(), respond(), respond()]);
-    expect(read).toHaveBeenCalledTimes(1);
+    await Promise.all([respond(), respond()]);
+    expect(read).toHaveBeenCalledTimes(2);
+    await respond();
+    expect(read).toHaveBeenCalledTimes(2);
   });
 
   it("answers 503 no-store without leaking the error, and does not memoize it", async () => {
