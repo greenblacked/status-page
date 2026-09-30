@@ -389,8 +389,8 @@ test("floats a compact header with the controls once the hero scrolls away", asy
 /** The floating bar, found by its markup: Playwright's role queries skip it while it is `inert`. */
 const controlBar = (page: Page) => page.locator('section[aria-label="Board controls"]');
 
-/** The board body, which carries --dock (0 to 1), the search field's progress into the bar. */
-const boardBody = (page: Page) => page.locator(".board-body");
+/** The search dock, which carries --dock (0 to 1), the search field's progress into the bar. */
+const searchDock = (page: Page) => page.locator(".search-dock");
 
 /** Scrolls to `y` and waits three frames, so the dock's own callback and React's update have run. */
 async function scrollAndSettle(page: Page, y: number): Promise<void> {
@@ -410,7 +410,7 @@ const maxScroll = (page: Page) =>
 
 /** The dock's --dock as a number. */
 const dockValue = (page: Page) =>
-  boardBody(page).evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--dock") || "0"));
+  searchDock(page).evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--dock") || "0"));
 
 /** Waits out the bar's own fade and slide, but not the live ring inside it, which never finishes. */
 async function barSettled(page: Page): Promise<void> {
@@ -437,6 +437,10 @@ type DockStop = {
   docking: boolean;
   liveBottom: number;
   barTop: number;
+  barBottom: number;
+  fieldTop: number;
+  /** The input's placeholder, which may only change where the field is at rest. */
+  placeholder: string;
   chipOpacity: number;
   chipsClickable: boolean;
   chipHitByInput: boolean;
@@ -530,7 +534,8 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           const timer = setTimeout(() => finish(true), fallback);
           requestAnimationFrame(() => finish(false));
         });
-      const body = document.querySelector<HTMLElement>(".board-body");
+      const dock = document.querySelector<HTMLElement>(".search-dock");
+      const field = document.querySelector<HTMLElement>(".search-field");
       const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
       const live = document.querySelector<HTMLElement>('[data-testid="live-bar"]');
       const chips = document.querySelector<HTMLElement>(".board-chips");
@@ -560,11 +565,14 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           scrollY: window.scrollY,
           frameMs,
           fellBack,
-          dock: Number.parseFloat(body?.style.getPropertyValue("--dock") || "0"),
+          dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
           shown: bar?.getAttribute("data-shown") ?? null,
-          docking: body?.hasAttribute("data-docking") ?? false,
+          docking: dock?.hasAttribute("data-docking") ?? false,
           liveBottom: live?.getBoundingClientRect().bottom ?? 0,
           barTop: bar?.getBoundingClientRect().top ?? 0,
+          barBottom: bar?.getBoundingClientRect().bottom ?? 0,
+          fieldTop: field?.getBoundingClientRect().top ?? 0,
+          placeholder: input?.placeholder ?? "",
           chipOpacity: chips ? Number.parseFloat(getComputedStyle(chips).opacity) : 1,
           chipsClickable: chip ? getComputedStyle(chip).pointerEvents !== "none" : true,
           chipHitByInput: Boolean(hit?.closest(".search-field")),
@@ -625,17 +633,49 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
   return sweep.stops;
 }
 
+/** The scroll offsets at which the dock changes, worked out from the page the way useSearchDock does. */
+type DockOffsets = {
+  /** From 64rem the field shares a row with the chips and moves in one go. */
+  wide: boolean;
+  natural: number;
+  /** The bar comes up: on a phone by itself, with the field waiting below it. */
+  barStart: number;
+  /** --dock leaves 0, and returns to 1 at moveEnd. */
+  moveStart: number;
+  moveEnd: number;
+};
+
+async function dockOffsets(page: Page): Promise<DockOffsets> {
+  const natural = await dockNatural(page);
+  const { wide, barStick, dockStick } = await page.evaluate(() => ({
+    wide: matchMedia("(min-width: 64rem)").matches,
+    barStick: Number.parseFloat(
+      getComputedStyle(document.querySelector('section[aria-label="Board controls"]') as Element).top,
+    ),
+    dockStick: Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
+  }));
+  if (wide) {
+    // One move of 48px, ending where the field sticks; the bar comes up about two thirds of the way through.
+    const moveStart = natural - dockStick - 48;
+    return { wide, natural, barStart: moveStart + 0.67 * 48, moveStart, moveEnd: moveStart + 48 };
+  }
+  // The bar sits at the top of the board body, two pixels above the field, until it sticks; 24px later the field
+  // starts to merge into it, over 56px.
+  const barStart = natural - 2 - barStick;
+  return { wide, natural, barStart, moveStart: barStart + 24, moveEnd: barStart + 24 + 56 };
+}
+
 /**
- * A sweep path, top to end: fine steps of `step` across the whole of the field's move into the bar (--dock
- * from 0 to 1 takes 48px of scrolling, ending a stick offset short of where the field sits in the page),
- * and only a few stops elsewhere, where nothing changes. `path` is the way up and all of it back.
+ * A sweep path, top to end: fine steps of `step` across the whole of the dock's change (the bar coming up
+ * and the field's move into it: 8px before the first to 8px after the last), and only a few stops
+ * elsewhere, where nothing changes. `path` is the way up and all of it back.
  */
 async function dockPath(page: Page, step = 8): Promise<{ up: number[]; path: number[] }> {
-  const natural = await dockNatural(page);
+  const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
   const limit = await maxScroll(page);
   const ramp: number[] = [];
-  for (let y = natural - 66; y <= natural - 2; y += step) ramp.push(y);
-  const coarse = [0, natural - 160, natural - 110, natural + 40, natural + 120, limit];
+  for (let y = Math.min(barStart, moveStart) - 8; y <= moveEnd + 8; y += step) ramp.push(y);
+  const coarse = [0, natural - 160, natural - 110, natural + 120, natural + 200, limit];
   const up = [...new Set([...coarse, ...ramp].map((y) => Math.round(Math.min(Math.max(y, 0), limit))))].sort(
     (a, b) => a - b,
   );
@@ -657,6 +697,99 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   const first = stops.find((stop) => stop.shown === "true");
   expect(first, "the bar never showed").toBeDefined();
   expect(first?.liveBottom ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(first?.barTop ?? 0);
+  // And it stays clear of it for the rest of the way down.
+  for (const stop of stops.filter((stop) => stop.shown === "true")) {
+    expect(stop.liveBottom, `at ${stop.y}`).toBeLessThanOrEqual(stop.barTop);
+  }
+});
+
+test("brings the bar up on its own first, then merges the field into it", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, barStart, moveStart, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field shares a row with the chips and moves in one go");
+
+  const { up } = await dockPath(page);
+  const stops = await sweepDock(page, up);
+  const firstShown = stops.findIndex((stop) => stop.shown === "true");
+  const firstMoving = stops.findIndex((stop) => stop.dock > 0);
+  expect(firstShown, "the bar never showed").toBeGreaterThanOrEqual(0);
+  expect(firstMoving, "the field never moved").toBeGreaterThanOrEqual(0);
+  // Phase one: the bar is up while the field has not moved at all.
+  const alone = stops.filter((stop) => stop.shown === "true" && stop.dock === 0);
+  expect(alone.length, "the bar never showed by itself").toBeGreaterThan(1);
+  for (const stop of alone) {
+    expect(stop.docking, `at ${stop.y}`).toBe(false);
+    // The field waits below the bar, not under it.
+    expect(stop.fieldTop, `at ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
+  }
+  // Waiting, the field stands still: it is pinned below the bar.
+  const waiting = alone.map((stop) => stop.fieldTop);
+  expect(Math.max(...waiting) - Math.min(...waiting)).toBeLessThanOrEqual(0.5);
+  // --dock rises only once the bar is up, and each phase sits at its own offsets.
+  expect(firstMoving).toBeGreaterThan(firstShown);
+  for (const stop of stops) {
+    if (stop.dock > 0) expect(stop.shown, `at ${stop.y}`).toBe("true");
+    if (stop.scrollY < barStart) expect(stop.shown, `at ${stop.y}`).toBe("false");
+    if (stop.scrollY >= barStart + 1) expect(stop.shown, `at ${stop.y}`).toBe("true");
+    if (stop.scrollY <= moveStart) expect(stop.dock, `at ${stop.y}`).toBe(0);
+    if (stop.scrollY >= moveEnd + 1) expect(stop.dock, `at ${stop.y}`).toBe(1);
+  }
+  // The merge itself is monotonic, and the field ends up inside the bar.
+  const merging = stops.filter((stop) => stop.dock > 0 && stop.dock < 1);
+  expect(merging.length).toBeGreaterThan(2);
+  for (const [index, stop] of merging.entries()) {
+    expect(stop.docking, `at ${stop.y}`).toBe(true);
+    const previous = merging[index - 1];
+    if (previous) {
+      expect(stop.dock).toBeGreaterThanOrEqual(previous.dock);
+      expect(stop.fieldTop).toBeLessThanOrEqual(previous.fieldTop + 0.5);
+    }
+  }
+  const docked = stops.find((stop) => stop.dock === 1);
+  expect(docked?.fieldTop).toBeGreaterThanOrEqual((docked?.barTop ?? 0) - 0.5);
+  expect(docked?.fieldTop).toBeLessThanOrEqual((docked?.barBottom ?? 0) + 0.5);
+});
+
+test("keeps the bar up while the page hovers just above where it appears", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, barStart } = await dockOffsets(page);
+  test.skip(wide, "the bar is part of the field's one move from 64rem");
+  const bar = controlBar(page);
+
+  await scrollAndSettle(page, Math.ceil(barStart) + 20);
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  // Up to 8px above the offset it came up at, it stays up; further, it goes; and it does not return before the offset.
+  await scrollAndSettle(page, Math.ceil(barStart) - 4);
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  await scrollAndSettle(page, Math.floor(barStart) - 12);
+  await expect(bar).toHaveAttribute("data-shown", "false");
+  await scrollAndSettle(page, Math.ceil(barStart) - 4);
+  await expect(bar).toHaveAttribute("data-shown", "false");
+  await scrollAndSettle(page, Math.ceil(barStart) + 1);
+  await expect(bar).toHaveAttribute("data-shown", "true");
+});
+
+test("changes the search placeholder only where the field is at rest", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { path } = await dockPath(page);
+  const stops = await sweepDock(page, path);
+  const half = stops.length / 2;
+  const long = "Search GCP, CS2 Europe, RouterOS…";
+  // Down, it is the long one until the field is in the bar; back up, the short one until it is out.
+  for (const stop of stops.slice(0, half)) {
+    expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : long);
+  }
+  for (const stop of stops.slice(half)) {
+    expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? long : "Search…");
+  }
 });
 
 test("keeps one search input, focus, text and caret intact through the dock", async ({ page }) => {
@@ -826,6 +959,10 @@ test.describe("with reduced motion", () => {
     const { path } = await dockPath(page);
     const stops = await sweepDock(page, path);
     expect([...new Set(stops.map((stop) => stop.dock))].sort()).toEqual([0, 1]);
+    // The two phases stay apart without motion: on a phone the bar is up before the field snaps in.
+    if (!(await dockOffsets(page)).wide) {
+      expect(stops.some((stop) => stop.shown === "true" && stop.dock === 0)).toBe(true);
+    }
   });
 });
 

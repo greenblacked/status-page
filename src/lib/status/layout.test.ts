@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  barShownAt,
   boardHeadline,
   dockProgress,
   documentTitle,
@@ -206,35 +207,58 @@ function notAnElement(): object {
 }
 
 describe("dockProgress", () => {
-  it("rests at 0 until the field reaches the point it starts to move", () => {
-    expect(dockProgress(400, 10, 48)).toBe(0);
-    expect(dockProgress(58, 10, 48)).toBe(0);
+  it("rests at 0 until the page reaches the point the field starts to move", () => {
+    expect(dockProgress(0, 400, 48)).toBe(0);
+    expect(dockProgress(400, 400, 48)).toBe(0);
   });
 
-  it("is 1 once the field sits at its stick point", () => {
-    expect(dockProgress(10, 10, 48)).toBe(1);
+  it("is 1 once the move is done", () => {
+    expect(dockProgress(448, 400, 48)).toBe(1);
   });
 
   it("clamps an overscroll bounce at both ends", () => {
-    expect(dockProgress(-30, 10, 48)).toBe(1);
-    expect(dockProgress(9000, 10, 48)).toBe(0);
+    expect(dockProgress(-30, 400, 48)).toBe(0);
+    expect(dockProgress(9000, 400, 48)).toBe(1);
   });
 
   it("is halfway at the middle of the range, eased at both ends", () => {
-    expect(dockProgress(34, 10, 48)).toBeCloseTo(0.5, 5);
+    expect(dockProgress(424, 400, 48)).toBeCloseTo(0.5, 5);
     // Smoothstep: slower than linear near each pose.
-    expect(dockProgress(58 - 4.8, 10, 48)).toBeLessThan(0.1);
-    expect(dockProgress(10 + 4.8, 10, 48)).toBeGreaterThan(0.9);
+    expect(dockProgress(404.8, 400, 48)).toBeLessThan(0.1);
+    expect(dockProgress(443.2, 400, 48)).toBeGreaterThan(0.9);
   });
 
-  it("only ever rises as the field climbs", () => {
+  it("only ever rises as the page scrolls down", () => {
     let last = -1;
-    for (let top = 80; top >= -10; top -= 1) {
-      const p = dockProgress(top, 10, 48);
+    for (let y = 380; y <= 470; y += 1) {
+      const p = dockProgress(y, 400, 48);
       expect(p).toBeGreaterThanOrEqual(last);
       expect(p).toBeGreaterThanOrEqual(0);
       expect(p).toBeLessThanOrEqual(1);
       last = p;
     }
+  });
+});
+
+describe("barShownAt", () => {
+  it("comes up at its start and not before", () => {
+    expect(barShownAt(299, 300, false)).toBe(false);
+    expect(barShownAt(300, 300, false)).toBe(true);
+  });
+
+  it("stays up until the page is a hysteresis above its start", () => {
+    expect(barShownAt(295, 300, true)).toBe(true);
+    expect(barShownAt(292, 300, true)).toBe(true);
+    expect(barShownAt(291.9, 300, true)).toBe(false);
+  });
+
+  it("does not flicker while a finger hovers around the start", () => {
+    let shown = false;
+    const seen: boolean[] = [];
+    for (const y of [296, 300, 297, 301, 294, 299, 293]) {
+      shown = barShownAt(y, 300, shown);
+      seen.push(shown);
+    }
+    expect(seen).toEqual([false, true, true, true, true, true, true]);
   });
 });

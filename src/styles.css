@@ -1062,26 +1062,43 @@
 
 /*
   The board body holds the bar, the search field, the filter chips and the
-  cards; --dock (0 to 1, written by useSearchDock) is set on it so all of
-  them can follow the field's progress into the bar. It is at least one
-  screen tall, so a search with few or no results cannot shorten the page
-  under a docked field and scroll it back out.
+  cards. It is at least one screen tall, so a search with few or no results
+  cannot shorten the page under a docked field and scroll it back out. On a
+  phone the field is docked 70px of scrolling below the body's top (the bar's
+  offset, the pause and the merge), so it is 5rem taller there.
+  --dock (0 to 1, written by useSearchDock) lives on the search dock, so a
+  write restyles the field and nothing else; only from 64rem, where the chips
+  sit beside the field and follow it, is it written here too.
 */
 .board-body {
-  min-height: 100lvh;
+  min-height: calc(100lvh + 5rem);
   --dock: 0;
-  --dock-x: 0px;
-  --dock-w: 12rem;
 }
 
-/* The search field: sticky, so the browser docks it. Two pixels under the bar's top, centred in its 48px. */
+@media (min-width: 64rem) {
+  .board-body {
+    min-height: 100lvh;
+  }
+}
+
+/*
+  The search field: sticky, so the browser docks it. On a phone it comes to
+  rest below the bar (its 3rem and a 0.5rem gap lower than the bar's top,
+  plus the field's two pixels), so the bar can come up on its own; the merge
+  then lifts the field by that much (see .search-field). From 64rem the field
+  shares its row with the chips and goes straight to its place in the bar: two
+  pixels under the bar's top, centred in its 48px.
+*/
 .search-dock {
   position: sticky;
-  top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
+  top: calc(env(safe-area-inset-top) + 0.5rem + 2px + 3.5rem);
   z-index: 41;
   height: 2.75rem;
   min-width: 0;
   pointer-events: none;
+  --dock: 0;
+  --dock-x: 0px;
+  --dock-w: 12rem;
 }
 
 .search-field {
@@ -1091,7 +1108,22 @@
   contain: layout style;
   pointer-events: auto;
   width: calc(100% - (100% - var(--dock-w)) * var(--dock));
-  transform: translateX(calc(var(--dock-x) * var(--dock)));
+  transform: translate(calc(var(--dock-x) * var(--dock)), calc(-3.5rem * var(--dock)));
+}
+
+/* Only while it moves: a layer held for the whole page would cost memory for nothing. */
+.search-dock[data-docking] .search-field {
+  will-change: transform;
+}
+
+@media (min-width: 64rem) {
+  .search-dock {
+    top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
+  }
+
+  .search-field {
+    transform: translateX(calc(var(--dock-x) * var(--dock)));
+  }
 }
 
 /* Our own clear button replaces the browser's, which is too small a target on a phone. */

@@ -159,12 +159,21 @@ export function keyboardFocus(target: unknown): boolean {
 }
 
 /**
- * How far a sticky search field has travelled into the bar, 0 to 1. `top` is its
- * current distance from the viewport top, `stick` where it comes to rest, and
- * `range` how many pixels of scrolling the move takes. Clamped, so an overscroll
- * bounce at either end never moves it past its two poses.
+ * How far the search field has travelled into the bar, 0 to 1, from the page's
+ * scroll position. It starts to move at `start` and arrives `range` pixels of
+ * scrolling later. Clamped, so an overscroll bounce at either end never moves
+ * it past its two poses.
  */
-export function dockProgress(top: number, stick: number, range: number): number {
-  const linear = Math.min(1, Math.max(0, 1 - (top - stick) / range));
+export function dockProgress(scrollY: number, start: number, range: number): number {
+  const linear = Math.min(1, Math.max(0, (scrollY - start) / range));
   return linear * linear * (3 - 2 * linear);
+}
+
+/**
+ * Whether the floating bar is up at `scrollY`: from `start` on, and once up it
+ * stays until the page is `hysteresis` px above that, so a finger hovering at
+ * the threshold cannot flicker it.
+ */
+export function barShownAt(scrollY: number, start: number, shown: boolean, hysteresis = 8): boolean {
+  return scrollY >= (shown ? start - hysteresis : start);
 }

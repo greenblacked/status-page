@@ -1,7 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Bell, BellOff, BellRing, RefreshCw, Search, Star, X } from "lucide-react";
-import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
-import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
+import {
+  type ComponentProps,
+  type MouseEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  CompactHeader,
+  createDockStore,
+  type DockStore,
+  useDockState,
+  useSearchDock,
+} from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
 import { LensField } from "@/components/status/lens-field";
@@ -78,8 +93,11 @@ export function BoardView({
   const searchRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
-  const docked = useSearchDock(bodyRef, dockRef, slotRef);
+  // The dock's two discrete states live outside this component: the board must not render mid-move.
+  const [dock] = useState(createDockStore);
+  useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, store: dock });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
@@ -334,9 +352,15 @@ export function BoardView({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {/* Docked, the bar's copies are the ones in reach: Tab goes from them to the search field. */}
-              <AlertsButton skipTab={docked} state={alerts.state} onToggle={alerts.toggle} />
-              <RefreshButton skipTab={docked} fetching={fetching} onRefresh={() => void handleRefresh()} />
+              {/* With the bar up, its copies are the ones in reach: Tab goes from them to the search field. */}
+              <WhileBarUp store={dock}>
+                {(barUp) => (
+                  <>
+                    <AlertsButton skipTab={barUp} state={alerts.state} onToggle={alerts.toggle} />
+                    <RefreshButton skipTab={barUp} fetching={fetching} onRefresh={() => void handleRefresh()} />
+                  </>
+                )}
+              </WhileBarUp>
             </div>
           </div>
 
@@ -359,7 +383,14 @@ export function BoardView({
           className="board-body page-gutter relative mx-auto flex max-w-6xl flex-wrap content-start items-start gap-x-4"
         >
           {/* Right before the search field in the markup, so Tab goes from the bar's buttons to it. */}
-          <CompactHeader shown={docked} slotRef={slotRef} name={APP_NAME} live={freshness.state} headline={headline}>
+          <CompactHeader
+            store={dock}
+            barRef={barRef}
+            slotRef={slotRef}
+            name={APP_NAME}
+            live={freshness.state}
+            headline={headline}
+          >
             <AlertsButton bar state={alerts.state} onToggle={alerts.toggle} />
             <RefreshButton bar fetching={fetching} onRefresh={() => void handleRefresh()} />
           </CompactHeader>
@@ -369,11 +400,11 @@ export function BoardView({
               <label className="relative block min-w-0 flex-1">
                 <span className="sr-only">Search services</span>
                 <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-subtle" />
-                <Input
+                <SearchInput
                   ref={searchRef}
+                  store={dock}
                   value={query}
                   onChange={(event) => updateFilters({ query: event.target.value })}
-                  placeholder={docked ? "Search…" : "Search GCP, CS2 Europe, RouterOS…"}
                   type="search"
                   enterKeyHint="search"
                   autoCapitalize="off"
@@ -781,6 +812,24 @@ const ALERT_LABEL: Record<AlertsState, string> = {
   on: "Browser alerts are on; click to turn them off",
   blocked: "Alerts are blocked in this browser's site settings",
 };
+
+/**
+ * Hands its children whether the floating bar is up. It is the one part of the
+ * hero that renders when that changes, so the board does not.
+ */
+function WhileBarUp({ store, children }: { store: DockStore; children: (barUp: boolean) => ReactNode }) {
+  return children(useDockState(store).barShown);
+}
+
+/**
+ * The search field's input. Its placeholder is the long one in the hero and the
+ * short one once the field is fully in the bar, and changes only there (never
+ * while the field is part way), in this component rather than the board's.
+ */
+function SearchInput({ store, ...props }: { store: DockStore } & ComponentProps<typeof Input>) {
+  const { docked } = useDockState(store);
+  return <Input placeholder={docked ? "Search…" : "Search GCP, CS2 Europe, RouterOS…"} {...props} />;
+}
 
 /**
  * Rendered twice, in the hero and in the compact header, both driven by
