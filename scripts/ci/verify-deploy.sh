@@ -105,12 +105,28 @@ get() {
   : >"$hdr"
   : >"$body"
   status="$(curl --silent --show-error --max-time "$timeout" --dump-header "$hdr" --output "$body" --write-out '%{http_code}' "$url" 2>"$work/curl-error")" || status=000
-  curl_error="$(tr -d '\r' <"$work/curl-error" | head -n 1)"
+  IFS= read -r curl_error <"$work/curl-error" || true
+  curl_error="${curl_error//$'\r'/}"
 }
 
 # header <name>: the value of the first such header of the last response,
-# matched case-insensitively; empty when absent.
-header() { grep -i "^$1:" "$hdr" | head -n 1 | cut -d: -f2- | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' || true; }
+# matched case-insensitively; empty when absent. Bash builtins only (no pipeline
+# of grep, head, cut, tr and sed per lookup), and nothing newer than bash 3.2.
+header() {
+  local line value=""
+  shopt -s nocasematch
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line//$'\r'/}"
+    if [[ "$line" == "$1":* ]]; then
+      value="${line#*:}"
+      break
+    fi
+  done <"$hdr"
+  shopt -u nocasematch
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
 
 # expect_200 <check> <path>: the check passes when the path answers 200.
 expect_200() {

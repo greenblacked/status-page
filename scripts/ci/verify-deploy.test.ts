@@ -57,6 +57,19 @@ function commandsWithoutTimeout(): string {
 
 const hasPerl = spawnSync("perl", ["-e", "1"]).status === 0;
 
+/**
+ * The fakes start with this shebang rather than `#!/usr/bin/env bash`: env
+ * would search every PATH directory for bash on each fake call, and each miss
+ * is a failed exec.
+ */
+function bashShebang(): string {
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (existsSync(join(dir, "bash"))) return `#!${join(dir, "bash")}`;
+  }
+  return "#!/usr/bin/env bash";
+}
+const SHEBANG = bashShebang();
+
 /** A healthy production host: indexable, on version `v-prod`. */
 function prodSite(): Site {
   return {
@@ -85,7 +98,7 @@ type Options = {
   san?: string;
   /** Exit code of `openssl x509 -checkend`: 1 means the certificate is expiring. */
   checkend?: number;
-  /** Extra environment for the fakes: `FAKE_NOCERT=1` (openssl prints no certificate), `FAKE_HANG=1` (openssl hangs). */
+  /** Extra environment for the fakes: `FAKE_NOCERT=1` (openssl prints no certificate), `FAKE_HANG=1` (openssl hangs for a minute). */
   env?: Record<string, string>;
   /** Puts a `timeout` on PATH that exits with this code without running anything. */
   timeoutExit?: number;
@@ -136,7 +149,7 @@ function run(args: string[], options: Options = {}) {
   const curl = join(bin, "curl");
   writeFileSync(
     curl,
-    `#!/usr/bin/env bash
+    `${SHEBANG}
 echo "$*" >> "${dir}/curl-calls"
 hdr=; out=; url=
 while [ $# -gt 0 ]; do
@@ -152,16 +165,18 @@ rest=\${url#*://}
 host=\${rest%%/*}
 host=\${host##*@}
 case "$rest" in */*) path=/\${rest#*/} ;; *) path=/ ;; esac
-key=$(printf '%s' "$path" | tr / _)
+key=\${path//\\//_}
 fixture="${fx}/$host/$key"
 if [ ! -d "$fixture" ]; then
   echo "curl: (6) Could not resolve host: $host" >&2
   printf '000'
   exit 6
 fi
-[ -n "$hdr" ] && cp "$fixture/headers" "$hdr"
-[ -n "$out" ] && cp "$fixture/body" "$out"
-printf '%s' "$(cat "$fixture/status")"
+# Builtins only: a fork and exec per cp, cat or tr costs seconds on a loaded machine.
+if [ -n "$hdr" ]; then IFS= read -r -d '' content < "$fixture/headers" || true; printf '%s' "$content" > "$hdr"; fi
+if [ -n "$out" ]; then IFS= read -r -d '' content < "$fixture/body" || true; printf '%s' "$content" > "$out"; fi
+IFS= read -r code < "$fixture/status" || true
+printf '%s' "$code"
 `,
   );
   const openssl = join(bin, "openssl");
@@ -170,17 +185,17 @@ printf '%s' "$(cat "$fixture/status")"
   // line), then the checkend verdict, and exit status 1 when it is expiring.
   writeFileSync(
     openssl,
-    `#!/usr/bin/env bash
+    `${SHEBANG}
 echo "$*" >> "${dir}/openssl-calls"
 case "$1" in
   s_client)
-    [ -n "$FAKE_HANG" ] && sleep 5
+    [ -n "$FAKE_HANG" ] && sleep 60
     [ -n "$FAKE_NOCERT" ] && exit 1
     printf 'CONNECTED(00000003)\\n'
     printf -- '-----BEGIN CERTIFICATE-----\\nZmFrZQ==\\n-----END CERTIFICATE-----\\n'
     ;;
   x509)
-    cat > /dev/null
+    while read -r _; do :; done
     if [ -n "$FAKE_NOCERT" ]; then
       echo "Could not read certificate from <stdin>" >&2
       exit 1
@@ -207,16 +222,15 @@ esac
   chmodSync(openssl, 0o755);
   if (options.timeoutExit !== undefined) {
     const stub = join(bin, "timeout");
-    writeFileSync(stub, `#!/usr/bin/env bash\necho "$*" >> "${dir}/timeout-calls"\nexit ${options.timeoutExit}\n`);
+    writeFileSync(stub, `${SHEBANG}\necho "$*" >> "${dir}/timeout-calls"\nexit ${options.timeoutExit}\n`);
     chmodSync(stub, 0o755);
   }
   if (options.gtimeout) {
     const stub = join(bin, "gtimeout");
-    writeFileSync(stub, `#!/usr/bin/env bash\necho "$*" >> "${dir}/gtimeout-calls"\nshift\nexec "$@"\n`);
+    writeFileSync(stub, `${SHEBANG}\necho "$*" >> "${dir}/gtimeout-calls"\nshift\nexec "$@"\n`);
     chmodSync(stub, 0o755);
   }
 
-  const started = Date.now();
   const result = spawnSync(SCRIPT, args, {
     encoding: "utf8",
     env: {
@@ -227,7 +241,6 @@ esac
       ...options.env,
     },
   });
-  const elapsed = Date.now() - started;
   const log = (name: string) =>
     existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8").trim().split("\n") : [];
   const output = `${result.stdout}${result.stderr}`;
@@ -252,12 +265,13 @@ esac
     opensslCalls: log("openssl-calls"),
     timeoutCalls: log("timeout-calls"),
     gtimeoutCalls: log("gtimeout-calls"),
-    /** Milliseconds the script ran for. */
-    elapsed,
   };
 }
 
-describe("verify-deploy.sh", () => {
+// Every test runs the real script, which starts dozens of processes. On four
+// cores that takes well under a second idle, 1-3 s at load 30-40 and over 5 s
+// at load 43 (Playwright and Vite builds running), past vitest's 5 s default.
+describe("verify-deploy.sh", { timeout: 20_000 }, () => {
   it("passes on a healthy production and stage", () => {
     const r = run([]);
     expect(r.status).toBe(0);
@@ -621,8 +635,7 @@ describe("verify-deploy.sh", () => {
         expect(r.status).toBe(1);
         expect(r.fails("prod")).toHaveLength(1);
         expect(r.fails("prod")[0]).toContain("timed out after 1s");
-        // The fake hangs for 5 s: the script must not wait for it.
-        expect(r.elapsed).toBeLessThan(4500);
+        // The fake hangs for 60 s: run() only returns because the script killed it.
       });
 
       it("uses gtimeout when there is no timeout", () => {
@@ -643,16 +656,15 @@ describe("verify-deploy.sh", () => {
         expect(r.status).toBe(1);
         expect(r.fails("prod")).toHaveLength(1);
         expect(r.fails("prod")[0]).toContain("timed out after 1s");
-        expect(r.elapsed).toBeLessThan(4500);
       });
     });
 
     it("skips TLS with --skip-tls", () => {
-      const withTls = run([]);
       const r = run(["--skip-tls"], { san: "DNS:nothing.example.org", checkend: 1 });
       expect(r.status).toBe(0);
       expect(r.opensslCalls).toEqual([]);
-      expect(r.checks).toBeLessThan(withTls.checks);
+      // Five checks per target, none of them the certificate.
+      expect(r.checks).toBe(10);
     });
   });
 
