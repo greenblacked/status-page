@@ -84,12 +84,16 @@ export function hostOf(url: string, fallback: string): string {
  * (upcoming maintenance). It never reads "since" or shows a running
  * duration, which would contradict its label: once the time has passed it
  * reads "was due 22:00 UTC".
+ *
+ * `lineStart` is for a line of its own, where the sentence begins with a
+ * capital: "Since 14:05 UTC", "Scheduled for 22:00 UTC", "Was due 22:00 UTC".
  */
 export function IncidentSince({
   startedAt,
   reference,
   now,
   scheduled = false,
+  lineStart = false,
   className,
 }: {
   startedAt: string | undefined;
@@ -98,14 +102,17 @@ export function IncidentSince({
   now: number;
   /** The vendor has not started this yet: no "since", no running duration. */
   scheduled?: boolean;
+  /** The line begins with this text, so it starts with a capital. */
+  lineStart?: boolean;
   className?: string;
 }) {
   const at = parseTimestamp(startedAt);
   if (at === null) return null;
   const { upcoming, duration } = incidentStart(at, now, reference);
+  const lead = upcoming ? "scheduled for " : scheduled ? "was due " : "since ";
   return (
     <span className={cn("text-subtle", className)}>
-      {upcoming ? "scheduled for " : scheduled ? "was due " : "since "}
+      {lineStart ? `${lead.charAt(0).toUpperCase()}${lead.slice(1)}` : lead}
       <LocalTime at={at} reference={Number.isFinite(reference) ? reference : at} />
       {duration && !scheduled ? (
         <>
@@ -310,6 +317,7 @@ export function ServiceExtras({
                 startedAt={incident.startedAt}
                 reference={checkedAt}
                 now={now}
+                lineStart
                 className="block text-footnote"
               />
             </li>
@@ -336,6 +344,7 @@ export function ServiceExtras({
                 reference={checkedAt}
                 now={now}
                 scheduled
+                lineStart
                 className="block text-footnote"
               />
             </li>

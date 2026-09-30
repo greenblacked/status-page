@@ -413,7 +413,7 @@ describe("service card incident labels and links", () => {
     expect(html).toContain("data-upcoming-maintenance");
     expect(html).toContain(">Upcoming</span>");
     expect(html).toContain("Database upgrade");
-    expect(html).toContain("scheduled for ");
+    expect(html).toContain("Scheduled for ");
     expect(html).toContain(">Degraded</span>");
   });
 
@@ -424,9 +424,10 @@ describe("service card incident labels and links", () => {
       upcomingMaintenance: [{ id: "m", title: "Database upgrade", scheduledFor: "2026-09-27T10:00:00.000Z" }],
     });
     expect(html).toContain(">Upcoming</span>");
-    expect(html).toContain("was due ");
+    expect(html).toContain("Was due ");
     expect(html).not.toContain("since ");
-    expect(html).not.toContain("scheduled for ");
+    expect(html).not.toContain("Since ");
+    expect(html).not.toContain("Scheduled for ");
     expect(html).not.toMatch(/<time dateTime="PT/);
   });
 

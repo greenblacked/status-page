@@ -2000,6 +2000,26 @@ test("keeps Alerts and Refresh as icon buttons with a name and a tooltip", async
   }
 });
 
+test("opens the countdown line with a capital in the margin, and keeps it lowercase after the dot on a phone", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await hydrated(page);
+  const next = page
+    .getByTestId("live-bar")
+    .locator("span", { hasText: /^next in/ })
+    .first();
+  await expect(next).toBeAttached();
+  const md = await page.evaluate(() => matchMedia("(min-width: 48rem)").matches);
+  const { display, transform } = await next.evaluate((element) => ({
+    display: getComputedStyle(element).display,
+    transform: getComputedStyle(element, "::first-letter").textTransform,
+  }));
+  // The countdown is a line of its own only from md up, and only then does it begin a line.
+  expect(display === "block").toBe(md);
+  expect(transform).toBe(md ? "uppercase" : "none");
+});
+
 test("shows the period dial only on the Full background, and the live line's words on every one", async ({ page }) => {
   await page.goto("/");
   await hydrated(page);

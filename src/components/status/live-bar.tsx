@@ -87,11 +87,11 @@ export function LiveBar({
             <>
               {" "}
               Checked {checkedAt === null ? "…" : <LocalTime at={checkedAt} />}
-              {/* In the margin the countdown takes a line of its own; on a phone it follows a dot. */}
+              {/* In the margin the countdown takes a line of its own, and its first letter is a capital; on a phone it follows a dot. */}
               <span aria-hidden className="md:hidden">
                 {" · "}
               </span>
-              <span className="md:block">
+              <span className="md:block md:first-letter:uppercase">
                 next in <span className="tabular-nums text-fg">{nextInText(now, refetchJitterMs)}</span>
               </span>
             </>

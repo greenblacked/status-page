@@ -75,6 +75,16 @@ describe("IncidentSince", () => {
     expect(html).toMatch(/\(<time dateTime="PT2H10M"/);
   });
 
+  it("begins with a capital when it has a line to itself", () => {
+    const now = Date.parse(at) + 130 * 60_000;
+    expect(render({ lineStart: true, now })).toContain("Since <time");
+    expect(render({ lineStart: true, scheduled: true, now })).toContain("Was due <time");
+    const ahead = { reference: Date.parse(at) - 60_000, now: Date.parse(at) - 60_000 };
+    expect(render({ lineStart: true, ...ahead })).toContain("Scheduled for <time");
+    // Inline, in a sentence, it stays lowercase.
+    expect(render({ now })).toContain("since <time");
+  });
+
   it("says scheduled for a start still ahead", () => {
     const html = render({ reference: Date.parse(at) - 60_000, now: Date.parse(at) - 60_000 });
     expect(html).toContain("scheduled for ");
