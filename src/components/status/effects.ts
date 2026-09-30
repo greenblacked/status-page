@@ -208,11 +208,15 @@ export function useWanderLight(container: RefObject<HTMLElement | null>): void {
       el.style.setProperty("--wander-delay", `${(-Math.random() * dur * 2).toFixed(1)}s`);
       el.dataset.wander = String(Math.floor(Math.random() * WANDER_PATHS));
     };
-    const scan = () => {
-      for (const el of root.querySelectorAll<HTMLElement>(".spotlight")) seed(el);
+    const seedWithin = (node: Node) => {
+      if (!(node instanceof HTMLElement)) return;
+      if (node.matches(".spotlight")) seed(node);
+      for (const el of node.querySelectorAll<HTMLElement>(".spotlight")) seed(el);
     };
-    scan();
-    const observer = new MutationObserver(scan);
+    seedWithin(root);
+    const observer = new MutationObserver((records) => {
+      for (const record of records) for (const node of record.addedNodes) seedWithin(node);
+    });
     observer.observe(root, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, [container]);
