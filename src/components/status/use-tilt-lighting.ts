@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createTiltController,
-  MIN_APPLY_INTERVAL_MS,
   needsPermission,
-  nextApplyInterval,
   readTiltLighting,
   screenAngle,
   TILT_ATTRIBUTE,
@@ -168,8 +166,6 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
     let attached = false;
     let gotReading = false;
     let driving = false;
-    let interval = MIN_APPLY_INTERVAL_MS;
-    let lastFrame = 0;
 
     const controller = createTiltController({
       apply: (x, y) => {
@@ -180,18 +176,13 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
         }
       },
       now: () => performance.now(),
-      minIntervalMs: () => interval,
     });
 
     const tick = (time: number) => {
       frame = 0;
       if (!latest) return;
-      // Frames that overrun mean the writes cost more than the device can spare: write less often.
-      if (lastFrame) interval = nextApplyInterval(interval, time - lastFrame);
-      lastFrame = time;
       const result = controller.sample(latest.beta, latest.gamma, latest.angle, time);
-      if (result.settled) lastFrame = 0;
-      else frame = requestAnimationFrame(tick);
+      if (!result.settled) frame = requestAnimationFrame(tick);
     };
 
     const onReading = (event: DeviceOrientationEvent) => {
