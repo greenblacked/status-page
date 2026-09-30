@@ -1951,8 +1951,9 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   expect(small.small).toEqual([]);
 
   // The links in the verdict's sub line sit in running text, so their reach is padding round them (hit-extend)
-  // on lines 44pt apart (hit-lines), not the words' own box: a tap 21px above or below the middle of the words
-  // still lands on the link. (The next test has the sentence wrap, and checks that no two of them overlap.)
+  // on lines 46pt apart (hit-lines, a hair over the 44pt box so a neighbour's edge never takes the tap), not the
+  // words' own box: a tap 21px above or below the middle of the words still lands on the link. (The next test
+  // has the sentence wrap, and checks that no two of them overlap.)
   const sentence = await page.evaluate(() => {
     const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
     const boxes = links.map((link) => {
