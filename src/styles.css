@@ -626,8 +626,8 @@
   cannot shorten the page under a docked field and scroll it back out.
 */
 .board-body {
-  /* On a phone the field docks a little way into the body (its margin less its pin, and the merge), so the page needs some more to hold it there; 3rem is ample. */
-  min-height: calc(100lvh + 3rem);
+  /* On a phone the field docks a little way into the body (its margin less its pin, and the merge), so the page needs some more to hold it there; 5rem is ample (the margin is 4rem at most). */
+  min-height: calc(100lvh + 5rem);
 }
 
 @media (min-width: 64rem) {
