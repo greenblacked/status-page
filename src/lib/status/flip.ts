@@ -21,7 +21,8 @@ export interface Move {
  * to glide from or to). A move under `threshold` pixels on both axes is
  * sub-pixel noise. A card fully outside the viewport both before and after is
  * skipped, since nobody sees it; one that enters or leaves the viewport is
- * kept. At most `limit` moves come back, so a large reshuffle stays cheap.
+ * kept. A card that enters starts just past the edge it comes from, not its
+ * whole distance away, so it does not streak across the page. At most `limit` moves come back, so a large reshuffle stays cheap.
  */
 export function cardMoves(
   before: ReadonlyMap<string, Box>,
@@ -35,9 +36,11 @@ export function cardMoves(
     const to = after.get(id);
     if (!to) continue;
     const dx = from.left - to.left;
-    const dy = from.top - to.top;
+    let dy = from.top - to.top;
     if (Math.abs(dx) < threshold && Math.abs(dy) < threshold) continue;
     if (offscreen(from) && offscreen(to)) continue;
+    if (from.top > viewportHeight) dy = Math.min(dy, viewportHeight - to.top);
+    else if (from.top + from.height < 0) dy = Math.max(dy, -(to.top + to.height));
     moves.push({ id, dx, dy });
     if (moves.length >= limit) break;
   }

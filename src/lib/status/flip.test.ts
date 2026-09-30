@@ -44,13 +44,25 @@ describe("cardMoves", () => {
     expect(cardMoves(before, after, VIEWPORT)).toEqual([{ id: "seen", dx: 0, dy: -240 }]);
   });
 
-  it("keeps a card that enters or leaves the viewport", () => {
+  it("keeps a card that enters or leaves the viewport, an entering one starting at the edge it comes from", () => {
     const before = boxes({ entering: box(0, 1200), leaving: box(0, 100) });
     const after = boxes({ entering: box(0, 100), leaving: box(0, 1200) });
     expect(cardMoves(before, after, VIEWPORT)).toEqual([
-      { id: "entering", dx: 0, dy: 1100 },
+      { id: "entering", dx: 0, dy: 700 },
       { id: "leaving", dx: 0, dy: -1100 },
     ]);
+  });
+
+  it("starts a card entering from above just past the top edge", () => {
+    const before = boxes({ entering: box(0, -900) });
+    const after = boxes({ entering: box(0, 100) });
+    expect(cardMoves(before, after, VIEWPORT)).toEqual([{ id: "entering", dx: 0, dy: -300 }]);
+  });
+
+  it("leaves a card that starts on screen unclamped", () => {
+    const before = boxes({ a: box(0, 700) });
+    const after = boxes({ a: box(0, 100) });
+    expect(cardMoves(before, after, VIEWPORT)).toEqual([{ id: "a", dx: 0, dy: 600 }]);
   });
 
   it("counts a card straddling the viewport edge as on screen", () => {
