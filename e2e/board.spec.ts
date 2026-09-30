@@ -1255,12 +1255,71 @@ test("renders healthy services as rows, alike whether or not the vendor lists co
     } else {
       await card.locator("summary").click();
       await expect(list).toHaveCount(1);
-      await expect(list.getByRole("listitem")).toHaveCount(service.components.length);
-      for (const component of service.components) {
+      await expect(list.getByRole("listitem")).toHaveCount(Math.min(service.components.length, 6));
+      for (const component of service.components.slice(0, 6)) {
         await expect(list.getByText(component.name, { exact: true })).toBeVisible();
       }
     }
   }
+});
+
+test("opens a long component list with Show all and closes it with Show fewer", async ({ page }) => {
+  const board = fixtureBoard(Date.now());
+  await openFixture(page, () => board);
+  const card = page.locator("article#service-spotify");
+  await card.locator("summary").click();
+  const list = card.getByRole("list", { name: "Components" });
+  const toggle = card.getByRole("button", { name: /^Show all 32/ });
+  await expect(list.getByRole("listitem")).toHaveCount(6);
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  // A 44pt target.
+  const box = await toggle.boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+  await toggle.click();
+  await expect(list.getByRole("listitem")).toHaveCount(32);
+  const fewer = card.getByRole("button", { name: /^Show fewer/ });
+  await expect(fewer).toHaveAttribute("aria-expanded", "true");
+  await expect(fewer).toBeFocused();
+  await expect(list.getByText("Spotify part 32", { exact: true })).toBeVisible();
+
+  await fewer.click();
+  await expect(list.getByRole("listitem")).toHaveCount(6);
+  await expect(card.getByRole("button", { name: /^Show all 32/ })).toHaveAttribute("aria-expanded", "false");
+});
+
+test("operates Show all from the keyboard", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "a keyboard is the desktop project's");
+  const board = fixtureBoard(Date.now());
+  await openFixture(page, () => board);
+  const card = page.locator("article#service-spotify");
+  await card.locator("summary").focus();
+  await page.keyboard.press("Enter");
+  const toggle = card.getByRole("button", { name: /^Show all 32/ });
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(card.getByRole("list", { name: "Components" }).getByRole("listitem")).toHaveCount(32);
+  await expect(card.getByRole("button", { name: /^Show fewer/ })).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(card.getByRole("list", { name: "Components" }).getByRole("listitem")).toHaveCount(6);
+});
+
+test("gives an attention card the same dropdown, with the working components in it", async ({ page }) => {
+  const board = fixtureBoard(Date.now());
+  await openFixture(page, () => board);
+  const card = page.locator("article#service-gcp");
+  // The broken components stay in view; the working ones wait in the dropdown.
+  await expect(card.locator("[data-component-row]")).toHaveCount(2);
+  const dropdown = card.locator("details[data-healthy-components]");
+  await expect(dropdown).toHaveCount(1);
+  await expect(dropdown.locator("summary")).toContainText("Working components");
+  await dropdown.locator("summary").click();
+  const list = dropdown.getByRole("list", { name: "Components" });
+  await expect(list.getByRole("listitem")).toHaveCount(6);
+  await dropdown.getByRole("button", { name: /^Show all 38/ }).click();
+  await expect(list.getByRole("listitem")).toHaveCount(38);
+  // A service without components has no dropdown on its attention card either.
+  await expect(page.locator("article#service-aws details")).toHaveCount(0);
 });
 
 test("leads Needs attention with the most urgent service and follows the data", async ({ page }) => {
@@ -1736,7 +1795,7 @@ for (const background of ["quiet", "glass"] as const) {
         await hydrated(page);
         await page.getByRole("button", { name: "Refresh status now" }).first().click();
         for (const label of ["Outage", "Degraded", "Maintenance", "No data", "Operational"]) {
-          await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
+          await expect(page.locator("main [data-card-header]").getByText(label, { exact: true }).first()).toBeVisible();
         }
         // Shortly after midnight UTC the fixture's incidents began the day
         // before, and the card adds their date: "since 27 Sep 21:52 UTC".

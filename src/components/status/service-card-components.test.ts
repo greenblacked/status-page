@@ -28,7 +28,7 @@ function render(
 const up = (count: number): ComponentHealth[] =>
   Array.from({ length: count }, (_, index) => ({ name: `Part ${index + 1}`, health: "operational" }));
 
-const LIST = '<ul aria-label="Components"';
+const LIST = 'aria-label="Components"';
 const rows = (html: string) => html.match(/data-component-row/g) ?? [];
 /** The header of a card or row: from the marker to the end of the name and its line. */
 const header = (html: string) =>
@@ -73,11 +73,14 @@ describe("healthy service row", () => {
     expect(html).toContain("<details");
     expect(html).toContain("<summary");
     expect(html).toContain(LIST);
-    expect(html.match(/<li/g)).toHaveLength(7);
+    expect(html.match(/<li/g)).toHaveLength(6);
     for (let n = 1; n <= 6; n++) expect(html).toContain(`>Part ${n}</span>`);
     expect(html).not.toContain(">Part 7<");
-    expect(html).toContain("+18 more");
-    expect(html).toContain("18 more components");
+    // The rest is behind a real button, collapsed until it is pressed.
+    expect(html).toMatch(
+      /<button[^>]*type="button"[^>]*aria-expanded="false"[^>]*aria-controls="[^"]+"[^>]*>Show all 24/,
+    );
+    expect(html).toContain("data-more-components");
     expect(html.match(/<span class="sr-only">Operational<\/span>/g)).toHaveLength(6);
     // The row keeps its name, word and latency in the summary; no per-component rows.
     expect(header(html)).toContain(">Operational</span>");
@@ -87,22 +90,22 @@ describe("healthy service row", () => {
 
   it("counts the vendor's true total when the snapshot kept fewer components", () => {
     const html = render("chatgpt", { components: up(24), componentCount: 40 });
-    expect(html.match(/<li/g)).toHaveLength(7);
-    expect(html).toContain("+34 more");
-    expect(html).toContain("34 more components");
-    expect(html).not.toContain("+18 more");
+    expect(html.match(/<li/g)).toHaveLength(6);
+    expect(html).toContain("Show all 40");
+    expect(html).not.toContain("Show all 24");
   });
 
   it("falls back to the components it has when the total is absent or smaller", () => {
-    expect(render("chatgpt", { components: up(24) })).toContain("+18 more");
-    expect(render("chatgpt", { components: up(24), componentCount: 3 })).toContain("+18 more");
+    expect(render("chatgpt", { components: up(24) })).toContain("Show all 24");
+    expect(render("chatgpt", { components: up(24), componentCount: 3 })).toContain("Show all 24");
   });
 
   it("adds no count when every component fits", () => {
     const html = render("chatgpt", { components: up(3) });
     expect(html.match(/<li/g)).toHaveLength(3);
     expect(html).not.toContain("data-more-components");
-    expect(html).not.toContain("more");
+    expect(html).not.toContain("aria-expanded");
+    expect(html).not.toContain("Show all");
   });
 
   it("puts a stray non-operational component first with its status in words", () => {
@@ -173,11 +176,33 @@ describe("degraded service card", () => {
     expect(rows(html)).toHaveLength(2);
     expect(html).toContain(">Codex</span>");
     expect(html).toContain(">Login</span>");
-    expect(html).not.toContain("Part 1");
     expect(html).toContain("Elevated errors on Codex");
     expect(html).toContain(">Outage</span>");
     expect(html).toContain(">Degraded</span>");
-    expect(html).not.toContain("<details");
+    // The working components sit in the same dropdown a healthy row has, not among the broken rows.
+    expect(html.match(/<details/g)).toHaveLength(1);
+    expect(html).toContain("Working components · 3");
+    expect(html.indexOf("Part 1")).toBeGreaterThan(html.indexOf("<details"));
+  });
+
+  it("has no dropdown when every component is broken, and one when any is working", () => {
+    const allBroken = render("chatgpt", {
+      health: "degraded",
+      components: [{ name: "Codex", health: "outage" }],
+    });
+    expect(allBroken).not.toContain("<details");
+    const some = render("chatgpt", { health: "outage", components: [{ name: "A", health: "outage" }, ...up(1)] });
+    expect(some).toContain("<details");
+  });
+
+  it("counts the working components from the vendor's total when the snapshot is cut", () => {
+    const html = render("gcp", {
+      health: "degraded",
+      components: [{ name: "Cloud Run", health: "degraded" }, ...up(23)],
+      componentCount: 215,
+    });
+    expect(html).toContain("Working components · 214");
+    expect(html).toContain("Show all 214");
   });
 
   it("caps rows at six", () => {
@@ -321,8 +346,7 @@ describe("service card truncation", () => {
     const html = render("chatgpt", { health: "degraded", summary: "Partial outage", components: broken(9) });
     expect(rows(html)).toHaveLength(6);
     expect(html).toContain("data-more-rows");
-    expect(html).toContain("+3 more");
-    expect(html).toContain("3 more components");
+    expect(html).toMatch(/aria-expanded="false"[^>]*aria-controls="[^"]+"[^>]*>Show all 9/);
   });
 
   it("says nothing when every row fits", () => {

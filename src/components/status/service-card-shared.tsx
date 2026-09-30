@@ -1,4 +1,5 @@
 import { Star } from "lucide-react";
+import { type Ref, useId, useRef, useState } from "react";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { CATALOG } from "@/lib/status/catalog";
@@ -179,11 +180,48 @@ export function ComponentRow({
 export const HEALTHY_COMPONENTS_SHOWN = 6;
 
 /**
+ * The "+N more" of a list, as a real button: "Show all 215" while the list is cut, "Show fewer" once it
+ * is open. It is a disclosure, so it carries aria-expanded and names the list it controls, and it is a
+ * 44px target with no chrome of its own.
+ */
+export function ListToggle({
+  expanded,
+  onToggle,
+  controls,
+  total,
+  noun = "components",
+  className,
+  buttonRef,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  controls: string;
+  total: number;
+  noun?: string;
+  className?: string;
+  buttonRef?: Ref<HTMLButtonElement>;
+}) {
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      aria-controls={controls}
+      className={cn("focus-ring pressable inline-flex min-h-11 items-center text-footnote text-accent", className)}
+    >
+      {expanded ? "Show fewer" : `Show all ${total}`}
+      <span className="sr-only"> {noun}</span>
+    </button>
+  );
+}
+
+/**
  * The components of a service with nothing to report, as a short list under
  * its row: a small status glyph for the eye, the status in words for a screen
- * reader. Anything past the first few is counted, not dropped silently.
- * Renders nothing when the vendor lists no components, since there is nothing
- * true to say.
+ * reader. Anything past the first few is behind a "Show all N" button that
+ * opens the whole list and "Show fewer" that closes it again. Renders nothing
+ * when the vendor lists no components, since there is nothing true to say.
  */
 export function HealthyComponents({
   components,
@@ -195,40 +233,59 @@ export function HealthyComponents({
   total?: number;
   className?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
+  const toggle = useRef<HTMLButtonElement>(null);
   if (components.length === 0) return null;
-  // A stray non-operational component still leads the list.
+  // A stray non-operational component still leads the list; the sort is stable, so the vendor's order holds.
   const ordered = [...components].sort(
     (a, b) => Number(a.health === "operational") - Number(b.health === "operational"),
   );
-  const shown = ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
-  const more = Math.max(total, ordered.length) - shown.length;
+  const count = Math.max(total, ordered.length);
+  const shown = expanded ? ordered : ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
+  const cut = count > HEALTHY_COMPONENTS_SHOWN;
   return (
-    <ul aria-label="Components" className={cn("flex flex-col gap-1.5", className)}>
-      {shown.map((component, componentIndex) => (
-        <li
-          // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
-          key={`${component.name}-${componentIndex}`}
-          className="flex max-w-full min-w-0 items-baseline gap-2 text-caption text-muted"
-        >
-          <StatusGlyph
-            health={component.health}
-            size={14}
-            className={cn("self-center", STATUS_TEXT[component.health])}
+    <div className={className} data-more-components={cut ? "" : undefined}>
+      <ul id={listId} aria-label="Components" className="flex flex-col gap-1.5">
+        {shown.map((component, componentIndex) => (
+          <li
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
+            key={`${component.name}-${componentIndex}`}
+            className="flex max-w-full min-w-0 items-baseline gap-2 text-caption text-muted"
+          >
+            <StatusGlyph
+              health={component.health}
+              size={14}
+              className={cn("self-center", STATUS_TEXT[component.health])}
+            />
+            <span className="[overflow-wrap:anywhere]" title={component.name}>
+              {component.name}
+            </span>
+            {component.detail ? <span className="text-footnote text-subtle">{component.detail}</span> : null}
+            <span className="sr-only">{stateWord(component.health)}</span>
+          </li>
+        ))}
+      </ul>
+      {cut ? (
+        <>
+          <ListToggle
+            buttonRef={toggle}
+            expanded={expanded}
+            controls={listId}
+            total={count}
+            onToggle={() => {
+              const wasExpanded = expanded;
+              setExpanded(!wasExpanded);
+              // Closing a long list leaves this button far below the row; bring it back in view.
+              if (wasExpanded) toggle.current?.scrollIntoView({ block: "nearest" });
+            }}
           />
-          <span className="[overflow-wrap:anywhere]" title={component.name}>
-            {component.name}
+          <span role="status" className="sr-only">
+            {expanded ? `Showing all ${count} components` : ""}
           </span>
-          {component.detail ? <span className="text-footnote text-subtle">{component.detail}</span> : null}
-          <span className="sr-only">{stateWord(component.health)}</span>
-        </li>
-      ))}
-      {more > 0 ? (
-        <li className="text-footnote text-subtle" data-more-components>
-          <span aria-hidden>+{more} more</span>
-          <span className="sr-only">{more} more components</span>
-        </li>
+        </>
       ) : null}
-    </ul>
+    </div>
   );
 }
 
