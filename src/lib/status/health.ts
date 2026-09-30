@@ -71,6 +71,24 @@ export function googleImpact(impact: string | undefined, severity?: string): Hea
   return "degraded";
 }
 
+// Instatus component statuses (status.x.ai/v2/components.json), which are
+// upper-case words without separators.
+export function instatusComponent(status: string | undefined): Health {
+  switch ((status ?? "").toUpperCase()) {
+    case "OPERATIONAL":
+      return "operational";
+    case "DEGRADEDPERFORMANCE":
+    case "PARTIALOUTAGE":
+      return "degraded";
+    case "MAJOROUTAGE":
+      return "outage";
+    case "UNDERMAINTENANCE":
+      return "maintenance";
+    default:
+      return "unknown";
+  }
+}
+
 export const ALL_CLEAR_SUMMARY = "All reported systems operational.";
 
 // `||`, not `??`: a vendor can send an empty description, and "" must fall

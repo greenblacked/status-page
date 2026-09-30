@@ -9,7 +9,14 @@ import {
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
-import { googleImpact, overallSummary, statuspageComponent, statuspageIndicator, worseHealth } from "./health.ts";
+import {
+  googleImpact,
+  instatusComponent,
+  overallSummary,
+  statuspageComponent,
+  statuspageIndicator,
+  worseHealth,
+} from "./health.ts";
 import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
 import type { ComponentHealth, Health, Incident, ServiceId, ServiceSnapshot, SourceFailure } from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
@@ -18,6 +25,10 @@ const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 // Upper bound on components kept per card. A vendor page can list hundreds;
 // the snapshot is cached and served as JSON, so it must not grow with them.
 const MAX_COMPONENTS = 24;
+// Extra, optional fetches (component lists, the Steam connection managers)
+// get their own short deadline so a slow side request never holds up the
+// main feed. Each is fail-soft: a failure loses that list, not the card.
+const EXTRA_TIMEOUT_MS = 4000;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
 
 type StatuspageSummary = {
@@ -59,7 +70,10 @@ type GoogleIncident = {
   service_name?: string;
   uri?: string;
   currently_affected_locations?: Array<{ title?: string }>;
+  affected_products?: Array<{ id?: string; title?: string }>;
 };
+
+type GoogleProduct = { id?: string; title: string };
 
 type AwsEvent = {
   date?: string;
@@ -199,6 +213,87 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
   return { health, incidents: mapped, components };
 }
 
+/**
+ * The product catalogue of a Google status dashboard (`products.json`) as
+ * `{ id?, title }` rows in the vendor's order. Accepts the bare array or an
+ * object holding it as `products`. Anything else, a row without a title and a
+ * repeated title yield nothing, so a malformed catalogue is an empty one and
+ * the caller falls back to what the incidents name.
+ */
+export function parseGoogleProducts(payload: unknown): GoogleProduct[] {
+  const list = Array.isArray(payload) ? payload : (payload as { products?: unknown } | null)?.products;
+  if (!Array.isArray(list)) return [];
+  const seen = new Set<string>();
+  const products: GoogleProduct[] = [];
+  for (const row of list) {
+    const title = typeof row?.title === "string" ? row.title.trim() : "";
+    if (!title || seen.has(title.toLowerCase())) continue;
+    seen.add(title.toLowerCase());
+    products.push({ id: typeof row.id === "string" && row.id ? row.id : undefined, title });
+  }
+  return products;
+}
+
+/**
+ * One component per catalogue product, in the catalogue's order. A product is
+ * as unhealthy as the worst open incident that lists it in
+ * `affected_products` (or, for an incident that lists none, names it as its
+ * `service_name`), with the same impact mapping as the card. A
+ * SERVICE_INFORMATION incident is a notice, not an impairment: the product
+ * stays operational and carries the incident's title as its detail. An
+ * affected product the catalogue does not list is added after it, because the
+ * vendor named it. Pass open incidents only.
+ */
+export function googleComponents(products: GoogleProduct[], openIncidents: GoogleIncident[]): ComponentHealth[] {
+  type Row = ComponentHealth & { id?: string };
+  const rows: Row[] = products.map((product) => ({ id: product.id, name: product.title, health: "operational" }));
+  const find = (ref: { id?: string; title?: string }): Row | undefined => {
+    const title = ref.title?.trim().toLowerCase();
+    return rows.find(
+      (row) => (ref.id !== undefined && row.id === ref.id) || (title !== undefined && row.name.toLowerCase() === title),
+    );
+  };
+  const noticed = new Set<Row>();
+  for (const incident of openIncidents) {
+    const refs = incident.affected_products?.length
+      ? incident.affected_products
+      : incident.service_name
+        ? [{ title: incident.service_name }]
+        : [];
+    const isNotice = (incident.status_impact ?? "").toUpperCase() === "SERVICE_INFORMATION";
+    const itemHealth = googleImpact(incident.status_impact, incident.severity);
+    const locations = (incident.currently_affected_locations ?? [])
+      .map((loc) => loc.title)
+      .filter(Boolean)
+      .join(", ");
+    for (const ref of refs) {
+      const name = ref.title?.trim();
+      if (!ref.id && !name) continue;
+      let row = find(ref);
+      if (!row) {
+        if (!name) continue;
+        row = { id: ref.id, name, health: "operational" };
+        rows.push(row);
+      }
+      if (isNotice) {
+        // A notice never overrides a real impairment already on the row.
+        if (row.health === "operational" && !noticed.has(row)) {
+          row.detail = incident.external_desc;
+          noticed.add(row);
+        }
+        continue;
+      }
+      // The worst incident wins the row; among equals, the first listed.
+      const worse = worseHealth(row.health, itemHealth);
+      if (worse !== row.health) {
+        row.health = worse;
+        row.detail = locations || incident.external_desc;
+      }
+    }
+  }
+  return rows.map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
+}
+
 // Non-operational first, then operational, each in source order, capped at
 // MAX_COMPONENTS. `componentCount` is the total the source listed, set only
 // when the cap dropped some, so a card can say how many it is not showing.
@@ -296,24 +391,39 @@ function fromStatuspage(
   };
 }
 
-async function collectGcp(): Promise<ServiceSnapshot> {
+// GCP and Play share one dashboard format: `incidents.json` is the health
+// signal and `products.json` is the catalogue the component list is cut from.
+// The catalogue is a side request: it runs beside the incidents and, if it is
+// slow, missing or unreadable, the card keeps the per-incident components.
+async function collectGoogle(id: "gcp" | "android", origin: string): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchJson<GoogleIncident[]>("https://status.cloud.google.com/incidents.json"),
-    );
-    const parsed = googleIncidents(value, "gcp");
+    const [{ value, ms }, catalogue] = await Promise.all([
+      timed(() => fetchJson<GoogleIncident[]>(`${origin}/incidents.json`)),
+      fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
+    ]);
+    const parsed = googleIncidents(value, id);
+    const products = parseGoogleProducts(catalogue);
+    const components = products.length
+      ? googleComponents(
+          products,
+          value.filter((incident) => !incident.end),
+        )
+      : parsed.components;
     return {
-      ...base("gcp", new Date().toISOString(), ms),
+      ...base(id, new Date().toISOString(), ms),
       health: parsed.health,
       summary: overallSummary(parsed.health, parsed.incidents.length, parsed.incidents[0]?.title),
-      components: parsed.components.slice(0, 8),
+      ...rankComponents(components),
       incidents: parsed.incidents,
     };
   } catch (error) {
-    return failed("gcp", started, error);
+    return failed(id, started, error);
   }
 }
+
+const collectGcp = () => collectGoogle("gcp", "https://status.cloud.google.com");
+const collectAndroid = () => collectGoogle("android", "https://status.play.google.com");
 
 // `includes("resolved")` also matched "unresolved" and "not yet resolved",
 // which would read a live incident's own update as its resolution.
@@ -369,6 +479,36 @@ export function epochToIso(value: unknown, unitMs: number): string | undefined {
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 
+/**
+ * The AWS services named by active events, one component each. Several events
+ * for a service merge into one row: the worst health wins and the detail is
+ * the newest event's summary. Only services the events name appear, so a
+ * quiet Health Dashboard yields no list; an event that names no service
+ * cannot be a row.
+ */
+export function awsComponents(active: AwsEvent[]): ComponentHealth[] {
+  const rows = new Map<string, ComponentHealth & { at: number }>();
+  for (const event of active) {
+    const name = (event.service_name ?? event.service ?? "").trim();
+    if (!name) continue;
+    const last = event.event_log?.at(-1);
+    const at = Number(last?.timestamp ?? event.date ?? 0) || 0;
+    const health = awsHealthFromEvent(event);
+    const detail = event.summary || last?.summary || undefined;
+    const row = rows.get(name);
+    if (!row) {
+      rows.set(name, { name, health, detail, at });
+      continue;
+    }
+    row.health = worseHealth(row.health, health);
+    if (at >= row.at) {
+      row.at = at;
+      row.detail = detail ?? row.detail;
+    }
+  }
+  return [...rows.values()].map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
+}
+
 async function collectAws(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -399,11 +539,7 @@ async function collectAws(): Promise<ServiceSnapshot> {
         incidents.length,
         incidents[0]?.title ?? `${value.length} public Health items, none currently active.`,
       ),
-      components: active.slice(0, 8).map((event) => ({
-        name: `${event.service_name ?? "Service"} (${event.region_name ?? "global"})`,
-        health: awsHealthFromEvent(event),
-        detail: event.summary,
-      })),
+      ...rankComponents(awsComponents(active)),
       incidents,
       meta: { publicEvents: value.length, active: active.length },
     };
@@ -412,15 +548,32 @@ async function collectAws(): Promise<ServiceSnapshot> {
   }
 }
 
+/**
+ * How many Steam connection managers a `GetCMListForConnect` answer lists, or
+ * 0 when it lists none or is not that shape. Both the socket and the
+ * websocket lists count: a client can connect through either.
+ */
+export function steamCmCount(payload: unknown): number {
+  const response = (payload as { response?: { serverlist?: unknown; serverlist_websockets?: unknown } } | null)
+    ?.response;
+  const size = (list: unknown) =>
+    Array.isArray(list) ? list.filter((row) => typeof row === "string" && row).length : 0;
+  return size(response?.serverlist) + size(response?.serverlist_websockets);
+}
+
 async function collectSteam(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     // allSettled, not all: one endpoint being down should degrade the card,
     // not blank it. Only when neither answers usefully do we fail the whole
     // collector, and with the real error rather than a generic outage.
-    const [info, store] = await Promise.allSettled([
+    const [info, store, cm] = await Promise.allSettled([
       fetchJson<{ servertime?: unknown } | null>("https://api.steampowered.com/ISteamWebAPIUtil/GetServerInfo/v1/"),
       fetchJson<{ featured_win?: unknown } | null>("https://store.steampowered.com/api/featured/"),
+      // Side signal: it never decides the card's health or whether it fails.
+      fetchJson<unknown>("https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0", {
+        timeoutMs: EXTRA_TIMEOUT_MS,
+      }),
     ]);
     const servertime = info.status === "fulfilled" ? info.value?.servertime : undefined;
     const apiOk = typeof servertime === "number";
@@ -442,6 +595,7 @@ async function collectSteam(): Promise<ServiceSnapshot> {
       storeOk
         ? { name: "Steam Store", health: "operational" }
         : { name: "Steam Store", health: "outage", detail: why(store) },
+      steamConnectionManagers(cm),
     ];
     return {
       ...base("steam", new Date().toISOString(), Date.now() - started),
@@ -454,6 +608,18 @@ async function collectSteam(): Promise<ServiceSnapshot> {
   } catch (error) {
     return failed("steam", started, error);
   }
+}
+
+// Operational when Valve's directory lists connection managers; Unknown when
+// it cannot be read or lists none. Never an outage: a directory that does not
+// answer from here says little about whether players can connect.
+function steamConnectionManagers(result: PromiseSettledResult<unknown>): ComponentHealth {
+  const name = "Steam Connection Managers";
+  if (result.status === "rejected") return { name, health: "unknown", detail: classifyFailure(result.reason).message };
+  const count = steamCmCount(result.value);
+  return count > 0
+    ? { name, health: "operational", detail: `${count} servers listed` }
+    : { name, health: "unknown", detail: "No servers listed." };
 }
 
 function isEuropePop(code: string, desc: string, geo?: number[]): boolean {
@@ -651,25 +817,6 @@ async function collectApple(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectAndroid(): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await timed(() =>
-      fetchJson<GoogleIncident[]>("https://status.play.google.com/incidents.json"),
-    );
-    const parsed = googleIncidents(value, "android");
-    return {
-      ...base("android", new Date().toISOString(), ms),
-      health: parsed.health,
-      summary: overallSummary(parsed.health, parsed.incidents.length, parsed.incidents[0]?.title),
-      components: parsed.components.slice(0, 8),
-      incidents: parsed.incidents,
-    };
-  } catch (error) {
-    return failed("android", started, error);
-  }
-}
-
 // Only strip comments and things that look like tags (`<` or `</` followed by
 // a letter). A blanket `<[^>]+>` also ate a decoded "Latency < 500ms", which
 // erased "Status: Resolved" from an otherwise operational item. Plain text
@@ -791,10 +938,84 @@ export function grokItemActive(item: { description: string; pubDate?: string }, 
   return Number.isFinite(at) && now - at <= STALE_MS;
 }
 
+/**
+ * Components from an Instatus `components.json`: the leaf components in page
+ * order (a parent's children stand in for it), or nothing when the payload is
+ * not that shape. The endpoint is optional, so a shape it does not have is an
+ * empty list, not an error.
+ */
+export function parseInstatusComponents(payload: unknown): ComponentHealth[] {
+  const list = (payload as { components?: unknown } | null)?.components;
+  if (!Array.isArray(list)) return [];
+  type Row = { name?: unknown; status?: unknown; description?: unknown; children?: unknown };
+  const out: ComponentHealth[] = [];
+  const add = (row: Row) => {
+    const name = typeof row?.name === "string" ? row.name.trim() : "";
+    if (!name) return;
+    const health = instatusComponent(typeof row.status === "string" ? row.status : undefined);
+    const description = typeof row.description === "string" ? row.description.trim() : "";
+    out.push(description && health !== "operational" ? { name, health, detail: description } : { name, health });
+  };
+  for (const row of list as Row[]) {
+    if (Array.isArray(row?.children) && row.children.length > 0) {
+      for (const child of row.children as Row[]) add(child);
+    } else {
+      add(row);
+    }
+  }
+  return out;
+}
+
+const TITLE_LEAD_WORDS =
+  /^(?:update|updated|resolved|investigating|identified|monitoring|scheduled|maintenance|incident)$/i;
+
+/**
+ * The service a feed title leads with, for a title written "Service: what
+ * happened". A title with no such prefix, or one whose prefix is a status
+ * word or too long to be a service name, names no service, and none is guessed.
+ */
+export function grokTitleService(title: string): { name: string; detail: string } | null {
+  const match = title.match(/^([^:]{2,32}):\s*(\S.*)$/);
+  const name = match?.[1]?.trim();
+  if (!match || !name || TITLE_LEAD_WORDS.test(name) || name.split(/\s+/).length > 4) return null;
+  return { name, detail: match[2].trim() };
+}
+
+/** One component per service the active items' titles lead with; worst health wins, newest item's detail. */
+export function grokFeedComponents(
+  active: Array<{ title: string; description: string; pubDate?: string }>,
+): ComponentHealth[] {
+  const rows = new Map<string, ComponentHealth & { at: number }>();
+  for (const item of active) {
+    const service = grokTitleService(item.title);
+    if (!service) continue;
+    const health = grokItemHealth(item.description);
+    const at = Date.parse(item.pubDate ?? "") || 0;
+    const key = service.name.toLowerCase();
+    const row = rows.get(key);
+    if (!row) {
+      rows.set(key, { name: service.name, health, detail: service.detail, at });
+      continue;
+    }
+    row.health = worseHealth(row.health, health);
+    if (at >= row.at) {
+      row.at = at;
+      row.detail = service.detail;
+    }
+  }
+  return [...rows.values()].map(({ name, health, detail }) => ({ name, health, detail }));
+}
+
 async function collectGrok(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() => fetchText("https://status.x.ai/feed.xml"));
+    // status.x.ai's JSON sits behind a Cloudflare challenge more often than
+    // not, so the optional Instatus component list is a side request that
+    // runs beside the feed and is simply absent when it does not answer.
+    const [{ value, ms }, instatus] = await Promise.all([
+      timed(() => fetchText("https://status.x.ai/feed.xml")),
+      fetchJson<unknown>("https://status.x.ai/v2/components.json", { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
+    ]);
     const items = parseRssItems(value.body);
     // parseRssItems only understands RSS 2.0 <item>. If x.ai moves to Atom
     // the parse yields nothing, and reporting that as "operational" would be
@@ -802,6 +1023,7 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     if (items.length === 0) throw new PayloadError("Grok feed returned no readable items.");
     const now = Date.now();
     const active = items.filter((item) => grokItemActive(item, now));
+    const listed = parseInstatusComponents(instatus);
     let health: Health = "operational";
     const incidents: Incident[] = active.slice(0, 8).map((item, index) => {
       const itemHealth = grokItemHealth(item.description);
@@ -818,7 +1040,10 @@ async function collectGrok(): Promise<ServiceSnapshot> {
       ...base("grok", new Date().toISOString(), ms),
       health,
       summary: overallSummary(health, incidents.length, incidents[0]?.title),
-      components: [],
+      // The vendor's own list when it is readable; otherwise only the
+      // services the current feed's titles name. Health above is the feed's
+      // alone: components add detail and never move it.
+      ...rankComponents(listed.length ? listed : grokFeedComponents(active)),
       incidents,
     };
   } catch (error) {
