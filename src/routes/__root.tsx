@@ -3,6 +3,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-r
 import { useState } from "react";
 import { APP_NAME } from "@/lib/status/catalog";
 import { REDUCE_GLASS_BOOT_SCRIPT } from "@/lib/status/glass";
+import appleCss from "../apple.css?url";
 import appCss from "../styles.css?url";
 
 function RootDocument() {
@@ -59,6 +60,9 @@ export const Route = createRootRoute({
       { title: APP_NAME },
       { name: "description", content: DESCRIPTION },
       { name: "color-scheme", content: "light dark" },
+      // Safari turns anything shaped like a phone number, date, address or
+      // email into a tappable link, which would rewrite incident text.
+      { name: "format-detection", content: "telephone=no, date=no, address=no, email=no" },
       // Add to Home Screen opens the board full screen, under its own name.
       // The default status bar style, not black-translucent: that one
       // always draws white text, which vanishes on the light appearance.
@@ -78,11 +82,15 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+      // A raster icon for browsers that do not take the SVG one.
+      { rel: "icon", type: "image/png", sizes: "192x192", href: "/icon-192.png" },
       // 180x180, square and unrounded: iOS applies its own corner mask.
       { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
       { rel: "manifest", href: "/manifest.webmanifest" },
       { rel: "alternate", type: "application/atom+xml", title: `${APP_NAME} incidents`, href: "/feed.xml" },
       { rel: "stylesheet", href: appCss },
+      // After appCss, so its rules win ties on equal specificity.
+      { rel: "stylesheet", href: appleCss },
     ],
     // Applies a stored Reduce glass choice before the first paint.
     scripts: [{ children: REDUCE_GLASS_BOOT_SCRIPT }],

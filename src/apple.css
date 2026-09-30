@@ -1,0 +1,37 @@
+/*
+  Rules that exist for Safari and iOS. Loaded after styles.css, so on equal
+  specificity these win.
+*/
+
+/*
+  Hold the "from" keyframe during the delay only. "both" also kept the
+  finished transform on every card for good, and each of those becomes its own
+  compositing layer behind a backdrop blur, which Safari pays for. The end
+  keyframe (opacity 1, translateY(0)) is the card's natural style, so nothing
+  changes visually.
+*/
+.stagger-in {
+  animation-fill-mode: backwards;
+}
+
+/* No double-tap zoom delay on anything tappable. */
+a,
+button,
+[role="button"],
+[role="switch"],
+label,
+input,
+summary {
+  touch-action: manipulation;
+}
+
+/* A long press on a control should not start a text selection or callout. */
+:is(button, [role="switch"]) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Lock the page behind an open dialog: iOS scrolls it through the backdrop. */
+html:has(dialog[open]) {
+  overflow: hidden;
+}
