@@ -15,11 +15,28 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
+- Unknown now ranks above Maintenance, so cards, the headline, the overall health, `/api/status.json` `overall`, the badge and the history days all use one order: Outage, Degraded, Unknown, Maintenance. A confirmed Degraded now outranks Unknown everywhere, where it used to be the other way round. This replaces the order listed under 0.5.0.
+- `/feed.xml` entry ids are now stable per service, health and incident, so a reworded incident is not posted again but an escalation, such as Degraded to Outage, is. Feed readers will show the current entries once more after this update. Services whose status is Unknown are no longer in the feed.
+- An alert for a change to or from Unknown now waits for two updates in a row, so a single failed check no longer sends one.
+- Google Cloud and Google Play SERVICE_INFORMATION items show as notices and no longer make a card Degraded.
+- AWS uses the vendor's own severity and merges every region, so a single-region service disruption can now show as Outage.
+- `/api/status.json` adds the `informational` and `upcomingMaintenance` fields.
 - Starring and refresh move cards with a light glide instead of a page snapshot, so they respond at once on iPhone, iPad and Safari.
 - The MikroTik RouterOS and Apple OS cards no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and an Unknown badge only when the source cannot be read.
 
 ### Fixed
 
+- Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.
+- Apple's upcoming events no longer change a service's health.
+- The live bar keeps one height on a phone.
+- Controls are at least 44pt on touch screens.
+- The layout works at 200% text size.
+- The page has a footer landmark for screen readers.
+- The spin and pulse, including the live dot while a check runs, stop under Reduce Motion.
+- The Alerts button no longer flashes in on iPhone.
+- Dark subtle text reaches 4.5:1 contrast.
+- The short search placeholder is used where the long one would be clipped.
+- The summary says "2 outages", not "2 outage".
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
 
