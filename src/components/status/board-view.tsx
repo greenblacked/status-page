@@ -37,13 +37,6 @@ import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { verdict as verdictOf } from "@/lib/status/verdict";
 
-/**
- * One string, so server rendering emits one text node. Interpolated JSX children would come out as
- * "checks <!-- -->every two minutes<!-- -->; ...", which breaks any text match on the served HTML
- * (scripts/ci/smoke.sh matches this sentence).
- */
-const CADENCE_NOTE = `This page checks ${everyInterval(PULSE_INTERVAL_MS)}; the server reads the official vendor feeds and keeps them for ${spokenDuration(CACHE_TTL_MS)}.`;
-
 // Long enough for a search to settle between keystrokes.
 const ANNOUNCE_DELAY_MS = 700;
 // A chip's card renders in the commit after its filters clear; one that has
