@@ -79,7 +79,9 @@ export function HistoryStrip({
             <>
               <span className="text-subtle"> · </span>
               <span className={cn("text-muted", toneText(worst.worst))}>
-                <time dateTime={worst.date}>{formatHistoryDay(worst.date)}</time> {shortHealth(worst.worst)}
+                <span className="whitespace-nowrap">
+                  <time dateTime={worst.date}>{formatHistoryDay(worst.date)}</time> {shortHealth(worst.worst)}
+                </span>
               </span>
             </>
           ) : null}
