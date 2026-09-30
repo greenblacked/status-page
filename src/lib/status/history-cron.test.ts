@@ -16,10 +16,12 @@ vi.mock("@tanstack/react-start/server", () => ({
 const NOON = Date.UTC(2026, 8, 25, 12, 0, 0);
 let db: D1Fake;
 let log: ReturnType<typeof vi.spyOn>;
+let errorLog: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   db = new D1Fake();
   log = vi.spyOn(console, "log").mockImplementation(() => {});
+  errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
   getFreshStatusBoard.mockReset();
   getFreshStatusBoard.mockResolvedValue(
     board([service("aws"), service("gcp", { failure: { kind: "http", message: "secret body", status: 500 } })]),
@@ -29,6 +31,7 @@ beforeEach(() => {
 afterEach(() => {
   db.close();
   log.mockRestore();
+  errorLog.mockRestore();
 });
 
 describe("runScheduledHistory", () => {
@@ -49,8 +52,9 @@ describe("runScheduledHistory", () => {
   it("logs only the error's name and message, then rethrows", async () => {
     getFreshStatusBoard.mockRejectedValue(new TypeError("vendor sweep failed"));
     await expect(runScheduledHistory({ HISTORY_DB: db }, NOON)).rejects.toThrow("vendor sweep failed");
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(log.mock.calls[0][0]))).toEqual({
+    expect(log).not.toHaveBeenCalled();
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(errorLog.mock.calls[0][0]))).toEqual({
       event: "history_failed",
       name: "TypeError",
       message: "vendor sweep failed",
@@ -60,13 +64,13 @@ describe("runScheduledHistory", () => {
 
   it("fails loudly when the binding is missing", async () => {
     await expect(runScheduledHistory({}, NOON)).rejects.toThrow("HISTORY_DB");
-    expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({ event: "history_failed" });
+    expect(JSON.parse(String(errorLog.mock.calls[0][0]))).toMatchObject({ event: "history_failed" });
   });
 
   it("logs a thrown non-Error as a plain message", async () => {
     getFreshStatusBoard.mockRejectedValue("nope");
     await expect(runScheduledHistory({ HISTORY_DB: db }, NOON)).rejects.toBe("nope");
-    expect(JSON.parse(String(log.mock.calls[0][0]))).toEqual({
+    expect(JSON.parse(String(errorLog.mock.calls[0][0]))).toEqual({
       event: "history_failed",
       name: "Error",
       message: "nope",

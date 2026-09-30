@@ -20,7 +20,7 @@ export async function runScheduledHistory(env: CloudflareEnv, scheduledTime: num
   } catch (error) {
     const name = error instanceof Error ? error.name : "Error";
     const message = error instanceof Error ? error.message : String(error);
-    console.log(JSON.stringify({ event: "history_failed", name, message }));
+    console.error(JSON.stringify({ event: "history_failed", name, message }));
     throw error;
   }
 }
