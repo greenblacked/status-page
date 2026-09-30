@@ -19,9 +19,12 @@ function pageLeft(element: HTMLElement): number {
 /**
  * Scroll progress of the search dock (0 in the hero, 1 in the bar). The dock is a
  * position: sticky element, so the browser moves it with the page; this only
- * reads where it is and writes --dock (plus the slot geometry) on it.
+ * reads where it is and writes --dock (plus the slot geometry) on `hostRef`,
+ * the board body around it, so its siblings can follow the same value. While
+ * the move is under way (--dock above 0) the host carries data-docking.
  */
 export function useSearchDock(
+  hostRef: RefObject<HTMLElement | null>,
   dockRef: RefObject<HTMLElement | null>,
   slotRef: RefObject<HTMLElement | null>,
   range = 48,
@@ -29,7 +32,8 @@ export function useSearchDock(
   const [docked, setDocked] = useState(false);
   useEffect(() => {
     const dock = dockRef.current;
-    if (!dock) return;
+    const host = hostRef.current;
+    if (!dock || !host) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     let raf = 0;
     let lastP = -1;
@@ -39,8 +43,8 @@ export function useSearchDock(
       const slot = slotRef.current;
       stickTop = Number.parseFloat(getComputedStyle(dock).top) || 10;
       if (!slot) return;
-      dock.style.setProperty("--dock-x", `${pageLeft(slot) - pageLeft(dock)}px`);
-      dock.style.setProperty("--dock-w", `${slot.offsetWidth}px`);
+      host.style.setProperty("--dock-x", `${pageLeft(slot) - pageLeft(dock)}px`);
+      host.style.setProperty("--dock-w", `${slot.offsetWidth}px`);
     };
     const frame = () => {
       raf = 0;
@@ -52,7 +56,9 @@ export function useSearchDock(
       p = Math.round(p * 500) / 500;
       if (p !== lastP) {
         lastP = p;
-        dock.style.setProperty("--dock", String(p));
+        host.style.setProperty("--dock", String(p));
+        if (p > 0) host.setAttribute("data-docking", "");
+        else host.removeAttribute("data-docking");
       }
       const next = p >= 0.75;
       if (next !== lastDocked) {
@@ -81,7 +87,7 @@ export function useSearchDock(
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [dockRef, slotRef, range]);
+  }, [hostRef, dockRef, slotRef, range]);
   return docked;
 }
 

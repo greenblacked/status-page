@@ -850,13 +850,9 @@
   position: sticky;
   top: calc(env(safe-area-inset-top) + 0.5rem);
   z-index: 40;
-  /* Lined up with the page content, inside the safe area on both sides. */
-  width: min(
-    calc(72rem - 2 * var(--gutter)),
-    calc(100% - max(var(--gutter), env(safe-area-inset-left)) - max(var(--gutter), env(safe-area-inset-right)))
-  );
-  margin-inline: auto;
-  /* Its own height: it floats over the hero instead of pushing it down. */
+  /* The first item of .board-body: the width of the page content, which already sits inside the safe area. */
+  width: 100%;
+  /* Its own height: it floats over the search field's row instead of pushing it down. */
   margin-bottom: -3rem;
   background-color: var(--bar-fill);
   transition:
@@ -869,18 +865,36 @@
   Hidden, it stays in layout (visibility, not display: none): the search
   field docks into its middle slot, which must stay measurable. It is
   invisible, inert and out of the accessibility tree once the fade ends.
+  Its blur goes at once (not animated), so a hidden bar keeps no blurred
+  layer for the compositor to hold.
 */
 .compact-header[data-shown="false"] {
   opacity: 0;
   transform: translateY(-0.75rem) scale(0.98);
   visibility: hidden;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
   transition:
     opacity var(--motion-quick) var(--ease-out),
     transform var(--motion-fast) var(--ease-smooth-out),
     visibility 0s linear var(--motion-fast);
 }
 
-/* The search field: sticky, so the browser docks it; --dock (0 to 1) is written by useSearchDock. */
+/*
+  The board body holds the bar, the search field, the filter chips and the
+  cards; --dock (0 to 1, written by useSearchDock) is set on it so all of
+  them can follow the field's progress into the bar. It is at least one
+  screen tall, so a search with few or no results cannot shorten the page
+  under a docked field and scroll it back out.
+*/
+.board-body {
+  min-height: 100lvh;
+  --dock: 0;
+  --dock-x: 0px;
+  --dock-w: 12rem;
+}
+
+/* The search field: sticky, so the browser docks it. Two pixels under the bar's top, centred in its 48px. */
 .search-dock {
   position: sticky;
   top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
@@ -888,9 +902,6 @@
   height: 2.75rem;
   min-width: 0;
   pointer-events: none;
-  --dock: 0;
-  --dock-x: 0px;
-  --dock-w: 12rem;
 }
 
 .search-field {
@@ -903,10 +914,43 @@
   transform: translateX(calc(var(--dock-x) * var(--dock)));
 }
 
+/* Our own clear button replaces the browser's, which is too small a target on a phone. */
+.search-field input::-webkit-search-cancel-button,
+.search-field input::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 @media (pointer: coarse) {
   .search-field input {
     font-size: 16px;
   }
+}
+
+/*
+  Beside the field, the chips would sit under it as it slides over: they fade
+  out in the first half of the move (opacity only) and stop taking clicks
+  the moment it starts.
+*/
+@media (min-width: 64rem) {
+  .board-chips {
+    opacity: calc(1 - var(--dock) * 2);
+  }
+
+  .board-body[data-docking] .board-chips {
+    pointer-events: none;
+  }
+}
+
+/*
+  A link to a card, the skip link and a revealed service stop below the bar,
+  not under it. Per target rather than scroll-padding on the page: padding
+  would count the docked field and the bar's buttons, which sit inside it, as
+  out of view and scroll the page back up whenever one of them took focus.
+*/
+article[id^="service-"],
+#services {
+  scroll-margin-top: calc(env(safe-area-inset-top) + 4.5rem);
 }
 
 /*
@@ -1086,6 +1130,13 @@
   .period-motion[data-running] > .period-sweep,
   .period-motion[data-running] > .period-hand {
     animation: none;
+  }
+
+  /* --dock only ever snaps to 0 or 1 here (useSearchDock), so the chips beside the field do too. */
+  @media (min-width: 64rem) {
+    .board-chips {
+      opacity: calc(1 - var(--dock));
+    }
   }
 
   .compact-header,

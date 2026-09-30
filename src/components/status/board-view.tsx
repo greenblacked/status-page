@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
+import { ArrowUpRight, Bell, BellOff, BellRing, RefreshCw, Search, Star, X } from "lucide-react";
 import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
@@ -75,9 +75,10 @@ export function BoardView({
   const manualRefreshInFlight = useRef(false);
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
-  const docked = useSearchDock(dockRef, slotRef);
+  const docked = useSearchDock(bodyRef, dockRef, slotRef);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
@@ -316,10 +317,6 @@ export function BoardView({
         >
           Skip to services
         </a>
-        <CompactHeader shown={docked} slotRef={slotRef} name={APP_NAME} live={freshness.state} headline={headline}>
-          <AlertsButton bar state={alerts.state} onToggle={alerts.toggle} />
-          <RefreshButton bar fetching={fetching} onRefresh={() => void handleRefresh()} />
-        </CompactHeader>
         <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-3 sm:pt-12">
           <div className="flex items-start justify-between gap-4">
             <div className="hero-recede min-w-0">
@@ -335,8 +332,9 @@ export function BoardView({
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
-              <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
+              {/* Docked, the bar's copies are the ones in reach: Tab goes from them to the search field. */}
+              <AlertsButton skipTab={docked} state={alerts.state} onToggle={alerts.toggle} />
+              <RefreshButton skipTab={docked} fetching={fetching} onRefresh={() => void handleRefresh()} />
             </div>
           </div>
 
@@ -354,9 +352,17 @@ export function BoardView({
             {announcement}
           </p>
         </header>
-        <div className="board-body page-gutter relative mx-auto flex max-w-6xl flex-wrap items-start gap-x-4 gap-y-3">
+        <div
+          ref={bodyRef}
+          className="board-body page-gutter relative mx-auto flex max-w-6xl flex-wrap content-start items-start gap-x-4"
+        >
+          {/* Right before the search field in the markup, so Tab goes from the bar's buttons to it. */}
+          <CompactHeader shown={docked} slotRef={slotRef} name={APP_NAME} live={freshness.state} headline={headline}>
+            <AlertsButton bar state={alerts.state} onToggle={alerts.toggle} />
+            <RefreshButton bar fetching={fetching} onRefresh={() => void handleRefresh()} />
+          </CompactHeader>
           {/* biome-ignore lint/a11y/useSemanticElements: <search> is Safari 17+; role="search" on a div names the same landmark everywhere. */}
-          <div ref={dockRef} role="search" className="search-dock basis-full lg:flex-1 lg:basis-0">
+          <div ref={dockRef} role="search" className="search-dock mt-0.5 basis-full lg:flex-1 lg:basis-0">
             <div className="search-field">
               <label className="relative block min-w-0 flex-1">
                 <span className="sr-only">Search services</span>
@@ -372,9 +378,9 @@ export function BoardView({
                   autoCorrect="off"
                   autoComplete="off"
                   spellCheck={false}
-                  className="pl-10 sm:pr-10"
+                  className={cn("appearance-none pl-10", query ? "pr-11" : "sm:pr-10")}
                 />
-                {singleKey.enabled ? (
+                {singleKey.enabled && !query ? (
                   <kbd
                     aria-hidden
                     className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
@@ -383,58 +389,74 @@ export function BoardView({
                   </kbd>
                 ) : null}
               </label>
+              {/* Ours, not the browser's: a 44pt target that keeps the field focused (and the keyboard up on a phone). */}
+              {query ? (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  className="focus-ring pressable absolute top-0 right-0 flex size-11 items-center justify-center rounded-full text-subtle hover:text-fg"
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    updateFilters({ query: "" });
+                    searchRef.current?.focus();
+                  }}
+                >
+                  <X className="size-4" aria-hidden />
+                </button>
+              ) : null}
             </div>
           </div>
           {/* One scrolling row on phones instead of three wrapped ones. */}
-          {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
-          <div
-            className="page-bleed flex max-sm:basis-[calc(100%+2*var(--gutter))] sm:basis-full lg:basis-auto gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
-            role="group"
-            aria-label="Filter services"
+          {/* The row's landmark, and its flex item: the group inside bleeds to the screen edges on a phone. */}
+          <section
+            aria-label="Filters"
+            className="board-chips mt-3 min-w-0 basis-full lg:mt-0 lg:basis-auto lg:self-center"
           >
-            {FILTERS.map((filter) => (
+            {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
+            <div
+              className="page-bleed flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
+              role="group"
+              aria-label="Filter services"
+            >
+              {FILTERS.map((filter) => (
+                <Button
+                  key={filter.id}
+                  variant={category === filter.id ? "default" : "outline"}
+                  size="sm"
+                  className="shrink-0"
+                  aria-pressed={category === filter.id}
+                  onClick={() => updateFilters({ category: filter.id })}
+                >
+                  {filter.label}
+                  <span className="font-mono text-[11px] tabular-nums opacity-70">{categoryCount(filter.id)}</span>
+                </Button>
+              ))}
               <Button
-                key={filter.id}
-                variant={category === filter.id ? "default" : "outline"}
+                variant={issuesOnly ? "default" : "outline"}
                 size="sm"
                 className="shrink-0"
-                aria-pressed={category === filter.id}
-                onClick={() => updateFilters({ category: filter.id })}
+                aria-pressed={issuesOnly}
+                onClick={() => updateFilters({ issuesOnly: !issuesOnly })}
               >
-                {filter.label}
-                <span className="font-mono text-[11px] tabular-nums opacity-70">{categoryCount(filter.id)}</span>
+                Issues only
+                <span className="font-mono text-[11px] tabular-nums opacity-70">{issueCount}</span>
               </Button>
-            ))}
-            <Button
-              variant={issuesOnly ? "default" : "outline"}
-              size="sm"
-              className="shrink-0"
-              aria-pressed={issuesOnly}
-              onClick={() => updateFilters({ issuesOnly: !issuesOnly })}
-            >
-              Issues only
-              <span className="font-mono text-[11px] tabular-nums opacity-70">{issueCount}</span>
-            </Button>
-            <Button
-              variant={starredOnly ? "default" : "outline"}
-              size="sm"
-              className="shrink-0"
-              aria-pressed={starredOnly}
-              onClick={() => updateFilters({ starredOnly: !starredOnly })}
-            >
-              <Star className={cn("size-3.5", starredOnly && "fill-current")} />
-              Starred
-              <span className="font-mono text-[11px] tabular-nums opacity-70">{starred.size}</span>
-            </Button>
-          </div>
+              <Button
+                variant={starredOnly ? "default" : "outline"}
+                size="sm"
+                className="shrink-0"
+                aria-pressed={starredOnly}
+                onClick={() => updateFilters({ starredOnly: !starredOnly })}
+              >
+                <Star className={cn("size-3.5", starredOnly && "fill-current")} />
+                Starred
+                <span className="font-mono text-[11px] tabular-nums opacity-70">{starred.size}</span>
+              </Button>
+            </div>
+          </section>
 
           {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
-          <main
-            ref={mainRef}
-            id="services"
-            tabIndex={-1}
-            className="relative basis-full scroll-mt-4 pb-20 pt-2 outline-none"
-          >
+          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-3 basis-full pb-20 pt-2 outline-none">
             {boardQuery.isError ? (
               <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
                 Could not refresh official sources. Showing the last successful snapshot.
@@ -761,14 +783,25 @@ const ALERT_LABEL: Record<AlertsState, string> = {
 /**
  * Rendered twice, in the hero and in the compact header, both driven by
  * the board's one handleRefresh. It carries no id, so the copies never
- * collide. The bar's copy (`bar`) is a full 44pt touch target.
+ * collide. The bar's copy (`bar`) is a full 44pt touch target; the hero's leaves the Tab order while the bar is up (`skipTab`).
  */
-function RefreshButton({ bar, fetching, onRefresh }: { bar?: boolean; fetching: boolean; onRefresh: () => void }) {
+function RefreshButton({
+  bar,
+  skipTab,
+  fetching,
+  onRefresh,
+}: {
+  bar?: boolean;
+  skipTab?: boolean;
+  fetching: boolean;
+  onRefresh: () => void;
+}) {
   return (
     <Button
       variant="outline"
       size={bar ? "default" : "sm"}
       className={cn("shrink-0", bar && "max-sm:w-11 max-sm:px-0")}
+      tabIndex={skipTab ? -1 : undefined}
       onClick={onRefresh}
       // Not `disabled`: every background refetch would drop keyboard
       // focus to <body>. handleRefresh ignores a press while its own
@@ -783,7 +816,17 @@ function RefreshButton({ bar, fetching, onRefresh }: { bar?: boolean; fetching: 
   );
 }
 
-function AlertsButton({ bar, state, onToggle }: { bar?: boolean; state: AlertsState; onToggle: () => void }) {
+function AlertsButton({
+  bar,
+  skipTab,
+  state,
+  onToggle,
+}: {
+  bar?: boolean;
+  skipTab?: boolean;
+  state: AlertsState;
+  onToggle: () => void;
+}) {
   // Two copies render, one in the compact header, so the hint's id is per copy.
   const hintId = useId();
   if (state === "unsupported") return null;
@@ -795,6 +838,7 @@ function AlertsButton({ bar, state, onToggle }: { bar?: boolean; state: AlertsSt
         variant={state === "on" ? "default" : "outline"}
         size={bar ? "default" : "sm"}
         className={cn(bar && "max-sm:w-11 max-sm:px-0")}
+        tabIndex={skipTab ? -1 : undefined}
         // aria-disabled, not disabled: a disabled button drops out of the Tab
         // order, so a keyboard or screen reader user never learns why alerts
         // are off. This one stays reachable, does nothing, and says why.
