@@ -11,7 +11,9 @@
 #   check    tools/npm names the same npm version as packageManager, exactly,
 #            in both its package.json and its lockfile. No network.
 #   install  check, then `npm ci` into tools/npm/node_modules (no install
-#            scripts), and confirm the npm it installed reports that version.
+#            scripts), check its registry signature with the runner's own npm
+#            (scripts/ci/audit-signatures.sh), and confirm the npm it
+#            installed reports that version.
 #            Under GitHub Actions it puts that npm first on PATH for the
 #            following steps; elsewhere it prints the line to run.
 #   verify   the `npm` on PATH is the pinned version, and is the one from
@@ -73,6 +75,10 @@ case "$mode" in
     check
     want="$(node -p "require('./package.json').packageManager.split('@')[1]")"
     npm ci --prefix "$tools" --ignore-scripts --no-audit --no-fund
+    # Plain `npm`, not "$bin/npm": at this point it is still the runner's own
+    # (GITHUB_PATH only applies to later steps), so the pinned npm is not
+    # verifying itself.
+    ./scripts/ci/audit-signatures.sh "$tools"
     got="$("$bin/npm" --version)"
     if [ "$got" != "$want" ]; then
       echo "::error::installed npm $got from $tools, expected $want" >&2

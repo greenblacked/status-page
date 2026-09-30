@@ -21,7 +21,7 @@ afterEach(() => {
  * each of `failures` in turn and then passes. Every call logs its arguments
  * and whether the trust-root cache was there at the time.
  */
-function run(failures: string[]) {
+function run(failures: string[], args: string[] = []) {
   const dir = mkdtempSync(join(tmpdir(), "audit-signatures-"));
   dirs.push(dir);
   const cache = join(dir, "cache");
@@ -43,7 +43,7 @@ echo "audited 214 packages; 214 have verified registry signatures"
 `,
   );
   chmodSync(npm, 0o755);
-  const result = spawnSync(SCRIPT, [], {
+  const result = spawnSync(SCRIPT, args, {
     encoding: "utf8",
     env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, AUDIT_SIGNATURES_BACKOFF: "0" },
   });
@@ -52,6 +52,12 @@ echo "audited 214 packages; 214 have verified registry signatures"
 }
 
 describe("audit-signatures.sh", () => {
+  it("audits the install in the directory it is given", () => {
+    const { ok, calls } = run([], ["tools/npm"]);
+    expect(ok).toBe(true);
+    expect(calls).toEqual(["audit signatures --prefix tools/npm tuf=present"]);
+  });
+
   it("passes on the first attempt without touching the cache", () => {
     const { ok, calls } = run([]);
     expect(ok).toBe(true);
