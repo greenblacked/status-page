@@ -315,7 +315,10 @@
 .aurora-grid {
   pointer-events: none;
   position: fixed;
-  inset: 0;
+  /* Sized like .lenses (see there), so the holes below stay put with the lenses. */
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 100lvh;
   z-index: 0;
   contain: strict;
   background-image:
@@ -337,7 +340,12 @@
 .lenses {
   pointer-events: none;
   position: fixed;
-  inset: 0;
+  /* The large viewport, not the visible one: on iOS a fixed inset:0 box
+     follows the toolbar, and every collapse would move the lenses and
+     repaint their filters. Percent tops and cqh below read this height. */
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 100lvh;
   z-index: 0;
   contain: strict;
   container-type: size;
@@ -400,7 +408,7 @@
     inset -1.5px -1.5px 0 0 var(--lens-fringe-b);
 }
 
-/* The rim light: a conic ring, masked to 2px. Turns slowly on a Mac. */
+/* The rim light: a conic ring, masked to 2px. Turns slowly where a pointer can hover. */
 .lens::after {
   content: "";
   position: absolute;
@@ -463,15 +471,15 @@
 */
 .aurora-grid {
   -webkit-mask-image:
-    radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1%), transparent 99%, #000 100%),
-    radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1%), transparent 99%, #000 100%),
-    radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1%), transparent 99%, #000 100%),
-    radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1%), transparent 99%, #000 100%);
+    radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1lvh), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1lvh), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1lvh), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1lvh), transparent 99%, #000 100%);
   mask-image:
-    radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1%), transparent 99%, #000 100%),
-    radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1%), transparent 99%, #000 100%),
-    radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1%), transparent 99%, #000 100%),
-    radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1%), transparent 99%, #000 100%);
+    radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1lvh), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1lvh), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1lvh), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1lvh), transparent 99%, #000 100%);
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
 }
