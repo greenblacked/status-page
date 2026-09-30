@@ -9,17 +9,29 @@ import {
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
+import { fingerprint } from "./fingerprint.ts";
 import {
-  googleImpact,
+  googleImpactInfo,
   instatusComponent,
   overallSummary,
   statuspageComponent,
+  statuspageComponentDetail,
+  statuspageIncidentImpact,
   statuspageIndicator,
   urgencyOf,
   worseHealth,
 } from "./health.ts";
 import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
-import type { ComponentHealth, Health, Incident, ServiceId, ServiceSnapshot, SourceFailure } from "./types.ts";
+import { sortIncidents } from "./layout.ts";
+import type {
+  ComponentHealth,
+  Health,
+  Incident,
+  ServiceId,
+  ServiceSnapshot,
+  SourceFailure,
+  UpcomingMaintenance,
+} from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -32,31 +44,40 @@ const MAX_COMPONENTS = 24;
 const EXTRA_TIMEOUT_MS = 4000;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
 
+// Every field a vendor could omit is optional: a missing one must cost a
+// detail, never the whole card (a TypeError here is a "parser" failure).
+type StatuspageRef = { id?: string; name?: string; group_id?: string | null };
+
 type StatuspageSummary = {
   status?: { indicator?: string; description?: string };
   components?: Array<{
-    id: string;
-    name: string;
-    status: string;
+    id?: string;
+    name?: string;
+    status?: string;
     group?: boolean;
     group_id?: string | null;
   }>;
   incidents?: Array<{
-    id: string;
-    name: string;
-    status: string;
+    id?: string;
+    name?: string;
+    status?: string;
     impact?: string;
     shortlink?: string;
     started_at?: string;
     updated_at?: string;
+    /** The components (and groups) the incident affects. */
+    components?: StatuspageRef[];
   }>;
   scheduled_maintenances?: Array<{
-    id: string;
-    name: string;
-    status: string;
+    id?: string;
+    name?: string;
+    status?: string;
     started_at?: string;
     updated_at?: string;
+    scheduled_for?: string;
+    scheduled_until?: string;
     shortlink?: string;
+    components?: StatuspageRef[];
   }>;
 };
 
@@ -182,27 +203,41 @@ function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }> {
   return fn().then((value) => ({ value, ms: Date.now() - started }));
 }
 
+/** Incidents that are problems: notices with no impact are listed but not counted. */
+function realIncidentCount(incidents: Incident[]): number {
+  return incidents.filter((incident) => !incident.informational).length;
+}
+
+/** The title of the worst incident that is a problem (the list is sorted worst first), if any. */
+function firstProblemTitle(incidents: Incident[]): string | undefined {
+  return incidents.find((incident) => !incident.informational)?.title;
+}
+
 function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
   const { sourceUrl } = CATALOG_BY_ID[id];
   const open = incidents.filter((incident) => !incident.end);
   let health: Health = "operational";
   const components: ComponentHealth[] = [];
   const mapped: Incident[] = open.map((incident) => {
-    const itemHealth = googleImpact(incident.status_impact, incident.severity);
+    const { health: itemHealth, informational } = googleImpactInfo(incident.status_impact, incident.severity);
     health = worseHealth(health, itemHealth);
     const locations = (incident.currently_affected_locations ?? [])
       .map((loc) => loc.title)
       .filter(Boolean)
       .join(", ");
-    components.push({
-      name: incident.service_name ?? "Service",
-      health: itemHealth,
-      detail: locations || incident.external_desc,
-    });
+    // A notice names no affected service: it is not a row.
+    if (!informational) {
+      components.push({
+        name: incident.service_name ?? "Service",
+        health: itemHealth,
+        detail: locations || incident.external_desc,
+      });
+    }
     return {
       id: incident.id,
       title: incident.external_desc ?? incident.service_name ?? "Incident",
       health: itemHealth,
+      ...(informational ? { informational: true } : {}),
       startedAt: isoTimestamp(incident.begin),
       updatedAt: isoTimestamp(incident.modified),
       // Resolved rather than concatenated: the feed's "incidents/<id>" form
@@ -212,7 +247,7 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
       url: vendorUrl(incident.uri, sourceUrl, [hostOf(sourceUrl)]),
     };
   });
-  return { health, incidents: mapped, components };
+  return { health, incidents: sortIncidents(mapped), components };
 }
 
 /**
@@ -261,7 +296,9 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
       : incident.service_name
         ? [{ title: incident.service_name }]
         : [];
-    const itemHealth = googleImpact(incident.status_impact, incident.severity);
+    const { health: itemHealth, informational } = googleImpactInfo(incident.status_impact, incident.severity);
+    // A notice reports no impact, so it changes no product's row.
+    if (informational) continue;
     const locations = (incident.currently_affected_locations ?? [])
       .map((loc) => loc.title)
       .filter(Boolean)
@@ -300,6 +337,13 @@ function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "c
     : { components: ranked };
 }
 
+/** The objects in a vendor array; anything else (a null entry, a non-array) is skipped, not a crash. */
+function records<T extends object>(value: unknown): T[] {
+  return Array.isArray(value) ? value.filter((item): item is T => typeof item === "object" && item !== null) : [];
+}
+
+const MAX_UPCOMING_MAINTENANCE = 3;
+
 function fromStatuspage(
   id: ServiceId,
   data: StatuspageSummary,
@@ -309,30 +353,34 @@ function fromStatuspage(
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
+  const allComponents = records<NonNullable<StatuspageSummary["components"]>[number]>(data.components);
   // Components stay in the vendor's array order, which is the page order.
   // (`position` is per group, so sorting on it would interleave groups.)
   // The name filter (Epic/Fortnite) sees groups too, and each child's group
   // name, so a group row can carry the health of a matching service and
   // plain-named children follow their group; groups are just never listed.
   const groupNames = new Map<string, string>();
-  for (const component of data.components ?? []) {
-    if (component.group) groupNames.set(component.id, component.name);
+  const componentsById = new Map<string, (typeof allComponents)[number]>();
+  for (const component of allComponents) {
+    if (component.id) componentsById.set(component.id, component);
+    if (component.group && component.id) groupNames.set(component.id, component.name ?? "");
   }
-  const matched = (data.components ?? [])
+  const matched = allComponents
     .filter((component) =>
       componentFilter
-        ? componentFilter(component.name, component.group_id ? groupNames.get(component.group_id) : undefined)
+        ? componentFilter(component.name ?? "", component.group_id ? groupNames.get(component.group_id) : undefined)
         : !component.group,
     )
     .map((component) => ({
-      name: component.name,
+      name: component.name ?? "Component",
       group: component.group === true,
       health: statuspageComponent(component.status),
+      detail: statuspageComponentDetail(component.status),
     }));
   // Leaf components only: groups are containers, not services.
   const components: ComponentHealth[] = matched
     .filter((component) => !component.group)
-    .map(({ name, health }) => ({ name, health }));
+    .map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
 
   // The list is capped only when returned (see rankComponents). Health is
   // worked out from every component first, so a broken one past the cap
@@ -345,44 +393,87 @@ function fromStatuspage(
     health = statuspageIndicator(data.status?.indicator);
   }
 
-  const activeIncidents = (data.incidents ?? []).filter((incident) => {
-    const status = incident.status.toLowerCase();
-    return status !== "resolved" && status !== "postmortem" && status !== "completed";
-  });
+  // Which of the shared page's cards an incident or maintenance belongs to.
+  // The components it lists are the vendor's own word for what it affects, so
+  // they decide when present (an incident called "Login issues" that lists a
+  // Fortnite component is Fortnite's); the name is only a fallback for an
+  // item that lists none.
+  const belongs = (item: { name?: string; components?: StatuspageRef[] }): boolean => {
+    if (!componentFilter) return true;
+    const refs = records<StatuspageRef>(item.components);
+    if (refs.length === 0) return componentFilter(item.name ?? "");
+    return refs.some((ref) => {
+      const known = ref.id ? componentsById.get(ref.id) : undefined;
+      const groupId = ref.group_id ?? known?.group_id;
+      return componentFilter(ref.name ?? known?.name ?? "", groupId ? groupNames.get(groupId) : undefined);
+    });
+  };
 
-  const incidents: Incident[] = activeIncidents
-    .filter((incident) => {
-      if (!componentFilter) return true;
-      return componentFilter(incident.name);
-    })
-    .map((incident) => ({
-      id: incident.id,
-      title: incident.name,
-      health: statuspageIndicator(incident.impact),
-      startedAt: isoTimestamp(incident.started_at),
-      updatedAt: isoTimestamp(incident.updated_at),
-      // Statuspage writes incident shortlinks on stspg.io; the vendor's own
-      // status host is allowed too. No shortlink stays no link, as before.
-      url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
-    }));
+  const activeIncidents = records<NonNullable<StatuspageSummary["incidents"]>[number]>(data.incidents).filter(
+    (incident) => {
+      const status = (incident.status ?? "").toLowerCase();
+      return status !== "resolved" && status !== "postmortem" && status !== "completed";
+    },
+  );
 
-  const maintenances = (data.scheduled_maintenances ?? []).filter((item) => {
-    const status = item.status.toLowerCase();
-    return status === "in_progress" || status === "verifying";
-  });
+  const incidents: Incident[] = sortIncidents(
+    activeIncidents
+      .filter((incident) => belongs(incident))
+      .map((incident) => {
+        const name = incident.name || "Incident";
+        const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
+        return {
+          id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
+          title: name,
+          health: itemHealth,
+          ...(informational ? { informational: true } : {}),
+          startedAt: isoTimestamp(incident.started_at),
+          updatedAt: isoTimestamp(incident.updated_at),
+          // Statuspage writes incident shortlinks on stspg.io; the vendor's own
+          // status host is allowed too. No shortlink stays no link, as before.
+          url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
+        };
+      }),
+  );
+
+  const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
+    data.scheduled_maintenances,
+  ).filter((item) => belongs(item));
+  const statusOf = (item: { status?: string }) => (item.status ?? "").toLowerCase();
+  const maintenances = scheduled.filter((item) => statusOf(item) === "in_progress" || statusOf(item) === "verifying");
 
   if (maintenances.length && health === "operational") health = "maintenance";
+
+  // Announced but not started: shown as upcoming, never as a health.
+  const upcoming: UpcomingMaintenance[] = scheduled
+    .filter((item) => statusOf(item) === "scheduled")
+    .map((item) => ({
+      id: item.id || `statuspage-${fingerprint(`${item.name ?? ""}|${item.scheduled_for ?? ""}`)}`,
+      title: item.name || "Scheduled maintenance",
+      scheduledFor: isoTimestamp(item.scheduled_for),
+      scheduledUntil: isoTimestamp(item.scheduled_until),
+      url: item.shortlink ? vendorUrl(item.shortlink, sourceUrl, statuspageHosts) : undefined,
+    }))
+    .sort(
+      (a, b) =>
+        (Date.parse(a.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER) -
+        (Date.parse(b.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER),
+    )
+    .slice(0, MAX_UPCOMING_MAINTENANCE);
 
   // During maintenance with no incident, the maintenance itself is what the
   // card should name; the indicator description is only a generic fallback.
   const hint =
-    incidents[0]?.title || (health === "maintenance" ? maintenances[0]?.name : undefined) || data.status?.description;
+    firstProblemTitle(incidents) ||
+    (health === "maintenance" ? maintenances[0]?.name : undefined) ||
+    data.status?.description;
   return {
     ...base(id, checkedAt, latencyMs),
     health,
-    summary: overallSummary(health, incidents.length, hint),
+    summary: overallSummary(health, realIncidentCount(incidents), hint),
     ...rankComponents(components),
     incidents,
+    ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),
   };
 }
 
@@ -408,7 +499,7 @@ async function collectGoogle(id: "gcp" | "android", origin: string): Promise<Ser
     return {
       ...base(id, new Date().toISOString(), ms),
       health: parsed.health,
-      summary: overallSummary(parsed.health, parsed.incidents.length, parsed.incidents[0]?.title),
+      summary: overallSummary(parsed.health, realIncidentCount(parsed.incidents), firstProblemTitle(parsed.incidents)),
       ...rankComponents(components),
       incidents: parsed.incidents,
     };

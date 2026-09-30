@@ -55,6 +55,28 @@ export function statuspageIndicator(indicator: string | undefined): Health {
   }
 }
 
+/**
+ * An incident's impact. "none" is a notice the vendor posted with no customer
+ * impact: operational and informational, so the row is labelled a notice
+ * instead of reading "Operational". A missing impact is not a reading at
+ * all, so it is unknown rather than an all-clear.
+ */
+export function statuspageIncidentImpact(impact: string | undefined): { health: Health; informational: boolean } {
+  const value = (impact ?? "").trim().toLowerCase();
+  if (value === "none") return { health: "operational", informational: true };
+  if (value === "") return { health: "unknown", informational: false };
+  return { health: statuspageIndicator(value), informational: false };
+}
+
+/**
+ * `degraded_performance` and `partial_outage` are both Degraded on the board
+ * (the Health type has no fourth level), but they are not the same thing to
+ * a reader. A partial outage keeps its name as the row's detail.
+ */
+export function statuspageComponentDetail(status: string | undefined): string | undefined {
+  return (status ?? "").toLowerCase() === "partial_outage" ? "Partial outage" : undefined;
+}
+
 export function statuspageComponent(status: string | undefined): Health {
   switch ((status ?? "").toLowerCase()) {
     case "operational":
@@ -71,15 +93,37 @@ export function statuspageComponent(status: string | undefined): Health {
   }
 }
 
-export function googleImpact(impact: string | undefined, severity?: string): Health {
-  const value = (impact ?? severity ?? "").toUpperCase();
-  if (value.includes("SERVICE_OUTAGE") || value === "CRITICAL" || value === "HIGH") {
-    return value.includes("SERVICE_OUTAGE") || value === "CRITICAL" ? "outage" : "degraded";
+/**
+ * What a Google status item's impact means for health, and whether it is a
+ * mere notice. `status_impact` wins; `severity` (Play's dashboard) is only
+ * read when the impact is missing or empty.
+ *
+ * SERVICE_INFORMATION (and AVAILABLE) is Google saying nothing is wrong for
+ * customers: it reads as operational, flagged informational, so the item
+ * stays listed as a notice and never makes the service look degraded. A
+ * value this code does not know is "unknown", not a guess in either
+ * direction: an open item of unclear severity is neither a confirmed
+ * problem nor an all-clear. LOW and MEDIUM severities are real, if minor,
+ * impact, so they stay degraded.
+ */
+export function googleImpactInfo(
+  impact: string | undefined,
+  severity?: string,
+): { health: Health; informational: boolean } {
+  const value = (impact?.trim() || severity?.trim() || "").toUpperCase();
+  if (value.includes("SERVICE_OUTAGE") || value === "CRITICAL") return { health: "outage", informational: false };
+  if (value.includes("SERVICE_DISRUPTION") || value === "HIGH" || value === "MEDIUM" || value === "LOW") {
+    return { health: "degraded", informational: false };
   }
-  if (value.includes("SERVICE_DISRUPTION") || value === "MEDIUM") return "degraded";
-  if (value.includes("MAINTENANCE")) return "maintenance";
-  if (value.includes("AVAILABLE") || value === "LOW") return "degraded";
-  return "degraded";
+  if (value.includes("MAINTENANCE")) return { health: "maintenance", informational: false };
+  if (value.includes("SERVICE_INFORMATION") || value.includes("AVAILABLE")) {
+    return { health: "operational", informational: true };
+  }
+  return { health: "unknown", informational: false };
+}
+
+export function googleImpact(impact: string | undefined, severity?: string): Health {
+  return googleImpactInfo(impact, severity).health;
 }
 
 // Instatus component statuses (status.x.ai/v2/components.json), which are

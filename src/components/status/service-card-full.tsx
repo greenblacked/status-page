@@ -12,9 +12,13 @@ import {
 } from "@/components/status/service-card-shared";
 import { Badge } from "@/components/ui/badge";
 import { healthLabel } from "@/lib/status/health";
-import { serviceAnchor, serviceIndex } from "@/lib/status/layout";
+import { incidentLink, serviceAnchor, serviceIndex } from "@/lib/status/layout";
 import type { Health, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
+
+/** How many broken component rows and incident lines a card shows before it says "+N more". */
+const MAX_ROWS = 6;
+const MAX_INCIDENTS = 2;
 
 /**
  * The badge in a card's header, or none. A changelog has no operational
@@ -72,19 +76,26 @@ export function ServiceCard({
   // that is up names its components in one compact line instead of rows;
   // otherwise only broken components earn a row.
   const healthy = service.health === "operational" && !changelog && service.id !== "cs2-europe";
-  const rows = healthy
+  const allRows = healthy
     ? []
-    : (changelog || service.id === "cs2-europe"
-        ? service.components
-        : service.components.filter((component) => component.health !== "operational")
-      ).slice(0, 6);
-  const incidents = service.incidents.filter((incident) => norm(incident.title) !== summary).slice(0, 2);
+    : changelog || service.id === "cs2-europe"
+      ? service.components
+      : service.components.filter((component) => component.health !== "operational");
+  const rows = allRows.slice(0, MAX_ROWS);
+  const moreRows = allRows.length - rows.length;
+  // The service's incidents arrive worst first (see sortIncidents), so the
+  // cut keeps the most urgent ones.
+  const allIncidents = service.incidents.filter((incident) => norm(incident.title) !== summary);
+  const incidents = allIncidents.slice(0, MAX_INCIDENTS);
+  const moreIncidents = allIncidents.length - incidents.length;
   // An incident whose title is the summary has no row of its own, so its
   // start goes under the summary instead.
   const summaryIncident = changelog
     ? undefined
     : service.incidents.find((incident) => norm(incident.title) === summary);
-  const incidentUrl = changelog ? undefined : service.incidents.find((incident) => incident.url)?.url;
+  // The worst incident with a page of its own; a vendor's generic dashboard is the source link, not an incident.
+  const incidentUrl = changelog ? undefined : incidentLink(service);
+  const upcoming = changelog ? [] : (service.upcomingMaintenance ?? []);
   const checkedAt = Date.parse(service.checkedAt);
   const headerBadge = headerBadgeFor(service);
 
@@ -171,6 +182,12 @@ export function ServiceCard({
               showDetail={Boolean(component.detail) && (changelog || !summary.includes(norm(component.detail ?? "")))}
             />
           ))}
+          {moreRows > 0 ? (
+            <li className="text-xs text-subtle" data-more-rows>
+              <span aria-hidden>+{moreRows} more</span>
+              <span className="sr-only">{moreRows} more components</span>
+            </li>
+          ) : null}
         </ul>
       ) : null}
 
@@ -179,10 +196,32 @@ export function ServiceCard({
           {incidents.map((incident, incidentIndex) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
             <li key={`${incident.id}-${incidentIndex}`} className="text-fg [overflow-wrap:anywhere]">
-              <span className={ICON_TONE[incident.health]}>{healthLabel(incident.health)}</span>
+              {/* A notice reports no impact, so it is not labelled with a health. */}
+              <span className={incident.informational ? "text-subtle" : ICON_TONE[incident.health]}>
+                {incident.informational ? "Notice" : healthLabel(incident.health)}
+              </span>
               <span className="text-subtle"> · </span>
               {incident.title}
               <IncidentSince startedAt={incident.startedAt} reference={checkedAt} now={now} />
+            </li>
+          ))}
+          {moreIncidents > 0 ? (
+            <li className="text-xs text-subtle" data-more-incidents>
+              <span aria-hidden>+{moreIncidents} more</span>
+              <span className="sr-only">{moreIncidents} more incidents</span>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {upcoming.length > 0 ? (
+        <ul className="dynamic-text mt-3 space-y-2 text-sm" data-upcoming-maintenance>
+          {upcoming.map((item) => (
+            <li key={item.id} className="text-fg [overflow-wrap:anywhere]">
+              <span className={ICON_TONE.maintenance}>Upcoming</span>
+              <span className="text-subtle"> · </span>
+              {item.title}
+              <IncidentSince startedAt={item.scheduledFor} reference={checkedAt} now={now} />
             </li>
           ))}
         </ul>

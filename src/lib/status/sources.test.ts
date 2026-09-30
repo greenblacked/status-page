@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { googleImpact } from "./health.ts";
 import { PayloadError, SourceError } from "./http.ts";
 import {
   awsComponents,
@@ -397,12 +396,18 @@ describe("googleComponents", () => {
     assert.deepEqual(rows[0], { name: "Cloud Run", health: "outage", detail: "Down" });
   });
 
-  it("reads an information-only notice like the card does: Degraded, with its description", () => {
+  it("leaves a product operational, with no detail, for an information-only notice", () => {
     const rows = googleComponents(products, [
       { id: "n", status_impact: "SERVICE_INFORMATION", external_desc: "FYI", affected_products: [{ id: "run" }] },
     ]);
-    assert.deepEqual(rows[0], { name: "Cloud Run", health: googleImpact("SERVICE_INFORMATION"), detail: "FYI" });
-    assert.equal(rows[0].health, "degraded");
+    assert.deepEqual(rows[0], { name: "Cloud Run", health: "operational" });
+  });
+
+  it("reads an unrecognised impact as unknown, not as a degradation", () => {
+    const rows = googleComponents(products, [
+      { id: "n", status_impact: "SOMETHING_NEW", external_desc: "Odd", affected_products: [{ id: "run" }] },
+    ]);
+    assert.deepEqual(rows[0], { name: "Cloud Run", health: "unknown", detail: "Odd" });
   });
 
   it("falls back to service_name when an incident lists no products", () => {

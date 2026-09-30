@@ -52,21 +52,17 @@ function mikrotikChannels(body: (file: string) => string): Record<string, Handle
 // Minimal but shape-correct Statuspage summary.json fixture.
 function statuspageSummary(overrides: {
   indicator?: string;
-  components?: Array<{
-    id: string;
-    name: string;
-    status: string;
-    group?: boolean;
-    group_id?: string | null;
-    position?: number;
-  }>;
-  incidents?: Array<{ id: string; name: string; status: string; impact?: string }>;
+  // Loose on purpose: several tests send components, incidents and maintenance
+  // with fields missing or null.
+  components?: unknown[];
+  incidents?: unknown[];
+  scheduled_maintenances?: unknown[];
 }) {
   return {
     status: { indicator: overrides.indicator ?? "none", description: "All Systems Operational" },
     components: overrides.components ?? [],
     incidents: overrides.incidents ?? [],
-    scheduled_maintenances: [],
+    scheduled_maintenances: overrides.scheduled_maintenances ?? [],
   };
 }
 
@@ -587,7 +583,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     const spotify = (await collectAllServices()).find((s) => s.id === "spotify")!;
     expect(spotify.components).toHaveLength(24);
     expect(spotify.componentCount).toBe(60);
-    expect(spotify.components[0]).toEqual({ name: "Component 55", health: "degraded" });
+    expect(spotify.components[0]).toEqual({ name: "Component 55", health: "degraded", detail: "Partial outage" });
     expect(spotify.components.slice(1).map((c) => c.name)).toEqual(
       Array.from({ length: 23 }, (_, i) => `Component ${i}`),
     );
@@ -617,7 +613,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(epic.components).toEqual([{ name: "Accounts", health: "operational" }]);
     expect(fortnite.health).toBe("degraded");
     expect(fortnite.components).toEqual([
-      { name: "Fortnite Matchmaking", health: "degraded" },
+      { name: "Fortnite Matchmaking", health: "degraded", detail: "Partial outage" },
       { name: "Fortnite Store", health: "operational" },
     ]);
   });
@@ -641,7 +637,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     const epic = services.find((s) => s.id === "epic")!;
     const fortnite = services.find((s) => s.id === "fortnite")!;
     expect(fortnite.components).toEqual([
-      { name: "Matchmaking", health: "degraded" },
+      { name: "Matchmaking", health: "degraded", detail: "Partial outage" },
       { name: "Login", health: "operational" },
     ]);
     expect(fortnite.health).toBe("degraded");
@@ -651,6 +647,220 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       { name: "Rocket League", health: "operational" },
     ]);
     expect(epic.health).toBe("outage");
+  });
+
+  it("Google Cloud: a SERVICE_INFORMATION item is an informational notice, and the service stays operational", async () => {
+    stubFetch({
+      [URLS.gcp]: json([
+        googleIncident({
+          id: "note",
+          status_impact: "SERVICE_INFORMATION",
+          external_desc: "Billing export schema change",
+          service_name: "Cloud Billing",
+          uri: "incidents/note",
+        }),
+      ]),
+    });
+    const gcp = (await collectAllServices()).find((s) => s.id === "gcp")!;
+    expect(gcp.health).toBe("operational");
+    expect(gcp.summary).toBe("All reported systems operational.");
+    expect(gcp.components).toEqual([]);
+    expect(gcp.incidents).toEqual([
+      {
+        id: "note",
+        title: "Billing export schema change",
+        health: "operational",
+        informational: true,
+        startedAt: "2026-09-20T00:00:00.000Z",
+        updatedAt: undefined,
+        url: "https://status.cloud.google.com/incidents/note",
+      },
+    ]);
+  });
+
+  it("Google Cloud: an impact this code does not know is unknown, and a real outage still sorts first", async () => {
+    stubFetch({
+      [URLS.gcp]: json([
+        googleIncident({ id: "odd", status_impact: "SOMETHING_NEW", external_desc: "Odd", uri: "incidents/odd" }),
+        googleIncident({ id: "down", status_impact: "SERVICE_OUTAGE", external_desc: "Down", uri: "incidents/down" }),
+      ]),
+    });
+    const gcp = (await collectAllServices()).find((s) => s.id === "gcp")!;
+    expect(gcp.health).toBe("outage");
+    expect(gcp.incidents.map((i) => [i.id, i.health])).toEqual([
+      ["down", "outage"],
+      ["odd", "unknown"],
+    ]);
+    expect(gcp.summary).toBe("Down");
+  });
+
+  describe("Statuspage incidents and maintenance", () => {
+    const claudeOf = async () => (await collectAllServices()).find((s) => s.id === "claude")!;
+
+    it("lists an impact-none incident as an informational notice, not as an Operational row", async () => {
+      stubFetch({
+        [URLS.claude]: json(
+          statuspageSummary({
+            incidents: [{ id: "n1", name: "Scheduled database upgrade", status: "investigating", impact: "none" }],
+          }),
+        ),
+      });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.summary).toBe("All reported systems operational.");
+      expect(claude.incidents).toEqual([
+        { id: "n1", title: "Scheduled database upgrade", health: "operational", informational: true },
+      ]);
+    });
+
+    it("sorts incidents by urgency, then recency, and names the worst one in the summary", async () => {
+      stubFetch({
+        [URLS.claude]: json(
+          statuspageSummary({
+            indicator: "major",
+            incidents: [
+              { id: "note", name: "FYI", status: "monitoring", impact: "none", started_at: "2026-09-20T11:00:00Z" },
+              {
+                id: "old-minor",
+                name: "Old minor",
+                status: "identified",
+                impact: "minor",
+                started_at: "2026-09-20T08:00:00Z",
+              },
+              {
+                id: "new-minor",
+                name: "New minor",
+                status: "identified",
+                impact: "minor",
+                started_at: "2026-09-20T10:00:00Z",
+              },
+              {
+                id: "major",
+                name: "Big outage",
+                status: "investigating",
+                impact: "major",
+                started_at: "2026-09-20T07:00:00Z",
+              },
+            ],
+          }),
+        ),
+      });
+      const claude = await claudeOf();
+      expect(claude.incidents.map((i) => i.id)).toEqual(["major", "new-minor", "old-minor", "note"]);
+      expect(claude.summary).toBe("Big outage");
+    });
+
+    it("survives incidents and maintenance with missing fields, instead of failing the card", async () => {
+      stubFetch({
+        [URLS.claude]: json(
+          statuspageSummary({
+            indicator: "minor",
+            components: [{ id: "1", status: "degraded_performance" }, null],
+            incidents: [{ impact: "minor" }, null, { id: "r", name: "Done", status: "resolved", impact: "minor" }],
+            scheduled_maintenances: [{ name: "No status" }, null],
+          }),
+        ),
+      });
+      const claude = await claudeOf();
+      expect(claude.failure).toBeUndefined();
+      expect(claude.health).toBe("degraded");
+      expect(claude.components).toEqual([{ name: "Component", health: "degraded" }]);
+      // A status-less incident is not known to be resolved, so it stays; an
+      // unnamed one gets a generic title and a stable id.
+      expect(claude.incidents).toHaveLength(1);
+      expect(claude.incidents[0]).toMatchObject({ title: "Incident", health: "degraded" });
+      expect(claude.incidents[0].id).toMatch(/^statuspage-[0-9a-f]{8}$/);
+    });
+
+    it("attributes an Epic/Fortnite incident by the components it lists, ahead of its name", async () => {
+      const components = [
+        { id: "g1", name: "Fortnite", status: "operational", group: true },
+        { id: "1", name: "Login", status: "major_outage", group_id: "g1" },
+        { id: "g2", name: "Epic Games Store", status: "operational", group: true },
+        { id: "3", name: "Login", status: "operational", group_id: "g2" },
+      ];
+      stubFetch({
+        [URLS.epicFortnite]: json(
+          statuspageSummary({
+            components,
+            incidents: [
+              // Named for Fortnite, but it lists the Epic store's Login.
+              {
+                id: "a",
+                name: "Fortnite login errors",
+                status: "investigating",
+                impact: "minor",
+                components: [{ id: "3", name: "Login", group_id: "g2" }],
+              },
+              // No mention of Fortnite in the name; it lists the Fortnite group's Login.
+              {
+                id: "b",
+                name: "Login failures",
+                status: "investigating",
+                impact: "major",
+                components: [{ id: "1" }],
+              },
+              // Lists nothing, so the name decides.
+              { id: "c", name: "Fortnite matchmaking delays", status: "identified", impact: "minor" },
+              { id: "d", name: "Payments delays", status: "identified", impact: "minor" },
+            ],
+          }),
+        ),
+      });
+      const services = await collectAllServices();
+      const epic = services.find((s) => s.id === "epic")!;
+      const fortnite = services.find((s) => s.id === "fortnite")!;
+      expect(epic.incidents.map((i) => i.id)).toEqual(["a", "d"]);
+      expect(fortnite.incidents.map((i) => i.id)).toEqual(["b", "c"]);
+    });
+
+    it("keeps scheduled maintenance as upcoming, soonest first, without changing health", async () => {
+      stubFetch({
+        [URLS.claude]: json(
+          statuspageSummary({
+            scheduled_maintenances: [
+              {
+                id: "later",
+                name: "Later window",
+                status: "scheduled",
+                scheduled_for: "2026-09-25T02:00:00Z",
+                scheduled_until: "2026-09-25T03:00:00Z",
+                shortlink: "https://stspg.io/later",
+              },
+              { id: "soon", name: "Sooner window", status: "scheduled", scheduled_for: "2026-09-21T02:00:00Z" },
+              { id: "done", name: "Finished", status: "completed", scheduled_for: "2026-09-10T02:00:00Z" },
+            ],
+          }),
+        ),
+      });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.summary).toBe("All reported systems operational.");
+      expect(claude.upcomingMaintenance).toEqual([
+        { id: "soon", title: "Sooner window", scheduledFor: "2026-09-21T02:00:00.000Z" },
+        {
+          id: "later",
+          title: "Later window",
+          scheduledFor: "2026-09-25T02:00:00.000Z",
+          scheduledUntil: "2026-09-25T03:00:00.000Z",
+          url: "https://stspg.io/later",
+        },
+      ]);
+    });
+
+    it("has no upcomingMaintenance field when nothing is scheduled, and in-progress work is maintenance", async () => {
+      stubFetch({
+        [URLS.claude]: json(
+          statuspageSummary({
+            scheduled_maintenances: [{ id: "m", name: "Database upgrade", status: "in_progress" }],
+          }),
+        ),
+      });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("maintenance");
+      expect(claude.summary).toBe("Database upgrade");
+      expect("upcomingMaintenance" in claude).toBe(false);
+    });
   });
 
   it("Apple: every service is a component, active ones first, capped at 24", async () => {
@@ -954,12 +1164,13 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         // The overall status is the incidents' alone, as before.
         expect(gcp.health).toBe("outage");
         expect(gcp.componentCount).toBeUndefined();
-        // Worst first, then catalogue order. The information-only notice is
-        // Degraded like the card's own mapping of it, not hidden as Operational.
+        // Worst first, then catalogue order. The information-only notice
+        // (SERVICE_INFORMATION) reports no impact, so Cloud Storage stays
+        // Operational: it is not degraded and it is not a row of its own.
         expect(gcp.components).toEqual([
           { name: "Google Compute Engine", health: "outage", detail: "Belgium (europe-west1)" },
-          { name: "Google Cloud Storage", health: "degraded", detail: "Billing export schema change on Sep 30" },
           { name: "Cloud Run", health: "degraded", detail: "Elevated latency for new deployments" },
+          { name: "Google Cloud Storage", health: "operational" },
           { name: "Cloud Build", health: "operational" },
           { name: "Cloud SQL", health: "operational" },
           // Its only incident has ended.
@@ -996,11 +1207,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           [URLS.gcpProducts]: json({ products: [] }),
         });
         const gcp = await collect("gcp");
-        expect(gcp.components.map((c) => c.name)).toEqual([
-          "Google Compute Engine",
-          "Cloud Run",
-          "Google Cloud Storage",
-        ]);
+        // The notice names no affected service, so it adds no row.
+        expect(gcp.components.map((c) => c.name)).toEqual(["Google Compute Engine", "Cloud Run"]);
       });
 
       it("keeps the per-incident components when the catalogue is malformed", async () => {
@@ -1008,7 +1216,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           stubFetch({ [URLS.gcp]: text(fixture("gcp/incidents.json")), [URLS.gcpProducts]: body });
           const gcp = await collect("gcp");
           expect(gcp.failure).toBeUndefined();
-          expect(gcp.components).toHaveLength(3);
+          expect(gcp.components).toHaveLength(2);
         }
       });
 
