@@ -18,10 +18,10 @@ import { cn } from "@/lib/utils";
   A day with no record is a stub on the baseline.
 */
 const SLOT_MARK: Record<Health, string> = {
-  operational: "h-full w-px bg-tick",
+  operational: "h-full w-px bg-muted/40",
   degraded: "h-full w-full bg-warn",
   outage: "h-full w-full bg-down",
-  maintenance: "h-full w-full bg-accent",
+  maintenance: "h-full w-full bg-muted",
   unknown: "h-full w-full bg-subtle/60",
 };
 
@@ -66,7 +66,7 @@ export function HistoryStrip({
     <div className={cn("min-w-0", className)}>
       {/* Sighted-only: the role="img" summary below already says all of this. */}
       <div aria-hidden className="flex items-end justify-between gap-2">
-        <p className="font-mono text-[11px] tabular-nums text-subtle">
+        <p className="text-footnote text-subtle">
           {uptime !== null ? (
             <>
               <span className="text-muted">{formatUptimePercent(uptime)}</span>
@@ -84,7 +84,7 @@ export function HistoryStrip({
             </>
           ) : null}
         </p>
-        <p className="shrink-0 font-mono text-[10px] uppercase tracking-[0.12em] text-subtle">30d</p>
+        <p className="shrink-0 text-footnote text-subtle">30d</p>
       </div>
       <div role="img" aria-label={summary} className="mt-1.5 flex h-4 items-stretch gap-px border-b border-hairline">
         {slots.map((slot) => (
@@ -128,7 +128,7 @@ function toneText(health: Health): string {
     case "outage":
       return "text-down";
     case "maintenance":
-      return "text-accent";
+      return "text-muted";
     default:
       return "text-subtle";
   }

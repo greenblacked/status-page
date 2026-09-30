@@ -5,7 +5,7 @@ import type { HistoryDay, PublicHistory } from "@/lib/status/history";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
 import { BoardHistoryContext } from "./board-history-provider";
-import { ServiceCard } from "./service-card-full";
+import { ServiceCard } from "./service-card";
 
 const NOW = Date.parse("2026-09-27T12:00:00.000Z");
 const STRIP = /uptime history/;

@@ -3,18 +3,24 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
-import { ServiceCard } from "./service-card-full";
+import { ServiceCard } from "./service-card";
 
 const noop = () => {};
+const NOW = Date.parse("2026-09-27T12:00:00.000Z");
 
-function render(id: ServiceSnapshot["id"], overrides: Partial<ServiceSnapshot> = {}): string {
+function render(
+  id: ServiceSnapshot["id"],
+  overrides: Partial<ServiceSnapshot> = {},
+  props: { highlight?: boolean; emphasized?: boolean; starred?: boolean } = {},
+): string {
   return renderToStaticMarkup(
     createElement(ServiceCard, {
       service: service(id, overrides),
       index: 0,
       starred: false,
       onToggleStar: noop,
-      now: Date.parse("2026-09-27T12:00:00.000Z"),
+      now: NOW,
+      ...props,
     }),
   );
 }
@@ -23,12 +29,49 @@ const up = (count: number): ComponentHealth[] =>
   Array.from({ length: count }, (_, index) => ({ name: `Part ${index + 1}`, health: "operational" }));
 
 const LIST = '<ul aria-label="Components"';
-const ROW = "data-component-row";
 const rows = (html: string) => html.match(/data-component-row/g) ?? [];
+/** The header of a card or row: from the marker to the end of the name and its line. */
+const header = (html: string) =>
+  html.slice(html.indexOf("data-card-header"), html.indexOf("</p>", html.indexOf("data-card-header")));
 
-describe("healthy service card", () => {
-  it("names the first components, marks each up in words, and counts the rest", () => {
+describe("healthy service row", () => {
+  it("is one article with a glyph, the name, the word and the latency, and no summary line", () => {
+    const html = render("aws", { name: "Amazon Web Services", summary: "All systems operational", latencyMs: 142 });
+    expect(html.match(/<article/g)).toHaveLength(1);
+    expect(html).toContain('id="service-aws"');
+    expect(html).toContain('tabindex="-1"');
+    expect(html).toContain('data-health="operational"');
+    expect(html).toContain("<h3");
+    expect(header(html)).toContain(">Operational</span>");
+    expect(header(html)).toContain("142 ms");
+    expect(html).not.toContain("All systems operational");
+    expect(html).not.toContain("Nothing reported");
+    // The glyph is decoration: the word beside it is the status.
+    expect(html).toMatch(/<svg aria-hidden="true"[^>]*data-health="operational"/);
+  });
+
+  it("has the Star button and the status-page link, each a 44px target", () => {
+    const html = render("aws", { name: "Amazon Web Services", sourceUrl: "https://health.aws.amazon.com/" });
+    expect(html).toContain('aria-label="Star Amazon Web Services"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('title="Pin Amazon Web Services to the top"');
+    expect(html).toContain('aria-label="Amazon Web Services status page"');
+    expect(html).toContain('href="https://health.aws.amazon.com/"');
+    expect(html).toContain('rel="noreferrer"');
+    expect(html.match(/size-11/g)).toHaveLength(2);
+  });
+
+  it("says Unpin for a starred service", () => {
+    const html = render("aws", { name: "AWS" }, { starred: true });
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain('title="Unpin AWS"');
+    expect(html).toContain('aria-label="Star AWS"');
+  });
+
+  it("names the first components in a disclosure, marks each up in words, and counts the rest", () => {
     const html = render("chatgpt", { summary: "All systems operational", components: up(24) });
+    expect(html).toContain("<details");
+    expect(html).toContain("<summary");
     expect(html).toContain(LIST);
     expect(html.match(/<li/g)).toHaveLength(7);
     for (let n = 1; n <= 6; n++) expect(html).toContain(`>Part ${n}</span>`);
@@ -36,12 +79,10 @@ describe("healthy service card", () => {
     expect(html).toContain("+18 more");
     expect(html).toContain("18 more components");
     expect(html.match(/<span class="sr-only">Operational<\/span>/g)).toHaveLength(6);
-    // The summary, latency and source footer stay.
-    expect(html).toContain("All systems operational");
-    expect(html).toContain("1 ms");
-    expect(html).toContain("Source");
-    // No per-component rows.
-    expect(html).not.toContain(ROW);
+    // The row keeps its name, word and latency in the summary; no per-component rows.
+    expect(header(html)).toContain(">Operational</span>");
+    expect(html).toContain("1 ms");
+    expect(html).not.toContain("data-component-row");
   });
 
   it("counts the vendor's true total when the snapshot kept fewer components", () => {
@@ -71,12 +112,51 @@ describe("healthy service card", () => {
     expect(html).toContain('<span class="sr-only">Degraded</span>');
   });
 
-  it("renders no list at all without components", () => {
+  it("is not a disclosure at all without components", () => {
     const html = render("grok", { summary: "All systems operational" });
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("<summary");
     expect(html).not.toContain("Components");
     expect(html).not.toContain("<ul");
-    expect(html).toContain("All systems operational");
-    expect(html).toContain("1 ms");
+    expect(header(html)).toContain(">Operational</span>");
+  });
+
+  it("opens to a notice or planned maintenance, and flags them under the name", () => {
+    const notice = render("claude", {
+      summary: "All reported systems operational.",
+      incidents: [{ id: "n", title: "Database upgrade", health: "operational", informational: true }],
+    });
+    expect(notice).toContain("<details");
+    expect(notice).toContain(">Notice</span>");
+    expect(notice).toContain("Database upgrade");
+    expect(header(notice)).toContain(" · Notice");
+    expect(header(notice)).toContain(">Operational</span>");
+
+    const planned = render("claude", {
+      upcomingMaintenance: [{ id: "m", title: "Database upgrade", scheduledFor: "2026-09-28T02:00:00.000Z" }],
+    });
+    expect(header(planned)).toContain(" · Maintenance planned");
+    expect(planned).toContain("data-upcoming-maintenance");
+  });
+});
+
+describe("row that could not be read", () => {
+  it("wears the unknown glyph and the word No data, with the reason as its line and no latency", () => {
+    const html = render("grok", { health: "unknown", summary: "Didn't answer in time.", latencyMs: 4000 });
+    expect(html).toContain('data-health="unknown"');
+    expect(header(html)).toContain(">No data</span>");
+    expect(header(html)).toContain("Didn&#x27;t answer in time.");
+    expect(html).not.toContain("Unknown");
+    expect(html).not.toContain("4000");
+    expect(html).not.toContain("<details");
+    expect(html).not.toContain("data-highlight");
+  });
+
+  it("keeps a release tracker that could not be read a plain row, not a release row", () => {
+    const html = render("mikrotik", { category: "updates", health: "unknown" });
+    expect(header(html)).toContain(">No data</span>");
+    expect(html).not.toContain("New release");
+    expect(html).not.toContain("No new release");
   });
 });
 
@@ -87,16 +167,17 @@ describe("degraded service card", () => {
     { name: "Login", health: "degraded" },
   ];
 
-  it("keeps rows for broken components only, without the healthy list", () => {
+  it("keeps rows for broken components only, in the Components list", () => {
     const html = render("chatgpt", { health: "degraded", summary: "Partial outage", components });
-    expect(html).not.toContain(LIST);
+    expect(html).toContain(LIST);
     expect(rows(html)).toHaveLength(2);
     expect(html).toContain(">Codex</span>");
     expect(html).toContain(">Login</span>");
     expect(html).not.toContain("Part 1");
     expect(html).toContain("Elevated errors on Codex");
-    expect(html).toContain("Outage");
-    expect(html).toContain("Degraded");
+    expect(html).toContain(">Outage</span>");
+    expect(html).toContain(">Degraded</span>");
+    expect(html).not.toContain("<details");
   });
 
   it("caps rows at six", () => {
@@ -107,77 +188,122 @@ describe("degraded service card", () => {
     const html = render("chatgpt", { health: "degraded", components: many });
     expect(rows(html)).toHaveLength(6);
   });
+
+  it("puts the glyph, name, coloured word and since-time in the header, and the summary under it", () => {
+    const html = render("chatgpt", {
+      name: "ChatGPT",
+      health: "degraded",
+      summary: "Partial outage",
+      incidents: [{ id: "a", title: "Partial outage", health: "degraded", startedAt: "2026-09-27T10:00:00.000Z" }],
+    });
+    expect(html).toContain('data-health="degraded"');
+    expect(header(html)).toContain(">ChatGPT</h3>");
+    expect(header(html)).toContain("font-semibold");
+    expect(header(html)).toContain(">Degraded</span>");
+    expect(header(html)).toContain("since <time");
+    expect(header(html)).toContain("10:00 UTC");
+    // Its title is the summary, so the incident has no line of its own and the time is not printed twice.
+    expect(html.match(/10:00 UTC/g)).toHaveLength(2);
+    expect(html).toContain("Partial outage</p>");
+    expect(html).not.toContain("Most urgent");
+    expect(html.match(/<h3/g)).toHaveLength(1);
+  });
+
+  it("draws the pen loop round an outage only", () => {
+    expect(render("aws", { health: "outage" })).toContain("pen-loop");
+    expect(render("aws", { health: "degraded" })).not.toContain("pen-loop");
+    expect(render("aws", { health: "maintenance" })).not.toContain("pen-loop");
+  });
+
+  it("says Changed when the service changed, with the context for a screen reader", () => {
+    const changed = render("aws", { health: "degraded" }, { emphasized: true });
+    expect(changed).toContain('data-changed="true"');
+    expect(changed).toContain('Changed<span class="sr-only"> since the last check</span>');
+    const quiet = render("aws", { health: "degraded" });
+    expect(quiet).not.toContain("data-changed");
+    expect(quiet).not.toContain("Changed");
+  });
 });
 
-describe("release trackers and CS2 pops", () => {
-  it("keep every component as a row, up or not", () => {
-    const changelog = render("aws", { category: "updates", components: up(3) });
-    expect(changelog).not.toContain(LIST);
+describe("release trackers and CS2 relays", () => {
+  it("keep every component as a row on a card that needs a look, up or not", () => {
+    const changelog = render("aws", { category: "updates", health: "maintenance", components: up(3) });
     expect(rows(changelog)).toHaveLength(3);
 
-    const pops = render("cs2-europe", { components: up(3) });
-    expect(pops).not.toContain(LIST);
-    expect(rows(pops)).toHaveLength(3);
+    const relays = render("cs2-europe", { health: "degraded", components: up(3) });
+    expect(rows(relays)).toHaveLength(3);
+  });
+
+  it("list a healthy relay set in the disclosure like any other components", () => {
+    const html = render("cs2-europe", { components: up(3) });
+    expect(html).toContain("<details");
+    expect(html.match(/<li/g)).toHaveLength(3);
+    expect(html).not.toContain("data-component-row");
   });
 });
 
-describe("release tracker header badge", () => {
-  const header = (html: string) => html.slice(html.indexOf("data-card-header"), html.indexOf("</h3>"));
-  const badge = (html: string) => html.slice(html.indexOf("</h3>"), html.indexOf("Star "));
-  const fresh: ComponentHealth[] = [{ name: "Stable", health: "maintenance" }, ...up(1)];
+describe("release row", () => {
+  const fresh: ComponentHealth[] = [
+    { name: "Stable", health: "maintenance", detail: "7.21 · Sep 24" },
+    { name: "Long-term", health: "operational", detail: "7.18.2" },
+    { name: "Testing", health: "operational", detail: "7.22beta3" },
+  ];
 
-  it("says nothing while no release is new", () => {
-    const html = render("mikrotik", { category: "updates", components: up(2) });
-    expect(header(html)).toBeTruthy();
-    expect(badge(html)).not.toContain("Operational");
-    expect(badge(html)).not.toContain('<span class="inline-flex');
+  it("has a tag icon and no status word or glyph", () => {
+    const html = render("mikrotik", { category: "updates", components: fresh });
+    expect(html).not.toContain("data-health");
+    expect(html).not.toContain("Operational");
+    expect(html).not.toContain("Maintenance");
+    expect(html).toContain("lucide-tag");
+    expect(html.match(/<article/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Star mikrotik"');
+    expect(html).toContain('aria-label="mikrotik status page"');
   });
 
-  it("says New release when a channel is fresh", () => {
+  it("says New release when a channel is fresh, and names the newest two versions", () => {
     const html = render("apple-os", { category: "updates", components: fresh });
-    expect(badge(html)).toContain(">New release</span>");
-    expect(badge(html)).not.toContain("Operational");
+    expect(header(html)).toContain("New release");
+    expect(header(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
+    expect(header(html)).not.toContain("Testing");
   });
 
-  it("keeps the ordinary badge for a source that could not be read", () => {
-    const html = render("mikrotik", { category: "updates", health: "unknown" });
-    expect(badge(html)).toContain(">Unknown</span>");
+  it("says nothing of a release while none is new, and puts the newest versions under the name", () => {
+    const html = render("mikrotik", {
+      category: "updates",
+      components: fresh.map((c) => ({ ...c, health: "operational" })),
+    });
+    expect(html).not.toContain("New release");
+    expect(header(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
   });
 
-  it("still labels a status service Operational", () => {
-    expect(badge(render("aws"))).toContain(">Operational</span>");
+  it("says No new release when the tracker lists no versions", () => {
+    const html = render("mikrotik", { category: "updates", components: up(2) });
+    expect(header(html)).toContain("No new release");
   });
 });
 
 describe("highlighted service card", () => {
-  const renderCard = (highlight: boolean) =>
-    renderToStaticMarkup(
-      createElement(ServiceCard, {
-        service: service("aws", { health: "outage", summary: "Increased error rates" }),
-        index: 0,
-        highlight,
-        starred: false,
-        onToggleStar: noop,
-        now: Date.parse("2026-09-27T12:00:00.000Z"),
-      }),
-    );
+  const renderCard = (highlight: boolean, health: ServiceSnapshot["health"] = "outage") =>
+    render("aws", { health, summary: "Increased error rates" }, { highlight });
 
-  it("marks the one article, with the caption as its first child and the wide-screen span", () => {
+  it("marks the one article and nothing else: no caption, no wider card", () => {
     const html = renderCard(true);
     expect(html.startsWith("<article")).toBe(true);
     expect(html.match(/<article/g)).toHaveLength(1);
     expect(html).toContain('data-highlight="true"');
-    expect(html).toContain("@xl:col-span-2");
-    const opening = html.indexOf(">") + 1;
-    expect(html.slice(opening).startsWith("<p")).toBe(true);
-    expect(html.slice(opening, html.indexOf("</p>"))).toContain("Most urgent");
+    expect(html).not.toContain("Most urgent");
+    expect(html).not.toContain("col-span");
+    expect(renderCard(true, "degraded")).toContain('data-highlight="true"');
   });
 
-  it("carries no mark, caption or span otherwise", () => {
-    const html = renderCard(false);
-    expect(html).not.toContain("data-highlight");
-    expect(html).not.toContain("Most urgent");
-    expect(html).not.toContain("col-span-2");
+  it("carries no mark otherwise", () => {
+    expect(renderCard(false)).not.toContain("data-highlight");
+  });
+
+  it("is never set on maintenance, a healthy row or one that could not be read", () => {
+    expect(renderCard(true, "maintenance")).not.toContain("data-highlight");
+    expect(renderCard(true, "operational")).not.toContain("data-highlight");
+    expect(renderCard(true, "unknown")).not.toContain("data-highlight");
   });
 });
 
@@ -211,9 +337,9 @@ describe("service card truncation", () => {
       summary: "Partial outage",
       incidents: [incident(1), incident(2), incident(3), incident(4), incident(5)],
     });
-    expect(html).toContain(">Incident 1<");
-    expect(html).toContain(">Incident 2<");
-    expect(html).not.toContain(">Incident 3<");
+    expect(html).toContain("Incident 1");
+    expect(html).toContain("Incident 2");
+    expect(html).not.toContain("Incident 3");
     expect(html).toContain("data-more-incidents");
     expect(html).toContain("+3 more");
     expect(html).toContain("3 more incidents");
@@ -226,18 +352,10 @@ describe("service card truncation", () => {
 });
 
 describe("service card incident labels and links", () => {
-  const link = (html: string) => /href="([^"]+)"[^>]*>\s*<span class="min-w-0">([^<]+)</.exec(html)?.slice(1);
+  /** The card's closing link: where it goes and what it says. */
+  const link = (html: string) => /<a href="([^"]+)"[^>]*><span class="min-w-0[^"]*">([^<]+)</.exec(html)?.slice(1);
 
-  it("labels an informational notice a Notice, never Operational", () => {
-    const html = render("claude", {
-      summary: "All reported systems operational.",
-      incidents: [{ id: "n", title: "Database upgrade", health: "operational", informational: true }],
-    });
-    expect(html).toContain(">Notice</span>");
-    expect(html).toContain("Database upgrade");
-  });
-
-  it("links to the worst incident, not the first listed", () => {
+  it("links to the worst incident, not the first listed, as Incident details", () => {
     const html = render("chatgpt", {
       health: "outage",
       sourceUrl: "https://status.example.com/",
@@ -246,10 +364,12 @@ describe("service card incident labels and links", () => {
         { id: "major", title: "Major", health: "outage", url: "https://status.example.com/major" },
       ],
     });
-    expect(link(html)).toEqual(["https://status.example.com/major", "View incident"]);
+    expect(link(html)).toEqual(["https://status.example.com/major", "Incident details"]);
+    // Many cards share one link label, so the name follows for a screen reader.
+    expect(html).toContain('<span class="sr-only"> for chatgpt</span>');
   });
 
-  it("does not call the vendor's generic dashboard an incident", () => {
+  it("does not call the vendor's generic dashboard an incident: it says the host", () => {
     const html = render("aws", {
       health: "degraded",
       sourceName: "AWS Health Dashboard",
@@ -263,24 +383,43 @@ describe("service card incident labels and links", () => {
         },
       ],
     });
-    expect(link(html)).toEqual(["https://health.aws.amazon.com/health/status", "AWS Health Dashboard"]);
-    expect(html).not.toContain("View incident");
+    expect(link(html)).toEqual(["https://health.aws.amazon.com/health/status", "health.aws.amazon.com"]);
+    expect(html).not.toContain("Incident details");
+  });
+
+  it("gives the latency to sight and to a screen reader", () => {
+    const html = render("aws", { health: "degraded", latencyMs: 312 });
+    expect(html).toContain("312 ms");
+    expect(html).toContain("answered in 312 ms");
+    expect(html).toContain('title="How long the vendor took to answer"');
+  });
+
+  it("labels an informational notice a Notice, never a health", () => {
+    const html = render("claude", {
+      health: "degraded",
+      summary: "Partial outage",
+      incidents: [{ id: "n", title: "Database upgrade", health: "operational", informational: true }],
+    });
+    expect(html).toContain(">Notice</span>");
+    expect(html).toContain("Database upgrade");
   });
 
   it("shows upcoming maintenance as Upcoming, apart from the health", () => {
     const html = render("claude", {
-      summary: "All reported systems operational.",
+      health: "degraded",
+      summary: "Partial outage",
       upcomingMaintenance: [{ id: "m", title: "Database upgrade", scheduledFor: "2026-09-28T02:00:00.000Z" }],
     });
     expect(html).toContain("data-upcoming-maintenance");
     expect(html).toContain(">Upcoming</span>");
     expect(html).toContain("Database upgrade");
     expect(html).toContain("scheduled for ");
-    expect(html).toContain(">Operational</span>");
+    expect(html).toContain(">Degraded</span>");
   });
 
   it("never says an upcoming maintenance began: once its time has passed it was due, with no duration", () => {
     const html = render("claude", {
+      health: "degraded",
       checkedAt: "2026-09-27T11:59:00.000Z",
       upcomingMaintenance: [{ id: "m", title: "Database upgrade", scheduledFor: "2026-09-27T10:00:00.000Z" }],
     });
@@ -293,6 +432,7 @@ describe("service card incident labels and links", () => {
 
   it("keeps two upcoming events with the same id as separate rows", () => {
     const html = render("claude", {
+      health: "degraded",
       upcomingMaintenance: [
         { id: "same", title: "First window", scheduledFor: "2026-09-28T02:00:00.000Z" },
         { id: "same", title: "Second window", scheduledFor: "2026-09-28T02:00:00.000Z" },
@@ -300,5 +440,16 @@ describe("service card incident labels and links", () => {
     });
     expect(html).toContain("First window");
     expect(html).toContain("Second window");
+  });
+
+  it("titles every time with the whole moment in UTC, and prints UTC before hydration", () => {
+    const html = render("claude", {
+      health: "degraded",
+      checkedAt: "2026-09-27T11:59:00.000Z",
+      summary: "Partial outage",
+      incidents: [{ id: "a", title: "Other", health: "degraded", startedAt: "2026-09-27T10:04:00.000Z" }],
+    });
+    expect(html).toContain('title="27 Sep 2026 10:04 UTC"');
+    expect(html).toContain(">10:04 UTC</time>");
   });
 });

@@ -1,35 +1,84 @@
-import { Cloud, Cpu, Gamepad2, History, Smartphone, Star } from "lucide-react";
-import { HealthDot } from "@/components/status/health-dot";
-import { Badge } from "@/components/ui/badge";
+import { Star } from "lucide-react";
+import { LocalTime } from "@/components/status/local-time";
+import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
+import { CATALOG } from "@/lib/status/catalog";
 import { healthLabel } from "@/lib/status/health";
-import { formatUtcTime, incidentStart, parseTimestamp } from "@/lib/status/schedule";
-import type { CategoryId, ComponentHealth } from "@/lib/status/types";
+import { incidentStart, parseTimestamp } from "@/lib/status/schedule";
+import type { ComponentHealth, Health, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
-
-export const CATEGORY_ICON: Record<CategoryId, typeof Cloud> = {
-  cloud: Cloud,
-  gaming: Gamepad2,
-  platforms: Smartphone,
-  ai: Cpu,
-  updates: History,
-};
-
-export const ICON_TONE = {
-  operational: "text-ok",
-  degraded: "text-warn",
-  outage: "text-down",
-  maintenance: "text-accent",
-  unknown: "text-subtle",
-} as const;
 
 export const norm = (text: string) => text.trim().toLowerCase();
 
+/** What every card and row takes: the service, and the board's view of it. */
+export type ServiceCardProps = {
+  service: ServiceSnapshot;
+  /** Ignored: kept so a caller that still passes its position compiles. */
+  index?: number;
+  /**
+   * The board's most urgent service. It carries `data-highlight` (and only while it is in outage or
+   * degraded), with no visual: the card stays the one <article>, never a wrapper, so a card that gains
+   * or loses it keeps its DOM node and the keyboard focus inside it.
+   */
+  highlight?: boolean;
+  /** The service changed in the latest check: a "Changed" tag and an accent bar. */
+  emphasized?: boolean;
+  starred: boolean;
+  onToggleStar: (id: ServiceSnapshot["id"]) => void;
+  /** The client clock (0 until mounted), for how long an incident has run. */
+  now: number;
+};
+
 /**
- * When an incident began, as "since 14:05 UTC", and after hydration how long
- * it has run. A start still ahead, such as planned maintenance, reads
- * "scheduled for 22:00 UTC" instead. The start is the same text on the
- * server and the client; the duration needs the visitor's clock, so it
- * waits for `now`.
+ * The word beside a status glyph. `healthLabel` says "No data" for a source that
+ * could not be read once the copy pass lands; until then this keeps the board
+ * from calling an unread source "Unknown".
+ */
+export function stateWord(health: Health): string {
+  return health === "unknown" ? "No data" : healthLabel(health);
+}
+
+/**
+ * A status as a coloured word, weighted by how much it asks of a person: what
+ * is fine is light and quiet (text-subtle, 450), what is wrong is semibold in
+ * its own colour. The glyph beside it is aria-hidden, so this word is the
+ * status for a screen reader.
+ */
+export function StateWord({ health, className }: { health: Health; className?: string }) {
+  return (
+    <span
+      className={cn(
+        health === "operational" ? "font-[450] text-subtle" : STATUS_TEXT[health],
+        health === "degraded" || health === "outage" || health === "maintenance" ? "font-semibold" : "font-[450]",
+        className,
+      )}
+    >
+      {stateWord(health)}
+    </span>
+  );
+}
+
+/** Which of the pen's three hands a service's loop takes: by its place in the catalog, so it never changes between checks. */
+export function penSeed(id: ServiceId): 0 | 1 | 2 {
+  const at = CATALOG.findIndex((entry) => entry.id === id);
+  return (at < 0 ? 0 : at % 3) as 0 | 1 | 2;
+}
+
+/** The host of a source page, "steamstat.us", for a link that says where it goes; the whole name if the URL is unreadable. */
+export function hostOf(url: string, fallback: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * When an incident began, as "since 14:05 UTC (2h 10m)", and after hydration
+ * the time in the viewer's own zone and how long it has run. A start still
+ * ahead, such as planned maintenance, reads "scheduled for 22:00 UTC"
+ * instead. The start is the same text on the server and in the first client
+ * render (LocalTime); the duration needs the visitor's clock, so it waits for
+ * `now`.
  *
  * With `scheduled`, the item is one the vendor still reports as not started
  * (upcoming maintenance). It never reads "since" or shows a running
@@ -55,24 +104,28 @@ export function IncidentSince({
   if (at === null) return null;
   const { upcoming, duration } = incidentStart(at, now, reference);
   return (
-    <span className={cn("block font-mono text-[11px] tabular-nums text-subtle", className)}>
+    <span className={cn("text-subtle", className)}>
       {upcoming ? "scheduled for " : scheduled ? "was due " : "since "}
-      <time dateTime={new Date(at).toISOString()}>
-        {formatUtcTime(at, Number.isFinite(reference) ? reference : at)}
-      </time>
+      <LocalTime at={at} reference={Number.isFinite(reference) ? reference : at} />
       {duration && !scheduled ? (
         <>
-          {" · "}
+          {" ("}
           <time dateTime={duration.iso}>
             <span aria-hidden>{duration.short}</span>
             <span className="sr-only">{duration.long}</span>
           </time>
+          {")"}
         </>
       ) : null}
     </span>
   );
 }
 
+/**
+ * One component of a service that needs a look: its name, what the vendor
+ * says about it (a footnote), and its status as a coloured word. A component
+ * that is fine says nothing; a release channel that is fresh says "New".
+ */
 export function ComponentRow({
   component,
   changelog,
@@ -82,43 +135,45 @@ export function ComponentRow({
   changelog: boolean;
   showDetail: boolean;
 }) {
-  const badge = changelog
-    ? component.health === "maintenance" && <Badge tone="maintenance">New</Badge>
-    : component.health !== "operational" && <Badge tone={component.health}>{healthLabel(component.health)}</Badge>;
+  const word = changelog ? (
+    component.health === "maintenance" ? (
+      <span className="font-semibold text-fg">New</span>
+    ) : null
+  ) : component.health !== "operational" ? (
+    <StateWord health={component.health} />
+  ) : null;
 
   return (
     <li
       data-component-row
-      // Narrow card: name and badge on the first line, the detail under the
-      // name. A wide card has room for all three on one line.
-      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 rounded-xs glass-inset px-3 py-2 @xl:grid-cols-[minmax(6rem,1fr)_minmax(0,auto)_auto]"
+      className="inset grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-0.5 rounded-md px-3 py-2"
     >
       {/* The name wraps rather than truncates: it is what the row is about. */}
-      <span className="min-w-0 text-sm text-fg [overflow-wrap:anywhere]" title={component.name}>
+      <span className="min-w-0 text-caption text-fg [overflow-wrap:anywhere]" title={component.name}>
         {component.name}
       </span>
+      {word ? <span className="col-start-2 row-start-1 text-caption">{word}</span> : null}
       {showDetail ? (
         <span
-          className="col-span-2 row-start-2 min-w-0 line-clamp-2 font-mono text-[11px] tabular-nums text-subtle [overflow-wrap:anywhere] @xl:col-span-1 @xl:col-start-2 @xl:row-start-1 @xl:line-clamp-1"
+          className="col-span-2 line-clamp-2 min-w-0 text-footnote text-subtle [overflow-wrap:anywhere]"
           title={component.detail}
         >
           {component.detail}
         </span>
       ) : null}
-      {badge ? <span className="col-start-2 row-start-1 shrink-0 @xl:col-start-3">{badge}</span> : null}
     </li>
   );
 }
 
-/** How many component names a healthy card names before it says "+N more". */
+/** How many component names a healthy row names before it says "+N more". */
 export const HEALTHY_COMPONENTS_SHOWN = 6;
 
 /**
- * The components of a service with nothing to report, as one quiet wrapping
- * line of names: a small status dot for the eye, the status in words for a
- * screen reader. Anything past the first few is counted, not dropped
- * silently. Renders nothing when the vendor lists no components, since
- * there is nothing true to say.
+ * The components of a service with nothing to report, as a short list under
+ * its row: a small status glyph for the eye, the status in words for a screen
+ * reader. Anything past the first few is counted, not dropped silently.
+ * Renders nothing when the vendor lists no components, since there is nothing
+ * true to say.
  */
 export function HealthyComponents({
   components,
@@ -131,29 +186,34 @@ export function HealthyComponents({
   className?: string;
 }) {
   if (components.length === 0) return null;
-  // A stray non-operational component still leads the line.
+  // A stray non-operational component still leads the list.
   const ordered = [...components].sort(
     (a, b) => Number(a.health === "operational") - Number(b.health === "operational"),
   );
   const shown = ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
   const more = Math.max(total, ordered.length) - shown.length;
   return (
-    <ul aria-label="Components" className={cn("flex flex-wrap gap-x-3 gap-y-1", className)}>
+    <ul aria-label="Components" className={cn("flex flex-col gap-1.5", className)}>
       {shown.map((component, componentIndex) => (
         <li
           // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
           key={`${component.name}-${componentIndex}`}
-          className="flex max-w-full min-w-0 items-center gap-1.5 text-xs text-muted"
+          className="flex max-w-full min-w-0 items-baseline gap-2 text-caption text-muted"
         >
-          <HealthDot health={component.health} />
+          <StatusGlyph
+            health={component.health}
+            size={14}
+            className={cn("self-center", STATUS_TEXT[component.health])}
+          />
           <span className="[overflow-wrap:anywhere]" title={component.name}>
             {component.name}
           </span>
-          <span className="sr-only">{healthLabel(component.health)}</span>
+          {component.detail ? <span className="text-footnote text-subtle">{component.detail}</span> : null}
+          <span className="sr-only">{stateWord(component.health)}</span>
         </li>
       ))}
       {more > 0 ? (
-        <li className="text-xs text-subtle" data-more-components>
+        <li className="text-footnote text-subtle" data-more-components>
           <span aria-hidden>+{more} more</span>
           <span className="sr-only">{more} more components</span>
         </li>
@@ -165,7 +225,7 @@ export function HealthyComponents({
 /**
  * Stars a service so it sorts first and shows under the Starred filter. It is
  * a preference, not a status, so it stays neutral rather than taking a
- * status colour.
+ * status colour. The star fills in 150ms when toggled (.star-toggle).
  */
 export function StarButton({
   name,
@@ -184,14 +244,101 @@ export function StarButton({
       onClick={onToggle}
       aria-pressed={starred}
       aria-label={`Star ${name}`}
-      title={starred ? `Unstar ${name}` : `Star ${name} to keep it first`}
+      title={starred ? `Unpin ${name}` : `Pin ${name} to the top`}
       className={cn(
-        "star-toggle grid size-11 shrink-0 place-items-center rounded-full focus-ring pressable",
+        "star-toggle grid size-11 shrink-0 place-items-center rounded-md focus-ring pressable",
         starred ? "text-fg" : "text-subtle hover:text-fg",
         className,
       )}
     >
-      <Star className={cn("size-4", starred && "fill-current")} strokeWidth={1.75} />
+      <Star className={cn("size-[18px]", starred && "fill-current")} strokeWidth={1.7} />
     </button>
+  );
+}
+
+/** How many incident lines a service shows before it says "+N more". */
+export const MAX_INCIDENTS = 2;
+
+/**
+ * What else a service has open besides its components: incident lines (a
+ * notice is labelled a Notice, never a health) and planned maintenance. Both
+ * arrive worst or soonest first, so a cut keeps the ones that matter, and the
+ * cut is counted, never silent. `hideTitle` leaves out the incident whose
+ * title the card already prints as its summary. A release tracker has no planned maintenance.
+ * Nothing when there is nothing to say.
+ */
+export function ServiceExtras({
+  service,
+  hideTitle = "",
+  now,
+  className,
+}: {
+  service: ServiceSnapshot;
+  /** A normalised title to leave out (the summary the card already shows). */
+  hideTitle?: string;
+  now: number;
+  className?: string;
+}) {
+  const all = service.incidents.filter((incident) => !hideTitle || norm(incident.title) !== hideTitle);
+  const incidents = all.slice(0, MAX_INCIDENTS);
+  const more = all.length - incidents.length;
+  const upcoming = service.category === "updates" ? [] : (service.upcomingMaintenance ?? []);
+  if (incidents.length === 0 && upcoming.length === 0) return null;
+  const checkedAt = Date.parse(service.checkedAt);
+
+  return (
+    <div className={cn("dynamic-text flex flex-col gap-3 text-caption", className)}>
+      {incidents.length > 0 ? (
+        <ul aria-label="Incidents" className="space-y-2">
+          {incidents.map((incident, incidentIndex) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
+            <li key={`${incident.id}-${incidentIndex}`} className="text-fg [overflow-wrap:anywhere]">
+              {/* A notice reports no impact, so it is not labelled with a health. */}
+              <span
+                className={
+                  incident.informational ? "font-[450] text-subtle" : cn("font-semibold", STATUS_TEXT[incident.health])
+                }
+              >
+                {incident.informational ? "Notice" : stateWord(incident.health)}
+              </span>
+              <span className="text-subtle"> · </span>
+              {incident.title}
+              <IncidentSince
+                startedAt={incident.startedAt}
+                reference={checkedAt}
+                now={now}
+                className="block text-footnote"
+              />
+            </li>
+          ))}
+          {more > 0 ? (
+            <li className="text-footnote text-subtle" data-more-incidents>
+              <span aria-hidden>+{more} more</span>
+              <span className="sr-only">{more} more incidents</span>
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+
+      {upcoming.length > 0 ? (
+        <ul aria-label="Upcoming maintenance" className="space-y-2" data-upcoming-maintenance>
+          {upcoming.map((item, upcomingIndex) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an event id; the index only breaks that tie.
+            <li key={`${item.id}-${upcomingIndex}`} className="text-fg [overflow-wrap:anywhere]">
+              <span className={cn("font-semibold", STATUS_TEXT.maintenance)}>Upcoming</span>
+              <span className="text-subtle"> · </span>
+              {item.title}
+              <IncidentSince
+                startedAt={item.scheduledFor}
+                reference={checkedAt}
+                now={now}
+                scheduled
+                className="block text-footnote"
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }

@@ -1,0 +1,70 @@
+// tokens-allow: rounded-full (the accent dot on a fresh release)
+import { Tag as TagIcon } from "lucide-react";
+import type { ServiceCardProps } from "@/components/status/service-card-shared";
+import { ChangedTag, ROW_LEAD, RowFrame, RowHeader } from "@/components/status/service-row";
+import { Tag } from "@/components/ui/tag";
+import type { ServiceSnapshot } from "@/lib/status/types";
+import { cn } from "@/lib/utils";
+
+/** How many versions the line under a release tracker's name shows. */
+const MAX_VERSIONS = 2;
+
+/**
+ * Whether a tracker has a release from the last two weeks: the collectors mark
+ * the fresh channel on its component row (or the feed itself).
+ */
+export function hasFreshRelease(service: ServiceSnapshot): boolean {
+  return service.health === "maintenance" || service.components.some((component) => component.health === "maintenance");
+}
+
+/**
+ * The newest versions a tracker lists, "Stable 7.21 · Sep 24" and the next,
+ * a fresh channel first; "No new release" when it lists none. The collectors
+ * put the channel in the component's name and the version in its detail.
+ */
+export function releaseLine(service: ServiceSnapshot): string {
+  const versions = service.components
+    .filter((component) => component.detail)
+    .sort((a, b) => Number(b.health === "maintenance") - Number(a.health === "maintenance"))
+    .slice(0, MAX_VERSIONS)
+    .map((component) => `${component.name} ${component.detail}`);
+  return versions.length > 0 ? versions.join(" · ") : "No new release";
+}
+
+/**
+ * A release tracker in the compact list. A changelog has no operational
+ * state, so it wears a tag icon instead of a status glyph, and no status word:
+ * its line is the newest versions, and a release from the last two weeks says
+ * "New release" in a tag with an accent dot. Unreadable or in-maintenance
+ * trackers are never rows here (they are unread rows and attention cards).
+ */
+export function ReleaseRow({ service, emphasized, starred, onToggleStar }: ServiceCardProps) {
+  const fresh = hasFreshRelease(service);
+  return (
+    <RowFrame
+      service={service}
+      emphasized={emphasized}
+      starred={starred}
+      onToggleStar={onToggleStar}
+      lead={<TagIcon aria-hidden strokeWidth={1.7} className={cn("block size-5 text-subtle", ROW_LEAD)} />}
+    >
+      <div className="flex min-h-(--row-h) min-w-0 items-center">
+        <RowHeader name={service.name}>
+          {fresh ? (
+            <Tag className="mr-1.5 gap-1.5 text-fg">
+              <span aria-hidden className="size-1.5 rounded-full bg-accent" />
+              New release
+            </Tag>
+          ) : null}
+          <span className="[overflow-wrap:anywhere]">{releaseLine(service)}</span>
+          {emphasized ? (
+            <>
+              {" "}
+              <ChangedTag />
+            </>
+          ) : null}
+        </RowHeader>
+      </div>
+    </RowFrame>
+  );
+}
