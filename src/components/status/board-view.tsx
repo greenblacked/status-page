@@ -43,6 +43,7 @@ import {
 } from "@/lib/status/filters";
 import { attentionBreakdown } from "@/lib/status/health";
 import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
+import { canvasFont, placeholderFits } from "@/lib/status/placeholder";
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import {
   CACHE_TTL_MS,
@@ -843,10 +844,8 @@ function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null>
     if (!dock || !input || !canvas) return;
     const measure = () => {
       const style = getComputedStyle(input);
-      canvas.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-      const needed =
-        canvas.measureText(text).width + Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
-      setFits(dock.clientWidth >= needed);
+      canvas.font = canvasFont(style);
+      setFits(placeholderFits(dock.clientWidth, canvas.measureText(text).width, style));
     };
     measure();
     const observer = new ResizeObserver(measure);
