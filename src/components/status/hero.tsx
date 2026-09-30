@@ -39,7 +39,7 @@ export function Hero({
 }) {
   const [first, ...rest] = verdict.title.split(" ");
   return (
-    <header className="page-gutter mx-auto max-w-[62rem] pt-6 pb-8 md:pt-10 md:pb-6">
+    <header className="page-gutter mx-auto max-w-[62rem] pt-6 pb-4 md:pt-10 md:pb-6">
       <div className="flex flex-wrap items-center justify-between gap-x-4 md:grid md:grid-cols-[var(--margin-col)_minmax(0,1fr)] md:gap-x-8">
         <p className="text-caption text-muted md:col-start-1">
           <Dateline generatedAt={generatedAt} />

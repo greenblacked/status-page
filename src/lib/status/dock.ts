@@ -45,6 +45,8 @@ export function createDockStore(): DockStore {
 /** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up, and the scrolling the merge takes. */
 export const PHONE_GAP = 20;
 export const PHONE_RANGE = 56;
+/** How far above its place the hidden bar sits, in px (the translateY of .compact-header[data-shown="false"] in styles.css): the bar slides down this far as it comes up. */
+export const BAR_RISE = 8;
 /** On a wide screen: the scrolling the one move takes, and where in it (0 to 1) the bar comes up. */
 export const WIDE_RANGE = 48;
 export const WIDE_BAR_AT = 0.67;
@@ -66,6 +68,13 @@ export type DockGeometry = {
  * scroll position at which the field reaches its pin; every other offset is
  * worked out from it. `pin` and `barTop` are the field's and the bar's `top`,
  * `barHeight` the bar's height (phone only).
+ *
+ * `contentBottom` (phone only) is where the hero's last line ends in the page.
+ * The bar is never raised over it: if the field sits so close under that line
+ * that the bar's usual moment would cover it, the bar waits until the line has
+ * scrolled up past the highest point the sliding bar reaches, and the merge
+ * then starts with it (the bar is always up before the field moves into it).
+ * With the usual room between the two, nothing changes.
  */
 export function dockGeometry({
   wide,
@@ -74,6 +83,7 @@ export function dockGeometry({
   pin,
   barTop,
   barHeight,
+  contentBottom = Number.NEGATIVE_INFINITY,
 }: {
   wide: boolean;
   reduce: boolean;
@@ -81,6 +91,7 @@ export function dockGeometry({
   pin: number;
   barTop: number;
   barHeight: number;
+  contentBottom?: number;
 }): DockGeometry {
   if (wide) {
     const range = WIDE_RANGE;
@@ -92,12 +103,9 @@ export function dockGeometry({
       hysteresis: reduce ? 0 : 8,
     };
   }
-  return {
-    start: end - PHONE_RANGE,
-    range: PHONE_RANGE,
-    barStart: end - (barHeight + PHONE_GAP - (pin - barTop)),
-    hysteresis: 8,
-  };
+  const barStart = Math.max(end - (barHeight + PHONE_GAP - (pin - barTop)), contentBottom - (barTop - BAR_RISE));
+  const start = Math.max(end - PHONE_RANGE, barStart);
+  return { start, range: Math.max(1, end - start), barStart, hysteresis: 8 };
 }
 
 /**

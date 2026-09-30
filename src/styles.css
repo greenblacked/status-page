@@ -565,7 +565,7 @@
   cannot shorten the page under a docked field and scroll it back out.
 */
 .board-body {
-  /* On a phone the field docks 2.5rem of scrolling into the body (its margin less its pin), so the page needs that much more to hold it there. */
+  /* On a phone the field docks a little way into the body (its margin less its pin, and the merge), so the page needs some more to hold it there; 3rem is ample. */
   min-height: calc(100lvh + 3rem);
 }
 
@@ -578,10 +578,11 @@
 /*
   The search field: sticky, so the browser docks it. Two pixels under the bar's
   top, centred in its 48px. --dock (0 to 1, written by useSearchDock) lives on
-  the search dock, so a write restyles the field and nothing else. On a phone
-  the field sits 3rem lower in the page than the hero's spacing alone would
-  put it: room for the bar to come up (clear of the summary's last line) with the
-  field still a good way below it, before the field scrolls up into the bar.
+  the search dock, so a write restyles the field and nothing else. Below 64rem
+  the field sits 0.5rem lower than the hero's spacing alone would put it, so
+  the live line and the field are about 26px apart, as in the phone mock. The
+  bar then waits until that line has scrolled clear of it (dockGeometry), and
+  the field merges into the bar over the scrolling that is left.
 */
 .search-dock {
   position: sticky;
@@ -589,7 +590,7 @@
   z-index: 41;
   height: 2.75rem;
   min-width: 0;
-  margin-top: calc(2px + 3rem);
+  margin-top: calc(2px + 0.5rem);
   pointer-events: none;
   --dock: 0;
   --dock-x: 0px;

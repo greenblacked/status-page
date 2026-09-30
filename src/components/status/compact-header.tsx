@@ -47,10 +47,11 @@ const WIDE = "(min-width: 64rem)";
  *
  * On a phone the bar is fixed at the top and the field is in the flow, so the
  * bar can come up on its own: at `end` minus the bar's height and PHONE_GAP, when
- * the field is still that far below it. The field then scrolls on up at the
- * page's pace, and over the last PHONE_RANGE px before it pins it merges into
- * the bar (its x and width follow --dock). Nothing is ever pinned over the page
- * without the bar behind it. On a wide screen the field shares its row with the
+ * the field is still that far below it, or later if the hero's last line is
+ * still in the bar's way. The field then scrolls on up at the page's pace,
+ * and over the last PHONE_RANGE px before it pins (fewer when the bar came up
+ * late) it merges into the bar (its x and width follow --dock). Nothing is
+ * ever pinned over the page without the bar behind it. On a wide screen the field shares its row with the
  * chips, so it is a single move, and the bar comes up 67% of the way through it
  * (only once it is done under Reduce Motion, where the field snaps).
  */
@@ -92,6 +93,13 @@ export function useSearchDock({
         (Number.parseFloat(hostStyle.borderTopWidth) || 0);
       const dockStyle = getComputedStyle(dock);
       const pin = Number.parseFloat(dockStyle.top) || 10;
+      // Where the hero's last line ends: on a phone the bar waits until it has scrolled clear.
+      const hero = host.previousElementSibling;
+      const heroStyle = hero ? getComputedStyle(hero) : null;
+      const contentBottom =
+        hero && heroStyle
+          ? hero.getBoundingClientRect().bottom + window.scrollY - (Number.parseFloat(heroStyle.paddingBottom) || 0)
+          : undefined;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
       geometry = dockGeometry({
         wide: wide.matches,
@@ -100,6 +108,7 @@ export function useSearchDock({
         pin,
         barTop: Number.parseFloat(getComputedStyle(bar).top) || 8,
         barHeight: bar.offsetHeight,
+        contentBottom,
       });
       const slot = slotRef.current;
       if (!slot) return;

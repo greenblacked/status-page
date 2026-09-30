@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BAR_RISE,
   createDockStore,
   DOCK_REST,
   type DockGeometry,
@@ -115,6 +116,35 @@ describe("dockGeometry", () => {
     const g = dockGeometry({ end: 500, wide: false, reduce: false, pin: 16, barTop: 4, barHeight: 48 });
     // 500 - (48 + 20 - (16 - 4))
     expect(g.barStart).toBe(444);
+  });
+
+  it("on a phone, keeps the usual moment while the hero's last line ends well above the field", () => {
+    // The line clears the bar (top 8, less the 8 it slides down) at 930 - 0 = 930, before the usual 934.
+    const roomy = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 930 });
+    expect(roomy).toEqual({ start: 944, range: 56, barStart: 934, hysteresis: 8 });
+  });
+
+  it("on a phone, holds the bar back until the hero's last line has scrolled clear of where it slides in", () => {
+    // The line ends at 986, so it is clear of the bar (top 8, less the 8 it slides down) at 986, after the usual 934.
+    const g = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 986 });
+    expect(BAR_RISE).toBe(8);
+    expect(g.barStart).toBe(986);
+    // The merge starts with the bar, over the scrolling that is left.
+    expect(g.start).toBe(986);
+    expect(g.range).toBe(14);
+    expect(g.hysteresis).toBe(8);
+  });
+
+  it("on a phone, never starts the merge before the bar is up, nor lets its range reach zero", () => {
+    const late = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 1100 });
+    expect(late.start).toBe(late.barStart);
+    expect(late.range).toBe(1);
+  });
+
+  it("on a wide screen, ignores the hero's last line", () => {
+    expect(dockGeometry({ ...measured, wide: true, reduce: false, contentBottom: 990 })).toEqual(
+      dockGeometry({ ...measured, wide: true, reduce: false }),
+    );
   });
 
   it("on a phone, Reduce Motion changes nothing: the bar is already clear of the field", () => {

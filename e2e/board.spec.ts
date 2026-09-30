@@ -655,7 +655,7 @@ type DockOffsets = {
   /** From 64rem the field shares a row with the chips and moves in one go. */
   wide: boolean;
   natural: number;
-  /** The bar comes up: on a phone by itself, with the field still on its way, a good way below it. */
+  /** The bar comes up: on a phone with the field still on its way, or once the live line is out of its way. */
   barStart: number;
   /** --dock leaves 0, and returns to 1 at moveEnd. */
   moveStart: number;
@@ -664,9 +664,11 @@ type DockOffsets = {
 
 async function dockOffsets(page: Page): Promise<DockOffsets> {
   const natural = await dockNatural(page);
-  const { wide, reduced, barStick, barHeight, dockStick } = await page.evaluate(() => {
+  const { wide, reduced, barStick, barHeight, dockStick, liveBottom } = await page.evaluate(() => {
     const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const live = document.querySelector('[data-testid="live-bar"]') as HTMLElement;
     return {
+      liveBottom: live.getBoundingClientRect().bottom + window.scrollY,
       wide: matchMedia("(min-width: 64rem)").matches,
       reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
       barStick: Number.parseFloat(getComputedStyle(bar).top),
@@ -681,10 +683,12 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
     const moveStart = moveEnd - 48;
     return { wide, natural, barStart: reduced ? moveEnd : moveStart + 0.67 * 48, moveStart, moveEnd };
   }
-  // The bar is fixed and comes up while the field is still 20px below its bottom edge; the field merges into it
-  // over its last 56px before the pin.
-  const barStart = moveEnd - (barHeight + 20 - (dockStick - barStick));
-  return { wide, natural, barStart, moveStart: moveEnd - 56, moveEnd };
+  // The bar is fixed and comes up while the field is still 20px below its bottom edge, but not before the live
+  // line (the hero's last line) has scrolled clear of the bar. The hidden bar sits 8px above its place and slides
+  // down, so the line must be clear of that higher edge. The field merges into the bar over its last 56px before
+  // the pin, or over what is left of them once the bar is up.
+  const barStart = Math.max(moveEnd - (barHeight + 20 - (dockStick - barStick)), liveBottom - (barStick - 8));
+  return { wide, natural, barStart, moveStart: Math.max(moveEnd - 56, barStart), moveEnd };
 }
 
 /**
@@ -732,8 +736,11 @@ test("brings the bar up on its own first, then merges the field into it", async 
   await hydrated(page);
   const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field shares a row with the chips and moves in one go");
+  // With room between the live line and the field, the bar has a phase to itself; when the two sit close (the
+  // phone mock's 26px), the bar waits for the live line to clear and the merge starts with it.
+  const roomy = moveStart > barStart + 1;
 
-  const { up } = await dockPath(page);
+  const { up } = await dockPath(page, roomy ? 8 : 2);
   const stops = await sweepDock(page, up);
   const firstShown = stops.findIndex((stop) => stop.shown === "true");
   const firstMoving = stops.findIndex((stop) => stop.dock > 0);
@@ -757,18 +764,21 @@ test("brings the bar up on its own first, then merges the field into it", async 
   }
   // Where the bar comes up, the field is still well below it and not yet moving.
   const first = stops[firstShown];
-  expect(first?.dock).toBe(0);
-  expect(first?.fieldTop ?? 0).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 12);
+  if (roomy) {
+    expect(first?.dock).toBe(0);
+    expect(first?.fieldTop ?? 0).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 12);
+  }
   // Phase one: the bar is up while the field has not started to merge.
   const alone = stops.filter((stop) => stop.shown === "true" && stop.dock === 0);
-  expect(alone.length, "the bar never showed by itself").toBeGreaterThan(1);
+  if (roomy) expect(alone.length, "the bar never showed by itself").toBeGreaterThan(1);
   for (const stop of alone) {
     expect(stop.docking, `at ${stop.y}`).toBe(false);
     // The field waits below the bar, not under it.
-    expect(stop.fieldTop, `at ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
+    if (roomy) expect(stop.fieldTop, `at ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
   }
   // --dock rises only once the bar is up, and each phase sits at its own offsets.
-  expect(firstMoving).toBeGreaterThan(firstShown);
+  if (roomy) expect(firstMoving).toBeGreaterThan(firstShown);
+  else expect(firstMoving).toBeGreaterThanOrEqual(firstShown);
   for (const stop of stops) {
     if (stop.dock > 0) expect(stop.shown, `at ${stop.y}`).toBe("true");
     if (stop.scrollY < barStart) expect(stop.shown, `at ${stop.y}`).toBe("false");
@@ -790,6 +800,26 @@ test("brings the bar up on its own first, then merges the field into it", async 
   const docked = stops.find((stop) => stop.dock === 1);
   expect(docked?.fieldTop).toBeGreaterThanOrEqual((docked?.barTop ?? 0) - 0.5);
   expect(docked?.fieldTop).toBeLessThanOrEqual((docked?.barBottom ?? 0) + 0.5);
+});
+
+test("sets the search field a line under the live line on a phone, as the mock does", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  for (const width of [375, 412, 768, 900]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    const gap = await page.evaluate(() => {
+      const live = document.querySelector('[data-testid="live-bar"]') as HTMLElement;
+      const field = document.querySelector(".search-field") as HTMLElement;
+      const sub = document.querySelector("#board-headline")?.nextElementSibling as HTMLElement | null;
+      const above = Math.max(live.getBoundingClientRect().bottom, sub?.getBoundingClientRect().bottom ?? 0);
+      return field.getBoundingClientRect().top - above;
+    });
+    // The mock has 28px; the old dead band was 75 to 82.
+    expect(gap, `at ${width}px`).toBeGreaterThanOrEqual(20);
+    expect(gap, `at ${width}px`).toBeLessThanOrEqual(40);
+  }
 });
 
 test("keeps the bar up while the page hovers just above where it appears", async ({ page }) => {
