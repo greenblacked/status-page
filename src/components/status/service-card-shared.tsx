@@ -79,17 +79,25 @@ export function ComponentRow({
     : component.health !== "operational" && <Badge tone={component.health}>{healthLabel(component.health)}</Badge>;
 
   return (
-    <li data-component-row className="flex items-center gap-3 rounded-xs glass-inset px-3 py-2">
-      {/* The floor keeps a name readable beside a long detail without reserving room a short name does not need. */}
-      <span className="min-w-[4.5rem] flex-1 truncate text-sm text-fg" title={component.name}>
+    <li
+      data-component-row
+      // Narrow card: name and badge on the first line, the detail under the
+      // name. A wide card has room for all three on one line.
+      className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 rounded-xs glass-inset px-3 py-2 @xl:grid-cols-[minmax(6rem,1fr)_minmax(0,auto)_auto]"
+    >
+      {/* The name wraps rather than truncates: it is what the row is about. */}
+      <span className="min-w-0 text-sm text-fg [overflow-wrap:anywhere]" title={component.name}>
         {component.name}
       </span>
       {showDetail ? (
-        <span className="min-w-0 truncate font-mono text-[11px] tabular-nums text-subtle" title={component.detail}>
+        <span
+          className="col-span-2 row-start-2 min-w-0 line-clamp-2 font-mono text-[11px] tabular-nums text-subtle [overflow-wrap:anywhere] @xl:col-span-1 @xl:col-start-2 @xl:row-start-1 @xl:line-clamp-1"
+          title={component.detail}
+        >
           {component.detail}
         </span>
       ) : null}
-      {badge ? <span className="shrink-0">{badge}</span> : null}
+      {badge ? <span className="col-start-2 row-start-1 shrink-0 @xl:col-start-3">{badge}</span> : null}
     </li>
   );
 }
@@ -130,7 +138,7 @@ export function HealthyComponents({
           className="flex max-w-full min-w-0 items-center gap-1.5 text-xs text-muted"
         >
           <HealthDot health={component.health} />
-          <span className="truncate" title={component.name}>
+          <span className="[overflow-wrap:anywhere]" title={component.name}>
             {component.name}
           </span>
           <span className="sr-only">{healthLabel(component.health)}</span>
