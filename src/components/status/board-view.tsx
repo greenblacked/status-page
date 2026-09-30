@@ -63,6 +63,13 @@ import { cn } from "@/lib/utils";
 
 const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [{ id: "all", label: "All" }, ...CATEGORIES];
 
+/**
+ * One string, so server rendering emits one text node. Interpolated JSX children would come out as
+ * "checks <!-- -->every two minutes<!-- -->; ...", which breaks any text match on the served HTML
+ * (scripts/ci/smoke.sh matches this sentence).
+ */
+const CADENCE_NOTE = `This page checks ${everyInterval(PULSE_INTERVAL_MS)}; the server reads the official vendor feeds and keeps them for ${spokenDuration(CACHE_TTL_MS)}.`;
+
 // Long enough for a search to settle between keystrokes.
 const ANNOUNCE_DELAY_MS = 700;
 // A chip's card renders in the commit after its filters clear; one that has
@@ -584,10 +591,7 @@ export function BoardView({
               Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
               Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
             </p>
-            <p>
-              This page checks {everyInterval(PULSE_INTERVAL_MS)}; the server reads the official vendor feeds and keeps
-              them for {spokenDuration(CACHE_TTL_MS)}.
-            </p>
+            <p>{CADENCE_NOTE}</p>
             <p>
               <a
                 className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
