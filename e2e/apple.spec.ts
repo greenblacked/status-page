@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 
 // What Safari and iOS read from the page head and the manifest, and the touch
 // rules in src/apple.css. Like the rest of the suite these hold whatever the
@@ -40,7 +40,15 @@ test("buttons opt out of double-tap zoom on a touch device", async ({ page, isMo
   test.skip(!isMobile, "the touch rule is checked on the phone project");
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
-  const button = page.getByRole("button").first();
+  // Named, not `.first()`: on an iPhone the Alerts button server-renders and
+  // is removed right after hydration (use-alerts.ts, "unsupported"), and
+  // WebKit reports "" for the computed style of a detached node. The poll
+  // also survives a remount between resolving the locator and reading it.
+  const touchAction = (locator: Locator) =>
+    locator.evaluate((element) => (element.isConnected ? getComputedStyle(element).touchAction : "detached"));
+  const button = page.getByRole("button", { name: "Refresh status now" });
   await expect(button).toBeVisible();
-  expect(await button.evaluate((element) => getComputedStyle(element).touchAction)).toBe("manipulation");
+  await expect.poll(() => touchAction(button)).toBe("manipulation");
+  const link = page.getByRole("link").first();
+  await expect.poll(() => touchAction(link)).toBe("manipulation");
 });
