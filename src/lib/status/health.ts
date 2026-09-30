@@ -8,11 +8,6 @@ const RANK: Record<Health, number> = {
   outage: 4,
 };
 
-/** How bad a state is, for ordering: outage > unknown > degraded > maintenance > operational. */
-export function healthRank(health: Health): number {
-  return RANK[health];
-}
-
 export function worseHealth(a: Health, b: Health): Health {
   return RANK[a] >= RANK[b] ? a : b;
 }

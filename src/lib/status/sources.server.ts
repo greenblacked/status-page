@@ -11,7 +11,6 @@ import {
 } from "./changelog.ts";
 import {
   googleImpact,
-  healthRank,
   instatusComponent,
   overallSummary,
   statuspageComponent,
@@ -19,6 +18,7 @@ import {
   worseHealth,
 } from "./health.ts";
 import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
+import { urgencyOf } from "./layout.ts";
 import type { ComponentHealth, Health, Incident, ServiceId, ServiceSnapshot, SourceFailure } from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
 
@@ -286,14 +286,14 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
   return rows.map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
 }
 
-// Non-operational first, worst first (outage, unknown, degraded, maintenance;
-// equals keep source order), then operational in source order, capped at
+// Non-operational first, in the board's urgency order (outage, degraded,
+// maintenance, then unknown: not a confirmed problem; equals keep source order), then operational in source order, capped at
 // MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
 // the total the source listed, set only when the cap dropped some, so a card
 // can say how many it is not showing.
 function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
   const isUp = (component: ComponentHealth) => component.health === "operational";
-  const broken = components.filter((c) => !isUp(c)).sort((a, b) => healthRank(b.health) - healthRank(a.health));
+  const broken = components.filter((c) => !isUp(c)).sort((a, b) => urgencyOf(a.health) - urgencyOf(b.health));
   const ranked = [...broken, ...components.filter(isUp)].slice(0, MAX_COMPONENTS);
   return components.length > MAX_COMPONENTS
     ? { components: ranked, componentCount: components.length }
@@ -481,7 +481,14 @@ export function epochToIso(value: unknown, unitMs: number): string | undefined {
 // one: a regional or maintenance event keeps the event's own, milder, health,
 // the same rule the card follows.
 function awsImpactedHealth(current: unknown, eventHealth: Health): Health | null {
-  const level = typeof current === "number" || typeof current === "string" ? Number(current) : Number.NaN;
+  // "" and other non-numbers are not a reading: Number("") is 0, which would
+  // read as recovered, so only a finite number or a non-blank numeric string counts.
+  const level =
+    typeof current === "number"
+      ? current
+      : typeof current === "string" && current.trim() !== ""
+        ? Number(current)
+        : Number.NaN;
   if (level === 0) return null;
   if (level === 3) return eventHealth;
   if (level === 1 || level === 2) return eventHealth === "maintenance" ? "maintenance" : "degraded";
@@ -493,8 +500,8 @@ function awsImpactedHealth(current: unknown, eventHealth: Health): Health | null
  * multi-service event (`impacted_services`) names each service it affects;
  * any other event names its own `service_name`. Several events for a service
  * merge into one row: the worst health wins, the detail is the newest event's
- * summary, prefixed with the regions those events name ("N. Virginia,
- * Ireland · Increased API Error Rates"). Only services the events name
+ * summary, prefixed with that event's region ("N. Virginia · Increased API
+ * Error Rates"). Only services the events name
  * appear, so a quiet Health Dashboard yields no list; an event that names no
  * service cannot be a row.
  */
@@ -527,10 +534,11 @@ export function awsComponents(active: AwsEvent[]): ComponentHealth[] {
         continue;
       }
       row.health = worseHealth(row.health, health);
-      if (region) row.regions.add(region);
+      // The regions belong to the summary shown, so they move with it.
       if (at >= row.at) {
         row.at = at;
         row.detail = summary ?? row.detail;
+        row.regions = new Set(region ? [region] : []);
       }
     }
   }
@@ -602,9 +610,18 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     // allSettled, not all: one endpoint being down should degrade the card,
     // not blank it. Only when neither answers usefully do we fail the whole
     // collector, and with the real error rather than a generic outage.
+    // The card's latency is the two health requests only: the side request
+    // for the connection managers has its own, longer, deadline.
+    let mainMs = 0;
+    const timeMain = <T>(request: Promise<T>) =>
+      request.finally(() => {
+        mainMs = Math.max(mainMs, Date.now() - started);
+      });
     const [info, store, cm] = await Promise.allSettled([
-      fetchJson<{ servertime?: unknown } | null>("https://api.steampowered.com/ISteamWebAPIUtil/GetServerInfo/v1/"),
-      fetchJson<{ featured_win?: unknown } | null>("https://store.steampowered.com/api/featured/"),
+      timeMain(
+        fetchJson<{ servertime?: unknown } | null>("https://api.steampowered.com/ISteamWebAPIUtil/GetServerInfo/v1/"),
+      ),
+      timeMain(fetchJson<{ featured_win?: unknown } | null>("https://store.steampowered.com/api/featured/")),
       // Side signal: it never decides the card's health or whether it fails.
       fetchJson<unknown>("https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0", {
         timeoutMs: EXTRA_TIMEOUT_MS,
@@ -642,7 +659,7 @@ async function collectSteam(): Promise<ServiceSnapshot> {
       });
     }
     return {
-      ...base("steam", new Date().toISOString(), Date.now() - started),
+      ...base("steam", new Date().toISOString(), mainMs),
       health,
       summary: overallSummary(health, 0, health === "operational" ? "Web API and Store responding." : undefined),
       components,
@@ -1053,15 +1070,20 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     if (items.length === 0) throw new PayloadError("Grok feed returned no readable items.");
     const now = Date.now();
     const active = items.filter((item) => grokItemActive(item, now));
-    const listed = parseInstatusComponents(instatus);
-    let health: Health = "operational";
+    // A list whose every status is unreadable says nothing: ignore it.
+    const parsed = parseInstatusComponents(instatus);
+    const listed = parsed.some((component) => component.health !== "unknown") ? parsed : [];
+    // Health covers every active item, though only the first 8 are listed
+    // as incidents, so the card is never better than its worst component row.
+    const health = active.reduce<Health>(
+      (worst, item) => worseHealth(worst, grokItemHealth(item.description)),
+      "operational",
+    );
     const incidents: Incident[] = active.slice(0, 8).map((item, index) => {
-      const itemHealth = grokItemHealth(item.description);
-      health = worseHealth(health, itemHealth);
       return {
         id: item.link ?? `${item.title}-${index}`,
         title: item.title,
-        health: itemHealth,
+        health: grokItemHealth(item.description),
         startedAt: item.pubDate ? new Date(item.pubDate).toISOString() : undefined,
         url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
       };
