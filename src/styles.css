@@ -162,21 +162,25 @@
   --grain-opacity: 0.08;
 
   /*
-    The glass lenses over the grid. Contrast budget: on the worst-case bezel
-    (light: shade .06, body-lo .04 and rim-lo .06 stacked) --color-subtle
-    still measures 4.69:1, above the 4.5:1 floor. The contrast test cannot
-    see these layers, so keep dark hairline alphas at .4 or less and re-check
-    the ratio by hand when any of them change.
+    The glass lenses over the grid. Contrast budget: --color-subtle and
+    --color-muted (the two weakest text colours) stay at 4.5:1 or better on
+    every pixel of a lens more than 3px inside its rim, in light and dark,
+    grid lines included. Only the rim hairline itself (the outer 3px, where
+    the bevel, fringe and rim light sit) is exempt: a glyph crosses that edge
+    for a pixel or two. The lenses spec measures this pixel by pixel; when a
+    token below changes, that test is the check. Dark is the tight side: the aurora alone leaves
+    --color-subtle about 4.7:1, so the dark alphas stay low (the grid at .04
+    is barely above the page grid's .035, and lines are magnified to ~2px).
   */
-  --lens-grid-line: light-dark(rgb(10 15 25 / 0.13), rgb(255 255 255 / 0.13));
-  --lens-body-hi: light-dark(rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.07));
+  --lens-grid-line: light-dark(rgb(10 15 25 / 0.06), rgb(255 255 255 / 0.04));
+  --lens-body-hi: light-dark(rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.04));
   --lens-body-lo: light-dark(rgb(70 90 150 / 0.04), rgb(0 0 0 / 0.22));
-  --lens-rim-hi: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.4));
-  --lens-rim-mid: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.14));
-  --lens-rim-lo: light-dark(rgb(16 24 40 / 0.07), rgb(255 255 255 / 0.09));
+  --lens-rim-hi: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.2));
+  --lens-rim-mid: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.1));
+  --lens-rim-lo: light-dark(rgb(16 24 40 / 0.07), rgb(255 255 255 / 0.06));
   --lens-shade: light-dark(rgb(38 52 84 / 0.06), rgb(0 0 0 / 0.5));
-  --lens-fringe-a: light-dark(oklch(0.78 0.12 200 / 0.5), oklch(0.8 0.13 200 / 0.42));
-  --lens-fringe-b: light-dark(oklch(0.74 0.16 340 / 0.45), oklch(0.72 0.17 340 / 0.38));
+  --lens-fringe-a: light-dark(oklch(0.78 0.12 200 / 0.5), oklch(0.8 0.13 200 / 0.2));
+  --lens-fringe-b: light-dark(oklch(0.74 0.16 340 / 0.45), oklch(0.72 0.17 340 / 0.18));
   /* Centre (percent of the viewport) and diameter of each lens. */
   --lens-1-x: 19;
   --lens-1-y: 30;
