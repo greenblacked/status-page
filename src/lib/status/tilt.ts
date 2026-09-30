@@ -7,9 +7,10 @@ import type { PreferenceStorage } from "@/lib/status/glass";
  * src/components/status/use-tilt-lighting.ts wires it to the browser.
  *
  * The light reaches the CSS only through two custom properties,
- * --light-x and --light-y, each from -1 to 1, set on the pseudo-elements
- * that draw it (TILT_LIGHT_SELECTOR). Nothing may depend on them: unset, the
- * board looks exactly as it did before this existed.
+ * --light-x and --light-y, each from -1 to 1, set inline on the glass
+ * elements whose ::before and ::after draw it (TILT_LIGHT_SELECTOR), which
+ * the pseudo-elements inherit. Nothing may depend on them: unset, the board
+ * looks exactly as it did before this existed.
  */
 export const TILT_STORAGE_KEY = "status-bar:tilt-lighting";
 /** Set on <html> while the light is really being driven, and only then. */
@@ -17,10 +18,12 @@ export const TILT_ATTRIBUTE = "data-tilt";
 export const TILT_VAR_X = "--light-x";
 export const TILT_VAR_Y = "--light-y";
 /**
- * What carries the variables: the sheen of glass and chrome, and the glint on
- * a card. Not <html>: an inherited property changing there re-styles the whole page.
+ * The elements the variables are written on, inline: the panels whose sheen
+ * (::before) and glint (::after) draw the light. A custom property is inherited,
+ * so each write re-styles what is inside those panels; that is why the light
+ * is written at most about 30 times a second, and only when it moved.
  */
-export const TILT_LIGHT_SELECTOR = ".glass::before, .glass-chrome::before, .spotlight::after";
+export const TILT_LIGHT_SELECTOR = ".glass, .glass-chrome, .spotlight";
 
 /**
  * Which way the light moves for a given tilt. The one place to flip it: 1
@@ -234,7 +237,7 @@ export type TiltWindow = {
   navigator?: { maxTouchPoints?: number };
 };
 
-/** A touch device that can report its orientation. A Mac has the API in name only, and no touch. */
+/** A touch device that can report its orientation. Desktop Safari does not expose the API at all; a laptop's Chrome has it but no touch. */
 export function tiltSupported(win: TiltWindow): boolean {
   if (typeof win.DeviceOrientationEvent === "undefined") return false;
   const coarse = win.matchMedia?.("(any-pointer: coarse)").matches === true;
@@ -245,4 +248,23 @@ export function tiltSupported(win: TiltWindow): boolean {
 export function needsPermission(win: TiltWindow): boolean {
   const api = win.DeviceOrientationEvent as { requestPermission?: unknown } | undefined;
   return typeof api?.requestPermission === "function";
+}
+
+/** The part of `window` that says how the screen is turned; `orientation` is the legacy, signed value. */
+export type OrientationWindow = {
+  screen?: { orientation?: { angle?: number } };
+  orientation?: unknown;
+};
+
+/**
+ * How far the screen is turned from its natural orientation, 0, 90, 180 or
+ * 270. Safari before 16.4 has no screen.orientation, only the legacy
+ * window.orientation (0, 90, -90, 180). Both count a turn counter-clockwise
+ * (90 is the device turned to the left), so the legacy -90 is 270.
+ */
+export function screenAngle(win: OrientationWindow): number {
+  const angle = win.screen?.orientation?.angle;
+  if (typeof angle === "number") return angle;
+  const legacy = win.orientation;
+  return typeof legacy === "number" && Number.isFinite(legacy) ? ((legacy % 360) + 360) % 360 : 0;
 }

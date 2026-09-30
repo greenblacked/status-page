@@ -12,6 +12,7 @@ import {
   needsPermission,
   parseTiltPreference,
   readTiltLighting,
+  screenAngle,
   serializeTiltPreference,
   TILT_STORAGE_KEY,
   tiltFromStorageEvent,
@@ -331,5 +332,27 @@ describe("tiltSupported and needsPermission", () => {
     expect(needsPermission({ DeviceOrientationEvent: class {} })).toBe(false);
     expect(needsPermission({ DeviceOrientationEvent: { requestPermission: async () => "granted" } })).toBe(true);
     expect(needsPermission({ DeviceOrientationEvent: { requestPermission: "yes" } })).toBe(false);
+  });
+});
+
+describe("screenAngle", () => {
+  it("uses screen.orientation where there is one", () => {
+    expect(screenAngle({ screen: { orientation: { angle: 270 } }, orientation: 90 })).toBe(270);
+    expect(screenAngle({ screen: { orientation: { angle: 0 } } })).toBe(0);
+  });
+
+  it("falls back to the legacy signed window.orientation", () => {
+    expect(screenAngle({ orientation: 0 })).toBe(0);
+    expect(screenAngle({ orientation: 90 })).toBe(90);
+    expect(screenAngle({ orientation: -90 })).toBe(270);
+    expect(screenAngle({ orientation: 180 })).toBe(180);
+    expect(screenAngle({ screen: {}, orientation: -90 })).toBe(270);
+    expect(screenAngle({ screen: { orientation: {} }, orientation: 90 })).toBe(90);
+  });
+
+  it("is 0 when the screen says nothing usable", () => {
+    expect(screenAngle({})).toBe(0);
+    expect(screenAngle({ orientation: "landscape" })).toBe(0);
+    expect(screenAngle({ orientation: Number.NaN })).toBe(0);
   });
 });
