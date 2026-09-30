@@ -161,9 +161,22 @@ describe("rows with history", () => {
     expect(row(document, { category: "updates", health: "unknown" })).not.toMatch(STRIP);
   });
 
-  it("render the row as it was with no days, or the flag off", () => {
-    expect(row(history({ aws: { days: [] } }))).toBe(row(undefined));
+  it("render the row as it was with the flag off, whatever the context holds", () => {
     vi.stubEnv("VITE_STATUS_HISTORY", "0");
     expect(row(document)).toBe(row(undefined));
+    expect(row(history({ aws: { days: [] } }))).toBe(row(undefined));
+  });
+
+  it("keep one structure whether or not there are days, so an open row is not remounted", () => {
+    // A row that opens: its <details> sits in the same wrapper with the strip, without it, and before the
+    // history loads, or React would replace the <details> (closing it, dropping focus) when the days arrive.
+    const components = [{ name: "Console", health: "operational" as const }];
+    const wrapped = '<div class="min-w-0"><details';
+    for (const withHistory of [document, history({ aws: { days: [] } }), undefined]) {
+      expect(row(withHistory, { components })).toContain(wrapped);
+    }
+    // And a flag-off render has no such wrapper.
+    vi.stubEnv("VITE_STATUS_HISTORY", "0");
+    expect(row(document, { components })).not.toContain(wrapped);
   });
 });

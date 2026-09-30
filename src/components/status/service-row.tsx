@@ -131,9 +131,10 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
   const withDetails = !unread && (service.components.length > 0 || extras);
   // The 30-day uptime strip, in a build that collects history: under the row's own line, so the row
   // stays as it is until there are days to draw. A release tracker (the changelog category) has none.
+  const historyBuild = import.meta.env.VITE_STATUS_HISTORY === "1";
   const days = useServiceHistoryDays(service.id);
   const strip =
-    import.meta.env.VITE_STATUS_HISTORY === "1" && days.length > 0 && service.category !== "updates" ? (
+    historyBuild && days.length > 0 && service.category !== "updates" ? (
       <HistoryStrip days={days} nowMs={now} className="pt-1 pb-3" />
     ) : null;
 
@@ -165,7 +166,9 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
         <StatusGlyph health={service.health} size={20} className={cn("block", STATUS_TEXT[service.health], ROW_LEAD)} />
       }
     >
-      {strip ? (
+      {historyBuild ? (
+        // One structure whether or not there are days yet: when the history arrives the strip mounts beside
+        // the body, and an open row keeps its <details> and the focus in it.
         <div className="min-w-0">
           {body}
           {strip}
