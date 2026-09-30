@@ -170,8 +170,11 @@ export function overallSummary(health: Health, incidentCount: number, componentH
 const ATTENTION_ORDER = SEVERITY_ORDER.filter((health) => health !== "operational");
 
 export function attentionBreakdown(counts: Record<Health, number>): string {
-  const parts = ATTENTION_ORDER.filter((health) => counts[health] > 0).map(
-    (health) => `${counts[health]} ${healthLabel(health).toLowerCase()}`,
-  );
+  const parts = ATTENTION_ORDER.filter((health) => counts[health] > 0).map((health) => {
+    const n = counts[health];
+    const word = healthLabel(health).toLowerCase();
+    // "Outage" is the one label that is a noun; the rest read the same at any count.
+    return `${n} ${health === "outage" && n !== 1 ? `${word}s` : word}`;
+  });
   return parts.length ? parts.join(" · ") : "nothing to watch";
 }
