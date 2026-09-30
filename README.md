@@ -162,16 +162,16 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Switch on the bell** for a browser notification when a service changes while the tab is in the background.
 - **Open any card's vendor page** for the full story.
 
-A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 npm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
+A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 npm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source behind that endpoint. The Cloudflare Workers deploy builds with the flag on, and the Worker records the history (see [Integrations](#integrations)); a Node or Docker build has no history source and returns an empty document, so its strip stays hidden even when the flag is set. On a new Workers deployment a strip appears once the first UTC day has been recorded.
 
 ## Integrations
 
-The board publishes current status in four open formats. Responses allow cross-origin reads and are cached for a minute. `/api/history.json` remains available as an empty compatibility response; without persistent storage it cannot provide uptime history.
+The board publishes current status in four open formats. Responses allow cross-origin reads and are cached for a minute. `/api/history.json` carries a real 30-day history on Cloudflare Workers, where a Cron Trigger samples the board every five minutes into Cloudflare D1; strips appear once days exist. Node and Docker keep no history, so there it returns an empty `services` map.
 
 | Endpoint | Format | Use it for |
 | --- | --- | --- |
 | `/api/status.json` | JSON: overall health, headline, counts, and each service's health, summary, source and incidents | Scripts, dashboards, chat bots |
-| `/api/history.json` | JSON: empty `services` map (compatibility only) | Existing clients checking the history schema |
+| `/api/history.json` | JSON: up to 30 UTC days per service, each with worst health, sample count and up fraction (empty `services` on Node and Docker) | Uptime strips, or your own charts |
 | `/feed.xml` | Atom, one entry per service that needs attention | Alerts in Slack, Teams, Discord or a feed reader |
 | `/api/badge/<service>` | [Shields.io endpoint badge](https://shields.io/badges/endpoint-badge) | A live status badge in a README or wiki |
 | `/metrics` | [Prometheus text format](https://prometheus.io/docs/instrumenting/exposition_formats/#text-based-format): each service's state, incidents and source reachability | Prometheus, Grafana and Alertmanager |
@@ -372,7 +372,7 @@ The status page's JSON API sits behind a Cloudflare challenge, so the official R
 
 <br>
 
-On Node, the server holds only the latest snapshot, in memory, and reuses it for up to 45 seconds. On Cloudflare Workers, each isolate holds only its recent snapshot in memory; it is lost when that isolate stops. No uptime history is retained. Neither build writes to a disk or a database of its own. The Board log lives in your browser's local storage and keeps the last two hours, next to your alerts on/off choice, your starred services and the single-key shortcuts setting. Private windows or blocked site data leave it empty.
+On Node, the server holds only the latest snapshot, in memory, and reuses it for up to 45 seconds. On Cloudflare Workers, each isolate holds only its recent snapshot in memory; it is lost when that isolate stops. The Workers build also keeps 30 days of per-day aggregates in Cloudflare D1: sample counts and worst health only, per service and UTC date. Node keeps no history. Neither build writes to a disk of its own. The Board log lives in your browser's local storage and keeps the last two hours, next to your alerts on/off choice, your starred services and the single-key shortcuts setting. Private windows or blocked site data leave it empty.
 
 </details>
 

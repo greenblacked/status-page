@@ -9,6 +9,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Added
 
 - The page footer links to the source on GitHub and to the MIT License (free to use, copy, modify and share, with the copyright notice kept), and says how often the board is checked: every two minutes in the page, with the server keeping vendor feeds for 45 seconds.
+- Persistent 30-day uptime history on Cloudflare Workers. A five-minute Cron Trigger records each service's health into Cloudflare D1, `/api/history.json` serves the last 30 UTC days (sample counts and worst health per day), and the Workers build turns the uptime strips on. Strips appear once days exist. Node and Docker keep no history.
 
 ### Changed
 

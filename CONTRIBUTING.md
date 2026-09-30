@@ -254,9 +254,9 @@ There is one Worker, `status-page`. Every push to `stage` or `main` deploys; `de
 
 ### How the board stays fresh on Workers
 
-Each Worker isolate collects the public vendor feeds on demand, shares a 45-second in-memory cache among its requests, serves a recently expired result while a new collection runs, and throttles forced refreshes to one per 15 seconds. A cold isolate can take several seconds to answer. Isolates do not share their cache, so traffic can cause more vendor requests than a shared store would. There is no persistent 30-day history; `/api/history.json` returns an empty compatible document.
+Each Worker isolate collects the public vendor feeds on demand, shares a 45-second in-memory cache among its requests, serves a recently expired result while a new collection runs, and throttles forced refreshes to one per 15 seconds. A cold isolate can take several seconds to answer. Isolates do not share their cache, so traffic can cause more vendor requests than a shared store would. The 30-day uptime history is the exception: a Cron Trigger runs every five minutes, collects the board and adds one sample per service to a Cloudflare D1 database (`HISTORY_DB`), and `/api/history.json` reads it back, cached for a minute per isolate. Node keeps no history and returns an empty document.
 
-The Cloudflare entry in `src/server.cloudflare.ts` only threads the preview's robots setting and version metadata into TanStack's request handler. It has no scheduled event or storage binding. The Node and Worker builds both use `src/lib/status/board.ts`.
+The Cloudflare entry in `src/server.cloudflare.ts` only threads the preview's robots setting and version metadata into TanStack's request handler. It also handles the scheduled event and passes the D1 binding along. The Node and Worker builds both use `src/lib/status/board.ts`.
 
 ### How the token is kept safe
 
@@ -280,16 +280,17 @@ The repository is public, so anyone can read the workflow and open a pull reques
    gh api repos/greenblacked/status-page/environments/production/deployment-branch-policies --jq '.branch_policies[] | "\(.id) \(.name)"'   # only main
    ```
 3. **Enter two settings in each environment:** `CLOUDFLARE_ACCOUNT_ID` as a variable (or secret; the account ID is not sensitive) and `CLOUDFLARE_API_TOKEN` as a secret. The deploy workflow requires these two values, and both environments can hold the same token. `DEPLOY_URL` is optional but recommended: set it to the address to check (`https://status.szolotov.com` for production, `https://stage.status.szolotov.com` for staging, the address `wrangler preview` prints) after the first deploy to enable post-deploy smoke tests, and for production automatic rollback. Production `DEPLOY_URL` is safe to set before the release. Set staging `DEPLOY_URL` only after the first production deploy: before it, the `stage` preview answers on `https://stage.stage.status.szolotov.com` while the dashboard's preview-only domain is attached, and the first `main` deploy replaces that domain, moving the preview to `https://stage.status.szolotov.com`. The Worker itself has no API token or account ID binding.
-4. **Monitor production:** optionally set repository variable `PRODUCTION_URL` to its HTTPS address for hourly `/readyz` checks in `source-health.yml`.
+4. **Create the history database once,** from your machine (not from CI). Run `npx wrangler login`, then `npx wrangler d1 create status-page-history`, and paste the `database_id` it prints into `wrangler.jsonc`, in both `d1_databases` and `previews.d1_databases`. Commit that change; a database ID is not a secret. The deploy builds with `VITE_STATUS_HISTORY=1` and fails if the built config lacks a cron trigger or a D1 database.
+5. **Monitor production:** optionally set repository variable `PRODUCTION_URL` to its HTTPS address for hourly `/readyz` checks in `source-health.yml`.
 
-No KV namespace or ID is needed. Deploying does not delete an old namespace; remove it in Cloudflare when you no longer need it.
+The deploy token needs no D1 permission: the table is created by the Worker itself. Deploying does not delete an old KV namespace; remove it in Cloudflare when you no longer need it.
 
 ### Locally
 
 | Command | Runs | What it does |
 | --- | --- | --- |
 | `npm run build:cf` | `DEPLOY_TARGET=cloudflare vite build` | The Worker in `dist/`, the same for every branch |
-| `npm run preview:cf` | `DEPLOY_TARGET=cloudflare vite preview --host 127.0.0.1` | Runs that build in workerd, Cloudflare's runtime, without storage bindings |
+| `npm run preview:cf` | `DEPLOY_TARGET=cloudflare vite preview --host 127.0.0.1` | Runs that build in workerd, Cloudflare's runtime; local D1 is simulated, so it starts empty |
 | `npm run deploy:dry-run` | `WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config dist/server/wrangler.json` | Shows what would upload, as a pull request's CI does |
 
 Without `DEPLOY_TARGET`, `npm run build` stays a plain Fetch handler, and `npm run preview` runs it on Node, as CI's smoke test does.
