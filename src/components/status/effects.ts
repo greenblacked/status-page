@@ -11,8 +11,14 @@ const GLIDE_ID = "card-move";
 /** The values of the CSS tokens --motion-fast and --ease-smooth-out, which the cards' own motion uses. */
 const GLIDE_MS = 250;
 const GLIDE_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
-/** How long to wait for an update that never commits (or changes nothing in the board) before letting go. */
-const GLIDE_WAIT_MS = 400;
+/**
+ * How long to wait for an update that never commits (or moves no card) before
+ * letting go. A slow phone takes a good part of a second over a frame, and a
+ * deferred commit waits behind them, so this is generous: the wait ends at
+ * the first glide, at the person's next input, or when a newer press replaces
+ * it, and until then it only reacts to a card that has really moved.
+ */
+const GLIDE_WAIT_MS = 1500;
 
 /** Where every card is in the viewport, and how far the page was scrolled when that was measured. */
 interface Layout {
@@ -52,14 +58,15 @@ function settleRiseIn(card: Element): void {
   }
 }
 
-/** Glides every card that moved from where it was to where it is now. */
-function glideCards(before: Layout): void {
+/** Glides every card that moved from where it was to where it is now; false when none did. */
+function glideCards(before: Layout): boolean {
   // Settled first, so the measurement below is where each card really is.
   for (const id of before.boxes.keys()) {
     const card = document.getElementById(id);
     if (card) settleRiseIn(card);
   }
-  for (const { id, dx, dy } of cardMoves(atCurrentScroll(before), measureCards().boxes, window.innerHeight)) {
+  const moves = cardMoves(atCurrentScroll(before), measureCards().boxes, window.innerHeight);
+  for (const { id, dx, dy } of moves) {
     // A card that crossed sections is a new node, so look it up by id.
     const card = document.getElementById(id);
     if (!card) continue;
@@ -69,6 +76,7 @@ function glideCards(before: Layout): void {
     });
     glide.id = GLIDE_ID;
   }
+  return moves.length > 0;
 }
 
 /**
@@ -116,6 +124,8 @@ export function withCardMotion(update: () => void): void {
   for (const animation of document.getAnimations()) {
     if (animation.id === GLIDE_ID) animation.cancel();
   }
+  // Read by the tests, and free: a mark costs nothing when nobody looks.
+  performance.mark("card-motion:start");
   let timer = 0;
   const stop = () => {
     observer.disconnect();
@@ -123,13 +133,23 @@ export function withCardMotion(update: () => void): void {
     for (const type of INTERACTIONS) window.removeEventListener(type, stop, true);
     if (pending === stop) pending = undefined;
   };
+  // A change that moves no card is not necessarily the update: the refresh
+  // button's own busy state commits before a deferred cache write does. So the
+  // wait goes on until a card has moved, and lets go on the person's input.
+  const glide = () => {
+    if (!glideCards(before)) return false;
+    performance.mark("card-motion:glide");
+    stop();
+    return true;
+  };
   // Registered before the update: a deferred one (a query cache write reaches
   // React on a timer) lands after this function returns, and the observer sees it.
   const observer = new MutationObserver(() => {
     try {
-      glideCards(before);
-    } finally {
+      glide();
+    } catch (error) {
       stop();
+      throw error;
     }
   });
   observer.observe(document.getElementById("services") ?? document.body, {
@@ -145,10 +165,7 @@ export function withCardMotion(update: () => void): void {
   timer = window.setTimeout(stop, GLIDE_WAIT_MS);
   try {
     flushSync(update);
-    if (observer.takeRecords().length > 0) {
-      glideCards(before);
-      stop();
-    }
+    if (observer.takeRecords().length > 0) glide();
   } catch (error) {
     stop();
     throw error;

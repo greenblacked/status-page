@@ -99,6 +99,48 @@ async function recordAnimations(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Records what a glide depends on, so a failure on a slow browser says why: the person's input events
+ * (type, time, trusted), when Grok's card changed section, and, from the product code, the
+ * performance marks card-motion:start and card-motion:glide.
+ */
+async function traceGlides(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const tracked = window as Window & { __glideTrace?: Record<string, unknown>[] };
+    tracked.__glideTrace = [];
+    const note = (entry: Record<string, unknown>) =>
+      tracked.__glideTrace?.push({ ...entry, t: Math.round(performance.now()) });
+    for (const type of ["pointerdown", "keydown", "input"]) {
+      window.addEventListener(type, (event) => note({ type, trusted: event.isTrusted }), true);
+    }
+    let section: string | null | undefined;
+    new MutationObserver(() => {
+      const now = document.getElementById("service-grok")?.closest("section")?.getAttribute("aria-labelledby");
+      if (now !== section) note({ type: "grok-section", section: now });
+      section = now;
+    }).observe(document, { childList: true, subtree: true });
+  });
+}
+
+/** Everything traceGlides and the product marks recorded, with the page's size and scroll, as one JSON-able object. */
+const glideTrace = (page: Page) =>
+  page.evaluate(() => {
+    const tracked = window as Window & { __glideTrace?: unknown[]; __animations?: Animation[] };
+    return {
+      viewport: [innerWidth, innerHeight],
+      scrollY: Math.round(scrollY),
+      grokTop: Math.round(document.getElementById("service-grok")?.getBoundingClientRect().top ?? Number.NaN),
+      events: tracked.__glideTrace,
+      marks: performance
+        .getEntriesByType("mark")
+        .filter((mark) => mark.name.startsWith("card-motion"))
+        .map((mark) => ({ name: mark.name, t: Math.round(mark.startTime) })),
+      glides: (tracked.__animations ?? [])
+        .filter((animation) => animation.id === "card-move")
+        .map((animation) => (animation.effect as KeyframeEffect).target?.id),
+    };
+  });
+
 const cardGlides = (page: Page) =>
   page.evaluate(
     () =>
@@ -993,16 +1035,28 @@ test("moves a starred card without a glide when the system asks for reduced moti
 
 test("glides the cards a refresh moves", async ({ page }) => {
   await recordAnimations(page);
+  await traceGlides(page);
   let grok: Health = "operational";
   await openFixture(page, () => fixtureBoard(Date.now(), { grok }));
   const before = await cardGlides(page);
-  expect(await page.evaluate(() => window.scrollY)).toBe(0);
 
-  // Grok leaves Operational for Needs attention, and the cards between shift.
+  // Grok leaves Operational for Needs attention and pushes the cards below it down. On a phone those start
+  // below the fold, and a card nobody sees does not glide, so bring the second attention card up first.
+  await page.evaluate(() => {
+    const card = document.getElementById("service-gcp");
+    if (card) window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - 100, behavior: "instant" });
+  });
   grok = "degraded";
-  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+  // Clicked from the page, not by the pointer: Playwright scrolls the hero's button back into view to click it.
+  const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
+  await pressRefresh(page, refresh, () => refresh.evaluate((button) => (button as HTMLElement).click()));
   await expect(page.locator('section[aria-labelledby="attention-heading"] #service-grok')).toHaveCount(1);
-  expect(await cardGlides(page)).toBeGreaterThan(before);
+  try {
+    expect(await cardGlides(page)).toBeGreaterThan(before);
+  } catch (error) {
+    console.log(`[glide] ${JSON.stringify({ before, ...(await glideTrace(page)) })}`);
+    throw error;
+  }
 });
 
 test("does not count a scroll between measuring and the commit as cards moving", async ({ page }) => {
@@ -1012,6 +1066,12 @@ test("does not count a scroll between measuring and the commit as cards moving",
   const before = await cardGlides(page);
   const first = await group(page, "attention").first().getAttribute("id");
 
+  // The first attention card near the top of the screen, so it and the card below it are both in view whatever
+  // the phone's height. The refresh is clicked from the page: Playwright would scroll the hero's button into view.
+  await page.evaluate((id) => {
+    const card = id ? document.getElementById(id) : null;
+    if (card) window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - 300, behavior: "instant" });
+  }, first);
   // withCardMotion cancels running glides right after measuring the cards, ahead of the update. Scrolling
   // then is a page scrolling on its own (a tap focusing a control, WebKit's do) before a deferred commit.
   await page.evaluate(() => {
@@ -1023,7 +1083,8 @@ test("does not count a scroll between measuring and the commit as cards moving",
     };
   });
   grok = "degraded";
-  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+  const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
+  await pressRefresh(page, refresh, () => refresh.evaluate((button) => (button as HTMLElement).click()));
   await expect(page.locator('section[aria-labelledby="attention-heading"] #service-grok')).toHaveCount(1);
   expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
 
