@@ -210,6 +210,11 @@
     cursor: pointer;
   }
 
+  /* Preflight gives <kbd> a monospace stack, and this theme has no mono face: keycaps take the text's own. */
+  kbd {
+    font-family: inherit;
+  }
+
   h1,
   h2,
   h3 {
