@@ -110,8 +110,8 @@ async function traceGlides(page: Page): Promise<void> {
     tracked.__glideTrace = [];
     const note = (entry: Record<string, unknown>) =>
       tracked.__glideTrace?.push({ ...entry, t: Math.round(performance.now()) });
-    for (const type of ["pointerdown", "keydown", "input"]) {
-      window.addEventListener(type, (event) => note({ type, trusted: event.isTrusted }), true);
+    for (const type of ["pointerdown", "keydown", "input", "resize", "orientationchange"]) {
+      window.addEventListener(type, (event) => note({ type, trusted: event.isTrusted, width: innerWidth }), true);
     }
     let section: string | null | undefined;
     new MutationObserver(() => {
@@ -1379,6 +1379,7 @@ test("does not glide a filter that follows a star which moved nothing", async ({
 
 test("does not glide a resize that follows a star which moved nothing", async ({ page }) => {
   await recordAnimations(page);
+  await traceGlides(page);
   await openFixture(page, () => fixtureBoard(Date.now()));
   const before = await cardGlides(page);
 
@@ -1394,6 +1395,34 @@ test("does not glide a resize that follows a star which moved nothing", async ({
     () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
   );
   // ...and the next unrelated change to the board must not glide the cards across against the old layout.
+  await page.evaluate(() => document.getElementById("services")?.appendChild(document.createTextNode(" ")));
+  await motionDone(page);
+  try {
+    expect(await longGlides(page, before)).toEqual([]);
+  } catch (error) {
+    console.log(`[glide] ${JSON.stringify({ before, ...(await glideTrace(page)) })}`);
+    throw error;
+  }
+});
+
+test("does not glide a resize whose event the board has not seen", async ({ page }) => {
+  // The page's resize event is dispatched with the next frame, after a change to the board can already have
+  // been seen against the new layout. Swallowing it stands in for that order.
+  await page.addInitScript(() => {
+    window.addEventListener("resize", (event) => event.stopImmediatePropagation(), true);
+  });
+  await recordAnimations(page);
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const before = await cardGlides(page);
+
+  const lead = group(page, "attention").first();
+  await toggleStar(page, () => lead.locator("button[aria-pressed]").first().click());
+  await expect(lead.locator("button[aria-pressed]").first()).toHaveAttribute("aria-pressed", "true");
+
+  const size = page.viewportSize();
+  if (!size) throw new Error("no viewport size");
+  await page.setViewportSize({ width: size.width > 800 ? 700 : 900, height: size.height });
+  await expect.poll(() => page.evaluate(() => window.innerWidth)).not.toBe(size.width);
   await page.evaluate(() => document.getElementById("services")?.appendChild(document.createTextNode(" ")));
   await motionDone(page);
   expect(await longGlides(page, before)).toEqual([]);
