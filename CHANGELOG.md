@@ -13,6 +13,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
+- Starring and refresh move cards with a light glide instead of a page snapshot, so they respond at once on iPhone, iPad and Safari.
 - The MikroTik RouterOS and Apple OS cards no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and an Unknown badge only when the source cannot be read.
 
 ### Fixed
