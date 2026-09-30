@@ -34,7 +34,7 @@
 When something breaks, the answer is spread across a dozen vendor dashboards, each with its own layout and vocabulary. Outage trackers are quicker, but they count user complaints, not what the vendor has confirmed. Status Page puts the official answers on one screen and holds itself to four rules:
 
 - **Official or nothing.** Every signal comes from the vendor's own status page, feed or public API. No crowd reports, no unofficial aggregators.
-- **Unknown beats a guess.** If a source times out or changes its format, its card says Unknown and why. Missing data never turns into an all clear.
+- **No data beats a guess.** If a source times out or changes its format, its row says No data and why. Missing data never turns into an all clear.
 - **Zero setup.** No API keys, no accounts, no environment variables.
 - **The vendor has the last word.** Every card links to the vendor's own page, which stays the source of truth.
 
@@ -42,16 +42,16 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 | | |
 | --- | --- |
-| **One board, five states** | Fourteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or Unknown, with the reason on the card |
+| **One board, five states** | Fourteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
-| **At home on Apple devices** | Glass over a slow aurora and a faint drafting grid that four glass lenses bend, in deep ink or warm paper as your system is set, with colour kept to small exact points and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
+| **At home on Apple devices** | Warm paper in light and true black in dark as your system is set, opaque panels with a hairline, the system typeface on Apple devices, and colour kept to small exact points. Pick **Glass** or **Full** in Settings for frosted panels over a still glow, or the slow drift, glass lenses that bend a drafting grid, a light that follows the pointer and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
 | **Open integrations** | A current-status JSON API, an Atom feed, Shields.io badges and Prometheus metrics |
 | **Runs anywhere** | Any Node host or Cloudflare Workers, with an in-memory cache per process or isolate. `docker compose` for a local run with no Node install |
 
 ## What it watches
 
-🟢 Operational · 🔧 Maintenance · 🟡 Degraded · 🔴 Outage · ❔ Unknown
+🟢 Operational · 🔧 Maintenance · 🟡 Degraded · 🔴 Outage · ❔ No data
 
 Fourteen services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
 
@@ -69,8 +69,8 @@ Fourteen services, each read from one official source. This table is the contrac
 | AI | Grok | [status.x.ai](https://status.x.ai/) (RSS feed, plus its component list when readable) |
 | AI | ChatGPT | [status.openai.com](https://status.openai.com/) |
 | AI | Claude | [status.claude.com](https://status.claude.com/) |
-| Updates | MikroTik RouterOS | [MikroTik changelogs](https://mikrotik.com/download/changelogs) |
-| Updates | Apple OS | [Apple Developer Releases](https://developer.apple.com/news/releases/) |
+| Releases | MikroTik RouterOS | [MikroTik changelogs](https://mikrotik.com/download/changelogs) |
+| Releases | Apple OS | [Apple Developer Releases](https://developer.apple.com/news/releases/) |
 
 Missing a service? [Request it](https://github.com/greenblacked/status-page/issues/new?template=new-service.yml). It needs an official, machine-readable source.
 
@@ -84,11 +84,11 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 | 🔧 Maintenance | Scheduled work is in progress |
 | 🟡 Degraded | Partial impact, elevated errors, or thin coverage |
 | 🔴 Outage | Major or critical impact |
-| ❔ Unknown | The source timed out, returned an error, or sent data Status Page could not read |
+| ❔ No data | The source timed out, returned an error, or sent data Status Page could not read. Says nothing about whether the vendor is up. The API and the badges still call it `unknown` |
 
-The overall card shows the worst state on the board: **All clear** when everything is Operational, **Outage** if anything is out, and **Attention** for everything in between.
+The headline at the top of the page is one sentence about the board: **Everything is up.** when all fourteen are Operational, "Two things need a look." when an outage, a degradation or maintenance is under way (each service named and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
 
-The two Updates services track releases, not incidents. Their cards carry no status badge while nothing is new, and a **New release** badge when a channel or OS was released in the last 14 days, which is also marked on its row. A source that could not be read still shows Unknown. In the summary, the API and the badges they still count as Operational.
+The two Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel or OS was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
 <details>
 <summary><strong>The rule behind every card</strong></summary>
@@ -146,21 +146,27 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 
 ### On the board
 
-- **Every service is a full card**, healthy or not, in three groups: **Needs attention**, **Operational** and **Releases**. Needs attention is ordered by urgency (Outage, then Degraded, then Unknown, then Maintenance, and within one state the incident that began most recently first), and the most urgent service leads it as a card marked **Most urgent** that spans the width on wide screens. It changes with each snapshot, and it is absent when nothing needs attention or when a filter or search hides that service. That is the one severity order the whole board uses: the headline, the overall health in `/api/status.json`, the badge colour and a history day's worst state all rank Outage, Degraded, Unknown, Maintenance, Operational, so a real degradation is never hidden behind a source that could not be read, and the headline and the **Most urgent** card always agree.
-- **Filter** by Cloud, Gaming, Platforms, AI or Updates, search by name, or switch on **Issues only**.
-- **Star** the services you care about: they sort first in their group, though never above a more urgent service in Needs attention, and **Starred** shows only them.
+- **The board reads top to bottom in four parts:**
+  - **Needs a look:** a card for each service with an outage, a degradation or maintenance, most urgent first: Outage, then Degraded, then Maintenance, and within one state the incident that began most recently first. It is absent when nothing needs a look.
+  - **Couldn't read:** rows for the sources that could not be read (No data). This says nothing about whether they are up, and the group says so.
+  - **Healthy services** are compact rows, one list per category (Cloud, Gaming, Platforms, AI).
+  - **Releases:** the release trackers, as rows.
+- **One severity order** is used everywhere: the overall health in `/api/status.json`, the badge colour and a history day's worst state all rank Outage, Degraded, Unknown, Maintenance, Operational, and the headline follows the same order with the sources that could not be read left out, so a real degradation is never hidden behind one.
+- **Filter** by Cloud, Gaming, Platforms, AI or Releases, search by name, or switch on **Issues only**.
+- **Star** the services you care about: they sort first in their group, though never above a more urgent service in Needs a look, and **Starred** shows only them.
 - **Share a view:** search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered.
-- **Drive it from the keyboard:** `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` opens **Settings and shortcuts**, which lists them all. If single keys get in the way, for example with speech input, switch **Single-key shortcuts** off there: every shortcut but `Esc` stops, the search box stays a Tab away, and the **Settings and shortcuts** button at the foot of the page opens the list again. The first Tab stop is **Skip to services**.
+- **Drive it from the keyboard:** `/` searches, `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` opens **Settings**, which lists them all. If single keys get in the way, for example with speech input, switch **Single-key shortcuts** off there: every shortcut but `Esc` stops, the search box stays a Tab away, and the **Settings** button at the foot of the page opens the list again. The first Tab stop is **Skip to services**.
 - **Light or dark:** the board follows your system appearance, and switches with it.
-- **Reduce glass** in **Settings and shortcuts** turns the frosted panels solid, stops the background drifting and drops the glass lenses, for easier reading or an older phone. Safari does not tell web pages about the system's Reduce Transparency setting, so the board has its own switch; browsers that do pass it on get the same result without it. The choice is kept in this browser.
-- **Tilt lighting** in **Settings and shortcuts**, on phones and tablets (iPhone, iPad, Android), makes the light on the glass follow how you tilt the device. It is off until you switch it on, because iOS asks for motion access first; it pauses under Reduce glass and Reduce Motion, and the choice is kept in this browser. On iPhone and iPad, Safari asks again after it has been closed; the board says so, and a tap turns it back on.
-- **Scroll down** and the search field docks into a floating bar at the top of the screen, beside the live signal, **Alerts** (where supported) and **Refresh** (and, on a wide screen, the headline).
+- **Background** in **Settings** is **Quiet** (flat paper, the default), **Glass** (frosted panels over a still glow) or **Full** (adds the slow drift, the glass lenses and a light that follows your pointer). The choice is kept in this browser.
+- **Reduce glass** in **Settings** turns any of those solid: panels opaque, nothing blurred, the background gone, for easier reading or an older phone. Safari does not tell web pages about the system's Reduce Transparency setting, so the board has its own switch; browsers that do pass it on get the same result without it. The choice is kept in this browser.
+- **Tilt lighting** in **Settings**, on phones and tablets (iPhone, iPad, Android), makes the light on the glass follow how you tilt the device. It is off until you switch it on, because iOS asks for motion access first; it needs the Glass or Full background, pauses under Reduce glass and Reduce Motion, and the choice is kept in this browser. On iPhone and iPad, Safari asks again after it has been closed; the board says so, and a tap turns it back on.
+- **Scroll down** and the search field docks into a floating bar at the top of the screen, beside the verdict in short ("2 need a look"), when the board was last checked, and the **Notifications** and **Refresh** icon buttons (Notifications where supported).
 - **Add to Home Screen** in Safari's share menu to open the board full screen, with its own icon, like an app.
-- **Know how fresh it is:** the board pulls a snapshot every two minutes, 15 to 30 seconds after each two-minute mark, by when a request can start a new collection, and the countdown ends when it does. The headline says when the snapshot on screen was taken ("as of 14:05 UTC"). If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did; a snapshot already more than half an hour old when the page opens shows **Stale** straight away.
-- **See how long an incident has run:** a card shows when the vendor says it began, such as "since 14:05 UTC · 2h 10m", or when planned maintenance is due, such as "scheduled for 22:00 UTC".
-- **Read the Board log** to see what changed between two-minute slots.
+- **Know how fresh it is:** the board pulls a snapshot every two minutes, 15 to 30 seconds after each two-minute mark, by when a request can start a new collection, and the countdown ends when it does. The live line under the headline says when the snapshot on screen was taken ("Checked 14:05 UTC · next in 1:52"), in your own time zone once the page has loaded and in UTC before that; hover a time for the full UTC moment. If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did; a snapshot already more than half an hour old when the page opens shows **Stale** straight away.
+- **See how long an incident has run:** a card shows when the vendor says it began, such as "since 14:05 UTC (2h 10m)", or when planned maintenance is due, such as "scheduled for 22:00 UTC".
+- **Read Recent changes**, at the foot of the board, to see what changed in the last checks made on this device.
 - **Press Refresh** to skip the cache and ask every vendor right now. Presses within 15 seconds of the last check reuse it.
-- **Switch on the bell** for a browser notification when a service changes while the tab is in the background.
+- **Switch on Notifications** (the bell) for a browser notification when a service changes while the tab is in the background.
 - **Open any card's vendor page** for the full story.
 
 A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 npm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
@@ -320,7 +326,7 @@ Tick these off as each step is done:
 ## FAQ
 
 <details>
-<summary><strong>Every card says Unknown. What is wrong?</strong></summary>
+<summary><strong>Every service says No data. What is wrong?</strong></summary>
 
 <br>
 
@@ -329,11 +335,11 @@ The server cannot reach the vendors. The collectors run on the machine that serv
 </details>
 
 <details>
-<summary><strong>One card says Unknown. Is the vendor down?</strong></summary>
+<summary><strong>One service says No data. Is the vendor down?</strong></summary>
 
 <br>
 
-Not necessarily. Unknown means Status Page could not read that vendor's source: it timed out, returned an error, sent more than 4 MiB, or changed its format. The card shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure, the vendor host and how many bytes it read (a source that reads cleanly logs `collector_completed` with its latency and size instead). An hourly job in this repository calls every source and opens an issue when one stays unreadable. If a card disagrees with the vendor's own page, [report it](https://github.com/greenblacked/status-page/issues/new?template=wrong-status.yml).
+Not necessarily. No data (`unknown` in the API) means Status Page could not read that vendor's source: it timed out, returned an error, sent more than 4 MiB, or changed its format. The row shows the reason, and the server logs one `collector_failed` JSON line with the service, the kind of failure, the vendor host and how many bytes it read (a source that reads cleanly logs `collector_completed` with its latency and size instead). An hourly job in this repository calls every source and opens an issue when one stays unreadable. If the board disagrees with the vendor's own page, [report it](https://github.com/greenblacked/status-page/issues/new?template=wrong-status.yml).
 
 </details>
 

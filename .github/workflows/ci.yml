@@ -46,6 +46,10 @@ jobs:
       - name: Repository hygiene
         run: ./scripts/ci/hygiene.sh
 
+      # The design tokens are the only source of type, radius, material and colour.
+      - name: Design tokens
+        run: ./scripts/ci/tokens.sh
+
       - name: Documentation links
         run: ./scripts/ci/links.sh
 
@@ -162,14 +166,14 @@ jobs:
           retention-days: 1
 
   e2e:
-    # One shard per engine family and device. Every project runs the same 97
-    # tests (485 in all), but WebKit is several times slower than Chromium in
+    # One shard per engine family and device. Every project runs the same 134
+    # tests (670 in all), but WebKit is several times slower than Chromium in
     # CI, so the two Chromium projects share a shard and each WebKit project
     # gets its own. Together the shards run every project exactly once.
     name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Per shard: at most 194 tests on one engine (Chromium) or 97 on WebKit,
+    # Per shard: at most 268 tests on one engine (Chromium) or 134 on WebKit,
     # plus the browser and its system libraries to install.
     timeout-minutes: 20
     strategy:

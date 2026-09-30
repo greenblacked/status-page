@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  BAR_RISE,
   createDockStore,
   DOCK_REST,
   type DockGeometry,
   dockFrame,
   dockGeometry,
   PHONE_GAP,
-  PHONE_RANGE,
   WIDE_BAR_AT,
   WIDE_RANGE,
 } from "./dock";
@@ -97,24 +97,109 @@ describe("dockGeometry", () => {
     expect(g).toEqual({ start: 952, range: 48, barStart: 1000, hysteresis: 0 });
   });
 
-  it("on a phone, merges over PHONE_RANGE px and raises the bar early, clear of the field", () => {
+  it("on a phone, raises the bar early and alone, then merges once the field reaches the bar's bottom edge", () => {
     const g = dockGeometry({ ...measured, wide: false, reduce: false });
-    expect(g).toEqual({ start: 944, range: 56, barStart: 934, hysteresis: 8 });
-    expect(PHONE_RANGE).toBe(56);
-    expect(PHONE_GAP).toBe(20);
+    // The bar at 1000 - (48 + 24 - 2); the merge when the field's top (pin + end - y) meets the bar's bottom (56): y = 954.
+    expect(g).toEqual({ start: 954, range: 46, barStart: 930, hysteresis: 8 });
+    expect(PHONE_GAP).toBe(24);
+    // Alone for PHONE_GAP px of scrolling, then a merge of at least 46.
+    expect(g.start - g.barStart).toBe(PHONE_GAP);
+    expect(g.range).toBeGreaterThanOrEqual(46);
   });
 
   it("on a phone, the bar comes up earlier the taller it is", () => {
     const short = dockGeometry({ ...measured, wide: false, reduce: false, barHeight: 40 });
     const tall = dockGeometry({ ...measured, wide: false, reduce: false, barHeight: 64 });
-    expect(short.barStart).toBe(942);
-    expect(tall.barStart).toBe(918);
+    expect(short.barStart).toBe(938);
+    expect(tall.barStart).toBe(914);
   });
 
   it("on a phone, the gap counts from where the field pins relative to the bar's own top", () => {
     const g = dockGeometry({ end: 500, wide: false, reduce: false, pin: 16, barTop: 4, barHeight: 48 });
-    // 500 - (48 + 20 - (16 - 4))
-    expect(g.barStart).toBe(444);
+    // 500 - (48 + 24 - (16 - 4))
+    expect(g.barStart).toBe(440);
+  });
+
+  it("on a phone, keeps the usual moment while the hero's last line ends well above the field", () => {
+    // The line clears the bar (top 8, less the 8 it slides down) at 920 - 0 = 920, before the usual 930.
+    const roomy = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 920 });
+    expect(roomy).toEqual({ start: 954, range: 46, barStart: 930, hysteresis: 8 });
+  });
+
+  it("on a phone, holds the bar back until the hero's last line has scrolled clear of where it slides in", () => {
+    // The line ends at 986, so it is clear of the bar (top 8, less the 8 it slides down) at 986, after the usual 930.
+    const g = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 986 });
+    expect(BAR_RISE).toBe(8);
+    expect(g.barStart).toBe(986);
+    // The merge starts with the bar, over the scrolling that is left.
+    expect(g.start).toBe(986);
+    expect(g.range).toBe(14);
+    expect(g.hysteresis).toBe(8);
+  });
+
+  it("on a phone, with the spacing the page gives it, the bar and the merge each get their own stretch", () => {
+    // The live line ends barHeight + BAR_RISE + PHONE_GAP above the field (its top is end + pin), on a phone
+    // 375, 390, 412 or 430 wide alike: the geometry depends on none of the width.
+    const fieldTop = measured.end + measured.pin;
+    const contentBottom = fieldTop - (measured.barHeight + BAR_RISE + PHONE_GAP);
+    const g = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom });
+    // The line clears the bar exactly when the field is PHONE_GAP under the bar's bottom edge: nothing waits.
+    expect(g.barStart).toBe(measured.end - (measured.barHeight + PHONE_GAP - (measured.pin - measured.barTop)));
+    expect(g).toEqual(dockGeometry({ ...measured, wide: false, reduce: false }));
+    // The bar is up alone for PHONE_GAP px of scrolling, then the field merges over the rest of its way to the bar.
+    expect(g.start - g.barStart).toBe(PHONE_GAP);
+    expect(g.start).toBe(measured.end - (measured.barHeight - (measured.pin - measured.barTop)));
+    expect(g.range).toBe(46);
+    // On an iPhone with a notch, the bar and the pin both move down by the safe area, and nothing changes.
+    const notch = { ...measured, pin: measured.pin + 47, barTop: measured.barTop + 47 };
+    const withNotch = dockGeometry({
+      ...notch,
+      wide: false,
+      reduce: false,
+      contentBottom: notch.end + notch.pin - (notch.barHeight + BAR_RISE + PHONE_GAP),
+    });
+    expect(withNotch).toEqual(g);
+  });
+
+  it("on a phone, the field is a clear PHONE_GAP under the bar's bottom edge where the bar comes up, and level with the page until then", () => {
+    const g = dockGeometry({ ...measured, wide: false, reduce: false });
+    // The field's top in the viewport at scroll y is (end + pin) - y until it pins.
+    const fieldTopAt = (y: number) => measured.end + measured.pin - y;
+    const barBottom = measured.barTop + measured.barHeight;
+    expect(fieldTopAt(g.barStart) - barBottom).toBe(PHONE_GAP);
+    // The merge starts with the field's top just at the bar's bottom edge, and ends with it at its pin.
+    expect(fieldTopAt(g.start)).toBe(barBottom);
+    expect(fieldTopAt(g.start + g.range)).toBe(measured.pin);
+    // Bar first: at every scroll before the merge the frame has the bar up (past barStart) and the field not moving.
+    for (let y = g.barStart; y <= g.start; y += 1) {
+      const frame = dockFrame(y, g, false, { barShown: false, docked: false });
+      expect(frame.barShown).toBe(true);
+      expect(frame.p).toBe(0);
+    }
+    expect(dockFrame(g.barStart - 1, g, false, { barShown: false, docked: false }).barShown).toBe(false);
+  });
+
+  it("on a phone at a larger text size, the merge still starts below the bar, and the bar still has PHONE_GAP px to itself", () => {
+    // A 32px root: the bar is 96px tall and 16px from the top, the field pins 2px under that.
+    const big = { end: 1000, pin: 18, barTop: 16, barHeight: 96 };
+    const g = dockGeometry({ ...big, wide: false, reduce: false });
+    expect(g.start - g.barStart).toBe(PHONE_GAP);
+    const fieldTopAt = (y: number) => big.end + big.pin - y;
+    expect(fieldTopAt(g.barStart) - (big.barTop + big.barHeight)).toBe(PHONE_GAP);
+    expect(fieldTopAt(g.start)).toBe(big.barTop + big.barHeight);
+    expect(g.range).toBe(94);
+  });
+
+  it("on a phone, never starts the merge before the bar is up, nor lets its range reach zero", () => {
+    const late = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 1100 });
+    expect(late.start).toBe(late.barStart);
+    expect(late.range).toBe(1);
+  });
+
+  it("on a wide screen, ignores the hero's last line", () => {
+    expect(dockGeometry({ ...measured, wide: true, reduce: false, contentBottom: 990 })).toEqual(
+      dockGeometry({ ...measured, wide: true, reduce: false }),
+    );
   });
 
   it("on a phone, Reduce Motion changes nothing: the bar is already clear of the field", () => {

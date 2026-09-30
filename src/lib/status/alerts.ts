@@ -1,8 +1,23 @@
 import { type PulseChange, releaseChange } from "./diff.ts";
-import { healthLabel } from "./health.ts";
 import type { BoardSnapshot, Health, ServiceId } from "./types.ts";
 
 export type AlertMessage = { title: string; body: string; tag: string };
+
+/** One sentence shape for a state a service moved into: "Grok is degraded", "Steam is down". */
+function alertTitle(name: string, to: Health): string {
+  switch (to) {
+    case "degraded":
+      return `${name} is degraded`;
+    case "outage":
+      return `${name} is down`;
+    case "maintenance":
+      return `${name} is in maintenance`;
+    case "unknown":
+      return `Couldn't read ${name}`;
+    default:
+      return `${name} is back`;
+  }
+}
 
 /**
  * The browser notification for one change between two boards. `tag` is the
@@ -12,10 +27,10 @@ export type AlertMessage = { title: string; body: string; tag: string };
 export function alertFor(change: PulseChange): AlertMessage {
   const title =
     change.from === change.to
-      ? `${change.name}: new release`
+      ? `New release: ${change.name}`
       : change.to === "operational"
-        ? `${change.name} recovered`
-        : `${change.name}: ${healthLabel(change.to)}`;
+        ? `${change.name} is back`
+        : alertTitle(change.name, change.to);
   return { title, body: change.summary, tag: `status-bar:${change.id}` };
 }
 

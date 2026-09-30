@@ -1,29 +1,17 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { CATALOG } from "../src/lib/status/catalog.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
-import { fixtureBoard, serveBoard } from "./fixture-board";
+import { calmBoard, fixtureBoard, serveBoard } from "./fixture-board";
 
 const SERVICES = 14;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
-/** The cards of one board group: "attention", "operational" or "releases". */
-const group = (page: Page, id: "attention" | "operational" | "releases") =>
-  page.locator(`section[aria-labelledby="${id}-heading"] article[id^="service-"]`);
-
-/**
- * Waits out every card's fade-in. A card mid-animation is partly transparent,
- * and axe would measure its text at that opacity instead of the colour it
- * settles on.
- */
-async function cardsSettled(page: Page): Promise<void> {
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((animation) => (animation as CSSAnimation).animationName === "rise-in")
-        .map((animation) => animation.finished.catch(() => undefined)),
-    ),
-  );
-}
+/** The services of one board group: "attention", "unread" (Couldn't read), "up" (every category's list) or "releases". */
+const group = (page: Page, id: "attention" | "unread" | "up" | "releases") =>
+  page.locator(`[data-group="${id}"] article[id^="service-"]`);
+/** The healthy services of one category's list, such as "ai". */
+const upList = (page: Page, category: string) =>
+  page.locator(`section[aria-labelledby="up-${category}-heading"] article[id^="service-"]`);
 
 /**
  * Waits until React has hydrated the page. The server's markup, cards
@@ -204,8 +192,8 @@ function watchConsole(page: Page): string[] {
 test("renders every service with no console errors or hydration warnings", async ({ page }) => {
   const problems = watchConsole(page);
   await page.goto("/");
-  // After hydration the title leads with how many services need attention: "(2) Status Page".
-  await expect(page).toHaveTitle(/^(\(\d+\) )?Status Page$/);
+  // After hydration the title leads with how many services need attention: "(2) Status".
+  await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   await expect(cards(page)).toHaveCount(SERVICES);
   // Hydration runs after the first paint; give React time to complain.
   await page.waitForLoadState("networkidle");
@@ -215,7 +203,10 @@ test("renders every service with no console errors or hydration warnings", async
 test("has no serious or critical accessibility violations", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await cardsSettled(page);
+  // Cards no longer rise in one after another: no stagger animation is ever started.
+  expect(
+    await page.evaluate(() => document.getAnimations().some((a) => (a as CSSAnimation).animationName === "rise-in")),
+  ).toBe(false);
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
@@ -275,8 +266,8 @@ test("opens with the search from the address and announces a new result count", 
 
   await search.fill("");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await expect(page.getByRole("status").filter({ hasText: "services shown" })).toHaveText(
-    `${SERVICES} of ${SERVICES} services shown`,
+  await expect(page.getByRole("status").filter({ hasText: "Showing" })).toHaveText(
+    `Showing ${SERVICES} of ${SERVICES}`,
   );
   expect(new URL(page.url()).search).toBe("");
 });
@@ -293,7 +284,7 @@ test("carries the Apple device head tags, with the icon and manifest served", as
   await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/);
   await expect(page.locator('meta[name="theme-color"][media*="light"]')).toHaveCount(1);
   await expect(page.locator('meta[name="theme-color"][media*="dark"]')).toHaveCount(1);
-  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Status Page");
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute("content", "Status");
   for (const rel of ["apple-touch-icon", "manifest"]) {
     const link = page.locator(`link[rel="${rel}"]`);
     await expect(link).toHaveCount(1);
@@ -321,12 +312,38 @@ function backdropFilters(page: Page, selector: string): Promise<string[]> {
   );
 }
 
-test("blurs the glass panels and never the whisper surfaces", async ({ page }) => {
+// The panel classes are .surface, .control and .float.
+const PANELS = ".surface";
+const CONTROLS = ".control";
+const BARS = ".float";
+
+test("Quiet, the default background, blurs no panel and no control, only the floating bar", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  const glass = await backdropFilters(page, ".glass");
+  await hydrated(page);
+  const panels = await backdropFilters(page, PANELS);
+  expect(panels.length).toBeGreaterThan(0);
+  expect(panels.filter((value) => value !== "none")).toEqual([]);
+  const controls = await backdropFilters(page, CONTROLS);
+  expect(controls.length).toBeGreaterThan(0);
+  expect(controls.filter((value) => value !== "none")).toEqual([]);
+  // The bar is the one translucent layer: hidden it holds no blur, up it blurs.
+  const bar = page.locator('section[aria-label="Board controls"]');
+  expect((await backdropFilters(page, BARS)).filter((value) => value !== "none")).toEqual([]);
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  expect((await backdropFilters(page, BARS)).some((value) => value.includes("blur("))).toBe(true);
+});
+
+test("Glass blurs the panels and never the whisper surfaces", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("status-bar:background", "glass"));
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await expect(page.locator("html")).toHaveAttribute("data-background", "glass");
+  const glass = await backdropFilters(page, PANELS);
   expect(glass.some((value) => value.includes("blur("))).toBe(true);
-  const whisper = await backdropFilters(page, ".glass-whisper");
+  const whisper = await backdropFilters(page, CONTROLS);
   expect(whisper.length).toBeGreaterThan(0);
   expect(whisper.filter((value) => value !== "none")).toEqual([]);
 });
@@ -436,6 +453,8 @@ type DockStop = {
   shown: string | null;
   docking: boolean;
   liveBottom: number;
+  /** Where the hero's last line ends: the live line on a phone, the headline's sentence beside it from 48rem. */
+  contentBottom: number;
   barTop: number;
   barBottom: number;
   fieldTop: number;
@@ -538,6 +557,8 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
       const field = document.querySelector<HTMLElement>(".search-field");
       const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
       const live = document.querySelector<HTMLElement>('[data-testid="live-bar"]');
+      const hero = document.querySelector<HTMLElement>(".board-body")?.previousElementSibling ?? null;
+      const heroPad = hero ? Number.parseFloat(getComputedStyle(hero).paddingBottom) : 0;
       const chips = document.querySelector<HTMLElement>(".board-chips");
       const chip = chips?.querySelector<HTMLElement>("button") ?? null;
       const seen: DockStop[] = [];
@@ -569,6 +590,7 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           shown: bar?.getAttribute("data-shown") ?? null,
           docking: dock?.hasAttribute("data-docking") ?? false,
           liveBottom: live?.getBoundingClientRect().bottom ?? 0,
+          contentBottom: (hero?.getBoundingClientRect().bottom ?? 0) - heroPad,
           barTop: bar?.getBoundingClientRect().top ?? 0,
           barBottom: bar?.getBoundingClientRect().bottom ?? 0,
           fieldTop: field?.getBoundingClientRect().top ?? 0,
@@ -633,6 +655,9 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
   return sweep.stops;
 }
 
+/** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up (PHONE_GAP in dock.ts). */
+const PHONE_GAP = 24;
+
 /** The scroll offsets at which the dock changes, worked out from the page the way useSearchDock does. */
 type DockOffsets = {
   /** From 64rem the field shares a row with the chips and moves in one go. */
@@ -664,10 +689,12 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
     const moveStart = moveEnd - 48;
     return { wide, natural, barStart: reduced ? moveEnd : moveStart + 0.67 * 48, moveStart, moveEnd };
   }
-  // The bar is fixed and comes up while the field is still 20px below its bottom edge; the field merges into it
-  // over its last 56px before the pin.
-  const barStart = moveEnd - (barHeight + 20 - (dockStick - barStick));
-  return { wide, natural, barStart, moveStart: moveEnd - 56, moveEnd };
+  // The bar is fixed and comes up on its own while the field is still PHONE_GAP px below its bottom edge (the
+  // page's spacing puts the live line just out from under the sliding bar at the same moment: a test of its own
+  // checks that). The field then rises 1:1 with the page and merges into the bar once it has risen to the bar's
+  // bottom edge, over what is left of the way to its pin.
+  const barStart = moveEnd - (barHeight + PHONE_GAP - (dockStick - barStick));
+  return { wide, natural, barStart, moveStart: moveEnd - (barHeight - (dockStick - barStick)), moveEnd };
 }
 
 /**
@@ -693,7 +720,7 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
-  await expect(page.getByTestId("live-bar")).toContainText("last check");
+  await expect(page.getByTestId("live-bar")).toContainText("Checked");
 
   // Down a few pixels at a time: at the first stop where the bar shows, the live
   // bar's text must already be above it, not sliding under or beside it.
@@ -716,7 +743,10 @@ test("brings the bar up on its own first, then merges the field into it", async 
   const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field shares a row with the chips and moves in one go");
 
-  const { up } = await dockPath(page);
+  // The bar has scrolling to itself, long enough for its fade (250ms) to be well under way before the merge.
+  expect(moveStart - barStart, "the stretch the bar is alone").toBeGreaterThanOrEqual(PHONE_GAP - 0.5);
+
+  const { up } = await dockPath(page, 2);
   const stops = await sweepDock(page, up);
   const firstShown = stops.findIndex((stop) => stop.shown === "true");
   const firstMoving = stops.findIndex((stop) => stop.dock > 0);
@@ -775,6 +805,134 @@ test("brings the bar up on its own first, then merges the field into it", async 
   expect(docked?.fieldTop).toBeLessThanOrEqual((docked?.barBottom ?? 0) + 0.5);
 });
 
+test("leaves the bar room to come up on its own under the hero's last line, at every width below 64rem", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  test.slow();
+  for (const { width, rootPx } of [
+    { width: 375, rootPx: 16 },
+    { width: 390, rootPx: 16 },
+    { width: 412, rootPx: 16 },
+    { width: 430, rootPx: 16 },
+    { width: 768, rootPx: 16 },
+    { width: 900, rootPx: 16 },
+    { width: 430, rootPx: 32 },
+  ]) {
+    const at = `at ${width}px, ${rootPx}px text`;
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    if (rootPx !== 16) {
+      await page.evaluate((px) => {
+        document.documentElement.style.fontSize = `${px}px`;
+      }, rootPx);
+      // The dock measures again when the hero and the bar change size.
+      await page.waitForTimeout(400);
+    }
+    // The field is sticky: measure it at the top of the page, not where the last width left the scroll.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
+    // The spacing under the hero's last line (the live line on a phone) is the bar's height, the 8px it slides
+    // in from and PHONE_GAP: the smallest gap at which the bar can come up clear of that line with the field
+    // still PHONE_GAP below it, and about 80px at a 16px root.
+    const { gap, barHeight } = await page.evaluate(() => {
+      const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
+      const field = document.querySelector(".search-field") as HTMLElement;
+      const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+      const last = hero.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(hero).paddingBottom);
+      return { gap: field.getBoundingClientRect().top - last, barHeight: bar.offsetHeight };
+    });
+    expect(gap, at).toBeGreaterThanOrEqual(barHeight + 8 + PHONE_GAP - 1);
+    expect(gap, at).toBeLessThanOrEqual(barHeight + 8 + PHONE_GAP + 2);
+    if (rootPx === 16) expect(gap, at).toBeLessThanOrEqual(88);
+    // The bar is alone for at least 24px of scrolling, and the merge has at least 46px.
+    expect(moveStart - barStart, at).toBeGreaterThanOrEqual(24 - 0.5);
+    expect(moveEnd - moveStart, at).toBeGreaterThanOrEqual(46 - 0.5);
+
+    const { up } = await dockPath(page, 2);
+    const stops = await sweepDock(page, up);
+    const shown = stops.filter((stop) => stop.shown === "true");
+    const first = shown[0];
+    expect(first, `${at}: the bar never showed`).toBeDefined();
+    // (a) It comes up with only itself on screen: the field entirely below its bottom edge, with a visible gap,
+    // the hero's last line already out from under it, and the field not yet moving.
+    expect(first?.dock, at).toBe(0);
+    expect(first?.fieldTop ?? 0, at).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 16);
+    for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
+    for (const stop of shown.filter((stop) => stop.dock === 0)) {
+      expect(stop.fieldTop, `${at}, ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
+    }
+    // Measured off the sweep, not worked out: the bar is up and the field still at 0 for a real stretch.
+    const firstMoving = stops.find((stop) => stop.dock > 0);
+    const docked = stops.find((stop) => stop.dock === 1);
+    expect(
+      firstMoving && first ? firstMoving.scrollY - first.scrollY : 0,
+      `${at}: the bar alone`,
+    ).toBeGreaterThanOrEqual(22);
+    // (b) The field rises 1:1 with the page the whole way, merging or not, until it reaches its pin.
+    for (const stop of stops.filter((stop) => stop.scrollY <= moveEnd)) {
+      expect(stop.fieldTop, `${at}, ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
+    }
+    // (c) The merge is a real stretch of scrolling: --dock leaves 0 within a few px of moveStart, and reaches 1
+    // within a few px of moveEnd, never after it.
+    const merging = stops.filter((stop) => stop.dock > 0 && stop.dock < 1);
+    expect(merging.length, at).toBeGreaterThan(10);
+    expect(firstMoving?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
+    expect(firstMoving?.scrollY ?? 0, at).toBeLessThanOrEqual(moveStart + 6);
+    expect(docked?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveEnd - 6);
+    expect(docked?.scrollY ?? Number.POSITIVE_INFINITY, at).toBeLessThanOrEqual(moveEnd + 2);
+    expect((docked?.scrollY ?? 0) - (firstMoving?.scrollY ?? 0), `${at}: the merge`).toBeGreaterThanOrEqual(46 - 6);
+  }
+});
+
+test("keeps the bar's buttons clear of the field under Reduce Motion on a phone", async ({ page }) => {
+  test.slow();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field shares a row with the chips");
+  // Under Reduce Motion the field snaps into the bar at moveEnd, so until then it is full width and rises
+  // through the bar's own place: it must be under the bar, not over its buttons.
+  const stops = await page.evaluate(
+    async ({ from, to }) => {
+      const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+      const field = document.querySelector(".search-field") as HTMLElement;
+      const refresh = [...bar.querySelectorAll("button")].find((button) =>
+        /^Refresh/.test(button.getAttribute("aria-label") ?? button.textContent ?? ""),
+      );
+      if (!refresh) throw new Error("no Refresh button in the bar");
+      const seen: { y: number; shown: string | null; hits: boolean; overlaps: boolean; docked: boolean }[] = [];
+      for (let y = from; y <= to; y += 2) {
+        window.scrollTo(0, y);
+        await frame();
+        await frame();
+        const box = refresh.getBoundingClientRect();
+        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+        const fieldBox = field.getBoundingClientRect();
+        seen.push({
+          y,
+          shown: bar.getAttribute("data-shown"),
+          hits: Boolean(hit && refresh.contains(hit)),
+          overlaps: fieldBox.top < bar.getBoundingClientRect().bottom && fieldBox.right > box.left,
+          docked: document.querySelector(".search-dock")?.hasAttribute("data-docking") ?? false,
+        });
+      }
+      return seen;
+    },
+    { from: Math.round(moveEnd - 120), to: Math.round(moveEnd + 30) },
+  );
+  const shown = stops.filter((stop) => stop.shown === "true");
+  expect(shown.length).toBeGreaterThan(20);
+  // Not vacuous: the full-width field does rise through the bar's place before it snaps in.
+  expect(stops.filter((stop) => stop.overlaps && !stop.docked).length).toBeGreaterThan(5);
+  for (const stop of shown) expect(stop.hits, `Refresh at ${stop.y}`).toBe(true);
+});
+
 test("keeps the bar up while the page hovers just above where it appears", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -805,12 +963,17 @@ test("changes the search placeholder only where the field is at rest", async ({ 
   const stops = await sweepDock(page, path);
   const half = stops.length / 2;
   const long = "Search GCP, CS2 Europe, RouterOS…";
-  // Down, it is the long one until the field is in the bar; back up, the short one until it is out.
+  // At rest it is the long one where the field has room for it, and the short one in the 200px margin column of
+  // a wide screen. Either way it never changes part way: down, it changes only once the field is in the bar,
+  // and back up only once the field is out of it.
+  const rest = stops[0].placeholder;
+  expect(stops[0].dock).toBe(0);
+  expect([long, "Search…"]).toContain(rest);
   for (const stop of stops.slice(0, half)) {
-    expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : long);
+    expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : rest);
   }
   for (const stop of stops.slice(half)) {
-    expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? long : "Search…");
+    expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? rest : "Search…");
   }
 });
 
@@ -822,7 +985,7 @@ test("never clips the search placeholder, at any width", async ({ page }, testIn
   const search = page.getByRole("searchbox", { name: "Search services" }).or(page.getByLabel("Search services"));
   const long = "Search GCP, CS2 Europe, RouterOS…";
   for (const [width, placeholder] of [
-    [1280, long],
+    [1280, "Search…"],
     [1100, "Search…"],
     [1024, "Search…"],
     [768, long],
@@ -1061,33 +1224,36 @@ test("sets the search field at 16px on a touch screen, so iPhone does not zoom i
   expect(Number.parseFloat(size)).toBeGreaterThanOrEqual(16);
 });
 
-test("renders healthy services as full cards, alike whether or not the vendor lists components", async ({ page }) => {
+test("renders healthy services as rows, alike whether or not the vendor lists components", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
 
-  // The heading's count and the cards under it agree.
-  const operational = group(page, "operational");
-  const total = await operational.count();
+  // Each category's heading counts the rows under it.
+  const up = group(page, "up");
+  const total = await up.count();
   expect(total).toBeGreaterThan(0);
-  await expect(page.locator("#operational-heading")).toContainText(String(total));
+  const counts = await page.locator('[data-group="up"] h2').allTextContents();
+  expect(counts.reduce((sum, text) => sum + Number(text.replace(/\D/g, "")), 0)).toBe(total);
 
   for (const id of ["chatgpt", "claude", "grok"] as const) {
     const service = board.services.find((item) => item.id === id);
     if (!service) throw new Error(`the fixture has no ${id}`);
     const card = page.locator(`article#service-${id}`);
-    // In the Operational group, not a one-line tile in a group of its own.
-    await expect(operational.and(card), `${id} sits in Operational`).toHaveCount(1);
-    // The same parts on every one: name, badge, star, link to the official source.
+    // In a category's list, not a card of its own.
+    await expect(up.and(card), `${id} sits in a list of healthy services`).toHaveCount(1);
+    // The same parts on every one: name, word, star, link to the official source.
     await expect(card.getByRole("heading", { level: 3, name: service.name })).toBeVisible();
-    // The badge in the card header, not the component list's screen-reader-only state words.
+    // The word in the row's header, not the component list's screen-reader-only state words.
     await expect(card.locator("[data-card-header]").getByText("Operational", { exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: `Star ${service.name}` })).toBeVisible();
     await expect(card.locator(`a[href="${service.sourceUrl}"]`)).toBeVisible();
-    // The component list is there when the vendor reports components, and only then.
+    // A row opens to its components when the vendor reports them, and only then.
     const list = card.getByRole("list", { name: "Components" });
     if (service.components.length === 0) {
+      await expect(card.locator("details")).toHaveCount(0);
       await expect(list).toHaveCount(0);
     } else {
+      await card.locator("summary").click();
       await expect(list).toHaveCount(1);
       await expect(list.getByRole("listitem")).toHaveCount(service.components.length);
       for (const component of service.components) {
@@ -1102,20 +1268,21 @@ test("leads Needs attention with the most urgent service and follows the data", 
   await openFixture(page, () => board);
 
   const attention = group(page, "attention");
-  // AWS is an outage, Google Cloud is degraded, Android is unknown, Epic is in maintenance.
-  await expect(attention).toHaveCount(4);
+  // AWS is an outage, Google Cloud is degraded, Epic is in maintenance. Android could not be read: that is its own group.
+  await expect(attention).toHaveCount(3);
   await expect(attention.nth(0)).toHaveAttribute("id", "service-aws");
   await expect(attention.nth(1)).toHaveAttribute("id", "service-gcp");
-  await expect(attention.nth(2)).toHaveAttribute("id", "service-android");
-  await expect(attention.nth(3)).toHaveAttribute("id", "service-epic");
+  await expect(attention.nth(2)).toHaveAttribute("id", "service-epic");
+  await expect(group(page, "unread")).toHaveCount(1);
+  await expect(group(page, "unread").first()).toHaveAttribute("id", "service-android");
 
   // Exactly one card is the highlight, and it is the first.
   const highlight = page.locator('article[data-highlight="true"]');
   await expect(highlight).toHaveCount(1);
   await expect(highlight).toHaveAttribute("id", "service-aws");
-  await expect(highlight).toContainText("Most urgent");
-  // The caption is the card's own first line, not a wrapper around it.
-  await expect(highlight.locator("> p").first()).toHaveText("Most urgent");
+  // No caption crowns it: the attribute is the whole mark. A service that could not be read never carries it.
+  await expect(highlight).not.toContainText("Most urgent");
+  await expect(page.locator("article#service-android")).not.toHaveAttribute("data-highlight");
   // It holds the whole card, not a stub of it.
   await expect(highlight.getByText("Outage", { exact: true }).first()).toBeVisible();
   await expect(highlight.locator('a[href^="https://"]')).toBeVisible();
@@ -1196,7 +1363,6 @@ test("keeps keyboard focus on a Star button when its card becomes the most urgen
   await expect(attention.nth(0)).toHaveAttribute("id", "service-grok");
   await expect(highlight).toHaveCount(1);
   await expect(highlight).toHaveAttribute("id", "service-grok");
-  await expect(highlight).toContainText("Most urgent");
   await expect(page.locator("article#service-gcp")).not.toHaveAttribute("data-highlight");
   await expect(star).toBeFocused();
   expect(
@@ -1235,26 +1401,25 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
 
-  // Attention first, then Operational, then Releases, each with its count.
-  await expect(page.locator("#attention-heading, #operational-heading, #releases-heading")).toHaveText([
-    /Needs attention\s*4/,
-    /Operational\s*\d+/,
-    /Releases\s*\d+/,
-  ]);
+  // Needs a look first, then what could not be read, then one list per category (Cloud is all down here), then Releases.
+  await expect(
+    page.locator('#attention-heading, #unread-heading, [id^="up-"][id$="-heading"], #releases-heading'),
+  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*2/]);
 
-  // Issues only leaves the four attention cards, the highlight among them.
+  // Issues only leaves the three that need a look, the highlight among them: the unreadable
+  // source in the fixture is not an issue, only a source that could not be read.
   const issues = page.getByRole("button", { name: /Issues only/ });
   await issues.click();
-  await expect(cards(page)).toHaveCount(4);
+  await expect(cards(page)).toHaveCount(3);
   await expect(page.locator('article[data-highlight="true"]')).toHaveAttribute("id", "service-aws");
   await issues.click();
   await expect(cards(page)).toHaveCount(SERVICES);
 
-  // A star lifts a healthy card to the head of Operational, but never above a worse service in Needs attention.
+  // A star lifts a healthy row to the head of its category's list, but never above a worse service in Needs a look.
   const starClaude = page.getByRole("button", { name: "Star Claude", exact: true });
   await toggleStar(page, () => starClaude.click());
   await expect(starClaude).toHaveAttribute("aria-pressed", "true");
-  await expect(group(page, "operational").first()).toHaveAttribute("id", "service-claude");
+  await expect(upList(page, "ai").first()).toHaveAttribute("id", "service-claude");
   const starGoogleCloud = page.getByRole("button", { name: "Star Google Cloud", exact: true });
   await toggleStar(page, () => starGoogleCloud.click());
   await expect(starGoogleCloud).toHaveAttribute("aria-pressed", "true");
@@ -1266,7 +1431,8 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
 test("glides a starred card to its place without naming the cards for a view transition", async ({ page }) => {
   await recordAnimations(page);
   await openFixture(page, () => fixtureBoard(Date.now()));
-  const operational = group(page, "operational");
+  // The AI list holds three rows, so the last one travels more than a row's height to the top.
+  const operational = upList(page, "ai");
   const farthest = await operational.last().getAttribute("id");
   const first = await operational.first().getAttribute("id");
   expect(farthest).not.toBe(first);
@@ -1291,7 +1457,7 @@ test("moves a starred card without a glide when the system asks for reduced moti
   await page.emulateMedia({ reducedMotion: "reduce" });
   await recordAnimations(page);
   await openFixture(page, () => fixtureBoard(Date.now()));
-  const operational = group(page, "operational");
+  const operational = upList(page, "ai");
   const farthest = await operational.last().getAttribute("id");
   const before = await cardGlides(page);
   const star = page.locator(`article#${farthest}`).locator("button[aria-pressed]").first();
@@ -1495,20 +1661,20 @@ test("keeps Reduce glass across a reload", async ({ page }) => {
   const html = page.locator("html");
   await expect(html).not.toHaveAttribute("data-reduce-transparency");
 
-  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   const toggle = page.getByRole("switch", { name: "Reduce glass" });
   await expect(toggle).toHaveAttribute("aria-checked", "false");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await expect(html).toHaveAttribute("data-reduce-transparency", "true");
-  expect((await backdropFilters(page, ".glass")).filter((value) => value !== "none")).toEqual([]);
+  expect((await backdropFilters(page, PANELS)).filter((value) => value !== "none")).toEqual([]);
 
   const problems = watchConsole(page);
   await page.reload();
   await expect(html).toHaveAttribute("data-reduce-transparency", "true");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Reduce glass" })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("switch", { name: "Reduce glass" }).click();
   await expect(html).not.toHaveAttribute("data-reduce-transparency");
@@ -1554,36 +1720,40 @@ async function contrastFailures(page: Page): Promise<string[]> {
 
 // On the fixture board, so every status colour, badge, incident time and
 // the Stale state are on screen, whatever the vendors say during the run.
-for (const colorScheme of ["light", "dark"] as const) {
-  for (const contrast of ["no-preference", "more"] as const) {
-    const name = `${colorScheme}${contrast === "more" ? ", Increase Contrast" : ""}`;
-    test(`keeps every text colour at AA on the flat fills alone (${name})`, async ({ page }) => {
-      await page.clock.install();
-      const board = fixtureBoard(Date.now());
-      await serveBoard(page, () => board);
-      await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
-      await page.goto("/");
-      await expect(cards(page)).toHaveCount(SERVICES);
-      await hydrated(page);
-      await page.getByRole("button", { name: "Refresh status now" }).first().click();
-      for (const label of ["Outage", "Degraded", "Maintenance", "Unknown", "Operational"]) {
-        await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
-      }
-      // Shortly after midnight UTC the fixture's incidents began the day
-      // before, and the card adds their date: "since 27 Sep 21:52 UTC".
-      await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d UTC/).first()).toBeVisible();
-      expect(await contrastFailures(page)).toEqual([]);
+// Quiet is the default; Glass makes the panels translucent, so its flat fills are the ones under test too.
+for (const background of ["quiet", "glass"] as const) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    for (const contrast of ["no-preference", "more"] as const) {
+      const name = `${colorScheme}${contrast === "more" ? ", Increase Contrast" : ""}${background === "glass" ? ", Glass" : ""}`;
+      test(`keeps every text colour at AA on the flat fills alone (${name})`, async ({ page }) => {
+        await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), background);
+        await page.clock.install();
+        const board = fixtureBoard(Date.now());
+        await serveBoard(page, () => board);
+        await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
+        await page.goto("/");
+        await expect(cards(page)).toHaveCount(SERVICES);
+        await hydrated(page);
+        await page.getByRole("button", { name: "Refresh status now" }).first().click();
+        for (const label of ["Outage", "Degraded", "Maintenance", "No data", "Operational"]) {
+          await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
+        }
+        // Shortly after midnight UTC the fixture's incidents began the day
+        // before, and the card adds their date: "since 27 Sep 21:52 UTC".
+        await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d\sUTC/).first()).toBeVisible();
+        expect(await contrastFailures(page)).toEqual([]);
 
-      // Seven minutes on, the same snapshot again: the board says Stale.
-      await page.clock.fastForward("07:00");
-      await expect(page.getByText("Stale", { exact: true })).toBeVisible();
-      expect(await contrastFailures(page)).toEqual([]);
+        // Seven minutes on, the same snapshot again: the board says Stale.
+        await page.clock.fastForward("07:00");
+        await expect(page.getByText("Stale", { exact: true })).toBeVisible();
+        expect(await contrastFailures(page)).toEqual([]);
 
-      // And the settings dialog, with the single-key shortcuts dimmed.
-      await page.getByRole("button", { name: "Settings and shortcuts" }).click();
-      await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
-      expect(await contrastFailures(page)).toEqual([]);
-    });
+        // And the settings dialog, with the single-key shortcuts dimmed.
+        await page.getByRole("button", { name: "Settings", exact: true }).click();
+        await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
+        expect(await contrastFailures(page)).toEqual([]);
+      });
+    }
   }
 }
 
@@ -1607,11 +1777,11 @@ test("renders cards without requesting persistent uptime history", async ({ page
 });
 
 // The board asks for history only in a build made with VITE_STATUS_HISTORY=1
-// (nothing collects any today). These two run only when the runner is given
+// (nothing collects any today). These run only when the runner is given
 // the same VITE_STATUS_HISTORY=1 it built with, and are skipped otherwise;
 // the default build is covered by the test above, which a history build skips.
 // CI's history job builds with the flag and runs them by their @history tag.
-test("shows an uptime strip on a card once /api/history.json has days", { tag: "@history" }, async ({ page }) => {
+test("shows an uptime strip on a service once /api/history.json has days", { tag: "@history" }, async ({ page }) => {
   test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
   const today = new Date();
   const days = Array.from({ length: 10 }, (_, index) => {
@@ -1644,6 +1814,77 @@ test("shows an uptime strip on a card once /api/history.json has days", { tag: "
   // Only the service the document lists gets one.
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(1);
   expect(problems).toEqual([]);
+});
+
+/** A /api/history.json with ten quiet days for each of these services. */
+function historyFor(ids: string[]) {
+  const today = new Date();
+  const days = Array.from({ length: 10 }, (_, index) => ({
+    date: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (9 - index)))
+      .toISOString()
+      .slice(0, 10),
+    worst: "operational",
+    samples: 2,
+    up: 1,
+  }));
+  return {
+    schema: 1,
+    updatedAt: today.toISOString(),
+    timezone: "UTC",
+    retentionDays: 30,
+    services: Object.fromEntries(ids.map((id) => [id, { days }])),
+  };
+}
+
+test("draws the strip on an attention card and on a list row", { tag: "@history" }, async ({ page }) => {
+  test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
+  // In the fixture AWS is in outage (an attention card) and every service without a problem is a row.
+  const body = JSON.stringify(historyFor(["aws", "chatgpt"]));
+  await page.route("**/api/history.json", (route) => route.fulfill({ contentType: "application/json", body }));
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const card = page.locator("#service-aws");
+  await expect(card.getByText("Outage", { exact: true }).first()).toBeVisible();
+  await expect(card.getByRole("img", { name: /uptime history/i })).toBeVisible();
+  const row = page.locator("#service-chatgpt");
+  await expect(row.getByText("Outage", { exact: true })).toHaveCount(0);
+  await expect(row.getByRole("img", { name: /uptime history/i })).toBeVisible();
+  await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(2);
+});
+
+test("keeps an open row open, and its summary focused, when the history arrives", { tag: "@history" }, async ({
+  page,
+}) => {
+  test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
+  // Held back, so the board is up with no days and the strip mounts while the row is being used.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let body = "";
+  await page.route("**/api/history.json", async (route) => {
+    await held;
+    await route.fulfill({ contentType: "application/json", body });
+  });
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  // A row that opens (it lists components), whichever one the fixture makes first.
+  const row = page.locator("article.row:has(details)").first();
+  const id = (await row.getAttribute("id"))?.replace(/^service-/, "") ?? "";
+  expect(id, "the fixture has a row that opens").not.toBe("");
+  body = JSON.stringify(historyFor([id]));
+
+  const summary = row.locator("summary");
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  const details = row.locator("details");
+  await expect(details).toHaveJSProperty("open", true);
+  await expect(summary).toBeFocused();
+  await expect(row.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
+
+  release();
+  await expect(row.getByRole("img", { name: /uptime history/i })).toBeVisible();
+  // The same <details>, not a new one: it is still open and the focus is still in it.
+  await expect(details).toHaveJSProperty("open", true);
+  await expect(summary).toBeFocused();
 });
 
 test("renders cards without a strip when /api/history.json is the empty document", { tag: "@history" }, async ({
@@ -1706,24 +1947,27 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
     "href",
     "https://github.com/greenblacked/status-page/blob/main/LICENSE",
   );
-  await expect(footer).toContainText(
-    "MIT License: free to use, copy, modify and share, with the copyright notice kept.",
-  );
-  await expect(footer).toContainText("This page checks every two minutes; the server reads the official vendor feeds");
+  await expect(footer).toContainText("Not affiliated with any of these vendors");
+  await expect(footer).toContainText("Made and kept by Serhii.");
+  await expect(footer).not.toContainText("every two minutes");
+  await expect(footer.getByRole("link", { name: "JSON" })).toHaveAttribute("href", "/api/status.json");
+  await expect(footer.getByRole("link", { name: "Atom feed" })).toHaveAttribute("href", "/feed.xml");
+  await expect(footer.getByRole("link", { name: "Badges" })).toHaveAttribute("href", "/api/badge/board");
 });
 
-test("puts the footer in a contentinfo landmark outside main, and names the board log", async ({ page }) => {
+test("puts the footer in a contentinfo landmark outside main, and names the recent changes", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   // The role only exists for a footer that is not inside main, an article or a section.
   const footer = page.getByRole("contentinfo");
   await expect(footer).toHaveCount(1);
-  await expect(footer).toContainText("Status Page reads vendor status feeds only");
+  await expect(footer).toBeVisible();
+  await expect(footer).toContainText("Not affiliated with any of these vendors");
   await expect(page.locator("main footer, main dialog")).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Board log" })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Recent changes" })).toHaveCount(1);
   await hydrated(page);
   // The dialog still opens from the footer's button.
-  await footer.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await footer.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
@@ -1754,18 +1998,12 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   await hydrated(page);
   const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
   test.skip(!coarse, "the touch sizes are for a coarse pointer, which this project does not have");
-  // The fixture board has services that need attention, so their chips are on screen.
+  // The fixture board has services that need attention, so its cards and their links are on screen.
   await openFixture(page, () => fixtureBoard(Date.now()));
   const small = await page.evaluate(() => {
     const targets = [
       ...document.querySelectorAll<HTMLElement>(
-        [
-          "header button",
-          '[role="group"][aria-label="Filter services"] button',
-          '[aria-label="Services that need attention"] a',
-          "footer a",
-          "footer button",
-        ].join(","),
+        ["header button", 'section[aria-label="Filter services"] button', "footer a", "footer button"].join(","),
       ),
     ];
     return {
@@ -1779,9 +2017,129 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
         .map(({ name, box }) => `${name}: ${Math.round(box.width)}x${Math.round(box.height)}`),
     };
   });
-  // Not vacuous: two hero buttons (one on an iPhone), the chips, the attention chips and the footer's links.
+  // Not vacuous: two hero buttons (one on an iPhone), the segments and toggles, and the footer's links.
   expect(small.count).toBeGreaterThan(12);
   expect(small.small).toEqual([]);
+
+  // The links in the verdict's sub line sit in running text, so their reach is padding round them (hit-extend)
+  // on lines 46pt apart (hit-lines, a hair over the 44pt box so a neighbour's edge never takes the tap), not the
+  // words' own box: a tap 21px above or below the middle of the words still lands on the link. (The next test
+  // has the sentence wrap, and checks that no two of them overlap.)
+  const sentence = await page.evaluate(() => {
+    const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
+    const boxes = links.map((link) => {
+      link.scrollIntoView({ block: "center" });
+      const box = link.getBoundingClientRect();
+      const x = box.left + box.width / 2;
+      const y = box.top + box.height / 2;
+      return {
+        name: link.textContent?.trim() ?? "",
+        x: x + window.scrollX,
+        y: y + window.scrollY,
+        reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
+        // What answers above and below, for the failure message: the link that took the tap, or what else.
+        seen: [-21.5, 21.5].map((dy) => {
+          const hit = document.elementFromPoint(x, y + dy);
+          return hit === link
+            ? "itself"
+            : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
+        }),
+      };
+    });
+    return boxes;
+  });
+  expect(sentence.length, "the sub line names services").toBeGreaterThan(1);
+  for (const link of sentence)
+    expect(link.reaches, `${link.name} reaches 44px tall (above and below it saw ${link.seen})`).toEqual([true, true]);
+  // Neighbours on one line are well apart (WCAG 2.5.8: 24px between centres).
+  for (const [index, link] of sentence.entries()) {
+    const next = sentence[index + 1];
+    if (next && Math.abs(next.y - link.y) < 4)
+      expect(next.x - link.x, `${link.name} to ${next.name}`).toBeGreaterThan(24);
+  }
+});
+
+test("keeps the tap areas of the verdict's links apart when the sentence wraps", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  test.skip(!coarse, "the tap areas are for a coarse pointer, which this project does not have");
+  // Three services need a look, and their names are long, so the sentence wraps at every width below: some of
+  // the links land on the line under another, and "Google Cloud Platform" is a link that wraps itself.
+  const longNames: Partial<Record<string, string>> = {
+    aws: "Amazon Web Services",
+    gcp: "Google Cloud Platform",
+    grok: "Grok from xAI",
+  };
+  const board = fixtureBoard(Date.now(), { grok: "outage" });
+  await openFixture(page, () => ({
+    ...board,
+    services: board.services.map((service) => ({ ...service, shortName: longNames[service.id] ?? service.shortName })),
+  }));
+
+  let wrapped = false;
+  for (const { width, rootPx } of [
+    { width: 320, rootPx: 16 },
+    { width: 390, rootPx: 16 },
+    { width: 390, rootPx: 24 },
+    { width: 390, rootPx: 32 },
+  ]) {
+    const at = `at ${width}px, ${rootPx}px text`;
+    // Tall, so the whole sentence is on screen at 200% text: elementFromPoint only answers for what is.
+    await page.setViewportSize({ width, height: 2400 });
+    await page.evaluate((px) => {
+      document.documentElement.style.fontSize = `${px}px`;
+    }, rootPx);
+    const links = await page.evaluate(() => {
+      const anchors = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
+      anchors[0]?.scrollIntoView({ block: "center" });
+      return anchors.map((link, index) => {
+        // The words' own boxes, one per line the link is on: Range rects have no padding in them.
+        const range = document.createRange();
+        range.selectNodeContents(link);
+        const fragments = [...range.getClientRects()].filter((box) => box.width > 1);
+        const resolve = (x: number, y: number) => {
+          const hit = document.elementFromPoint(x, y)?.closest("a");
+          return hit ? anchors.indexOf(hit) : -1;
+        };
+        return {
+          name: link.textContent?.trim() ?? "",
+          fragments: fragments.map((box) => {
+            const x = box.left + box.width / 2;
+            return {
+              top: box.top,
+              bottom: box.bottom,
+              // Just inside the words, and a little way past them: both are the link's own.
+              inside: [box.top + 1.5, box.bottom - 1.5].map((y) => resolve(x, y) === index),
+              beyond: [box.top - 8, box.bottom + 8].map((y) => resolve(x, y) === index),
+              // What answers 1.5px from either edge, for the failure message.
+              seen: [box.top + 1.5, box.bottom - 1.5, box.top - 8, box.bottom + 8].map((y) => resolve(x, y)),
+            };
+          }),
+        };
+      });
+    });
+    expect(links.length, `${at}: the sub line names services`).toBeGreaterThan(1);
+    // Not vacuous: the sentence wraps, so some link sits on a line under another, and one link is on two lines.
+    const rows = new Set(links.flatMap((link) => link.fragments.map((fragment) => Math.round(fragment.top / 4))));
+    expect(rows.size, `${at}: the sentence is on more than one line`).toBeGreaterThan(1);
+    wrapped ||= links.some((link) => link.fragments.length > 1);
+    for (const link of links) {
+      expect(link.fragments.length, `${at}: ${link.name} has a box`).toBeGreaterThan(0);
+      for (const fragment of link.fragments) {
+        expect(fragment.inside, `${at}: a tap on the words of ${link.name} (saw links ${fragment.seen})`).toEqual([
+          true,
+          true,
+        ]);
+        expect(fragment.beyond, `${at}: a tap just above and below ${link.name} (saw links ${fragment.seen})`).toEqual([
+          true,
+          true,
+        ]);
+      }
+    }
+  }
+  expect(wrapped, "a link wraps onto a second line at some width").toBe(true);
 });
 
 test("lays the hero out at 200% root text on a phone: no overflow, no overlap", async ({ page }, testInfo) => {
@@ -1798,44 +2156,59 @@ test("lays the hero out at 200% root text on a phone: no overflow, no overlap", 
     await page.setViewportSize({ width, height: 800 });
     await openFixture(page, () => board);
     const layout = await page.evaluate(() => {
-      const box = (selector: string) => {
-        const rect = document.querySelector(selector)?.getBoundingClientRect();
-        if (!rect) throw new Error(`no ${selector}`);
-        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
+      const box = (element: Element | undefined | null, name: string) => {
+        const rect = element?.getBoundingClientRect();
+        if (!rect) throw new Error(`no ${name}`);
+        return { name, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
       };
+      const buttons = [...document.querySelectorAll("header button")].map((button, at) => box(button, `button ${at}`));
       return {
         rootPx: getComputedStyle(document.documentElement).fontSize,
         overflow: document.documentElement.scrollWidth - window.innerWidth,
-        dial: box(".period-dial"),
-        counts: box("section[aria-labelledby='board-headline'] dl"),
-        blurb: box("header p.max-w-xl"),
-        buttons: box("header .shrink-0"),
         viewport: window.innerWidth,
+        dateline: box(document.querySelector("header time"), "dateline"),
+        headline: box(document.querySelector("h1#board-headline"), "headline"),
+        sub: box(document.querySelector("header h1 + p"), "sub"),
+        live: box(document.querySelector('[data-testid="live-bar"]'), "live line"),
+        buttons,
       };
     });
     const at = `at ${width}px`;
     expect(layout.rootPx).toBe("32px");
     expect(layout.overflow, `horizontal overflow ${at}`).toBeLessThanOrEqual(0);
-    // The counts keep their width, and the dial sits below them rather than over them.
-    expect(layout.counts.width, `counts ${at}`).toBeGreaterThan(120);
-    expect(layout.dial.top, `dial under the counts ${at}`).toBeGreaterThanOrEqual(layout.counts.bottom - 1);
-    // The blurb keeps a readable measure, and stays inside the screen with the buttons under it.
-    expect(layout.blurb.width, `blurb ${at}`).toBeGreaterThan(200);
-    expect(layout.blurb.right, `blurb inside the screen ${at}`).toBeLessThanOrEqual(layout.viewport);
-    expect(layout.buttons.top, `buttons under the blurb ${at}`).toBeGreaterThanOrEqual(layout.blurb.bottom - 1);
+    // Everything stays inside the screen, and the headline and its sub line keep a readable measure.
+    for (const part of [layout.dateline, layout.headline, layout.sub, layout.live, ...layout.buttons]) {
+      expect(part.right, `${part.name} inside the screen ${at}`).toBeLessThanOrEqual(layout.viewport + 0.5);
+      expect(part.left, `${part.name} inside the screen ${at}`).toBeGreaterThanOrEqual(-0.5);
+    }
+    expect(layout.headline.width, `headline ${at}`).toBeGreaterThan(200);
+    // Nothing sits over anything else: the dateline, the two buttons, the headline, the sub line and the live line.
+    const parts = [layout.dateline, ...layout.buttons, layout.headline, layout.sub, layout.live];
+    for (const [i, a] of parts.entries()) {
+      for (const b of parts.slice(i + 1)) {
+        const apart =
+          a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5;
+        expect(apart, `${a.name} and ${b.name} overlap ${at}`).toBe(true);
+      }
+    }
   }
 });
 
+// Nothing loops on a Quiet board: with the check done, no animation is left running, whatever the motion setting.
 for (const reducedMotion of ["no-preference", "reduce"] as const) {
-  test(`${reducedMotion === "reduce" ? "stills" : "pulses"} an outage dot ${reducedMotion === "reduce" ? "under" : "without"} reduced motion`, async ({
+  test(`keeps nothing moving on a settled board (${reducedMotion === "reduce" ? "Reduce Motion" : "motion allowed"})`, async ({
     page,
   }) => {
     await page.emulateMedia({ reducedMotion });
     await openFixture(page, () => fixtureBoard(Date.now()));
-    const dot = page.locator('[aria-label="Services that need attention"] .bg-down').first();
-    await expect(dot).toBeVisible();
-    const animation = await dot.evaluate((element) => getComputedStyle(element).animationName);
-    expect(animation).toBe(reducedMotion === "reduce" ? "none" : "pulse");
+    await expect(page.getByTestId("live-bar")).toContainText("Checked");
+    const looping = await page.evaluate(() =>
+      document
+        .getAnimations()
+        .filter((animation) => animation.effect?.getComputedTiming().iterations === Number.POSITIVE_INFINITY)
+        .map((animation) => (animation as CSSAnimation).animationName || animation.id),
+    );
+    expect(looping).toEqual([]);
   });
 }
 
@@ -1873,3 +2246,269 @@ test("keeps the live bar the same height while checking and live at phone widths
     release();
   }
 });
+
+test("reads the board as one sentence in the h1, with the count underlined by hand and the services linked", async ({
+  page,
+}) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const headline = page.getByRole("heading", { level: 1 });
+  await expect(headline).toHaveText("Three things need a look.");
+  await expect(headline).toHaveAttribute("id", "board-headline");
+  // One pen stroke, under the count only, drawn from constants (aria-hidden, no text of its own).
+  await expect(headline.locator("svg.pen-underline")).toHaveCount(1);
+  await expect(headline.locator("svg.pen-underline")).toHaveAttribute("aria-hidden", "true");
+  // The sentence under it names the services and links each to its card.
+  const sub = page.locator("h1 + p");
+  await expect(sub).toContainText("The other ten are running normally.");
+  await expect(sub).toContainText("I couldn't read Android.");
+  const links = sub.getByRole("link");
+  await expect(links).toHaveText(["AWS", "GCP", "Epic", "Android"]);
+  await expect(links.first()).toHaveAttribute("href", "#service-aws");
+  // Nothing hand-written while there is something to look at.
+  await expect(page.getByText("all quiet")).toHaveCount(0);
+  await expect(page.locator("#service-aws svg.pen-loop")).toHaveCount(1);
+});
+
+test("writes all quiet by hand, and says so in words, when all fourteen are up", async ({ page }) => {
+  await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Everything is up.");
+  await expect(page.locator("h1 svg.pen-underline")).toHaveCount(0);
+  const note = page.getByText("all quiet", { exact: true });
+  await expect(note).toBeVisible();
+  await expect(note).toHaveAttribute("aria-hidden", "true");
+  expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
+  await expect(page.getByText("All fourteen services are running normally.")).toHaveClass(/sr-only/);
+  // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
+  await expect(page).toHaveTitle("Status");
+  await expect(group(page, "attention")).toHaveCount(0);
+  await expect(page.locator("[data-highlight]")).toHaveCount(0);
+});
+
+test("keeps Alerts and Refresh as icon buttons with a name and a tooltip", async ({ page }) => {
+  // Not yet asked: headless Chromium (CI's) reports notifications as denied unless told otherwise, which would
+  // make the button the blocked one with another tooltip. Set before the page's scripts read it.
+  await page.addInitScript(() => {
+    if ("Notification" in window) Object.defineProperty(Notification, "permission", { get: () => "default" });
+  });
+  await page.goto("/");
+  await hydrated(page);
+  const refresh = page.locator("header").getByRole("button", { name: "Refresh status now" });
+  await expect(refresh).toHaveAttribute("title", "Refresh status now");
+  await expect(refresh).toHaveText("");
+  const box = await refresh.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(43.5);
+  expect(box?.height).toBeGreaterThanOrEqual(43.5);
+  const alerts = page.locator("header").getByRole("button", { name: "Notifications" });
+  // Where the browser can send them (an iPhone cannot, and has no button at all).
+  if (await alerts.count()) {
+    await expect(alerts).toHaveText("");
+    await expect(alerts).toHaveAttribute("title", "Notify me when a service changes");
+    await expect(alerts).toHaveAttribute("aria-pressed", "false");
+  }
+});
+
+test("shows Alerts as blocked, with the reason, and does nothing when pressed, where notifications are denied", async ({
+  page,
+}) => {
+  // The browser's answer is no, and any request would be seen: nothing should ask.
+  await page.addInitScript(() => {
+    if (!("Notification" in window)) return;
+    Object.defineProperty(Notification, "permission", { get: () => "denied" });
+    const asked: string[] = [];
+    Object.defineProperty(window, "__permissionRequests", { value: asked });
+    Notification.requestPermission = () => {
+      asked.push("requestPermission");
+      return Promise.resolve("denied");
+    };
+  });
+  await page.goto("/");
+  await hydrated(page);
+  const alerts = page.locator("header").getByRole("button", { name: "Notifications" });
+  test.skip((await alerts.count()) === 0, "this browser has no Alerts button (an iPhone cannot send them)");
+  await expect(alerts).toHaveAttribute(
+    "title",
+    "Notifications are blocked for this site. Allow them in browser settings.",
+  );
+  await expect(alerts).toHaveAttribute("aria-disabled", "true");
+  await expect(alerts).toHaveAttribute("aria-pressed", "false");
+  // Still reachable by a screen reader, and it says why.
+  const hint = await alerts.getAttribute("aria-describedby");
+  expect(hint, "the button points at its reason").toBeTruthy();
+  await expect(page.locator(`[id="${hint}"]`)).toHaveText("Blocked in this browser's site settings");
+
+  // Pressing it does nothing: Playwright will not click an aria-disabled button unless forced.
+  await alerts.click({ force: true });
+  await expect(alerts).toHaveAttribute("aria-pressed", "false");
+  await expect(alerts).toHaveAttribute("aria-disabled", "true");
+  await expect(alerts).toHaveAttribute(
+    "title",
+    "Notifications are blocked for this site. Allow them in browser settings.",
+  );
+  expect(
+    await page.evaluate(() => (window as unknown as { __permissionRequests: string[] }).__permissionRequests),
+  ).toEqual([]);
+});
+
+test("opens the countdown line with a capital in the margin, and keeps it lowercase after the dot on a phone", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await hydrated(page);
+  const next = page
+    .getByTestId("live-bar")
+    .locator("span", { hasText: /^next in/ })
+    .first();
+  await expect(next).toBeAttached();
+  const md = await page.evaluate(() => matchMedia("(min-width: 48rem)").matches);
+  const { display, transform } = await next.evaluate((element) => ({
+    display: getComputedStyle(element).display,
+    transform: getComputedStyle(element, "::first-letter").textTransform,
+  }));
+  // The countdown is a line of its own only from md up, and only then does it begin a line.
+  expect(display === "block").toBe(md);
+  expect(transform).toBe(md ? "uppercase" : "none");
+});
+
+test("shows the period dial only on the Full background, and the live line's words on every one", async ({ page }) => {
+  await page.goto("/");
+  await hydrated(page);
+  await expect(page.locator(".period-dial")).toHaveCount(0);
+  const live = page.getByTestId("live-bar");
+  await expect(live).toContainText(/Checked \d\d:\d\d\sUTC/);
+  await expect(live).toContainText(/next in \d:\d\d/);
+  await page.evaluate(() => localStorage.setItem("status-bar:background", "full"));
+  await page.reload();
+  await hydrated(page);
+  await expect(page.locator("html")).toHaveAttribute("data-background", "full");
+  const dial = page.locator(".period-dial");
+  await expect(dial).toHaveCount(1);
+  expect((await dial.boundingBox())?.width).toBe(24);
+  await expect(live).toContainText(/Checked \d\d:\d\d\sUTC/);
+});
+
+test("puts the floating bar's verdict, check time and countdown beside the docked field", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const bar = controlBar(page);
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  const lead = bar.locator("p[data-bar-lead]");
+  await expect(lead).toContainText("3 need a look");
+  await expect(lead).toContainText(/Checked \d\d:\d\d\sUTC · next in \d:\d\d/);
+  // The bar is a float: the one translucent element on a Quiet page.
+  await expect(bar).toHaveClass(/\bfloat\b/);
+});
+
+test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
+  // Hold the font back so the page is drawn in its fallback first, and count every layout shift that follows.
+  await page.route("**/fonts/inter-var.woff2", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await page.addInitScript(() => {
+    const tracked = window as Window & { __cls?: number };
+    tracked.__cls = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
+        if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+      }
+    }).observe({ type: "layout-shift", buffered: true });
+  });
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  // Whether this machine has any font the fallback faces name (the local() names in styles.css).
+  const fallbackFound = await page.evaluate(async () => {
+    // A face whose local() names match no installed font fails to load and matches nothing.
+    const loaded = await Promise.all(
+      ['"Inter Fallback"', '"Inter Fallback Roboto"'].map((family) =>
+        document.fonts.load(`16px ${family}`).catch(() => [] as FontFace[]),
+      ),
+    );
+    return loaded.some((faces) => faces.length > 0);
+  });
+  test.skip(
+    !fallbackFound,
+    'this machine has none of the fonts the fallback faces look for, so there is no fallback to resize: local() "Arial", "ArialMT", "Liberation Sans", "LiberationSans", "Arimo" (Inter Fallback) and "Roboto", "Roboto Regular", "Roboto-Regular" (Inter Fallback Roboto)',
+  );
+  // The first paint was in the fallback; the swap has happened once Inter reports loaded.
+  await page.waitForFunction(
+    () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  await page.waitForTimeout(500);
+  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+  expect(shift, "cumulative layout shift").toBeLessThan(0.1);
+});
+
+/** The fixture board with twelve services degraded, so the Issues count has two digits. */
+function busyBoard(): BoardSnapshot {
+  const board = fixtureBoard(Date.now());
+  const services = board.services.map((service, index) =>
+    index < 12 && service.health === "operational"
+      ? { ...service, health: "degraded" as const, summary: "Slower than usual", incidents: [] }
+      : service,
+  );
+  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const service of services) counts[service.health] += 1;
+  return { ...board, services, counts };
+}
+
+for (const width of [1024, 1440]) {
+  test(`keeps the filter row on one line, and the board still, when a star is added at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, busyBoard);
+    const row = async () =>
+      page.evaluate(() => {
+        const segments = document.querySelector('[role="group"][aria-label="Category"]') as HTMLElement;
+        const toggles = segments.nextElementSibling as HTMLElement;
+        const field = document.querySelector(".search-field") as HTMLElement;
+        const box = (element: Element) => element.getBoundingClientRect();
+        return {
+          segmentsBottom: box(segments).bottom,
+          togglesTop: box(toggles).top,
+          togglesRight: box(toggles).right,
+          sectionRight: box(segments.parentElement as Element).right,
+          mainTop: box(document.querySelector("main#services") as Element).top,
+          fieldMid: box(field).top + box(field).height / 2,
+          rowMid: (box(segments).top + box(segments).bottom) / 2,
+          togglesText: toggles.textContent ?? "",
+        };
+      });
+    const bare = await row();
+    // Not vacuous: two digits on Issues only.
+    expect(bare.togglesText).toMatch(/Issues only\s*1\d/);
+
+    const one = page.getByRole("button", { name: /^Star / }).first();
+    await toggleStar(page, () => one.click());
+    const starred = await row();
+    expect(starred.togglesText).toMatch(/Starred\s*1$/);
+    // The toggles stay beside the segments: their top is not below the segments' bottom.
+    expect(starred.togglesTop).toBeLessThan(starred.segmentsBottom);
+    expect(starred.togglesRight).toBeLessThanOrEqual(starred.sectionRight + 0.5);
+    // Nothing on the page moves, and the field in the margin still lines up with the row.
+    expect(starred.mainTop).toBeCloseTo(bare.mainTop, 0);
+    expect(Math.abs(starred.fieldMid - starred.rowMid)).toBeLessThan(2);
+
+    // And with two digits on Starred as well: eleven more stars.
+    await page.evaluate(
+      (ids) => localStorage.setItem("status-bar:starred", JSON.stringify(ids)),
+      CATALOG.slice(0, 11).map((entry) => entry.id),
+    );
+    await page.reload();
+    await hydrated(page);
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    const many = await row();
+    expect(many.togglesText).toMatch(/Starred\s*11$/);
+    expect(many.togglesTop).toBeLessThan(many.segmentsBottom);
+    expect(many.togglesRight).toBeLessThanOrEqual(many.sectionRight + 0.5);
+    expect(many.mainTop).toBeCloseTo(bare.mainTop, 0);
+  });
+}

@@ -30,6 +30,11 @@ export default defineConfig({
   use: {
     baseURL,
     trace: "retain-on-failure",
+    // Times show in the viewer's own zone once the page has hydrated. Pinning UTC
+    // and a locale makes that text equal the server's UTC text ("14:05 UTC"), so
+    // the suite stays deterministic wherever it runs. One test sets its own zone.
+    timezoneId: "UTC",
+    locale: "en-GB",
   },
   // The board is built for Apple devices first, so Safari's engine runs
   // every test too: a Mac, an iPhone and an iPad, alongside Chromium on a

@@ -99,6 +99,18 @@ describe("single-key shortcuts switched off", () => {
     const kept = SHORTCUT_HELP.filter((item) => !item.singleKey).flatMap((item) => item.keys);
     expect(kept).toEqual(["Esc"]);
   });
+
+  it("labels each key in plain, sentence-case words", () => {
+    expect(SHORTCUT_HELP.map((item) => item.label)).toEqual([
+      "Search",
+      "Jump to a category",
+      "Issues only",
+      "Starred only",
+      "Refresh",
+      "Clear filters",
+      "Open settings",
+    ]);
+  });
 });
 
 describe("single-key preference", () => {

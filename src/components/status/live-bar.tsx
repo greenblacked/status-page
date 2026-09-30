@@ -1,9 +1,8 @@
-import { Radio } from "lucide-react";
-import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { type ReactNode, useState } from "react";
+import { LiveSignal } from "@/components/status/live-signal";
+import { LocalTime } from "@/components/status/local-time";
 import {
   type Freshness,
-  formatAge,
   formatCountdown,
   formatStaleAge,
   freshnessOf,
@@ -28,63 +27,78 @@ export function useFreshness(checkedAt: string, isFetching: boolean, now: number
   return freshnessOf(noted, isFetching, now);
 }
 
+/** The countdown to the next refetch, "1:52", or a dash until the client clock has mounted. */
+export function nextInText(now: number, refetchJitterMs: number): string {
+  return now > 0 ? formatCountdown(nextRefetchAt(now, refetchJitterMs) - now) : "—";
+}
+
 /**
- * The freshness strip at the foot of the summary panel. Its countdown is the
- * period dial's accessible value: the dial beside the counts is decorative.
+ * The live line: whether the board is current, when it was last checked and
+ * when the next check comes. One quiet sentence in the margin on a wide screen
+ * (under the headline on a phone), with the live signal, a ring, in front of
+ * it. Only the state word sits in the polite live region: the clock and the
+ * countdown tick, and a wider region would have a screen reader read them out
+ * every time they moved.
+ *
+ *   live      "Checked 12:04 CET · next in 1:52" (a screen reader is also told "Live")
+ *   checking  "Checking…"
+ *   stale     "Stale" and "Last checked 7 min ago."
+ *
+ * `dial` is the period dial, which only the Full background draws.
  */
 export function LiveBar({
   freshness,
-  isFetching,
   now,
   refetchJitterMs,
+  checkedAt,
+  dial,
   className,
 }: {
   freshness: Freshness;
-  isFetching: boolean;
   now: number;
   /** The board query's jitter, so the countdown ends when its refetch starts. */
   refetchJitterMs: number;
+  /** When the snapshot on screen was collected (epoch ms), if it says. */
+  checkedAt: number | null;
+  dial?: ReactNode;
   className?: string;
 }) {
-  const mounted = now > 0;
-  const remaining = mounted ? nextRefetchAt(now, refetchJitterMs) - now : 0;
-  const { ageMs, stale } = freshness;
-  const age = mounted ? formatAge(ageMs) : "…";
+  const { ageMs, state } = freshness;
 
   return (
-    <div data-testid="live-bar" className={className}>
-      {/*
-        Two rows on a phone in every state. One row that wrapped only when a
-        state ran long ("Checking official sources") made the strip, and
-        everything under it, jump by a line each time a check began.
-      */}
-      <div className="flex flex-col gap-y-1 font-mono text-[11px] tabular-nums text-subtle sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4">
-        <p className="flex items-center gap-2">
-          <Radio className={cn("size-3.5", isFetching || stale ? "text-muted" : "live-dot text-ok")} aria-hidden />
-          {/*
-            The live region is scoped to this word alone. The age and the
-            countdown tick, and a wider region made a screen reader
-            re-announce them every time they moved, a stale board's age
-            once a minute for as long as it stayed stale.
-          */}
-          <span className="flex items-center gap-2 text-fg" aria-live="polite">
-            {isFetching ? (
-              <span>
-                Checking<span className="sm:hidden">…</span>
-                <span className="max-sm:sr-only"> official sources</span>
-              </span>
-            ) : stale ? (
-              <Badge tone="mute">Stale</Badge>
+    <div data-testid="live-bar" className={cn("flex items-start gap-3", className)}>
+      <p className="flex min-w-0 items-start gap-2 text-caption text-muted">
+        <LiveSignal state={state} className="mt-[2px]" />
+        <span className="min-w-0">
+          <span aria-live="polite">
+            {state === "checking" ? (
+              "Checking…"
+            ) : state === "stale" ? (
+              <>
+                <span className="font-semibold text-fg">Stale</span>.
+              </>
             ) : (
-              "Live"
+              <span className="sr-only">Live</span>
             )}
           </span>
-          {stale ? <span>last check {formatStaleAge(ageMs)}</span> : <span>· last check {age}</span>}
-        </p>
-        <p>
-          Next update <span className="text-fg">{mounted ? formatCountdown(remaining) : "—"}</span>
-        </p>
-      </div>
+          {state === "stale" ? (
+            <> Last checked {now > 0 ? formatStaleAge(ageMs) : "…"}.</>
+          ) : state === "live" ? (
+            <>
+              {" "}
+              Checked {checkedAt === null ? "…" : <LocalTime at={checkedAt} />}
+              {/* In the margin the countdown takes a line of its own, and its first letter is a capital; on a phone it follows a dot. */}
+              <span aria-hidden className="md:hidden">
+                {" · "}
+              </span>
+              <span className="md:block md:first-letter:uppercase">
+                next in <span className="tabular-nums text-fg">{nextInText(now, refetchJitterMs)}</span>
+              </span>
+            </>
+          ) : null}
+        </span>
+      </p>
+      {dial}
     </div>
   );
 }

@@ -34,7 +34,7 @@ export function healthLabel(health: Health): string {
     case "maintenance":
       return "Maintenance";
     default:
-      return "Unknown";
+      return "No data";
   }
 }
 
@@ -144,37 +144,22 @@ export function instatusComponent(status: string | undefined): Health {
   }
 }
 
-export const ALL_CLEAR_SUMMARY = "All reported systems operational.";
+export const ALL_CLEAR_SUMMARY = "Nothing reported.";
 
 // `||`, not `??`: a vendor can send an empty description, and "" must fall
 // back to the generic sentence rather than leave the card blank.
 export function overallSummary(health: Health, incidentCount: number, componentHint?: string): string {
   if (health === "operational") {
-    return incidentCount > 0
-      ? `Clear. ${incidentCount} recently resolved item${incidentCount === 1 ? "" : "s"}.`
-      : ALL_CLEAR_SUMMARY;
+    return incidentCount > 0 ? `Up. ${incidentCount} resolved recently.` : ALL_CLEAR_SUMMARY;
   }
   if (health === "maintenance") {
-    return componentHint || "Scheduled maintenance is in progress.";
+    return componentHint || "Maintenance in progress.";
   }
   if (health === "degraded") {
-    return componentHint || "Degraded performance on one or more components.";
+    return componentHint || "Some parts are slow or failing.";
   }
   if (health === "outage") {
-    return componentHint || "An outage is affecting this service.";
+    return componentHint || "Down right now.";
   }
-  return "Status could not be confirmed from the official source.";
-}
-
-// What the board's Attention count is made of, worst first.
-const ATTENTION_ORDER = SEVERITY_ORDER.filter((health) => health !== "operational");
-
-export function attentionBreakdown(counts: Record<Health, number>): string {
-  const parts = ATTENTION_ORDER.filter((health) => counts[health] > 0).map((health) => {
-    const n = counts[health];
-    const word = healthLabel(health).toLowerCase();
-    // "Outage" is the one label that is a noun; the rest read the same at any count.
-    return `${n} ${health === "outage" && n !== 1 ? `${word}s` : word}`;
-  });
-  return parts.length ? parts.join(" · ") : "nothing to watch";
+  return "Couldn't read their status page.";
 }

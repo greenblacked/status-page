@@ -44,7 +44,7 @@ describe("PeriodDial", () => {
     expect(html.match(/<svg/g)).toHaveLength(2);
     expect(html.match(/data-lit="true"/g)).toHaveLength(1);
     expect(html).toContain("period-hand");
-    expect(html).toContain("bg-down");
+    expect(html).toContain("text-down");
     expect(html).toContain("size-8");
   });
 });

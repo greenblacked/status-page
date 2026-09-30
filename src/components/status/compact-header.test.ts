@@ -6,12 +6,14 @@ import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
 import { CompactHeader } from "./compact-header";
 
+const CHECKED = Date.parse("2026-09-27T12:00:00.000Z");
+
 function render(
   options: {
     live?: LiveState;
     tone?: Health;
-    title?: string;
-    name?: string;
+    short?: string;
+    checkedAt?: number | null;
     store?: ReturnType<typeof createDockStore>;
   } = {},
 ): string {
@@ -20,9 +22,10 @@ function render(
     store: options.store ?? createDockStore(),
     barRef: { current: null },
     slotRef: { current: null },
-    name: options.name ?? "Status Board",
     live: options.live ?? "live",
-    headline: { tone: options.tone ?? "operational", title: options.title ?? "All systems operational" },
+    verdict: { tone: options.tone ?? "operational", short: options.short ?? "Everything is up" },
+    checkedAt: options.checkedAt === undefined ? CHECKED : options.checkedAt,
+    nextIn: "1:52",
   };
   return renderToStaticMarkup(
     createElement(
@@ -41,17 +44,34 @@ describe("CompactHeader", () => {
     expect(html).toContain("inert");
   });
 
-  it("shows the board's name (screen readers only on a phone), its live state and the headline", () => {
-    const html = render({ name: "Acme Board", live: "stale", tone: "outage", title: "Outage: ChatGPT" });
-    expect(html).toContain('<span class="max-sm:sr-only">Acme Board</span>');
-    expect(html).toContain('data-state="stale"');
-    expect(html).toContain('<span class="truncate" title="Outage: ChatGPT">Outage: ChatGPT</span>');
-    expect(html).toContain("bg-down");
+  it("is the one translucent element: a float with the bar's radius, not a pill", () => {
+    const html = render();
+    expect(html).toContain("compact-header float");
+    expect(html).not.toContain("rounded-full");
   });
 
-  it("tones the headline's dot by its health", () => {
-    expect(render({ tone: "degraded" })).toContain("bg-warn");
-    expect(render({ tone: "operational" })).toContain("bg-ok");
+  it("leads with the verdict's glyph and its short form, shown on a phone too, where the check time is for a screen reader only", () => {
+    const html = render({ tone: "outage", short: "2 need a look" });
+    expect(html).toMatch(/^<section[^>]*><p data-bar-lead/);
+    expect(html).toContain('data-health="outage"');
+    expect(html).toContain("text-down");
+    expect(html).toContain("data-bar-verdict");
+    expect(html).not.toMatch(/data-bar-verdict[^>]*max-sm:sr-only/);
+    expect(html).toContain(">2 need a look</span>");
+    expect(html).toMatch(/max-sm:sr-only">Checked /);
+  });
+
+  it("says when the board was checked and when the next check is, in the viewer's zone once hydrated", () => {
+    const html = render();
+    expect(html).toContain("Checked <time");
+    expect(html).toContain(">12:00 UTC</time> · next in 1:52");
+  });
+
+  it("says Checking while a check runs, and Stale when the board has stopped", () => {
+    expect(render({ live: "checking" })).toContain("Checking…");
+    const stale = render({ live: "stale" });
+    expect(stale).toContain("Stale · checked <time");
+    expect(stale).not.toContain("next in");
   });
 
   it("renders the board's controls after the slot the search field merges into", () => {

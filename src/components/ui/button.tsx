@@ -3,21 +3,23 @@ import { cva, type VariantProps } from "class-variance-authority";
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+const CONTROL =
+  "control text-fg aria-pressed:bg-card aria-pressed:font-semibold aria-pressed:shadow-[inset_0_0_0_var(--hair)_var(--color-hairline)]";
+
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium pressable focus-ring disabled:pointer-events-none disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-body font-medium pressable focus-ring disabled:pointer-events-none disabled:opacity-40 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
         default: "bg-accent text-bg hover:opacity-90",
-        // The whisper material: no blur, so a row of chips costs nothing to scroll.
-        outline: "glass-whisper text-fg",
-        ghost: "bg-transparent text-muted hover:text-fg hover:bg-surface-2",
-        solid: "bg-surface-2 text-fg hover:bg-surface",
+        // The inset fill; pressed (a toggle) it becomes the card with a hairline, as a segment's thumb does.
+        control: CONTROL,
+        ghost: "bg-transparent text-muted hover:text-fg hover:bg-inset",
       },
       size: {
         default: "h-11 px-4",
-        // A finger is bigger than the 36px chip: on a touch screen it is 44pt, and never narrower.
-        sm: "h-9 px-3 text-xs pointer-coarse:h-11 pointer-coarse:min-w-11",
+        // A finger is bigger than the 36px control: on a touch screen it is 44pt, and never narrower.
+        sm: "h-9 px-2.5 text-caption pointer-coarse:h-11 pointer-coarse:min-w-11",
         lg: "h-12 px-5",
         icon: "size-11",
       },

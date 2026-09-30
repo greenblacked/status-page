@@ -1,6 +1,9 @@
 import type { CategoryId, ServiceId } from "./types.ts";
 
-export const APP_NAME = "Status Page";
+export const APP_NAME = "Status";
+
+/** The deployed origin, for the absolute URLs a link preview needs (og:url, og:image, the canonical link). */
+export const SITE_ORIGIN = "https://status.szolotov.com";
 
 export type CatalogEntry = {
   id: ServiceId;
@@ -16,7 +19,7 @@ export const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: "gaming", label: "Gaming" },
   { id: "platforms", label: "Platforms" },
   { id: "ai", label: "AI" },
-  { id: "updates", label: "Updates" },
+  { id: "updates", label: "Releases" },
 ];
 
 export const CATALOG: CatalogEntry[] = [
@@ -49,7 +52,7 @@ export const CATALOG: CatalogEntry[] = [
     name: "CS2 Europe",
     shortName: "CS2 EU",
     category: "gaming",
-    sourceName: "Valve SDR config (app 730)",
+    sourceName: "Valve relay list",
     sourceUrl: "https://store.steampowered.com/app/730/",
   },
   {

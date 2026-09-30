@@ -1,5 +1,6 @@
+// tokens-allow: rounded-full (the centre point is a dot)
 import { type CSSProperties, useState } from "react";
-import { HealthDot } from "@/components/status/health-dot";
+import { STATUS_TEXT } from "@/components/status/status-glyph";
 import { dialTicks } from "@/lib/status/dial";
 import { PULSE_INTERVAL_MS, periodPhase } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
@@ -47,7 +48,7 @@ export function PeriodDial({
       {/* A new period remounts the motion, so it starts over from empty. */}
       <PeriodMotion key={phase?.endsAt ?? "server"} elapsedMs={phase?.elapsedMs ?? null} />
       <span className="period-lens">
-        <HealthDot health={tone} />
+        <span className={cn("block size-1.5 rounded-full bg-current", STATUS_TEXT[tone])} />
       </span>
     </div>
   );

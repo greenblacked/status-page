@@ -181,7 +181,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       }),
     });
     const services = await collectAllServices();
-    expect(services.find((s) => s.id === "chatgpt")!.summary).toBe("Degraded performance on one or more components.");
+    expect(services.find((s) => s.id === "chatgpt")!.summary).toBe("Some parts are slow or failing.");
   });
 
   it("Google Cloud incidents.json: incident links resolve with or without a leading slash", async () => {
@@ -517,7 +517,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
     const apple = (await collectAllServices()).find((s) => s.id === "apple")!;
     expect(apple.health).toBe("operational");
-    expect(apple.summary).toBe("All reported systems operational.");
+    expect(apple.summary).toBe("Nothing reported.");
     expect(apple.incidents).toEqual([]);
     expect(apple.components).toEqual([
       { name: "Apple Music", health: "operational" },
@@ -749,7 +749,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
     const gcp = (await collectAllServices()).find((s) => s.id === "gcp")!;
     expect(gcp.health).toBe("operational");
-    expect(gcp.summary).toBe("All reported systems operational.");
+    expect(gcp.summary).toBe("Nothing reported.");
     expect(gcp.components).toEqual([]);
     expect(gcp.incidents).toEqual([
       {
@@ -793,7 +793,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       });
       const claude = await claudeOf();
       expect(claude.health).toBe("operational");
-      expect(claude.summary).toBe("All reported systems operational.");
+      expect(claude.summary).toBe("Nothing reported.");
       expect(claude.incidents).toEqual([
         { id: "n1", title: "Scheduled database upgrade", health: "operational", informational: true },
       ]);
@@ -921,7 +921,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       });
       const claude = await claudeOf();
       expect(claude.health).toBe("operational");
-      expect(claude.summary).toBe("All reported systems operational.");
+      expect(claude.summary).toBe("Nothing reported.");
       expect(claude.upcomingMaintenance).toEqual([
         { id: "soon", title: "Sooner window", scheduledFor: "2026-09-21T02:00:00.000Z" },
         {

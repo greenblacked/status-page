@@ -4,19 +4,26 @@ import { type AlertDebounce, alertChanges, alertFor, emptyAlertDebounce } from "
 import type { Health } from "./types";
 
 describe("alertFor", () => {
-  it("names the new state, recovery, or a release", () => {
+  const change = (from: Health, to: Health, name = "Grok") => alertFor({ id: "grok", name, from, to, summary: "s" });
+
+  it("says what the service is now, in one shape", () => {
+    expect(change("operational", "degraded").title).toBe("Grok is degraded");
+    expect(change("operational", "outage").title).toBe("Grok is down");
+    expect(change("operational", "maintenance").title).toBe("Grok is in maintenance");
+    expect(change("operational", "unknown").title).toBe("Couldn't read Grok");
+  });
+
+  it("says a service is back, or that a release is new", () => {
+    expect(change("degraded", "operational", "Steam").title).toBe("Steam is back");
+    expect(change("operational", "operational", "MikroTik RouterOS").title).toBe("New release: MikroTik RouterOS");
+  });
+
+  it("carries the summary as the body and the service as the tag, so a newer alert replaces an older one", () => {
     expect(alertFor({ id: "gcp", name: "Google Cloud", from: "operational", to: "outage", summary: "Down" })).toEqual({
-      title: "Google Cloud: Outage",
+      title: "Google Cloud is down",
       body: "Down",
       tag: "status-bar:gcp",
     });
-    expect(
-      alertFor({ id: "gcp", name: "Google Cloud", from: "degraded", to: "operational", summary: "ok" }).title,
-    ).toBe("Google Cloud recovered");
-    expect(
-      alertFor({ id: "mikrotik", name: "MikroTik RouterOS", from: "operational", to: "operational", summary: "7.21" })
-        .title,
-    ).toBe("MikroTik RouterOS: new release");
   });
 });
 
