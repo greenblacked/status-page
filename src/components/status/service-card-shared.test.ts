@@ -63,7 +63,7 @@ describe("IncidentSince", () => {
   it("says since and the time, with no duration before the clock is read", () => {
     const html = render({});
     expect(html).toContain("since ");
-    expect(html).toContain(">10:00 UTC</time>");
+    expect(html).toContain(">10:00\u202fUTC</time>");
     expect(html).not.toContain("(");
   });
 

@@ -49,7 +49,7 @@ export function Segmented<T extends string>({
             aria-pressed={pressed}
             onClick={() => onChange(option.value)}
             className={cn(
-              "focus-ring pressable flex min-h-8 shrink-0 items-center gap-1.5 rounded-thumb px-3 text-caption pointer-coarse:min-h-10",
+              "focus-ring pressable flex min-h-8 shrink-0 items-center gap-1.5 rounded-thumb px-2.5 text-caption pointer-coarse:min-h-11 pointer-coarse:min-w-11 justify-center",
               pressed
                 ? "bg-card font-semibold text-fg shadow-[inset_0_0_0_var(--hair)_var(--color-hairline)]"
                 : "text-muted hover:text-fg",

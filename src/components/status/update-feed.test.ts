@@ -52,7 +52,7 @@ describe("UpdateFeed", () => {
     expect(html).toContain("First check");
     expect(html.indexOf("Steam is now degraded")).toBeLessThan(html.indexOf("First check"));
     expect(html).toContain('title="30 Sep 2026 10:06 UTC"');
-    expect(html).toContain(">10:06 UTC</time>");
+    expect(html).toContain(">10:06\u202fUTC</time>");
     // Rows sit in list items of a card list, which draws the hairline between them.
     expect(html.match(/<li><div class="row /g)).toHaveLength(2);
   });

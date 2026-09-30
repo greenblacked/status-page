@@ -1,41 +1,27 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, BellOff, BellRing, RefreshCw, Search, Star, X } from "lucide-react";
-import {
-  type ComponentProps,
-  type MouseEvent,
-  type ReactNode,
-  type RefObject,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { AlertsButton, FilterBar, RefreshButton, SearchField, WhileBarUp } from "@/components/status/board-controls";
 import { BoardSections } from "@/components/status/board-sections";
-import { CompactHeader, useDockState, useSearchDock } from "@/components/status/compact-header";
-import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
-import { HealthDot } from "@/components/status/health-dot";
+import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
+import { prefersReducedMotion, useSpotlight, withCardMotion } from "@/components/status/effects";
+import { Hero } from "@/components/status/hero";
 import { LensField } from "@/components/status/lens-field";
-import { LiveBar, useFreshness } from "@/components/status/live-bar";
-import { LiveSignal } from "@/components/status/live-signal";
-import { LocalTime } from "@/components/status/local-time";
+import { LiveBar, nextInText, useFreshness } from "@/components/status/live-bar";
 import { PeriodDial } from "@/components/status/period-dial";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { SiteFooter } from "@/components/status/site-footer";
 import { UpdateFeed } from "@/components/status/update-feed";
-import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
+import { useBoardAlerts } from "@/components/status/use-alerts";
 import { useBackground } from "@/components/status/use-background";
 import { useNow } from "@/components/status/use-now";
 import { useReduceGlass } from "@/components/status/use-reduce-glass";
 import { useShortcuts, useSingleKeyShortcuts } from "@/components/status/use-shortcuts";
 import { useStarred } from "@/components/status/use-starred";
 import { useTiltLighting } from "@/components/status/use-tilt-lighting";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
-import { APP_NAME, CATEGORIES } from "@/lib/status/catalog";
-import { createDockStore, type DockStore } from "@/lib/status/dock";
+import { APP_NAME } from "@/lib/status/catalog";
+import { createDockStore } from "@/lib/status/dock";
 import {
   type BoardFilters,
   DEFAULT_FILTERS,
@@ -44,32 +30,12 @@ import {
   matchesFilters,
   resultsAnnouncement,
 } from "@/lib/status/filters";
-import { attentionBreakdown } from "@/lib/status/health";
-import {
-  type BoardGroups,
-  boardHeadline,
-  documentTitle,
-  groupServices,
-  serviceAnchor,
-  sortByUrgency,
-} from "@/lib/status/layout";
-import { canvasFont, placeholderFits } from "@/lib/status/placeholder";
+import { documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
-import {
-  CACHE_TTL_MS,
-  everyInterval,
-  type Freshness,
-  lastPulseAt,
-  nextRefetchAt,
-  PULSE_INTERVAL_MS,
-  parseTimestamp,
-  pickRefetchJitter,
-} from "@/lib/status/schedule";
+import { CACHE_TTL_MS, lastPulseAt, nextRefetchAt, parseTimestamp, pickRefetchJitter } from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
-import { cn } from "@/lib/utils";
-
-const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [{ id: "all", label: "All" }, ...CATEGORIES];
+import { verdict as verdictOf } from "@/lib/status/verdict";
 
 /**
  * One string, so server rendering emits one text node. Interpolated JSX children would come out as
@@ -99,7 +65,7 @@ export function BoardView({
   // Local state drives the board; the URL follows it. Reading the filters
   // back from the URL would make every keystroke wait on a router update.
   const [filters, setFilters] = useState(initialFilters);
-  const { query, category, issuesOnly, starredOnly } = filters;
+  const { query, issuesOnly, starredOnly } = filters;
   const updateFilters = (patch: Partial<BoardFilters>) => setFilters((current) => ({ ...current, ...patch }));
   const [store, setStore] = useState<PulseStore | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -152,7 +118,8 @@ export function BoardView({
   });
 
   const board = boardQuery.data ?? initial;
-  const headline = boardHeadline(board);
+  const verdict = useMemo(() => verdictOf(board), [board]);
+  const checkedAt = parseTimestamp(board.generatedAt);
   const alerts = useBoardAlerts(board);
   const { starred, ready: starsReady, toggle: toggleStar } = useStarred();
   const pulseStore = store ?? emptyPulseStore();
@@ -223,7 +190,9 @@ export function BoardView({
   // soon as the filters move on or it has had its moment, so a card that
   // turns up later, with a refetch, never pulls the page to it unasked.
   const [revealing, setRevealing] = useState<{ id: ServiceId; filters: BoardFilters } | null>(null);
-  function revealService(service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) {
+  function revealService(id: ServiceId, event: MouseEvent<HTMLAnchorElement>) {
+    const service = board.services.find((candidate) => candidate.id === id);
+    if (!service) return;
     const next = filtersToReveal(service, filters, starred);
     // On the board already: the plain anchor scrolls to it.
     if (!next) return;
@@ -257,7 +226,7 @@ export function BoardView({
   const issueCount = board.services.length - board.counts.operational - board.counts.unknown;
   // Starring moves a card, so it glides there like a refresh does.
   const onToggleStar = (id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id));
-  const groups = withUnread(groupServices(visible));
+  const groups = groupServices(visible);
   // The board's most urgent service, from the whole board rather than the
   // filtered view (starred services first among equals, as on the cards).
   // It is highlighted only while it is also the first card on screen, so a
@@ -355,201 +324,119 @@ export function BoardView({
             event.preventDefault();
             mainRef.current?.focus();
           }}
-          className="focus-ring sr-only rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg focus:not-sr-only focus:fixed focus:top-[calc(env(safe-area-inset-top)+0.75rem)] focus:left-[calc(env(safe-area-inset-left)+0.75rem)] focus:z-50"
+          className="focus-ring sr-only rounded-md bg-accent px-4 py-2 text-body font-medium text-bg focus:not-sr-only focus:fixed focus:top-[calc(env(safe-area-inset-top)+0.75rem)] focus:left-[calc(env(safe-area-inset-left)+0.75rem)] focus:z-50"
         >
           Skip to services
         </a>
-        <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-3 sm:pt-12">
-          {/* Wraps, so at a large text size the buttons drop under the text instead of squeezing it to a word a line. */}
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="hero-recede min-w-[min(10rem,100%)] flex-1">
-              <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
-                <LiveSignal state={freshness.state} />
-                Live status board
-              </p>
-              <h1 className="mt-2 font-display text-4xl tracking-[-0.035em] text-balance [font-optical-sizing:auto] [font-weight:350] sm:text-6xl">
-                {APP_NAME}
-              </h1>
-              <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted text-pretty sm:text-base">
-                Official vendor status for {board.services.length} services, checked {everyInterval(PULSE_INTERVAL_MS)}.
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {/* With the bar up, its copies are the ones in reach: Tab goes from them to the search field. */}
-              <WhileBarUp store={dock}>
-                {(barUp) => (
-                  <>
-                    <AlertsButton skipTab={barUp} state={alerts.state} onToggle={alerts.toggle} />
-                    <RefreshButton skipTab={barUp} fetching={fetching} onRefresh={() => void handleRefresh()} />
-                  </>
-                )}
-              </WhileBarUp>
-            </div>
-          </div>
-
-          <SummaryPanel
-            board={board}
-            headline={headline}
-            fetching={fetching}
-            freshness={freshness}
-            now={now}
-            refetchJitter={refetchJitter}
-            onReveal={revealService}
-          />
-
+        <Hero
+          generatedAt={board.generatedAt}
+          verdict={verdict}
+          onReveal={revealService}
+          controls={
+            // With the bar up, its copies are the ones in reach: Tab goes from them to the search field.
+            <WhileBarUp store={dock}>
+              {(barUp) => (
+                <>
+                  <AlertsButton skipTab={barUp} state={alerts.state} onToggle={alerts.toggle} />
+                  <RefreshButton skipTab={barUp} fetching={fetching} onRefresh={() => void handleRefresh()} />
+                </>
+              )}
+            </WhileBarUp>
+          }
+          live={
+            <LiveBar
+              freshness={freshness}
+              now={now}
+              refetchJitterMs={refetchJitter}
+              checkedAt={checkedAt}
+              // The dial is a Full-background flourish; the words say the same.
+              dial={
+                background.value === "full" ? (
+                  <PeriodDial now={now} jitterMs={refetchJitter} tone={verdict.tone} className="size-6 shrink-0" />
+                ) : null
+              }
+            />
+          }
+        >
           <p role="status" className="sr-only">
             {announcement}
           </p>
-        </header>
+        </Hero>
         <div
           ref={bodyRef}
-          className="board-body page-gutter relative mx-auto flex max-w-6xl flex-wrap content-start items-start gap-x-4"
+          className="board-body page-gutter relative mx-auto flex max-w-[62rem] flex-wrap content-start items-start gap-x-4 lg:gap-x-8"
         >
           {/* Right before the search field in the markup, so Tab goes from the bar's buttons to it. */}
           <CompactHeader
             store={dock}
             barRef={barRef}
             slotRef={slotRef}
-            name={APP_NAME}
+            verdict={verdict}
             live={freshness.state}
-            headline={headline}
+            checkedAt={checkedAt}
+            nextIn={nextInText(now, refetchJitter)}
           >
-            <AlertsButton bar state={alerts.state} onToggle={alerts.toggle} />
-            <RefreshButton bar fetching={fetching} onRefresh={() => void handleRefresh()} />
+            <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
+            <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
           </CompactHeader>
           {/* biome-ignore lint/a11y/useSemanticElements: <search> is Safari 17+; role="search" on a div names the same landmark everywhere. */}
-          <div ref={dockRef} role="search" className="search-dock basis-full lg:flex-1 lg:basis-0">
-            <div className="search-field">
-              <label className="relative block min-w-0 flex-1">
-                <span className="sr-only">Search services</span>
-                <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-subtle" />
-                <SearchInput
-                  ref={searchRef}
-                  store={dock}
-                  dockRef={dockRef}
-                  value={query}
-                  onChange={(event) => updateFilters({ query: event.target.value })}
-                  type="search"
-                  enterKeyHint="search"
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className={cn("appearance-none pl-10", query ? "pr-11" : "sm:pr-10")}
-                />
-                {singleKey.enabled && !query ? (
-                  <kbd
-                    aria-hidden
-                    className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
-                  >
-                    /
-                  </kbd>
-                ) : null}
-              </label>
-              {/* Ours, not the browser's: a 44pt target that keeps the field focused (and the keyboard up on a phone). */}
-              {query ? (
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  className="focus-ring pressable absolute top-0 right-0 flex size-11 items-center justify-center rounded-full text-subtle hover:text-fg"
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    updateFilters({ query: "" });
-                    searchRef.current?.focus();
-                  }}
-                >
-                  <X className="size-4" aria-hidden />
-                </button>
-              ) : null}
-            </div>
+          <div ref={dockRef} role="search" className="search-dock basis-full lg:flex-none lg:basis-[var(--margin-col)]">
+            <SearchField
+              store={dock}
+              dockRef={dockRef}
+              inputRef={searchRef}
+              query={query}
+              onQuery={(next) => updateFilters({ query: next })}
+              showSlash={singleKey.enabled}
+            />
           </div>
-          {/* One scrolling row on phones instead of three wrapped ones. */}
-          {/* The row's landmark, and its flex item: the group inside bleeds to the screen edges on a phone. */}
+          {/* The row's landmark, and its flex item. The segments scroll sideways on a phone; the two toggles follow them. */}
           <section
             ref={chipsRef}
-            aria-label="Filters"
-            className="board-chips mt-3 min-w-0 basis-full lg:mt-0 lg:basis-auto lg:self-center"
+            aria-label="Filter services"
+            className="board-chips mt-3 flex min-w-0 basis-full flex-wrap items-center gap-2 lg:mt-0 lg:flex-1 lg:basis-0 lg:self-center"
           >
-            {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
-            <div
-              className="page-bleed flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
-              role="group"
-              aria-label="Filter services"
-            >
-              {FILTERS.map((filter) => (
-                <Button
-                  key={filter.id}
-                  variant={category === filter.id ? "default" : "outline"}
-                  size="sm"
-                  className="shrink-0"
-                  aria-pressed={category === filter.id}
-                  onClick={() => updateFilters({ category: filter.id })}
-                >
-                  {filter.label}
-                  <span className="font-mono text-[11px] tabular-nums opacity-70">{categoryCount(filter.id)}</span>
-                </Button>
-              ))}
-              <Button
-                variant={issuesOnly ? "default" : "outline"}
-                size="sm"
-                className="shrink-0"
-                aria-pressed={issuesOnly}
-                onClick={() => updateFilters({ issuesOnly: !issuesOnly })}
-              >
-                Issues only
-                <span className="font-mono text-[11px] tabular-nums opacity-70">{issueCount}</span>
-              </Button>
-              <Button
-                variant={starredOnly ? "default" : "outline"}
-                size="sm"
-                className="shrink-0"
-                aria-pressed={starredOnly}
-                onClick={() => updateFilters({ starredOnly: !starredOnly })}
-              >
-                <Star className={cn("size-3.5", starredOnly && "fill-current")} />
-                Starred
-                <span className="font-mono text-[11px] tabular-nums opacity-70">{starred.size}</span>
-              </Button>
-            </div>
+            <FilterBar
+              filters={filters}
+              onChange={updateFilters}
+              categoryCount={categoryCount}
+              issueCount={issueCount}
+              starredCount={starred.size}
+            />
           </section>
 
           {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
-          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-3 basis-full pt-2 outline-none">
+          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-6 basis-full outline-none">
             {boardQuery.isError ? (
-              <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
+              <p role="alert" className="surface mb-4 px-4 py-3 text-body text-down">
                 Could not refresh official sources. Showing the last successful snapshot.
               </p>
             ) : null}
 
-            <div className="flex min-w-0 flex-col gap-10">
-              <div className="flex min-w-0 flex-col gap-8">
-                {fetching && !board.services.length ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {Array.from({ length: 6 }).map((_, index) => (
-                      // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
-                      <Skeleton key={index} className="h-56 rounded-lg" />
-                    ))}
-                  </div>
-                ) : visible.length === 0 ? (
-                  // Stars load after hydration; until then an empty Starred view proves nothing.
-                  // Not a live region: the results announcement already says this.
-                  starredOnly && !starsReady ? null : (
-                    // The board's one serif phrase: a caption for the quiet, not a UI label.
-                    <p className="rounded-lg glass px-5 py-10 text-center font-serif text-lg text-muted italic">
-                      {emptyMessage}
-                    </p>
-                  )
-                ) : (
-                  <BoardSections
-                    groups={groups}
-                    mostUrgentId={mostUrgentId}
-                    changedIds={changedIds}
-                    starred={starred}
-                    onToggleStar={onToggleStar}
-                    now={now}
-                  />
-                )}
-              </div>
+            <div className="flex min-w-0 flex-col gap-12">
+              {fetching && !board.services.length ? (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
+                    <Skeleton key={index} className="h-56 rounded-lg" />
+                  ))}
+                </div>
+              ) : visible.length === 0 ? (
+                // Stars load after hydration; until then an empty Starred view proves nothing.
+                // Not a live region: the results announcement already says this.
+                starredOnly && !starsReady ? null : (
+                  <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
+                )
+              ) : (
+                <BoardSections
+                  groups={groups}
+                  mostUrgentId={mostUrgentId}
+                  changedIds={changedIds}
+                  starred={starred}
+                  onToggleStar={onToggleStar}
+                  now={now}
+                />
+              )}
               <UpdateFeed pulses={pulseStore.pulses} />
             </div>
           </main>
@@ -577,260 +464,5 @@ export function BoardView({
         </div>
       </div>
     </div>
-  );
-}
-
-function SummaryPanel({
-  board,
-  headline,
-  fetching,
-  freshness,
-  now,
-  refetchJitter,
-  onReveal,
-}: {
-  board: BoardSnapshot;
-  headline: ReturnType<typeof boardHeadline>;
-  fetching: boolean;
-  freshness: Freshness;
-  now: number;
-  refetchJitter: number;
-  /** A chip was followed; clears the filters first if they hide its card. */
-  onReveal: (service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) => void;
-}) {
-  const total = board.services.length;
-  const attention = total - board.counts.operational - board.counts.unknown;
-  const affected = groupServices(board.services).attention;
-  const generatedAt = parseTimestamp(board.generatedAt);
-
-  return (
-    <section aria-labelledby="board-headline" className="glass rounded-xl p-5 sm:p-6">
-      {/* A size container: below lg, whether the counts fit beside the dial is a question of this row's width in rem, so a large text size stacks them. */}
-      <div className="@container flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <h2
-            id="board-headline"
-            className="flex items-center gap-3 font-display text-2xl font-medium tracking-[-0.03em] text-balance sm:text-3xl"
-          >
-            <HealthDot
-              health={headline.tone}
-              ping={headline.tone !== "operational"}
-              pingColor="event"
-              className="size-2.5"
-            />
-            {/* Live on the sentence alone: the counts below roll as they change. */}
-            <span aria-live="polite">{headline.title}</span>
-          </h2>
-          <p className="mt-1.5 font-mono text-[11px] tabular-nums text-subtle">
-            {attention ? attentionBreakdown(board.counts) : `All ${total} official sources report normal operation`}
-            {/* UTC on the server and while hydrating, the viewer's own zone after (LocalTime). */}
-            {generatedAt === null ? null : (
-              <>
-                {" · as of "}
-                <LocalTime at={generatedAt} />
-              </>
-            )}
-          </p>
-          {affected.length ? (
-            <ul className="mt-4 flex flex-wrap gap-1.5" aria-label="Services that need attention">
-              {affected.map((service) => (
-                <li key={service.id}>
-                  <a
-                    href={`#${serviceAnchor(service.id)}`}
-                    onClick={(event) => onReveal(service, event)}
-                    className="focus-ring pressable inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset pointer-coarse:min-h-11 px-3 text-xs text-muted hover:text-fg"
-                  >
-                    <HealthDot health={service.health} />
-                    {service.name}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-        {/* On a phone the counts stack into a specimen table beside the dial; wider, they sit in a row. */}
-        <div className="flex flex-col gap-5 @min-[15rem]:flex-row @min-[15rem]:items-center @min-[15rem]:max-lg:justify-between sm:gap-10 lg:shrink-0 lg:justify-end">
-          <dl className="flex min-w-0 flex-col gap-1.5 @min-[15rem]:max-sm:flex-1 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
-            <Stat label="Operational" value={board.counts.operational} of={total} />
-            <Stat label="Attention" value={attention} />
-            <Stat label="Sources" value={total - board.counts.unknown} of={total} />
-          </dl>
-          <PeriodDial
-            now={now}
-            jitterMs={refetchJitter}
-            tone={headline.tone}
-            className="mx-auto size-[80px] min-[380px]:size-[96px] @min-[15rem]:mx-0 sm:size-[112px] lg:size-[128px]"
-          />
-        </div>
-      </div>
-      <LiveBar
-        freshness={freshness}
-        isFetching={fetching}
-        now={now}
-        refetchJitterMs={refetchJitter}
-        className="mt-5 border-t border-border pt-4"
-      />
-    </section>
-  );
-}
-
-function Stat({ label, value, of }: { label: string; value: number; of?: number }) {
-  const shown = useCountUp(value);
-  return (
-    <div className="flex items-baseline justify-between gap-2 sm:block">
-      <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-subtle">{label}</dt>
-      <dd className="font-display text-lg tabular-nums tracking-[-0.03em] sm:mt-1 sm:text-2xl">
-        {shown}
-        {of !== undefined ? <span className="text-subtle">/{of}</span> : null}
-      </dd>
-    </div>
-  );
-}
-
-const ALERT_LABEL: Record<AlertsState, string> = {
-  unsupported: "Alerts are not supported in this browser",
-  off: "Get a browser alert when a service changes",
-  on: "Browser alerts are on; click to turn them off",
-  blocked: "Alerts are blocked in this browser's site settings",
-};
-
-/**
- * Hands its children whether the floating bar is up. It is the one part of the
- * hero that renders when that changes, so the board does not.
- */
-function WhileBarUp({ store, children }: { store: DockStore; children: (barUp: boolean) => ReactNode }) {
-  return children(useDockState(store).barShown);
-}
-
-const LONG_PLACEHOLDER = "Search GCP, CS2 Europe, RouterOS…";
-const SHORT_PLACEHOLDER = "Search…";
-
-/**
- * Whether `text` fits the field as a placeholder, unclipped. The field at rest
- * is as wide as its dock (`dockRef`, which the merge into the bar never
- * resizes), so this measures the text against that width less the input's own
- * padding, and again when either changes. True until measured, which is what
- * the server rendered, so hydration sees the same placeholder.
- */
-function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null>): boolean {
-  const [fits, setFits] = useState(true);
-  useEffect(() => {
-    const dock = dockRef.current;
-    const input = dock?.querySelector("input");
-    const canvas = document.createElement("canvas").getContext("2d");
-    if (!dock || !input || !canvas) return;
-    const measure = () => {
-      const style = getComputedStyle(input);
-      canvas.font = canvasFont(style);
-      setFits(placeholderFits(dock.clientWidth, canvas.measureText(text).width, style));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(dock);
-    // The system font can arrive after the first measure.
-    void document.fonts?.ready.then(measure);
-    return () => observer.disconnect();
-  }, [text, dockRef]);
-  return fits;
-}
-
-/**
- * The search field's input. Its placeholder is the long one in the hero and the
- * short one once the field is fully in the bar, and changes only there (never
- * while the field is part way), in this component rather than the board's. The
- * short one also stands in wherever the field, at rest, is too narrow to show
- * the long one whole (a small phone, or beside the chips just past 1024px).
- */
-function SearchInput({
-  store,
-  dockRef,
-  ...props
-}: { store: DockStore; dockRef: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
-  const { docked } = useDockState(store);
-  const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
-  return <Input placeholder={docked || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
-}
-
-/**
- * Rendered twice, in the hero and in the compact header, both driven by
- * the board's one handleRefresh. It carries no id, so the copies never
- * collide. The bar's copy (`bar`) is a full 44pt touch target; the hero's leaves the Tab order while the bar is up (`skipTab`).
- */
-function RefreshButton({
-  bar,
-  skipTab,
-  fetching,
-  onRefresh,
-}: {
-  bar?: boolean;
-  skipTab?: boolean;
-  fetching: boolean;
-  onRefresh: () => void;
-}) {
-  return (
-    <Button
-      variant="outline"
-      size={bar ? "default" : "sm"}
-      className={cn("shrink-0", bar && "max-sm:w-11 max-sm:px-0")}
-      tabIndex={skipTab ? -1 : undefined}
-      onClick={onRefresh}
-      // Not `disabled`: every background refetch would drop keyboard
-      // focus to <body>. handleRefresh ignores a press while its own
-      // refresh is in flight, cancels a background one, and aria-busy
-      // says a check is running.
-      aria-busy={fetching}
-      aria-label="Refresh status now"
-    >
-      <RefreshCw className={cn("size-3.5", fetching && "motion-safe:animate-spin")} />
-      <span className="hidden sm:inline">Refresh</span>
-    </Button>
-  );
-}
-
-function AlertsButton({
-  bar,
-  skipTab,
-  state,
-  onToggle,
-}: {
-  bar?: boolean;
-  skipTab?: boolean;
-  state: AlertsState;
-  onToggle: () => void;
-}) {
-  // Two copies render, one in the compact header, so the hint's id is per copy.
-  const hintId = useId();
-  if (state === "unsupported") return null;
-  const Icon = state === "on" ? BellRing : state === "blocked" ? BellOff : Bell;
-  const blocked = state === "blocked";
-  return (
-    <>
-      <Button
-        variant={state === "on" ? "default" : "outline"}
-        size={bar ? "default" : "sm"}
-        className={cn(bar && "max-sm:w-11 max-sm:px-0")}
-        tabIndex={skipTab ? -1 : undefined}
-        // aria-disabled, not disabled: a disabled button drops out of the Tab
-        // order, so a keyboard or screen reader user never learns why alerts
-        // are off. This one stays reachable, does nothing, and says why.
-        onClick={blocked ? undefined : onToggle}
-        aria-disabled={blocked || undefined}
-        aria-describedby={blocked ? hintId : undefined}
-        // A toggle keeps one name and lets aria-pressed carry the state; the
-        // title explains the current state to pointer users.
-        aria-pressed={state === "on"}
-        aria-label="Browser alerts"
-        data-alerts-toggle
-        title={ALERT_LABEL[state]}
-      >
-        <Icon className="size-3.5" />
-        <span className="hidden sm:inline">Alerts</span>
-      </Button>
-      {blocked ? (
-        <span id={hintId} className="sr-only">
-          Blocked in this browser's site settings
-        </span>
-      ) : null}
-    </>
   );
 }

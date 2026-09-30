@@ -1,6 +1,6 @@
 import { type ReactNode, type RefObject, useEffect, useState, useSyncExternalStore } from "react";
-import { HealthDot } from "@/components/status/health-dot";
-import { LiveSignal } from "@/components/status/live-signal";
+import { LocalTime } from "@/components/status/local-time";
+import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
   DOCK_REST,
   type DockGeometry,
@@ -177,9 +177,10 @@ export function useSearchDock({
 }
 
 /**
- * The floating control bar: the board's name, its live signal and
- * headline, and the same Alerts and Refresh controls as the hero, shown
- * once the hero has scrolled away. The one chrome surface on the page.
+ * The floating control bar: the verdict in short ("2 need a look") with when
+ * the board was last checked, the search field once it has docked, and the same
+ * Alerts and Refresh controls as the hero. It is shown once the hero has
+ * scrolled away, and it is the only translucent element on a Quiet page.
  *
  * Hidden, it is `inert`, so Tab never lands on a control nobody can see
  * and the skip link stays the first stop. It stays put while keyboard
@@ -192,24 +193,30 @@ export function CompactHeader({
   store,
   barRef,
   slotRef,
-  name,
+  verdict,
   live,
-  headline,
+  checkedAt,
+  nextIn,
   children,
 }: {
   /** Says when the bar is up; only this component renders when that changes. */
   store: DockStore;
   barRef: RefObject<HTMLElement | null>;
   slotRef: RefObject<HTMLDivElement | null>;
-  name: string;
+  /** The verdict's tone and its short form. */
+  verdict: { tone: Health; short: string };
   live: LiveState;
-  headline: { tone: Health; title: string };
+  /** When the snapshot was collected (epoch ms), if it says. */
+  checkedAt: number | null;
+  /** The countdown to the next check, "1:52". */
+  nextIn: string;
   /** The controls, rendered by the board so they share its state and handlers. */
   children: ReactNode;
 }) {
   const { barShown } = useDockState(store);
   const [heldByKeyboard, setKeyboardFocus] = useState(false);
   const visible = barShown || heldByKeyboard;
+  const when = checkedAt === null ? null : <LocalTime at={checkedAt} />;
   return (
     <section
       ref={barRef}
@@ -220,26 +227,29 @@ export function CompactHeader({
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false);
       }}
-      className="compact-header glass-chrome flex h-12 items-center gap-3 rounded-full pr-1.5 pl-4"
+      className="compact-header float flex h-12 items-center gap-3 pr-1.5 pl-3.5"
     >
-      <p className="flex shrink-0 items-center gap-2 text-sm font-medium tracking-[-0.01em]">
-        <LiveSignal state={live} />
-        <span className="max-sm:sr-only">{name}</span>
-      </p>
-      {/* The headline again, where there is room for it. */}
-      <p className="hidden min-w-0 items-center gap-2 text-sm text-muted sm:flex">
-        <span aria-hidden className="text-subtle">
-          ·
-        </span>
-        <HealthDot health={headline.tone} />
-        <span className="truncate" title={headline.title}>
-          {headline.title}
+      <p data-bar-lead data-state={live} className="flex shrink-0 items-center gap-2.5">
+        <StatusGlyph health={verdict.tone} size={20} className={STATUS_TEXT[verdict.tone]} cut="card" />
+        <span className="max-sm:sr-only">
+          <span className="block text-row leading-[18px]">{verdict.short}</span>
+          <span className="block text-footnote text-subtle">
+            {live === "checking" ? (
+              "Checking…"
+            ) : live === "stale" ? (
+              <>Stale{when ? <> · checked {when}</> : null}</>
+            ) : (
+              <>
+                {when ? <>Checked {when} · </> : null}next in {nextIn}
+              </>
+            )}
+          </span>
         </span>
       </p>
       <div className="flex min-w-0 flex-1 justify-center" aria-hidden>
         <div ref={slotRef} className="h-11 w-full max-w-[26rem]" />
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">{children}</div>
+      <div className="flex shrink-0 items-center">{children}</div>
     </section>
   );
 }

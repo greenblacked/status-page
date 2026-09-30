@@ -201,9 +201,9 @@ describe("degraded service card", () => {
     expect(header(html)).toContain("font-semibold");
     expect(header(html)).toContain(">Degraded</span>");
     expect(header(html)).toContain("since <time");
-    expect(header(html)).toContain("10:00 UTC");
+    expect(header(html)).toContain("10:00\u202fUTC");
     // Its title is the summary, so the incident has no line of its own and the time is not printed twice.
-    expect(html.match(/10:00 UTC/g)).toHaveLength(2);
+    expect(html.match(/10:00[ \u202f]UTC/g)).toHaveLength(2);
     expect(html).toContain("Partial outage</p>");
     expect(html).not.toContain("Most urgent");
     expect(html.match(/<h3/g)).toHaveLength(1);
@@ -450,6 +450,6 @@ describe("service card incident labels and links", () => {
       incidents: [{ id: "a", title: "Other", health: "degraded", startedAt: "2026-09-27T10:04:00.000Z" }],
     });
     expect(html).toContain('title="27 Sep 2026 10:04 UTC"');
-    expect(html).toContain(">10:04 UTC</time>");
+    expect(html).toContain(">10:04\u202fUTC</time>");
   });
 });
