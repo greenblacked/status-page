@@ -959,7 +959,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       const aws = await collect("aws");
       expect(aws.failure).toBeUndefined();
       expect(aws.health).toBe("degraded");
-      expect(aws.summary).toBe("Amazon Elastic Compute Cloud — Increased API Error Rates");
+      expect(aws.summary).toBe("Amazon Elastic Compute Cloud (N. Virginia) — Increased API Error Rates");
       // The Lambda event reports resolved and the CloudFront one is 30 days
       // old, so neither shows up as a component or an incident.
       expect(aws.components).toEqual([
@@ -968,7 +968,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(aws.incidents).toEqual([
         {
           id: "arn:aws:health:us-east-1::event/EC2/AWS_EC2_OPERATIONAL_ISSUE/AWS_EC2_OPERATIONAL_ISSUE_4E7B1C2D9A0F",
-          title: "Amazon Elastic Compute Cloud — Increased API Error Rates",
+          title: "Amazon Elastic Compute Cloud (N. Virginia) — Increased API Error Rates",
           health: "degraded",
           startedAt: "2026-09-20T10:00:00.000Z",
           updatedAt: "2026-09-20T11:00:00.000Z",
@@ -993,25 +993,52 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       const aws = await collect("aws");
       expect(aws.failure).toBeUndefined();
       expect(aws.health).toBe("outage");
-      expect(aws.incidents).toHaveLength(3);
+      // Worst first, then the newest: the global IAM outage, the N. Virginia
+      // disruption (status 3, so an outage even though it is one region) and
+      // the Ireland performance issue. "Multiple services" is replaced by the
+      // services still affected (Lambda has recovered) and the region is named.
+      expect(aws.incidents.map((incident) => [incident.title, incident.health])).toEqual([
+        ["AWS Identity and Access Management — Global sign-in outage", "outage"],
+        [
+          "Amazon Elastic Compute Cloud and Amazon Relational Database Service (N. Virginia) — Increased Error Rates and Latencies",
+          "outage",
+        ],
+        ["Amazon Elastic Compute Cloud (Ireland) — Elevated Launch Failures", "degraded"],
+      ]);
+      expect(aws.summary).toBe("AWS Identity and Access Management — Global sign-in outage");
       // "Multiple services" is never a row. Lambda has recovered (current 0)
-      // so it is not one either. The regional N. Virginia event caps EC2's
-      // disruption at Degraded, as it does for the card; the global sign-in
-      // outage is an outage. EC2 merges the Virginia and Ireland events, with
-      // the newest one's summary and region.
+      // so it is not one either. EC2 merges the Virginia and Ireland events:
+      // the worse health, both regions, and the newest event's summary.
       expect(aws.components).toEqual([
-        { name: "AWS Identity and Access Management", health: "outage", detail: "Global sign-in outage" },
         {
           name: "Amazon Elastic Compute Cloud",
-          health: "degraded",
-          detail: "Ireland · Elevated Launch Failures",
+          health: "outage",
+          detail: "N. Virginia, Ireland · Elevated Launch Failures",
         },
+        { name: "AWS Identity and Access Management", health: "outage", detail: "Global sign-in outage" },
         {
           name: "Amazon Relational Database Service",
           health: "degraded",
           detail: "N. Virginia · Increased Error Rates and Latencies",
         },
       ]);
+    });
+
+    it("AWS currentevents: an event with no ARN gets the same content-derived id on every sweep", async () => {
+      const event = {
+        date: "1789898400",
+        region_name: "Ohio",
+        status: "2",
+        service_name: "Amazon S3",
+        summary: "Increased latency",
+        event_log: [{ summary: "Increased latency", message: "Investigating.", status: 2, timestamp: 1789898400 }],
+      };
+      stubFetch({ [URLS.aws]: bytes(utf16(JSON.stringify([event]))) });
+      const first = (await collect("aws")).incidents[0].id;
+      stubFetch({ [URLS.aws]: bytes(utf16(JSON.stringify([event]))) });
+      const second = (await collect("aws")).incidents[0].id;
+      expect(first).toBe(second);
+      expect(first).toMatch(/^aws-[0-9a-f]{8}$/);
     });
 
     it("Grok feed.xml: a recent unresolved item is an incident; resolved and stale items are not", async () => {
@@ -1528,7 +1555,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       }
       const serve = (events: unknown[]) => stubFetch({ [URLS.aws]: bytes(utf16(JSON.stringify(events))) });
 
-      it("merges events per service: worst health wins, the newest event's summary is the detail", async () => {
+      it("merges events per service: worst health wins, all regions, the newest event's summary is the detail", async () => {
         serve([
           awsEvent({ summary: "Older regional issue", date: String(at - 600), event_log: [{ timestamp: at - 600 }] }),
           awsEvent({
@@ -1545,7 +1572,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           {
             name: "Amazon Elastic Compute Cloud",
             health: "outage",
-            detail: "Newest: multi-region outage",
+            detail: "N. Virginia · Newest: multi-region outage",
           },
           { name: "AWS Lambda", health: "degraded", detail: "N. Virginia · Invoke latency" },
         ]);

@@ -518,33 +518,71 @@ export function saysResolved(text: string): boolean {
   return /\bresolved\b/.test(t) && !/\bnot\s+(?:yet\s+)?(?:been\s+)?resolved\b/.test(t);
 }
 
+type AwsLogEntry = NonNullable<AwsEvent["event_log"]>[number];
+
+/**
+ * The newest `event_log` entry by timestamp. The log's order is not trusted
+ * (`.at(-1)` read whichever entry the vendor listed last, which is not
+ * always the latest), so this takes the maximum timestamp; an entry without
+ * a readable one loses to any that has one, and among equals the later entry
+ * in the list wins.
+ */
+export function awsLatestLog(event: AwsEvent): AwsLogEntry | undefined {
+  let latest: AwsLogEntry | undefined;
+  let latestAt = Number.NEGATIVE_INFINITY;
+  for (const entry of event.event_log ?? []) {
+    if (!entry || typeof entry !== "object") continue;
+    const at = Number(entry.timestamp ?? Number.NaN);
+    const value = Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+    if (latest === undefined || value >= latestAt) {
+      latest = entry;
+      latestAt = value;
+    }
+  }
+  return latest;
+}
+
+// A reported status or level as a number, or NaN when it is not a reading.
+// null and "" coerce to 0, which would read as resolved, so only a real
+// number or a non-blank numeric string counts.
+function awsLevel(raw: unknown): number {
+  return typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "") ? Number(raw) : Number.NaN;
+}
+
 export function awsEventActive(event: AwsEvent, now: number): boolean {
   if (event.end_time) return false;
   const summary = event.summary ?? "";
   if (/^\[resolved\]/i.test(summary)) return false;
-  const last = event.event_log?.at(-1);
-  const lastTs = (last?.timestamp ?? Number(event.date ?? 0)) * 1000;
+  const last = awsLatestLog(event);
+  const lastTs = (Number(last?.timestamp ?? event.date ?? 0) || 0) * 1000;
   if (!lastTs || now - lastTs > STALE_MS) return false;
   const lastMessage = `${last?.summary ?? ""} ${last?.message ?? ""}`.toLowerCase();
   // `Number(undefined)` is NaN and `NaN !== 0` is true, so an event missing
   // `status` used to count as active. Fall back to the update text instead.
-  // null and "" coerce to 0, which would read as resolved, so only a real
-  // number or a non-blank numeric string counts as a reported status.
-  const raw = event.status as unknown;
-  const status = typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "") ? Number(raw) : Number.NaN;
+  const status = awsLevel(event.status);
   if (!Number.isFinite(status)) return !saysResolved(lastMessage);
   if (saysResolved(lastMessage) && status === 0) return false;
   return status !== 0;
 }
 
+/**
+ * An event's health as a whole. AWS reports `status` as 0 (resolved), 1
+ * (informational), 2 (performance issue) or 3 (service disruption), and the
+ * vendor's own reading comes first: a disruption is an outage even in one
+ * region, and a performance issue is Degraded. Only an informational or
+ * unreported status falls back to the words of the event: maintenance, a
+ * regional Health item (one AZ or region, impact rather than a global
+ * outage) or an outage word.
+ */
 function awsHealthFromEvent(event: AwsEvent): Health {
-  const text = `${event.summary ?? ""} ${event.event_log?.at(-1)?.message ?? ""}`.toLowerCase();
-  const region = (event.region_name ?? "").trim();
+  const last = awsLatestLog(event);
+  const level = awsLevel(event.status);
+  if (level === 3) return "outage";
+  const text = `${event.summary ?? ""} ${last?.message ?? ""}`.toLowerCase();
   if (text.includes("maintenance")) return "maintenance";
-  // Regional Health items (one AZ / one region) are impact, not a global outage.
-  if (region || /region availability/.test(text) || /availability zone/.test(text)) {
-    return "degraded";
-  }
+  if (level === 2) return "degraded";
+  const region = (event.region_name ?? "").trim();
+  if (region || /region availability/.test(text) || /availability zone/.test(text)) return "degraded";
   if (text.includes("outage") || text.includes("unavailable")) return "outage";
   return "degraded";
 }
@@ -592,69 +630,83 @@ export function isoTimestamp(value: unknown): string | undefined {
 
 // What one impacted service of a multi-service event contributes. AWS
 // reports `current` as 0 (recovered), 1 (informational), 2 (performance
-// issue) or 3 (service disruption). Recovered services contribute no row.
-// A disruption is an outage only where the collector would call the event
-// one: a regional or maintenance event keeps the event's own, milder, health,
-// the same rule the card follows.
+// issue) or 3 (service disruption). Recovered services contribute no row. A
+// disruption is an outage wherever it is (the vendor's word, not the
+// region's); the milder levels are Degraded, or Maintenance during
+// maintenance. A missing reading keeps the event's own health.
 function awsImpactedHealth(current: unknown, eventHealth: Health): Health | null {
-  // "" and other non-numbers are not a reading: Number("") is 0, which would
-  // read as recovered, so only a finite number or a non-blank numeric string counts.
-  const level =
-    typeof current === "number"
-      ? current
-      : typeof current === "string" && current.trim() !== ""
-        ? Number(current)
-        : Number.NaN;
+  const level = awsLevel(current);
   if (level === 0) return null;
-  if (level === 3) return eventHealth;
+  if (level === 3) return "outage";
   if (level === 1 || level === 2) return eventHealth === "maintenance" ? "maintenance" : "degraded";
   return eventHealth;
 }
 
+const AWS_GENERIC_NAME = /^multiple services?$/i;
+
+// The services an event names that are not recovered, each with its health.
+// A multi-service event (`impacted_services`) names each service it affects;
+// any other event names its own `service_name`. "Multiple services" is a
+// placeholder for the first case, never a service.
+function awsEventServices(event: AwsEvent): Array<{ name: string; health: Health }> {
+  const eventHealth = awsHealthFromEvent(event);
+  const impacted = Object.values(event.impacted_services ?? {}).filter(
+    (entry) => typeof entry?.service_name === "string" && entry.service_name.trim() !== "",
+  );
+  if (impacted.length > 0) {
+    const named: Array<{ name: string; health: Health }> = [];
+    for (const entry of impacted) {
+      const health = awsImpactedHealth(entry.current, eventHealth);
+      if (health) named.push({ name: (entry.service_name as string).trim(), health });
+    }
+    return named;
+  }
+  const name = (event.service_name ?? event.service ?? "").trim();
+  return name && !AWS_GENERIC_NAME.test(name) ? [{ name, health: eventHealth }] : [];
+}
+
 /**
- * The AWS services named by active events, one component each. A
- * multi-service event (`impacted_services`) names each service it affects;
- * any other event names its own `service_name`. Several events for a service
- * merge into one row: the worst health wins, the detail is the newest event's
- * summary, prefixed with that event's region ("N. Virginia · Increased API
- * Error Rates"). Only services the events name
- * appear, so a quiet Health Dashboard yields no list; an event that names no
- * service cannot be a row.
+ * An event's health. With per-service readings (`impacted_services`) it is
+ * the worst of the services still affected; otherwise, or when every one has
+ * recovered, it is the event's own (see `awsHealthFromEvent`).
+ */
+function awsEventHealth(event: AwsEvent): Health {
+  const services = awsEventServices(event);
+  if (Object.keys(event.impacted_services ?? {}).length > 0 && services.length > 0) {
+    return services.reduce<Health>((worst, service) => worseHealth(worst, service.health), "operational");
+  }
+  return awsHealthFromEvent(event);
+}
+
+/**
+ * The AWS services named by active events, one component each. Several
+ * events for a service merge into one row: the worst health wins, the
+ * regions are the union of every event's, and the detail is the newest
+ * event's summary, prefixed with those regions ("N. Virginia, Ireland ·
+ * Increased API Error Rates"). Only services the events name appear, so a
+ * quiet Health Dashboard yields no list; an event that names no service
+ * (or only "Multiple services") cannot be a row.
  */
 export function awsComponents(active: AwsEvent[]): ComponentHealth[] {
   type Row = ComponentHealth & { at: number; regions: Set<string> };
   const rows = new Map<string, Row>();
   for (const event of active) {
-    const last = event.event_log?.at(-1);
+    const last = awsLatestLog(event);
     const at = Number(last?.timestamp ?? event.date ?? 0) || 0;
-    const eventHealth = awsHealthFromEvent(event);
     const summary = event.summary || last?.summary || undefined;
     const region = (event.region_name ?? "").trim();
-    const impacted = Object.values(event.impacted_services ?? {}).filter(
-      (entry) => typeof entry?.service_name === "string" && entry.service_name.trim() !== "",
-    );
-    const named: Array<{ name: string; health: Health }> = [];
-    if (impacted.length > 0) {
-      for (const entry of impacted) {
-        const health = awsImpactedHealth(entry.current, eventHealth);
-        if (health) named.push({ name: (entry.service_name as string).trim(), health });
-      }
-    } else {
-      const name = (event.service_name ?? event.service ?? "").trim();
-      if (name) named.push({ name, health: eventHealth });
-    }
-    for (const { name, health } of named) {
+    for (const { name, health } of awsEventServices(event)) {
       const row = rows.get(name);
       if (!row) {
         rows.set(name, { name, health, detail: summary, at, regions: new Set(region ? [region] : []) });
         continue;
       }
       row.health = worseHealth(row.health, health);
-      // The regions belong to the summary shown, so they move with it.
+      // Every event's region counts, whichever summary is shown.
+      if (region) row.regions.add(region);
       if (at >= row.at) {
         row.at = at;
         row.detail = summary ?? row.detail;
-        row.regions = new Set(region ? [region] : []);
       }
     }
   }
@@ -662,6 +714,26 @@ export function awsComponents(active: AwsEvent[]): ComponentHealth[] {
     const text = [regions.size ? [...regions].join(", ") : "", detail ?? ""].filter(Boolean).join(" · ");
     return text ? { name, health, detail: text } : { name, health };
   });
+}
+
+/**
+ * What an incident title names as the affected service. A "Multiple
+ * services" event is named by the services it still affects (one or two by
+ * name, more than that as a count).
+ */
+export function awsEventSubject(event: AwsEvent): string {
+  const own = (event.service_name ?? event.service ?? "").trim();
+  if (own && !AWS_GENERIC_NAME.test(own)) return own;
+  const names = [...new Set(awsEventServices(event).map((service) => service.name))];
+  if (names.length === 0) return own ? "Multiple AWS services" : "AWS";
+  return names.length <= 2 ? names.join(" and ") : `${names.length} AWS services`;
+}
+
+/** "Service (Region) — summary". */
+export function awsIncidentTitle(event: AwsEvent): string {
+  const region = (event.region_name ?? "").trim();
+  const summary = event.summary ?? awsLatestLog(event)?.summary ?? "Event";
+  return `${awsEventSubject(event)}${region ? ` (${region})` : ""} — ${summary}`;
 }
 
 async function collectAws(): Promise<ServiceSnapshot> {
@@ -673,19 +745,33 @@ async function collectAws(): Promise<ServiceSnapshot> {
     const now = Date.now();
     const active = value.filter((event) => awsEventActive(event, now));
     let health: Health = "operational";
-    const incidents: Incident[] = active.map((event) => {
-      const itemHealth = awsHealthFromEvent(event);
-      health = worseHealth(health, itemHealth);
-      const last = event.event_log?.at(-1);
-      return {
-        id: event.arn ?? event.summary ?? crypto.randomUUID(),
-        title: `${event.service_name ?? event.service ?? "AWS"} — ${event.summary ?? last?.summary ?? "Event"}`,
-        health: itemHealth,
-        startedAt: epochToIso(event.date, 1000),
-        updatedAt: epochToIso(last?.timestamp, 1000),
-        url: "https://health.aws.amazon.com/health/status",
-      };
-    });
+    const incidents: Incident[] = sortIncidents(
+      active.map((event) => {
+        const itemHealth = awsEventHealth(event);
+        health = worseHealth(health, itemHealth);
+        const last = awsLatestLog(event);
+        return {
+          // The ARN is the event's identity. Without one the id is built from
+          // the event's own content, so it is the same on every sweep (a
+          // random UUID would make each sweep look like a new incident).
+          id:
+            event.arn ||
+            `aws-${fingerprint(
+              [
+                event.service_name ?? event.service ?? "",
+                event.region_name ?? "",
+                event.date ?? "",
+                event.summary ?? "",
+              ].join("|"),
+            )}`,
+          title: awsIncidentTitle(event),
+          health: itemHealth,
+          startedAt: epochToIso(event.date, 1000),
+          updatedAt: epochToIso(last?.timestamp, 1000),
+          url: "https://health.aws.amazon.com/health/status",
+        };
+      }),
+    );
     return {
       ...base("aws", new Date().toISOString(), ms),
       health,
