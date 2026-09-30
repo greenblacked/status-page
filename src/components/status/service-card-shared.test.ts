@@ -70,7 +70,7 @@ describe("IncidentSince", () => {
   it("adds how long it has run, in brackets, once the clock is known", () => {
     const html = render({ now: Date.parse(at) + 130 * 60_000 });
     expect(html).toContain('<time dateTime="PT2H10M">');
-    expect(html).toContain(">2h 10m</span>");
+    expect(html).toContain(">2h\u202f10m</span>");
     expect(html).toContain(">2 hours 10 minutes</span>");
     expect(html).toMatch(/\(<time dateTime="PT2H10M"/);
   });

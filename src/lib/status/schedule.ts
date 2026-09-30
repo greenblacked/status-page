@@ -235,7 +235,7 @@ export function formatUtcTime(at: number, reference: number = at): string {
 }
 
 export type Duration = {
-  /** "2h 10m", for the eye. */
+  /** "2h 10m", for the eye; the gaps are narrow no-break spaces, so it never breaks across lines. */
   short: string;
   /** "2 hours 10 minutes", for a screen reader. */
   long: string;
@@ -255,17 +255,17 @@ export function formatDuration(ms: number): Duration | null {
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
   const iso = `PT${hours}H${minutes % 60}M`;
-  if (minutes < 1) return { short: "under 1m", long: "under a minute", iso };
+  if (minutes < 1) return { short: `under${THIN_SPACE}1m`, long: "under a minute", iso };
   if (hours < 1) return { short: `${minutes}m`, long: plural(minutes, "minute"), iso };
   if (days < 1) {
     const rest = minutes % 60;
     return rest
-      ? { short: `${hours}h ${rest}m`, long: `${plural(hours, "hour")} ${plural(rest, "minute")}`, iso }
+      ? { short: `${hours}h${THIN_SPACE}${rest}m`, long: `${plural(hours, "hour")} ${plural(rest, "minute")}`, iso }
       : { short: `${hours}h`, long: plural(hours, "hour"), iso };
   }
   const rest = hours % 24;
   return rest
-    ? { short: `${days}d ${rest}h`, long: `${plural(days, "day")} ${plural(rest, "hour")}`, iso }
+    ? { short: `${days}d${THIN_SPACE}${rest}h`, long: `${plural(days, "day")} ${plural(rest, "hour")}`, iso }
     : { short: `${days}d`, long: plural(days, "day"), iso };
 }
 

@@ -213,15 +213,19 @@ describe("incident times", () => {
 
   it("formats how long an incident has lasted", () => {
     const minute = 60_000;
-    assert.deepEqual(formatDuration(20_000), { short: "under 1m", long: "under a minute", iso: "PT0H0M" });
+    assert.deepEqual(formatDuration(20_000), { short: "under\u202f1m", long: "under a minute", iso: "PT0H0M" });
     assert.equal(formatDuration(-5 * minute), null);
     assert.equal(formatDuration(-1), null);
     assert.equal(formatDuration(Number.NaN), null);
     assert.deepEqual(formatDuration(45 * minute), { short: "45m", long: "45 minutes", iso: "PT0H45M" });
-    assert.deepEqual(formatDuration(130 * minute), { short: "2h 10m", long: "2 hours 10 minutes", iso: "PT2H10M" });
+    assert.deepEqual(formatDuration(130 * minute), {
+      short: "2h\u202f10m",
+      long: "2 hours 10 minutes",
+      iso: "PT2H10M",
+    });
     assert.deepEqual(formatDuration(60 * minute), { short: "1h", long: "1 hour", iso: "PT1H0M" });
     assert.deepEqual(formatDuration((76 * 60 + 1) * minute), {
-      short: "3d 4h",
+      short: "3d\u202f4h",
       long: "3 days 4 hours",
       iso: "PT76H1M",
     });

@@ -109,12 +109,15 @@ export function IncidentSince({
       <LocalTime at={at} reference={Number.isFinite(reference) ? reference : at} />
       {duration && !scheduled ? (
         <>
-          {" ("}
-          <time dateTime={duration.iso} className="tabular-nums">
-            <span aria-hidden>{duration.short}</span>
-            <span className="sr-only">{duration.long}</span>
-          </time>
-          {")"}
+          {" "}
+          <span className="whitespace-nowrap tabular-nums">
+            (
+            <time dateTime={duration.iso}>
+              <span aria-hidden>{duration.short}</span>
+              <span className="sr-only">{duration.long}</span>
+            </time>
+            )
+          </span>
         </>
       ) : null}
     </span>
