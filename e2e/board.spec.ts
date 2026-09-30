@@ -1777,11 +1777,11 @@ test("renders cards without requesting persistent uptime history", async ({ page
 });
 
 // The board asks for history only in a build made with VITE_STATUS_HISTORY=1
-// (nothing collects any today). These two run only when the runner is given
+// (nothing collects any today). These run only when the runner is given
 // the same VITE_STATUS_HISTORY=1 it built with, and are skipped otherwise;
 // the default build is covered by the test above, which a history build skips.
 // CI's history job builds with the flag and runs them by their @history tag.
-test("shows an uptime strip on a card once /api/history.json has days", { tag: "@history" }, async ({ page }) => {
+test("shows an uptime strip on a service once /api/history.json has days", { tag: "@history" }, async ({ page }) => {
   test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
   const today = new Date();
   const days = Array.from({ length: 10 }, (_, index) => {
@@ -1814,6 +1814,77 @@ test("shows an uptime strip on a card once /api/history.json has days", { tag: "
   // Only the service the document lists gets one.
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(1);
   expect(problems).toEqual([]);
+});
+
+/** A /api/history.json with ten quiet days for each of these services. */
+function historyFor(ids: string[]) {
+  const today = new Date();
+  const days = Array.from({ length: 10 }, (_, index) => ({
+    date: new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (9 - index)))
+      .toISOString()
+      .slice(0, 10),
+    worst: "operational",
+    samples: 2,
+    up: 1,
+  }));
+  return {
+    schema: 1,
+    updatedAt: today.toISOString(),
+    timezone: "UTC",
+    retentionDays: 30,
+    services: Object.fromEntries(ids.map((id) => [id, { days }])),
+  };
+}
+
+test("draws the strip on an attention card and on a list row", { tag: "@history" }, async ({ page }) => {
+  test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
+  // In the fixture AWS is in outage (an attention card) and every service without a problem is a row.
+  const body = JSON.stringify(historyFor(["aws", "chatgpt"]));
+  await page.route("**/api/history.json", (route) => route.fulfill({ contentType: "application/json", body }));
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const card = page.locator("#service-aws");
+  await expect(card.getByText("Outage", { exact: true }).first()).toBeVisible();
+  await expect(card.getByRole("img", { name: /uptime history/i })).toBeVisible();
+  const row = page.locator("#service-chatgpt");
+  await expect(row.getByText("Outage", { exact: true })).toHaveCount(0);
+  await expect(row.getByRole("img", { name: /uptime history/i })).toBeVisible();
+  await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(2);
+});
+
+test("keeps an open row open, and its summary focused, when the history arrives", { tag: "@history" }, async ({
+  page,
+}) => {
+  test.skip(process.env.VITE_STATUS_HISTORY !== "1", "needs a build with VITE_STATUS_HISTORY=1");
+  // Held back, so the board is up with no days and the strip mounts while the row is being used.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let body = "";
+  await page.route("**/api/history.json", async (route) => {
+    await held;
+    await route.fulfill({ contentType: "application/json", body });
+  });
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  // A row that opens (it lists components), whichever one the fixture makes first.
+  const row = page.locator("article.row:has(details)").first();
+  const id = (await row.getAttribute("id"))?.replace(/^service-/, "") ?? "";
+  expect(id, "the fixture has a row that opens").not.toBe("");
+  body = JSON.stringify(historyFor([id]));
+
+  const summary = row.locator("summary");
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  const details = row.locator("details");
+  await expect(details).toHaveJSProperty("open", true);
+  await expect(summary).toBeFocused();
+  await expect(row.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
+
+  release();
+  await expect(row.getByRole("img", { name: /uptime history/i })).toBeVisible();
+  // The same <details>, not a new one: it is still open and the focus is still in it.
+  await expect(details).toHaveJSProperty("open", true);
+  await expect(summary).toBeFocused();
 });
 
 test("renders cards without a strip when /api/history.json is the empty document", { tag: "@history" }, async ({
@@ -1966,12 +2037,20 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
         x: x + window.scrollX,
         y: y + window.scrollY,
         reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
+        // What answers above and below, for the failure message: the link that took the tap, or what else.
+        seen: [-21.5, 21.5].map((dy) => {
+          const hit = document.elementFromPoint(x, y + dy);
+          return hit === link
+            ? "itself"
+            : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
+        }),
       };
     });
     return boxes;
   });
   expect(sentence.length, "the sub line names services").toBeGreaterThan(1);
-  for (const link of sentence) expect(link.reaches, `${link.name} reaches 44px tall`).toEqual([true, true]);
+  for (const link of sentence)
+    expect(link.reaches, `${link.name} reaches 44px tall (above and below it saw ${link.seen})`).toEqual([true, true]);
   // Neighbours on one line are well apart (WCAG 2.5.8: 24px between centres).
   for (const [index, link] of sentence.entries()) {
     const next = sentence[index + 1];
@@ -2226,6 +2305,48 @@ test("keeps Alerts and Refresh as icon buttons with a name and a tooltip", async
     await expect(alerts).toHaveAttribute("title", "Notify me when a service changes");
     await expect(alerts).toHaveAttribute("aria-pressed", "false");
   }
+});
+
+test("shows Alerts as blocked, with the reason, and does nothing when pressed, where notifications are denied", async ({
+  page,
+}) => {
+  // The browser's answer is no, and any request would be seen: nothing should ask.
+  await page.addInitScript(() => {
+    if (!("Notification" in window)) return;
+    Object.defineProperty(Notification, "permission", { get: () => "denied" });
+    const asked: string[] = [];
+    Object.defineProperty(window, "__permissionRequests", { value: asked });
+    Notification.requestPermission = () => {
+      asked.push("requestPermission");
+      return Promise.resolve("denied");
+    };
+  });
+  await page.goto("/");
+  await hydrated(page);
+  const alerts = page.locator("header").getByRole("button", { name: "Notifications" });
+  test.skip((await alerts.count()) === 0, "this browser has no Alerts button (an iPhone cannot send them)");
+  await expect(alerts).toHaveAttribute(
+    "title",
+    "Notifications are blocked for this site. Allow them in browser settings.",
+  );
+  await expect(alerts).toHaveAttribute("aria-disabled", "true");
+  await expect(alerts).toHaveAttribute("aria-pressed", "false");
+  // Still reachable by a screen reader, and it says why.
+  const hint = await alerts.getAttribute("aria-describedby");
+  expect(hint, "the button points at its reason").toBeTruthy();
+  await expect(page.locator(`[id="${hint}"]`)).toHaveText("Blocked in this browser's site settings");
+
+  // Pressing it does nothing: Playwright will not click an aria-disabled button unless forced.
+  await alerts.click({ force: true });
+  await expect(alerts).toHaveAttribute("aria-pressed", "false");
+  await expect(alerts).toHaveAttribute("aria-disabled", "true");
+  await expect(alerts).toHaveAttribute(
+    "title",
+    "Notifications are blocked for this site. Allow them in browser settings.",
+  );
+  expect(
+    await page.evaluate(() => (window as unknown as { __permissionRequests: string[] }).__permissionRequests),
+  ).toEqual([]);
 });
 
 test("opens the countdown line with a capital in the margin, and keeps it lowercase after the dot on a phone", async ({
