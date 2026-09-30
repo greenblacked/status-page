@@ -105,11 +105,22 @@ describe("verdict when something needs a look", () => {
     expect(result.subParts.map((part) => part.text).join("")).toBe(result.sub);
   });
 
-  it("adds what it could not read, without counting it", () => {
+  it("adds what it could not read, by name and linked, without counting it", () => {
     const result = verdict(board({ steam: "degraded", grok: "unknown", android: "unknown" }));
-    expect(result.sub).toBe("Steam. The other eleven are running normally. I couldn't read 2.");
+    expect(result.sub).toBe("Steam. The other eleven are running normally. I couldn't read Android and Grok.");
+    expect(result.subParts.filter((part) => part.id).map((part) => part.id)).toEqual(["steam", "android", "grok"]);
     expect(result.count).toBe(1);
     expect(result.tone).toBe("degraded");
+    expect(verdict(board({ steam: "degraded", grok: "unknown" })).sub).toBe(
+      "Steam. The other twelve are running normally. I couldn't read Grok.",
+    );
+  });
+
+  it("spells out how many it could not read when there are more than two", () => {
+    const result = verdict(board({ steam: "degraded", grok: "unknown", android: "unknown", claude: "unknown" }));
+    expect(result.sub).toBe("Steam. The other ten are running normally. I couldn't read three of them.");
+    expect(result.subParts.filter((part) => part.id).map((part) => part.id)).toEqual(["steam"]);
+    expect(result.count).toBe(1);
   });
 
   it("takes the tone from the worst thing, and counts maintenance", () => {
@@ -133,7 +144,7 @@ describe("verdict when sources could not be read", () => {
 
   it("counts them when there are more than two, and links the ones it names", () => {
     expect(verdict(board({ grok: "unknown", android: "unknown", claude: "unknown" })).sub).toBe(
-      "I couldn't read 3 of them.",
+      "I couldn't read three of them.",
     );
     expect(
       verdict(board({ grok: "unknown", android: "unknown" }))

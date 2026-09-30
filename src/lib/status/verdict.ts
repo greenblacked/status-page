@@ -80,6 +80,19 @@ function namedParts(services: ServiceSnapshot[]): VerdictPart[] {
   return parts;
 }
 
+/** "I couldn't read Android.", "I couldn't read Android and Steam." (each linked), or "I couldn't read three of them." */
+function unreadParts(unread: ServiceSnapshot[], lead = ""): VerdictPart[] {
+  if (unread.length > 2) return [{ text: `${lead}I couldn't read ${countWord(unread.length)} of them.` }];
+  return [
+    { text: `${lead}I couldn't read ` },
+    ...unread.flatMap((service, at) => [
+      ...(at > 0 ? [{ text: " and " }] : []),
+      { text: service.shortName, id: service.id },
+    ]),
+    { text: "." },
+  ];
+}
+
 const textOf = (parts: VerdictPart[]) => parts.map((part) => part.text).join("");
 
 export function verdict(board: BoardSnapshot): Verdict {
@@ -100,7 +113,7 @@ export function verdict(board: BoardSnapshot): Verdict {
     if (others > 0) {
       parts.push({ text: ` The other ${countWord(others)} ${others === 1 ? "is" : "are"} running normally.` });
     }
-    if (k > 0) parts.push({ text: ` I couldn't read ${k}.` });
+    if (k > 0) parts.push(...unreadParts(unread, " "));
     const sub = textOf(parts);
     return {
       tone: attention[0].health,
@@ -115,17 +128,7 @@ export function verdict(board: BoardSnapshot): Verdict {
   }
 
   if (k > 0) {
-    const parts: VerdictPart[] =
-      k <= 2
-        ? [
-            { text: "I couldn't read " },
-            ...unread.flatMap((service, at) => [
-              ...(at > 0 ? [{ text: " and " }] : []),
-              { text: service.shortName, id: service.id },
-            ]),
-            { text: "." },
-          ]
-        : [{ text: `I couldn't read ${k} of them.` }];
+    const parts = unreadParts(unread);
     const sub = textOf(parts);
     return {
       tone: "unknown",
