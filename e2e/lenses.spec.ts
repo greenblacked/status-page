@@ -486,8 +486,8 @@ test.describe("contrast", () => {
       await page.goto("/");
       await hydrated(page);
       await page.getByRole("button", { name: "Refresh status now" }).first().click();
-      // The most urgent card's caption sits at the brightest corner of a panel.
-      await expect(page.getByText("Most urgent", { exact: true })).toBeVisible();
+      // The most urgent card's "since" line sits at the brightest corner of a panel.
+      await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
       await page.waitForTimeout(500);
       const setup = await page.evaluate(() => {
         const channels = (token: string) => {
@@ -527,8 +527,8 @@ test.describe("contrast", () => {
         }
         return { colours, discs, runs };
       });
-      // Not vacuous: both colours are used on panels, among them the urgent card's caption.
-      expect(setup.runs.some((run) => run.text === "Most urgent")).toBe(true);
+      // Not vacuous: both colours are used on panels, among them the urgent card's "since" line.
+      expect(setup.runs.some((run) => run.text === "since")).toBe(true);
       expect(setup.runs.filter((run) => run.kind === "subtle").length).toBeGreaterThan(8);
       expect(setup.runs.filter((run) => run.kind === "muted").length).toBeGreaterThan(2);
       await page.addStyleTag({ content: "*{color:transparent !important;text-shadow:none !important}" });

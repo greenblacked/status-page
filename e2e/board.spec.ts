@@ -5,9 +5,12 @@ import { fixtureBoard, serveBoard } from "./fixture-board";
 
 const SERVICES = 14;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
-/** The cards of one board group: "attention", "operational" or "releases". */
-const group = (page: Page, id: "attention" | "operational" | "releases") =>
-  page.locator(`section[aria-labelledby="${id}-heading"] article[id^="service-"]`);
+/** The services of one board group: "attention", "unread" (Couldn't read), "up" (every category's list) or "releases". */
+const group = (page: Page, id: "attention" | "unread" | "up" | "releases") =>
+  page.locator(`[data-group="${id}"] article[id^="service-"]`);
+/** The healthy services of one category's list, such as "ai". */
+const upList = (page: Page, category: string) =>
+  page.locator(`section[aria-labelledby="up-${category}-heading"] article[id^="service-"]`);
 
 /**
  * Waits out every card's fade-in. A card mid-animation is partly transparent,
@@ -1088,33 +1091,36 @@ test("sets the search field at 16px on a touch screen, so iPhone does not zoom i
   expect(Number.parseFloat(size)).toBeGreaterThanOrEqual(16);
 });
 
-test("renders healthy services as full cards, alike whether or not the vendor lists components", async ({ page }) => {
+test("renders healthy services as rows, alike whether or not the vendor lists components", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
 
-  // The heading's count and the cards under it agree.
-  const operational = group(page, "operational");
-  const total = await operational.count();
+  // Each category's heading counts the rows under it.
+  const up = group(page, "up");
+  const total = await up.count();
   expect(total).toBeGreaterThan(0);
-  await expect(page.locator("#operational-heading")).toContainText(String(total));
+  const counts = await page.locator('[data-group="up"] h2').allTextContents();
+  expect(counts.reduce((sum, text) => sum + Number(text.replace(/\D/g, "")), 0)).toBe(total);
 
   for (const id of ["chatgpt", "claude", "grok"] as const) {
     const service = board.services.find((item) => item.id === id);
     if (!service) throw new Error(`the fixture has no ${id}`);
     const card = page.locator(`article#service-${id}`);
-    // In the Operational group, not a one-line tile in a group of its own.
-    await expect(operational.and(card), `${id} sits in Operational`).toHaveCount(1);
-    // The same parts on every one: name, badge, star, link to the official source.
+    // In a category's list, not a card of its own.
+    await expect(up.and(card), `${id} sits in a list of healthy services`).toHaveCount(1);
+    // The same parts on every one: name, word, star, link to the official source.
     await expect(card.getByRole("heading", { level: 3, name: service.name })).toBeVisible();
-    // The badge in the card header, not the component list's screen-reader-only state words.
+    // The word in the row's header, not the component list's screen-reader-only state words.
     await expect(card.locator("[data-card-header]").getByText("Operational", { exact: true })).toBeVisible();
     await expect(card.getByRole("button", { name: `Star ${service.name}` })).toBeVisible();
     await expect(card.locator(`a[href="${service.sourceUrl}"]`)).toBeVisible();
-    // The component list is there when the vendor reports components, and only then.
+    // A row opens to its components when the vendor reports them, and only then.
     const list = card.getByRole("list", { name: "Components" });
     if (service.components.length === 0) {
+      await expect(card.locator("details")).toHaveCount(0);
       await expect(list).toHaveCount(0);
     } else {
+      await card.locator("summary").click();
       await expect(list).toHaveCount(1);
       await expect(list.getByRole("listitem")).toHaveCount(service.components.length);
       for (const component of service.components) {
@@ -1129,20 +1135,21 @@ test("leads Needs attention with the most urgent service and follows the data", 
   await openFixture(page, () => board);
 
   const attention = group(page, "attention");
-  // AWS is an outage, Google Cloud is degraded, Android is unknown, Epic is in maintenance.
-  await expect(attention).toHaveCount(4);
+  // AWS is an outage, Google Cloud is degraded, Epic is in maintenance. Android could not be read: that is its own group.
+  await expect(attention).toHaveCount(3);
   await expect(attention.nth(0)).toHaveAttribute("id", "service-aws");
   await expect(attention.nth(1)).toHaveAttribute("id", "service-gcp");
-  await expect(attention.nth(2)).toHaveAttribute("id", "service-android");
-  await expect(attention.nth(3)).toHaveAttribute("id", "service-epic");
+  await expect(attention.nth(2)).toHaveAttribute("id", "service-epic");
+  await expect(group(page, "unread")).toHaveCount(1);
+  await expect(group(page, "unread").first()).toHaveAttribute("id", "service-android");
 
   // Exactly one card is the highlight, and it is the first.
   const highlight = page.locator('article[data-highlight="true"]');
   await expect(highlight).toHaveCount(1);
   await expect(highlight).toHaveAttribute("id", "service-aws");
-  await expect(highlight).toContainText("Most urgent");
-  // The caption is the card's own first line, not a wrapper around it.
-  await expect(highlight.locator("> p").first()).toHaveText("Most urgent");
+  // No caption crowns it: the attribute is the whole mark. A service that could not be read never carries it.
+  await expect(highlight).not.toContainText("Most urgent");
+  await expect(page.locator("article#service-android")).not.toHaveAttribute("data-highlight");
   // It holds the whole card, not a stub of it.
   await expect(highlight.getByText("Outage", { exact: true }).first()).toBeVisible();
   await expect(highlight.locator('a[href^="https://"]')).toBeVisible();
@@ -1223,7 +1230,6 @@ test("keeps keyboard focus on a Star button when its card becomes the most urgen
   await expect(attention.nth(0)).toHaveAttribute("id", "service-grok");
   await expect(highlight).toHaveCount(1);
   await expect(highlight).toHaveAttribute("id", "service-grok");
-  await expect(highlight).toContainText("Most urgent");
   await expect(page.locator("article#service-gcp")).not.toHaveAttribute("data-highlight");
   await expect(star).toBeFocused();
   expect(
@@ -1262,14 +1268,12 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
 
-  // Attention first, then Operational, then Releases, each with its count.
-  await expect(page.locator("#attention-heading, #operational-heading, #releases-heading")).toHaveText([
-    /Needs attention\s*4/,
-    /Operational\s*\d+/,
-    /Releases\s*\d+/,
-  ]);
+  // Needs a look first, then what could not be read, then one list per category (Cloud is all down here), then Releases.
+  await expect(
+    page.locator('#attention-heading, #unread-heading, [id^="up-"][id$="-heading"], #releases-heading'),
+  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*2/]);
 
-  // Issues only leaves the four attention cards, the highlight among them.
+  // Issues only leaves the attention cards and the row that could not be read, the highlight among them.
   const issues = page.getByRole("button", { name: /Issues only/ });
   await issues.click();
   await expect(cards(page)).toHaveCount(4);
@@ -1277,11 +1281,11 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   await issues.click();
   await expect(cards(page)).toHaveCount(SERVICES);
 
-  // A star lifts a healthy card to the head of Operational, but never above a worse service in Needs attention.
+  // A star lifts a healthy row to the head of its category's list, but never above a worse service in Needs a look.
   const starClaude = page.getByRole("button", { name: "Star Claude", exact: true });
   await toggleStar(page, () => starClaude.click());
   await expect(starClaude).toHaveAttribute("aria-pressed", "true");
-  await expect(group(page, "operational").first()).toHaveAttribute("id", "service-claude");
+  await expect(upList(page, "ai").first()).toHaveAttribute("id", "service-claude");
   const starGoogleCloud = page.getByRole("button", { name: "Star Google Cloud", exact: true });
   await toggleStar(page, () => starGoogleCloud.click());
   await expect(starGoogleCloud).toHaveAttribute("aria-pressed", "true");
@@ -1293,7 +1297,8 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
 test("glides a starred card to its place without naming the cards for a view transition", async ({ page }) => {
   await recordAnimations(page);
   await openFixture(page, () => fixtureBoard(Date.now()));
-  const operational = group(page, "operational");
+  // The AI list holds three rows, so the last one travels more than a row's height to the top.
+  const operational = upList(page, "ai");
   const farthest = await operational.last().getAttribute("id");
   const first = await operational.first().getAttribute("id");
   expect(farthest).not.toBe(first);
@@ -1318,7 +1323,7 @@ test("moves a starred card without a glide when the system asks for reduced moti
   await page.emulateMedia({ reducedMotion: "reduce" });
   await recordAnimations(page);
   await openFixture(page, () => fixtureBoard(Date.now()));
-  const operational = group(page, "operational");
+  const operational = upList(page, "ai");
   const farthest = await operational.last().getAttribute("id");
   const before = await cardGlides(page);
   const star = page.locator(`article#${farthest}`).locator("button[aria-pressed]").first();
@@ -1596,7 +1601,7 @@ for (const background of ["quiet", "glass"] as const) {
         await expect(cards(page)).toHaveCount(SERVICES);
         await hydrated(page);
         await page.getByRole("button", { name: "Refresh status now" }).first().click();
-        for (const label of ["Outage", "Degraded", "Maintenance", "Unknown", "Operational"]) {
+        for (const label of ["Outage", "Degraded", "Maintenance", "No data", "Operational"]) {
           await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();
         }
         // Shortly after midnight UTC the fixture's incidents began the day
@@ -1743,7 +1748,7 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
   await expect(footer).toContainText("This page checks every two minutes; the server reads the official vendor feeds");
 });
 
-test("puts the footer in a contentinfo landmark outside main, and names the board log", async ({ page }) => {
+test("puts the footer in a contentinfo landmark outside main, and names the recent changes", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   // The role only exists for a footer that is not inside main, an article or a section.
@@ -1751,7 +1756,7 @@ test("puts the footer in a contentinfo landmark outside main, and names the boar
   await expect(footer).toHaveCount(1);
   await expect(footer).toContainText("Status Page reads vendor status feeds only");
   await expect(page.locator("main footer, main dialog")).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Board log" })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Recent changes" })).toHaveCount(1);
   await hydrated(page);
   // The dialog still opens from the footer's button.
   await footer.getByRole("button", { name: "Settings and shortcuts" }).click();

@@ -187,13 +187,13 @@ async function tilt(page: Page, beta: number | null, gamma: number | null): Prom
 }
 
 /**
- * What the hook wrote: the first card's own inline --light-x or --light-y, empty
+ * What the hook wrote: the first panel's own (a card, or a list of rows: the first .surface) inline --light-x or --light-y, empty
  * while the light is not being driven. This is the hook's doing and reads the
  * same in every engine; whether the pseudo-elements then draw it is paintedLight.
  */
 const lightVar = (page: Page, name: "--light-x" | "--light-y") =>
   page.evaluate((name) => {
-    const card = document.querySelector<HTMLElement>('article[id^="service-"]');
+    const card = document.querySelector<HTMLElement>(".surface");
     return card ? card.style.getPropertyValue(name).trim() : "no card";
   }, name);
 
@@ -205,7 +205,7 @@ const lightVar = (page: Page, name: "--light-x" | "--light-y") =>
  */
 const paintedLight = (page: Page) =>
   page.evaluate(() => {
-    const card = document.querySelector('article[id^="service-"]');
+    const card = document.querySelector(".surface");
     if (!card) return { sheen: "no card", glint: "no card" };
     return {
       sheen: getComputedStyle(card, "::before").backgroundImage,
@@ -216,7 +216,7 @@ const paintedLight = (page: Page) =>
 /** Everything about the light in one line, for a log that has to explain a failure in an engine we cannot run. */
 const lightReadings = (page: Page) =>
   page.evaluate(() => {
-    const card = document.querySelector<HTMLElement>('article[id^="service-"]');
+    const card = document.querySelector<HTMLElement>(".surface");
     if (!card) return "no card";
     const before = getComputedStyle(card, "::before");
     const after = getComputedStyle(card, "::after");
@@ -292,9 +292,10 @@ async function openSettings(page: Page): Promise<void> {
 const tiltSwitch = (page: Page) => page.getByRole("switch", { name: "Tilt lighting" });
 const storedChoice = (page: Page) => page.evaluate((key) => localStorage.getItem(key), TILT_STORAGE_KEY);
 
-/** The first card's light-carrying pseudo-elements, as the browser computes them. */
+/** The first panel's light-carrying pseudo-elements, as the browser computes them. */
 const cardLight = (page: Page) =>
-  cards(page)
+  page
+    .locator(".surface")
     .first()
     .evaluate((card) => ({
       sheen: getComputedStyle(card, "::before").backgroundImage,
