@@ -55,15 +55,69 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-/** Waits until every view transition the page has started, including any started meanwhile, has finished. */
+/** How long a view transition may take before the wait gives up with a clear message. */
+const TRANSITION_LIMIT_MS = 20_000;
+
+/**
+ * Waits until every view transition the page has started, including any
+ * started meanwhile, has finished. A software-rendered browser can take
+ * seconds over one, so a wait past a second is recorded on the test and
+ * logged, where a CI log shows it; one that never ends fails with its own
+ * message instead of running into the test's timeout.
+ */
 async function transitionsDone(page: Page): Promise<void> {
-  await page.evaluate(async () => {
+  const began = Date.now();
+  let timer: NodeJS.Timeout | undefined;
+  const finished = page.evaluate(async () => {
     const tracked = window as Window & { __vts?: Promise<unknown>[] };
     for (let seen = 0; tracked.__vts && seen < tracked.__vts.length; ) {
       seen = tracked.__vts.length;
       await Promise.all(tracked.__vts);
     }
   });
+  const stuck = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`view transition did not finish in ${TRANSITION_LIMIT_MS / 1000} s`)),
+      TRANSITION_LIMIT_MS,
+    );
+  });
+  // If the timer wins, the evaluate is left behind and may reject once the page closes.
+  finished.catch(() => undefined);
+  try {
+    await Promise.race([finished, stuck]);
+  } finally {
+    clearTimeout(timer);
+  }
+  const waited = Date.now() - began;
+  const info = test.info();
+  info.annotations.push({ type: "view-transition-ms", description: String(waited) });
+  if (waited > 1000) console.log(`[vt] ${info.title} waited ${waited} ms`);
+}
+
+/** How many view transitions the page has started so far. */
+const transitionsStarted = (page: Page) =>
+  page.evaluate(() => (window as Window & { __vts?: Promise<unknown>[] }).__vts?.length ?? 0);
+
+/**
+ * Runs `press` (a click or a key that toggles a star) and waits for the whole
+ * of its view transition. The star's state (aria-pressed) changes only when
+ * the browser runs the transition's update callback, after it has captured
+ * the old page, which can take seconds on a software-rendered browser: so
+ * this proves the press landed by the transition it started, then waits the
+ * transition out, and only then can the caller read the state. Without
+ * view transitions (or with reduced motion) the update is synchronous and
+ * nothing is started, so it goes straight to the state.
+ */
+async function toggleStar(page: Page, press: () => Promise<void>): Promise<void> {
+  const animated = await page.evaluate(
+    () =>
+      typeof document.startViewTransition === "function" &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const before = await transitionsStarted(page);
+  await press();
+  if (animated) await expect.poll(() => transitionsStarted(page)).toBeGreaterThan(before);
+  await transitionsDone(page);
 }
 
 /**
@@ -422,9 +476,8 @@ test("keeps keyboard focus on a Star button when its card becomes the most urgen
   const star = page.locator("article#service-grok").getByRole("button", { name: "Star Grok", exact: true });
   await star.focus();
   await expect(star).toBeFocused();
-  await page.keyboard.press("Enter");
+  await toggleStar(page, () => page.keyboard.press("Enter"));
   await expect(star).toHaveAttribute("aria-pressed", "true");
-  await transitionsDone(page);
 
   // It is now first and the highlight, and focus never left its button.
   await expect(attention.nth(0)).toHaveAttribute("id", "service-grok");
@@ -445,9 +498,8 @@ test("keeps keyboard focus on a Star button when its card becomes the most urgen
   ).toEqual({ label: "Star Grok", card: "service-grok", sameNode: true });
 
   // Unstarring hands the lead back, and focus still stays.
-  await page.keyboard.press("Enter");
+  await toggleStar(page, () => page.keyboard.press("Enter"));
   await expect(star).toHaveAttribute("aria-pressed", "false");
-  await transitionsDone(page);
   await expect(attention.nth(0)).toHaveAttribute("id", "service-gcp");
   await expect(highlight).toHaveAttribute("id", "service-gcp");
   await expect(star).toBeFocused();
@@ -487,14 +539,12 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
 
   // A star lifts a healthy card to the head of Operational, but never above a worse service in Needs attention.
   const starClaude = page.getByRole("button", { name: "Star Claude", exact: true });
-  await starClaude.click();
+  await toggleStar(page, () => starClaude.click());
   await expect(starClaude).toHaveAttribute("aria-pressed", "true");
-  await transitionsDone(page);
   await expect(group(page, "operational").first()).toHaveAttribute("id", "service-claude");
   const starGoogleCloud = page.getByRole("button", { name: "Star Google Cloud", exact: true });
-  await starGoogleCloud.click();
+  await toggleStar(page, () => starGoogleCloud.click());
   await expect(starGoogleCloud).toHaveAttribute("aria-pressed", "true");
-  await transitionsDone(page);
   await expect(group(page, "attention").first()).toHaveAttribute("id", "service-aws");
   await page.getByRole("button", { name: /^Starred/ }).click();
   await expect(cards(page)).toHaveCount(2);
