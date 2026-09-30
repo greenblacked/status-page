@@ -1,5 +1,5 @@
 import { Star } from "lucide-react";
-import { type Ref, useId, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { CATALOG } from "@/lib/status/catalog";
@@ -191,7 +191,6 @@ export function ListToggle({
   total,
   noun = "components",
   className,
-  buttonRef,
 }: {
   expanded: boolean;
   onToggle: () => void;
@@ -199,16 +198,34 @@ export function ListToggle({
   total: number;
   noun?: string;
   className?: string;
-  buttonRef?: Ref<HTMLButtonElement>;
 }) {
+  const button = useRef<HTMLButtonElement>(null);
+  // Where the button sat when a list was closed, so the page can be moved back under it.
+  const closedFrom = useRef<number | null>(null);
+  // Closing a long list pulls the page up by thousands of pixels and leaves this button above the
+  // screen; once the smaller list is committed, scroll by the distance the button moved.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: it must run when `expanded` flips, and only then.
+  useLayoutEffect(() => {
+    const from = closedFrom.current;
+    closedFrom.current = null;
+    if (from === null || !button.current) return;
+    const moved = button.current.getBoundingClientRect().top - from;
+    if (moved !== 0) window.scrollBy({ top: moved, behavior: "instant" });
+  }, [expanded]);
   return (
     <button
-      ref={buttonRef}
+      ref={button}
       type="button"
-      onClick={onToggle}
+      onClick={() => {
+        if (expanded && button.current) closedFrom.current = button.current.getBoundingClientRect().top;
+        onToggle();
+      }}
       aria-expanded={expanded}
       aria-controls={controls}
-      className={cn("focus-ring pressable inline-flex min-h-11 items-center text-footnote text-accent", className)}
+      className={cn(
+        "focus-ring pressable inline-flex min-h-11 scroll-mt-20 items-center rounded-md text-footnote text-accent",
+        className,
+      )}
     >
       {expanded ? "Show fewer" : `Show all ${total}`}
       <span className="sr-only"> {noun}</span>
@@ -226,27 +243,33 @@ export function ListToggle({
 export function HealthyComponents({
   components,
   total = components.length,
+  label = "Components",
+  sourceUrl,
   className,
 }: {
   components: ComponentHealth[];
   /** The vendor's true component count, when the snapshot kept fewer than it lists. */
   total?: number;
+  /** The list's accessible name, when a card holds more than one list. */
+  label?: string;
+  /** The vendor's own status page, linked when the snapshot holds fewer components than it lists. */
+  sourceUrl?: string;
   className?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const listId = useId();
-  const toggle = useRef<HTMLButtonElement>(null);
   if (components.length === 0) return null;
   // A stray non-operational component still leads the list; the sort is stable, so the vendor's order holds.
   const ordered = [...components].sort(
     (a, b) => Number(a.health === "operational") - Number(b.health === "operational"),
   );
-  const count = Math.max(total, ordered.length);
   const shown = expanded ? ordered : ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
-  const cut = count > HEALTHY_COMPONENTS_SHOWN;
+  const cut = ordered.length > HEALTHY_COMPONENTS_SHOWN;
+  // The snapshot keeps at most so many components; the vendor may list more than it holds.
+  const truncated = total > ordered.length && (expanded || !cut);
   return (
     <div className={className} data-more-components={cut ? "" : undefined}>
-      <ul id={listId} aria-label="Components" className="flex flex-col gap-1.5">
+      <ul id={listId} aria-label={label} className="flex flex-col gap-1.5">
         {shown.map((component, componentIndex) => (
           <li
             // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
@@ -267,23 +290,30 @@ export function HealthyComponents({
         ))}
       </ul>
       {cut ? (
-        <>
-          <ListToggle
-            buttonRef={toggle}
-            expanded={expanded}
-            controls={listId}
-            total={count}
-            onToggle={() => {
-              const wasExpanded = expanded;
-              setExpanded(!wasExpanded);
-              // Closing a long list leaves this button far below the row; bring it back in view.
-              if (wasExpanded) toggle.current?.scrollIntoView({ block: "nearest" });
-            }}
-          />
-          <span role="status" className="sr-only">
-            {expanded ? `Showing all ${count} components` : ""}
-          </span>
-        </>
+        <ListToggle
+          expanded={expanded}
+          controls={listId}
+          total={ordered.length}
+          onToggle={() => setExpanded(!expanded)}
+        />
+      ) : null}
+      {truncated ? (
+        <p className="text-footnote text-subtle">
+          {ordered.length} of {total}
+          {sourceUrl ? (
+            <>
+              {" · "}
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="focus-ring rounded-md text-accent underline underline-offset-2"
+              >
+                full list on the status page
+              </a>
+            </>
+          ) : null}
+        </p>
       ) : null}
     </div>
   );

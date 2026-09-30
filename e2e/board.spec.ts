@@ -1263,6 +1263,13 @@ test("renders healthy services as rows, alike whether or not the vendor lists co
   }
 });
 
+/** Whether the element sits wholly inside the viewport, so a reader never loses the button they just pressed. */
+const inViewport = (locator: Locator) =>
+  locator.evaluate((element) => {
+    const { top, bottom } = element.getBoundingClientRect();
+    return top >= 0 && bottom <= window.innerHeight;
+  });
+
 test("opens a long component list with Show all and closes it with Show fewer", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
@@ -1283,8 +1290,10 @@ test("opens a long component list with Show all and closes it with Show fewer", 
   await expect(fewer).toBeFocused();
   await expect(list.getByText("Spotify part 32", { exact: true })).toBeVisible();
 
+  await fewer.scrollIntoViewIfNeeded();
   await fewer.click();
   await expect(list.getByRole("listitem")).toHaveCount(6);
+  expect(await inViewport(card.getByRole("button", { name: /^Show all 32/ }))).toBe(true);
   await expect(card.getByRole("button", { name: /^Show all 32/ })).toHaveAttribute("aria-expanded", "false");
 });
 
@@ -1360,8 +1369,13 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
   await dropdown.getByRole("button", { name: /^Show all 299/ }).click();
   await expect(list.getByRole("listitem")).toHaveCount(299);
   await expect(list.getByText("Claude part 299", { exact: true })).toBeVisible();
-  await dropdown.getByRole("button", { name: /^Show fewer/ }).click();
+  const fewer = dropdown.getByRole("button", { name: /^Show fewer/ });
+  await fewer.scrollIntoViewIfNeeded();
+  await fewer.click();
   await expect(list.getByRole("listitem")).toHaveCount(6);
+  // A 299-row list closing must not strand the reader far below the button they pressed.
+  expect(await inViewport(dropdown.getByRole("button", { name: /^Show all 299/ }))).toBe(true);
+  await expect(dropdown.getByRole("button", { name: /^Show all 299/ })).toBeFocused();
 
   // A healthy Statuspage row keeps the same dropdown.
   const row = page.locator("article#service-chatgpt");
@@ -1369,6 +1383,25 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
   await row.locator("summary").click();
   await expect(row.getByRole("list", { name: "Components" }).getByRole("listitem")).toHaveCount(5);
   await expect(row.getByRole("button", { name: /^Show all/ })).toHaveCount(0);
+});
+
+test("closing a long list of broken rows on an attention card keeps its button in view", async ({ page }) => {
+  const board = fixtureBoard(Date.now());
+  const gcp = board.services.find((service) => service.id === "gcp");
+  if (!gcp) throw new Error("the fixture has no Google Cloud");
+  gcp.components = Array.from({ length: 120 }, (_, index) => ({
+    name: `Broken ${index + 1}`,
+    health: "degraded" as const,
+  }));
+  await openFixture(page, () => board);
+  const card = page.locator("article#service-gcp");
+  await card.getByRole("button", { name: /^Show all 120/ }).click();
+  const fewer = card.getByRole("button", { name: /^Show fewer/ });
+  await fewer.scrollIntoViewIfNeeded();
+  await fewer.click();
+  const more = card.getByRole("button", { name: /^Show all 120/ });
+  await expect(more).toBeFocused();
+  expect(await inViewport(more)).toBe(true);
 });
 
 test("leads Needs attention with the most urgent service and follows the data", async ({ page }) => {

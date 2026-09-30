@@ -175,6 +175,7 @@ export function AttentionCard({
               onToggle={() => setAllShown(!allShown)}
               controls={rowsId}
               total={allRows.length}
+              noun={changelog ? "releases" : service.id === "cs2-europe" ? "relays" : "components"}
             />
           ) : null}
         </div>
@@ -185,7 +186,13 @@ export function AttentionCard({
           <summary className="focus-ring flex min-h-11 items-center rounded-md text-caption text-muted focus-visible:-outline-offset-2! [&]:after:top-[calc(50%-0.25rem)]!">
             Working components · {healthyTotal}
           </summary>
-          <HealthyComponents components={healthy} total={healthyTotal} className="pr-6 pb-2" />
+          <HealthyComponents
+            components={healthy}
+            total={healthyTotal}
+            label="Working components"
+            sourceUrl={service.sourceUrl}
+            className="pr-6 pb-2"
+          />
         </details>
       ) : null}
 

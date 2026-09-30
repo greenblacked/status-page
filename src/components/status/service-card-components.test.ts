@@ -88,11 +88,15 @@ describe("healthy service row", () => {
     expect(html).not.toContain("data-component-row");
   });
 
-  it("counts the vendor's true total when the snapshot kept fewer components", () => {
+  it("promises only the components it holds, and says so when the vendor lists more", () => {
     const html = render("chatgpt", { components: up(24), componentCount: 40 });
     expect(html.match(/<li/g)).toHaveLength(6);
-    expect(html).toContain("Show all 40");
-    expect(html).not.toContain("Show all 24");
+    expect(html).toContain("Show all 24");
+    expect(html).not.toContain("Show all 40");
+    // The cut is named once the list is open, with a way to the vendor's full list.
+    const short = render("chatgpt", { components: up(4), componentCount: 40 });
+    expect(short).toContain("4 of 40");
+    expect(short).toContain("full list on the status page");
   });
 
   it("falls back to the components it has when the total is absent or smaller", () => {
@@ -202,7 +206,9 @@ describe("degraded service card", () => {
       componentCount: 215,
     });
     expect(html).toContain("Working components · 214");
-    expect(html).toContain("Show all 214");
+    // The button promises what it will open: the 23 working components the snapshot holds.
+    expect(html).toContain("Show all 23");
+    expect(html).not.toContain("Show all 214");
   });
 
   it("caps rows at six", () => {
