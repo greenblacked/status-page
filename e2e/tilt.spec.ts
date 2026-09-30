@@ -24,7 +24,10 @@ async function hydrated(page: Page): Promise<void> {
 function watchConsole(page: Page): string[] {
   const problems: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error" || message.type() === "warning") problems.push(message.text());
+    if (message.type() !== "error" && message.type() !== "warning") return;
+    // WebKit's resource-timing notice when hydration starts late on a loaded runner, not an app error.
+    if (message.text().includes("was preloaded using link preload but not used within a few seconds")) return;
+    problems.push(message.text());
   });
   page.on("pageerror", (error) => problems.push(`uncaught: ${error.message}`));
   return problems;
@@ -124,17 +127,52 @@ async function tilt(page: Page, beta: number | null, gamma: number | null): Prom
 }
 
 /**
- * The light as a card's sheen sees it; empty while the light is not being
- * driven. (The properties are registered in CSS, so undriven they read 0
- * rather than nothing: what counts is data-tilt, and lightHolders below.)
+ * What the hook wrote: the first card's own inline --light-x or --light-y, empty
+ * while the light is not being driven. This is the hook's doing and reads the
+ * same in every engine; whether the pseudo-elements then draw it is paintedLight.
  */
 const lightVar = (page: Page, name: "--light-x" | "--light-y") =>
   page.evaluate((name) => {
-    const card = document.querySelector('article[id^="service-"]');
-    if (!card) return "no card";
-    if (!document.documentElement.hasAttribute("data-tilt")) return "";
-    return getComputedStyle(card, "::before").getPropertyValue(name).trim();
+    const card = document.querySelector<HTMLElement>('article[id^="service-"]');
+    return card ? card.style.getPropertyValue(name).trim() : "no card";
   }, name);
+
+/**
+ * What the first card's pseudo-elements draw: the sheen's and the glint's
+ * background as the browser computes them. Their gradients hold var(--light-x)
+ * and var(--light-y), so the strings change when the value reaches them and
+ * not otherwise, whatever the engine does with registered properties.
+ */
+const paintedLight = (page: Page) =>
+  page.evaluate(() => {
+    const card = document.querySelector('article[id^="service-"]');
+    if (!card) return { sheen: "no card", glint: "no card" };
+    return {
+      sheen: getComputedStyle(card, "::before").backgroundImage,
+      glint: getComputedStyle(card, "::after").backgroundImage,
+    };
+  });
+
+/** Everything about the light in one line, for a log that has to explain a failure in an engine we cannot run. */
+const lightReadings = (page: Page) =>
+  page.evaluate(() => {
+    const card = document.querySelector<HTMLElement>('article[id^="service-"]');
+    if (!card) return "no card";
+    const before = getComputedStyle(card, "::before");
+    const after = getComputedStyle(card, "::after");
+    const legacy = (window as unknown as { orientation?: number }).orientation;
+    return JSON.stringify({
+      tilt: document.documentElement.getAttribute("data-tilt"),
+      hostX: card.style.getPropertyValue("--light-x"),
+      hostY: card.style.getPropertyValue("--light-y"),
+      beforeX: before.getPropertyValue("--light-x"),
+      afterY: after.getPropertyValue("--light-y"),
+      sheen: before.backgroundImage.slice(0, 90),
+      glint: after.backgroundImage.slice(0, 90),
+      angle: window.screen.orientation ? window.screen.orientation.angle : "no screen.orientation",
+      legacy,
+    });
+  });
 
 /** How many elements still carry a light value inline: none when the light is off. */
 const lightHolders = (page: Page) =>
@@ -157,16 +195,21 @@ async function tiltUntil(
   name: "--light-x" | "--light-y",
   reached: (value: number) => boolean,
 ): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        await tilt(page, beta, gamma);
-        const value = await lightVar(page, name);
-        return value !== "" && reached(Number(value));
-      },
-      { timeout: 10_000, intervals: [50, 100, 200] },
-    )
-    .toBe(true);
+  try {
+    await expect
+      .poll(
+        async () => {
+          await tilt(page, beta, gamma);
+          const value = await lightVar(page, name);
+          return value !== "" && reached(Number(value));
+        },
+        { timeout: 10_000, intervals: [50, 100, 200] },
+      )
+      .toBe(true);
+  } catch (error) {
+    console.log(`[tilt] no ${name} for beta=${beta} gamma=${gamma}: ${await lightReadings(page)}`);
+    throw error;
+  }
 }
 
 /** A reading at rest, which the light takes as neutral, then one upright, which moves it. */
@@ -255,13 +298,28 @@ test.describe("on a touch device", () => {
     await tiltSwitch(page).click();
     // The first reading is neutral.
     await tiltUntil(page, 0, 0, "--light-x", () => true);
+    const neutralPainted = await paintedLight(page);
     expect(Math.abs(Number(await lightVar(page, "--light-x")))).toBeLessThan(0.05);
 
     // Held upright: the vertical light reaches its end.
     await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
     // Left edge down and right edge down go opposite ways (upright, gamma says nothing: it is the edge case).
     await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+    const leftDown = await paintedLight(page);
     await tiltUntil(page, 30, 45, "--light-x", (x) => x * LIGHT_SIGN <= -0.5);
+    const rightDown = await paintedLight(page);
+
+    // And the value reaches the pseudo-elements: what they draw follows it.
+    const readings = await lightReadings(page);
+    test.info().annotations.push({ type: "tilt-readings", description: readings });
+    const same = (name: string, a: string, b: string) => {
+      if (a === b) console.log(`[tilt] ${name} did not change: ${readings}`);
+      expect(a, name).not.toBe(b);
+    };
+    same("sheen, left edge down against right", leftDown.sheen, rightDown.sheen);
+    same("glint, left edge down against right", leftDown.glint, rightDown.glint);
+    same("sheen against the untilted one", neutralPainted.sheen, rightDown.sheen);
+    same("glint against the neutral one", neutralPainted.glint, rightDown.glint);
     for (const name of ["--light-x", "--light-y"] as const) {
       const value = Number(await lightVar(page, name));
       expect(Math.abs(value)).toBeLessThanOrEqual(1);
