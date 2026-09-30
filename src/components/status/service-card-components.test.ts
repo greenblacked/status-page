@@ -278,4 +278,27 @@ describe("service card incident labels and links", () => {
     expect(html).toContain("scheduled for ");
     expect(html).toContain(">Operational</span>");
   });
+
+  it("never says an upcoming maintenance began: once its time has passed it was due, with no duration", () => {
+    const html = render("claude", {
+      checkedAt: "2026-09-27T11:59:00.000Z",
+      upcomingMaintenance: [{ id: "m", title: "Database upgrade", scheduledFor: "2026-09-27T10:00:00.000Z" }],
+    });
+    expect(html).toContain(">Upcoming</span>");
+    expect(html).toContain("was due ");
+    expect(html).not.toContain("since ");
+    expect(html).not.toContain("scheduled for ");
+    expect(html).not.toMatch(/<time dateTime="PT/);
+  });
+
+  it("keeps two upcoming events with the same id as separate rows", () => {
+    const html = render("claude", {
+      upcomingMaintenance: [
+        { id: "same", title: "First window", scheduledFor: "2026-09-28T02:00:00.000Z" },
+        { id: "same", title: "Second window", scheduledFor: "2026-09-28T02:00:00.000Z" },
+      ],
+    });
+    expect(html).toContain("First window");
+    expect(html).toContain("Second window");
+  });
 });

@@ -222,12 +222,13 @@ export function ServiceCard({
 
       {upcoming.length > 0 ? (
         <ul className="dynamic-text mt-3 space-y-2 text-sm" data-upcoming-maintenance>
-          {upcoming.map((item) => (
-            <li key={item.id} className="text-fg [overflow-wrap:anywhere]">
+          {upcoming.map((item, upcomingIndex) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an event id; the index only breaks that tie.
+            <li key={`${item.id}-${upcomingIndex}`} className="text-fg [overflow-wrap:anywhere]">
               <span className={ICON_TONE.maintenance}>Upcoming</span>
               <span className="text-subtle"> · </span>
               {item.title}
-              <IncidentSince startedAt={item.scheduledFor} reference={checkedAt} now={now} />
+              <IncidentSince startedAt={item.scheduledFor} reference={checkedAt} now={now} scheduled />
             </li>
           ))}
         </ul>
