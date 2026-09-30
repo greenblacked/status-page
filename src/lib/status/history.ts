@@ -1,24 +1,11 @@
+import { SEVERITY_ORDER, worseHealth } from "./health";
 import type { BoardSnapshot, Health } from "./types";
 
 export const HISTORY_SCHEMA = 1;
 export const HISTORY_TIMEZONE = "UTC";
 export const HISTORY_RETENTION_DAYS = 30;
 
-/**
- * History severity: outage is worst, operational is best. The same order as
- * the board's card urgency in layout.ts (outage, degraded, maintenance,
- * unknown), and distinct from the overall-health rank in health.ts, where
- * unknown outranks degraded.
- */
-const HISTORY_RANK: Record<Health, number> = {
-  operational: 0,
-  unknown: 1,
-  maintenance: 2,
-  degraded: 3,
-  outage: 4,
-};
-
-const HEALTHS = new Set<string>(Object.keys(HISTORY_RANK));
+const HEALTHS = new Set<string>(SEVERITY_ORDER);
 
 /** Public day fields only. Only these fields may reach /api/history.json. */
 export type HistoryDay = {
@@ -54,9 +41,8 @@ export function emptyHistory(updatedAt: string): HistoryDocument {
   };
 }
 
-export function worseHistoryHealth(a: Health, b: Health): Health {
-  return HISTORY_RANK[a] >= HISTORY_RANK[b] ? a : b;
-}
+/** A history day's worst state: the board's one severity order (`SEVERITY_ORDER`). */
+export const worseHistoryHealth = worseHealth;
 
 /** YYYY-MM-DD for an ISO-8601 instant, or null when the stamp is unusable. */
 export function utcDateString(iso: string): string | null {

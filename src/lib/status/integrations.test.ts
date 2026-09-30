@@ -37,6 +37,19 @@ describe("publicStatus", () => {
   });
 });
 
+describe("overall health across the public endpoints", () => {
+  const mixed = board([service("aws", { health: "unknown" }), gcp({ health: "degraded" })]);
+
+  it("reports the degradation, not the unreadable source, as overall and as the headline", () => {
+    expect(publicStatus(mixed).overall).toBe("degraded");
+    expect(publicStatus(mixed).headline).toBe("Degraded: Google Cloud");
+  });
+
+  it("colours the board badge by the same overall health", () => {
+    expect(shieldsBadge(mixed, "board")).toMatchObject({ message: "degraded: google cloud", color: "yellow" });
+  });
+});
+
 describe("shieldsBadge", () => {
   const snapshot = board([gcp({ health: "outage" }), service("aws", { health: "operational" })]);
 

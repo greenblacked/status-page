@@ -15,10 +15,10 @@ import {
   overallSummary,
   statuspageComponent,
   statuspageIndicator,
+  urgencyOf,
   worseHealth,
 } from "./health.ts";
 import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
-import { urgencyOf } from "./layout.ts";
 import type { ComponentHealth, Health, Incident, ServiceId, ServiceSnapshot, SourceFailure } from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
 

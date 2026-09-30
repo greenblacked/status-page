@@ -1,15 +1,26 @@
 import type { Health } from "./types.ts";
 
-const RANK: Record<Health, number> = {
-  operational: 0,
-  maintenance: 1,
-  degraded: 2,
-  unknown: 3,
-  outage: 4,
-};
+/**
+ * The one severity order, worst first: outage, degraded, unknown,
+ * maintenance, operational. Everything that ranks a state derives from it:
+ * `worseHealth` (the board's overall health, the JSON API's `overall`, the
+ * badge colour, a history day's worst state), `urgencyOf` (card order and
+ * the order of a card's rows) and the board's headline.
+ *
+ * Unknown sits above maintenance and below a confirmed degradation. An
+ * unreadable source may be hiding anything, so it is more worth a look than
+ * planned work; but it is not a confirmed problem, so a real degradation is
+ * never masked by it.
+ */
+export const SEVERITY_ORDER: readonly Health[] = ["outage", "degraded", "unknown", "maintenance", "operational"];
+
+/** How urgent a state is: 0 (outage) is the worst, 4 (operational) the best. */
+export function urgencyOf(health: Health): number {
+  return SEVERITY_ORDER.indexOf(health);
+}
 
 export function worseHealth(a: Health, b: Health): Health {
-  return RANK[a] >= RANK[b] ? a : b;
+  return urgencyOf(a) <= urgencyOf(b) ? a : b;
 }
 
 export function healthLabel(health: Health): string {
@@ -112,7 +123,7 @@ export function overallSummary(health: Health, incidentCount: number, componentH
 }
 
 // What the board's Attention count is made of, worst first.
-const ATTENTION_ORDER: Health[] = ["outage", "degraded", "unknown", "maintenance"];
+const ATTENTION_ORDER = SEVERITY_ORDER.filter((health) => health !== "operational");
 
 export function attentionBreakdown(counts: Record<Health, number>): string {
   const parts = ATTENTION_ORDER.filter((health) => counts[health] > 0).map(

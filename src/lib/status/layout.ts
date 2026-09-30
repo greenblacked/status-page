@@ -1,22 +1,9 @@
 import { CATALOG } from "./catalog.ts";
+import { urgencyOf } from "./health.ts";
 import type { BoardSnapshot, Health, ServiceSnapshot } from "./types.ts";
 
-// Most urgent first: a confirmed outage, then a confirmed degradation, then
-// maintenance, and last a source the board cannot read (it may be hiding
-// anything, but it is not a confirmed problem). The board's headline names
-// confirmed breakage before an unreadable source for the same reason.
-const URGENCY: Record<Health, number> = {
-  outage: 0,
-  degraded: 1,
-  maintenance: 2,
-  unknown: 3,
-  operational: 4,
-};
-
-/** How urgent a state is on the board: 0 (outage) is most urgent, then degraded, maintenance, unknown, operational. */
-export function urgencyOf(health: Health): number {
-  return URGENCY[health];
-}
+// Severity is the one order in health.ts (SEVERITY_ORDER), so the cards, the
+// headline, the overall health and a history day's worst state never disagree.
 
 /** When a service's most recently started incident began, as epoch ms; -Infinity if none has a readable start. */
 function latestIncidentStart(service: ServiceSnapshot): number {
@@ -35,8 +22,8 @@ function newerFirst(a: number, b: number): number {
 }
 
 /**
- * Services by urgency: severity first (outage, degraded, maintenance,
- * unknown, operational), then the most recently started incident. Anything
+ * Services by urgency: severity first (outage, degraded, unknown,
+ * maintenance, operational), then the most recently started incident. Anything
  * still tied keeps the order it came in (a stable sort): catalog order, with
  * starred services first, as the board passes them. A pure sort of a copy,
  * run on every snapshot, so the first entry is always the current most
@@ -44,7 +31,7 @@ function newerFirst(a: number, b: number): number {
  */
 export function sortByUrgency(services: ServiceSnapshot[]): ServiceSnapshot[] {
   return [...services].sort(
-    (a, b) => URGENCY[a.health] - URGENCY[b.health] || newerFirst(latestIncidentStart(a), latestIncidentStart(b)),
+    (a, b) => urgencyOf(a.health) - urgencyOf(b.health) || newerFirst(latestIncidentStart(a), latestIncidentStart(b)),
   );
 }
 
@@ -91,11 +78,9 @@ function names(services: ServiceSnapshot[]): string {
  * The one sentence at the top of the board. It names the worst confirmed
  * problem, so a glance answers "is something I use broken?" without reading
  * the cards. Confirmed breakage (outage, then degraded) is named before an
- * unreadable source, so `tone` is the health of what the title names, which
- * can differ from the board's overall health (where unknown outranks
- * degraded). The cards below are ordered by `sortByUrgency` (outage,
- * degraded, maintenance, unknown), so the headline's tone is always that of
- * the first card unless only maintenance and unreadable sources are left.
+ * unreadable source, and an unreadable source before maintenance: the same
+ * order as `SEVERITY_ORDER`, so `tone` is always the board's overall health
+ * (`overallHealth`) and the health of the first card in `sortByUrgency`.
  */
 export function boardHeadline(board: BoardSnapshot): { tone: Health; title: string } {
   const by = (health: Health) => board.services.filter((service) => service.health === health);

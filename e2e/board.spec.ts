@@ -1068,12 +1068,12 @@ test("leads Needs attention with the most urgent service and follows the data", 
   await openFixture(page, () => board);
 
   const attention = group(page, "attention");
-  // AWS is an outage, Google Cloud is degraded, Epic is in maintenance, Android is unknown.
+  // AWS is an outage, Google Cloud is degraded, Android is unknown, Epic is in maintenance.
   await expect(attention).toHaveCount(4);
   await expect(attention.nth(0)).toHaveAttribute("id", "service-aws");
   await expect(attention.nth(1)).toHaveAttribute("id", "service-gcp");
-  await expect(attention.nth(2)).toHaveAttribute("id", "service-epic");
-  await expect(attention.nth(3)).toHaveAttribute("id", "service-android");
+  await expect(attention.nth(2)).toHaveAttribute("id", "service-android");
+  await expect(attention.nth(3)).toHaveAttribute("id", "service-epic");
 
   // Exactly one card is the highlight, and it is the first.
   const highlight = page.locator('article[data-highlight="true"]');

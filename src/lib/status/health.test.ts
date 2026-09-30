@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attentionBreakdown, instatusComponent } from "./health";
+import { attentionBreakdown, instatusComponent, SEVERITY_ORDER, urgencyOf, worseHealth } from "./health";
 
 const none = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
 
@@ -31,5 +31,26 @@ describe("instatusComponent", () => {
   it("reads anything else, or nothing, as unknown", () => {
     expect(instatusComponent("HASISSUES")).toBe("unknown");
     expect(instatusComponent(undefined)).toBe("unknown");
+  });
+});
+
+describe("severity order", () => {
+  it("is outage, degraded, unknown, maintenance, operational", () => {
+    expect([...SEVERITY_ORDER]).toEqual(["outage", "degraded", "unknown", "maintenance", "operational"]);
+    expect(urgencyOf("outage")).toBe(0);
+    expect(urgencyOf("degraded")).toBe(1);
+    expect(urgencyOf("unknown")).toBe(2);
+    expect(urgencyOf("maintenance")).toBe(3);
+    expect(urgencyOf("operational")).toBe(4);
+  });
+
+  it("worseHealth agrees, in both argument orders", () => {
+    expect(worseHealth("unknown", "degraded")).toBe("degraded");
+    expect(worseHealth("degraded", "unknown")).toBe("degraded");
+    expect(worseHealth("unknown", "maintenance")).toBe("unknown");
+    expect(worseHealth("maintenance", "unknown")).toBe("unknown");
+    expect(worseHealth("maintenance", "operational")).toBe("maintenance");
+    expect(worseHealth("outage", "unknown")).toBe("outage");
+    expect(worseHealth("operational", "operational")).toBe("operational");
   });
 });
