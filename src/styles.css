@@ -22,8 +22,13 @@
 /*
   Inter, the face for devices that have no system face of their own. The
   stack (below) puts SF first, so an Apple device never fetches it, and there
-  is deliberately no <link rel="preload">. "Inter Fallback" is Arial resized
-  to Inter's metrics, so the swap moves nothing on Windows and Android.
+  is deliberately no <link rel="preload">. Until it arrives the text is drawn
+  in a fallback resized to Inter's metrics, so the swap moves almost nothing:
+  "Inter Fallback" is Arial (Windows, macOS) or its metric twins Liberation
+  Sans and Arimo (most Linux, ChromeOS), "Inter Fallback Roboto" is Roboto
+  (Android). local() needs the font's own name: fontconfig's Arial-to-Liberation
+  substitution does not count, so each name is listed. A system with none of
+  them falls to system-ui, and the swap then reflows the page once.
 */
 @font-face {
   font-family: "Inter";
@@ -35,10 +40,20 @@
 
 @font-face {
   font-family: "Inter Fallback";
-  src: local("Arial");
+  src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans"), local("Arimo");
   size-adjust: 107.4%;
   ascent-override: 90.2%;
   descent-override: 22.48%;
+  line-gap-override: 0%;
+}
+
+/* Roboto is narrower than Arial and its lines are shaped differently, so it gets its own numbers. */
+@font-face {
+  font-family: "Inter Fallback Roboto";
+  src: local("Roboto"), local("Roboto Regular"), local("Roboto-Regular");
+  size-adjust: 105.8%;
+  ascent-override: 91.6%;
+  descent-override: 22.8%;
   line-gap-override: 0%;
 }
 
@@ -59,7 +74,7 @@
 */
 @theme static {
   --font-*: initial;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Inter Fallback", system-ui, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Inter Fallback", "Inter Fallback Roboto", system-ui, sans-serif;
   /* The signature only: two uses on a page at most, never body text or a control. */
   --font-hand: "Hand", "Bradley Hand", "Segoe Print", cursive;
 

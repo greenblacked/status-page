@@ -2048,3 +2048,47 @@ test("puts the floating bar's verdict, check time and countdown beside the docke
   // The bar is a float: the one translucent element on a Quiet page.
   await expect(bar).toHaveClass(/\bfloat\b/);
 });
+
+test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
+  // Hold the font back so the page is drawn in its fallback first, and count every layout shift that follows.
+  await page.route("**/fonts/inter-var.woff2", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await page.addInitScript(() => {
+    const tracked = window as Window & { __cls?: number };
+    tracked.__cls = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
+        if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+      }
+    }).observe({ type: "layout-shift", buffered: true });
+  });
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  // Whether this machine has any font the fallback faces name (Arial, Liberation Sans or Roboto).
+  const fallbackFound = await page.evaluate(async () => {
+    // A face whose local() names match no installed font fails to load and matches nothing.
+    const loaded = await Promise.all(
+      ['"Inter Fallback"', '"Inter Fallback Roboto"'].map((family) =>
+        document.fonts.load(`16px ${family}`).catch(() => [] as FontFace[]),
+      ),
+    );
+    return loaded.some((faces) => faces.length > 0);
+  });
+  test.skip(!fallbackFound, "this machine has no Arial, Liberation Sans or Roboto for the fallback to resize");
+  // The first paint was in the fallback; the swap has happened once Inter reports loaded.
+  await page.waitForFunction(
+    () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
+    undefined,
+    { timeout: 15_000 },
+  );
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  await page.waitForTimeout(500);
+  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+  expect(shift, "cumulative layout shift").toBeLessThan(0.1);
+});
