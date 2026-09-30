@@ -15,8 +15,6 @@ import {
 
 const storage = () => window.localStorage;
 
-/** How long a page that was allowed motion before waits for the first reading before asking again (iOS). */
-const NO_PERMISSION_MS = 1500;
 /** How long any page waits for a first reading before saying none is coming. */
 const NO_READING_MS = 3000;
 
@@ -87,9 +85,17 @@ function createLightSink(): { set: (x: string, y: string) => void; remove: () =>
   };
 }
 
-export type TiltStatus = "off" | "on" | "denied" | "no-sensor" | "needs-permission" | "no-readings" | "paused";
+export type TiltStatus =
+  | "off"
+  | "on"
+  | "denied"
+  | "no-sensor"
+  | "needs-permission"
+  | "no-readings"
+  | "no-readings-dropped"
+  | "paused";
 
-type Problem = "denied" | "no-sensor" | "needs-permission" | "no-readings" | null;
+type Problem = "denied" | "no-sensor" | "needs-permission" | "no-readings" | "no-readings-dropped" | null;
 
 /** iOS 13+ only: motion is behind a permission that a tap has to ask for. */
 type MotionPermissionApi = { requestPermission?: () => Promise<"granted" | "denied"> };
@@ -164,9 +170,11 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
 
     let latest: { beta: number; gamma: number; angle: number } | null = null;
     let frame = 0;
-    let permissionTimer = 0;
     let readingTimer = 0;
     let attached = false;
+    let probed = false;
+    // Set when this run ends, so a late answer cannot touch a page that has moved on.
+    let cancelled = false;
     let gotReading = false;
     let driving = false;
 
@@ -194,40 +202,63 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
         return;
       }
       gotReading = true;
-      window.clearTimeout(permissionTimer);
       window.clearTimeout(readingTimer);
       latest = { beta: event.beta, gamma: event.gamma, angle: screenAngle(window) };
       if (!frame) frame = requestAnimationFrame(tick);
     };
 
-    const clearTimers = () => {
-      window.clearTimeout(permissionTimer);
-      window.clearTimeout(readingTimer);
+    // A saved choice that cannot be kept: forget it, so the next load does not meet the same problem.
+    const forget = (problem: Problem) => {
+      writeTiltLighting(storage, false);
+      setPreferred(false);
+      setProblem(problem);
+    };
+
+    /**
+     * Asks iOS whether motion is still allowed, without a tap. Called outside a
+     * gesture, requestPermission never prompts (WebKit's mayPrompt is false): it
+     * answers with what Safari remembers for this session, or rejects when only a
+     * tap can ask. So a slow first reading is no longer taken for a missing permission.
+     */
+    const probe = () => {
+      let request: Promise<"granted" | "denied"> | undefined;
+      try {
+        request = (DeviceOrientationEvent as unknown as MotionPermissionApi).requestPermission?.();
+      } catch {
+        request = Promise.reject(new Error("motion permission needs a tap"));
+      }
+      request?.then(
+        (answer) => {
+          if (!cancelled && answer !== "granted") forget("denied");
+        },
+        () => {
+          if (!cancelled) forget("needs-permission");
+        },
+      );
     };
 
     const attach = () => {
       if (attached) return;
       attached = true;
       window.addEventListener("deviceorientation", onReading);
-      // The waits run only while listening, and only until the first reading. A saved "on"
-      // never asks by itself (iOS wants a tap), so silence there means it has to ask again;
-      // silence after a tap, or anywhere else, means no motion is coming at all.
-      if (gotReading) return;
-      if (!viaTap && needsPermission(window)) {
-        permissionTimer = window.setTimeout(() => {
-          // Saved "on" but no motion: forget it, so the next load does not ask again. A tap turns it back on.
-          writeTiltLighting(storage, false);
-          setPreferred(false);
-          setProblem("needs-permission");
-        }, NO_PERMISSION_MS);
+      // A saved "on" on iOS is checked once with the browser (probe). Whatever the device,
+      // silence for a few seconds means no motion is coming: after a tap that is only said;
+      // for a saved choice it is forgotten too, or the note would return on every load.
+      if (!viaTap && !probed && needsPermission(window)) {
+        probed = true;
+        probe();
       }
-      readingTimer = window.setTimeout(() => setProblem("no-readings"), NO_READING_MS);
+      if (gotReading) return;
+      readingTimer = window.setTimeout(() => {
+        if (viaTap) setProblem("no-readings");
+        else forget("no-readings-dropped");
+      }, NO_READING_MS);
     };
     const detach = () => {
       if (!attached) return;
       attached = false;
       window.removeEventListener("deviceorientation", onReading);
-      clearTimers();
+      window.clearTimeout(readingTimer);
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
     };
@@ -251,6 +282,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
     window.addEventListener("pageshow", onPageShow);
 
     return () => {
+      cancelled = true;
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", detach);
       window.removeEventListener("pageshow", onPageShow);

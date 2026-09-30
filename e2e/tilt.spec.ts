@@ -30,11 +30,23 @@ function watchConsole(page: Page): string[] {
   return problems;
 }
 
-/** Puts iOS's permission prompt in place, answering `answer`, before any page script runs. */
-async function stubMotionPermission(page: Page, answer: "granted" | "denied" | "throws" = "granted"): Promise<void> {
+/**
+ * Puts iOS's permission prompt in place, before any page script runs, and
+ * answers as it does. A call made inside a tap gets `answer` (and, if that is
+ * "granted", is remembered for the session, as Safari does until it is closed).
+ * A call made outside a tap never prompts: it resolves "granted" if the session
+ * remembers a grant, and rejects with NotAllowedError otherwise. Only calls
+ * made in a tap are counted. "absent" leaves requestPermission out altogether,
+ * as Android and older iOS have it.
+ */
+async function stubMotionPermission(
+  page: Page,
+  answer: "granted" | "denied" | "throws" | "absent" = "granted",
+): Promise<void> {
   await page.addInitScript((answer) => {
-    const w = window as unknown as { __permCalls: number };
+    const w = window as unknown as { __permCalls: number; __gesture: boolean };
     w.__permCalls = 0;
+    w.__gesture = false;
     if (typeof DeviceOrientationEvent === "undefined") {
       (window as unknown as { DeviceOrientationEvent: unknown }).DeviceOrientationEvent =
         class DeviceOrientationEvent extends Event {};
@@ -42,10 +54,30 @@ async function stubMotionPermission(page: Page, answer: "granted" | "denied" | "
     // A browser with no sensor fires one empty reading of its own as soon as
     // something listens. Only the tests' readings should count.
     window.addEventListener("deviceorientation", (event) => event.isTrusted && event.stopImmediatePropagation(), true);
+    // The click handlers run inside this event's dispatch, so a flag up for one task marks "in a tap".
+    document.addEventListener(
+      "click",
+      () => {
+        w.__gesture = true;
+        setTimeout(() => {
+          w.__gesture = false;
+        }, 0);
+      },
+      true,
+    );
+    if (answer === "absent") {
+      Reflect.deleteProperty(DeviceOrientationEvent, "requestPermission");
+      return;
+    }
     Object.defineProperty(DeviceOrientationEvent, "requestPermission", {
       value: async () => {
+        if (!w.__gesture) {
+          if (sessionStorage.getItem("__tiltGranted") === "1") return "granted";
+          throw new DOMException("A tap is needed to ask for motion access.", "NotAllowedError");
+        }
         w.__permCalls++;
-        if (answer === "throws") throw new Error("not from a user gesture");
+        if (answer === "throws") throw new Error("refused");
+        if (answer === "granted") sessionStorage.setItem("__tiltGranted", "1");
         return answer;
       },
       configurable: true,
@@ -60,18 +92,20 @@ const permissionCalls = (page: Page) => page.evaluate(() => (window as unknown a
  * the start of each page load. It queues ahead of any wait for a first reading,
  * so a slow browser cannot make the page think none is coming.
  */
-async function pumpReadings(page: Page, beta: number, gamma: number): Promise<void> {
+async function pumpReadings(page: Page, beta: number, gamma: number, startAfterMs = 0): Promise<void> {
   await page.addInitScript(
-    ([beta, gamma]) => {
-      setInterval(() => {
-        const event = new Event("deviceorientation");
-        for (const [key, value] of Object.entries({ alpha: 0, beta, gamma, absolute: false })) {
-          Object.defineProperty(event, key, { value });
-        }
-        window.dispatchEvent(event);
-      }, 30);
+    ([beta, gamma, startAfterMs]) => {
+      setTimeout(() => {
+        setInterval(() => {
+          const event = new Event("deviceorientation");
+          for (const [key, value] of Object.entries({ alpha: 0, beta, gamma, absolute: false })) {
+            Object.defineProperty(event, key, { value });
+          }
+          window.dispatchEvent(event);
+        }, 30);
+      }, startAfterMs);
     },
-    [beta, gamma],
+    [beta, gamma, startAfterMs],
   );
 }
 
@@ -357,6 +391,62 @@ test.describe("on a touch device", () => {
     expect(await storedChoice(page)).toBe("off");
   });
 
+  test("keeps a saved choice when the first reading is two seconds late", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+
+    await pumpReadings(page, 0, 0, 2000);
+    await page.reload();
+    await hydrated(page);
+    // Motion is allowed for the session, so a slow sensor is not a missing permission.
+    await expect(html(page)).toHaveAttribute("data-tilt", "on", { timeout: 10_000 });
+    expect(await storedChoice(page)).toBe("on");
+    await expect(page.getByText("Motion access needs allowing again")).toHaveCount(0);
+  });
+
+  test("asks again, and stores off, when Safari was closed since motion was allowed", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    expect(await storedChoice(page)).toBe("on");
+
+    // A new session remembers no grant.
+    await page.evaluate(() => sessionStorage.clear());
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await expect(page.getByText("Motion access needs allowing again")).toBeVisible();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    expect(await storedChoice(page)).toBe("off");
+    expect(await permissionCalls(page)).toBe(0);
+  });
+
+  test("drops a saved choice when no readings ever arrive and there is nothing to ask", async ({ page }) => {
+    await stubMotionPermission(page, "absent");
+    await page.evaluate((key) => localStorage.setItem(key, "on"), TILT_STORAGE_KEY);
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await expect(page.getByText("No motion readings arrived from this device, so Tilt lighting is off.")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    expect(await storedChoice(page)).toBe("off");
+
+    // The next load has nothing to say.
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await page.waitForTimeout(3500);
+    await expect(page.getByText("No motion readings arrived")).toHaveCount(0);
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+  });
+
   test("says so when a tap gets no readings, and a second tap tries again", async ({ page }) => {
     await page.reload();
     await hydrated(page);
@@ -377,6 +467,8 @@ test.describe("on a touch device", () => {
 
   test("does not ask again while the page loads hidden", async ({ page }) => {
     await page.evaluate((key) => localStorage.setItem(key, "on"), TILT_STORAGE_KEY);
+    // Motion was allowed earlier in this session.
+    await page.evaluate(() => sessionStorage.setItem("__tiltGranted", "1"));
     await page.addInitScript(() => {
       const w = window as unknown as { __hidden: boolean };
       w.__hidden = true;
