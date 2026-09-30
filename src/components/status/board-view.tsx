@@ -490,7 +490,7 @@ export function BoardView({
           </section>
 
           {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
-          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-3 basis-full pb-20 pt-2 outline-none">
+          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-3 basis-full pt-2 outline-none">
             {boardQuery.isError ? (
               <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
                 Could not refresh official sources. Showing the last successful snapshot.
@@ -574,100 +574,99 @@ export function BoardView({
               {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
               <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
             </div>
-
-            {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
-            <footer className="mt-14 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] text-sm text-subtle">
-              <p>
-                Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
-                Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
-              </p>
-              <p>
-                This page checks {everyInterval(PULSE_INTERVAL_MS)}; the server reads the official vendor feeds and
-                keeps them for {spokenDuration(CACHE_TTL_MS)}.
-              </p>
-              <p>
-                <a
-                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="https://github.com/greenblacked/status-page"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Source on GitHub
-                  <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-                </a>
-                {" · "}
-                <a
-                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
-                  target="_blank"
-                  rel="noopener noreferrer license"
-                >
-                  MIT License
-                  <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-                </a>
-                : free to use, copy, modify and share, with the copyright notice kept.
-              </p>
-              <p>
-                Use the board elsewhere:{" "}
-                <a
-                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="/api/status.json"
-                >
-                  JSON API
-                </a>
-                {" · "}
-                <a
-                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="/feed.xml"
-                >
-                  Atom feed
-                </a>{" "}
-                for Slack, Teams and feed readers ·{" "}
-                <a
-                  className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  href="/api/badge/board"
-                >
-                  status badges
-                </a>
-                .
-              </p>
-              {/*
+          </main>
+          {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
+          <footer className="mt-14 flex basis-full flex-col gap-2 pb-[calc(5rem+env(safe-area-inset-bottom))] text-sm text-subtle">
+            <p>
+              Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
+              Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
+            </p>
+            <p>
+              This page checks {everyInterval(PULSE_INTERVAL_MS)}; the server reads the official vendor feeds and keeps
+              them for {spokenDuration(CACHE_TTL_MS)}.
+            </p>
+            <p>
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Source on GitHub
+                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+              </a>
+              {" · "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
+                target="_blank"
+                rel="noopener noreferrer license"
+              >
+                MIT License
+                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
+              </a>
+              : free to use, copy, modify and share, with the copyright notice kept.
+            </p>
+            <p>
+              Use the board elsewhere:{" "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/api/status.json"
+              >
+                JSON API
+              </a>
+              {" · "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/feed.xml"
+              >
+                Atom feed
+              </a>{" "}
+              for Slack, Teams and feed readers ·{" "}
+              <a
+                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                href="/api/badge/board"
+              >
+                status badges
+              </a>
+              .
+            </p>
+            {/*
               On every screen width: with the single-key shortcuts off, ? no
               longer opens the list, and this button is the way back to the
               switches, including on a desktop zoomed to a phone's width, and
               the only way to them on a touch screen.
             */}
-              <p>
-                <button
-                  type="button"
-                  className="focus-ring pressable touch-target rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                  onClick={() => setSettingsOpen(true)}
-                >
-                  Settings and shortcuts
-                </button>
-                {singleKey.enabled ? (
-                  <span className="hidden sm:inline">
-                    {" "}
-                    (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
-                  </span>
-                ) : null}
-              </p>
-            </footer>
-            <SettingsDialog
-              open={settingsOpen}
-              onClose={() => setSettingsOpen(false)}
-              singleKey={singleKey.enabled}
-              onSingleKeyChange={singleKey.setEnabled}
-              reduceGlass={reduceGlass.enabled}
-              onReduceGlassChange={reduceGlass.setEnabled}
-              tilt={{
-                supported: tilt.supported,
-                enabled: tilt.enabled,
-                status: tilt.status,
-                onChange: tilt.setEnabled,
-              }}
-            />
-          </main>
+            <p>
+              <button
+                type="button"
+                className="focus-ring pressable touch-target rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
+                onClick={() => setSettingsOpen(true)}
+              >
+                Settings and shortcuts
+              </button>
+              {singleKey.enabled ? (
+                <span className="hidden sm:inline">
+                  {" "}
+                  (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
+                </span>
+              ) : null}
+            </p>
+          </footer>
+          <SettingsDialog
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            singleKey={singleKey.enabled}
+            onSingleKeyChange={singleKey.setEnabled}
+            reduceGlass={reduceGlass.enabled}
+            onReduceGlassChange={reduceGlass.setEnabled}
+            tilt={{
+              supported: tilt.supported,
+              enabled: tilt.enabled,
+              status: tilt.status,
+              onChange: tilt.setEnabled,
+            }}
+          />
         </div>
       </div>
     </div>
