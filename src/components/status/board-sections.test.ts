@@ -5,7 +5,7 @@ import { CATALOG } from "@/lib/status/catalog";
 import { groupServices } from "@/lib/status/layout";
 import type { Health, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
-import { BoardSections, splitGroups, upByCategory } from "./board-sections";
+import { BoardSections, upByCategory } from "./board-sections";
 
 const noop = () => {};
 const NOW = Date.parse("2026-09-30T12:00:00.000Z");
@@ -69,14 +69,23 @@ describe("BoardSections", () => {
     expect(html.slice(0, html.indexOf('data-group="unread"'))).not.toContain("service-android");
   });
 
-  it("uses the unread bucket when the groups carry one", () => {
+  it("lists exactly the groups' unread bucket under Couldn't read, and its attention list under Needs a look", () => {
     const groups = groupServices(all({ android: "unknown", aws: "outage" }));
-    const unread = [service("grok", { health: "unknown" })];
-    expect(splitGroups({ ...groups, unread }).unread).toBe(unread);
-    // Without one, the unknown services are split out of attention.
-    const split = splitGroups(groups);
-    expect(split.attention.map((s) => s.id)).toEqual(["aws"]);
-    expect(split.unread.map((s) => s.id)).toEqual(["android"]);
+    const html = renderToStaticMarkup(
+      createElement(BoardSections, {
+        groups: { ...groups, unread: [service("grok", { health: "unknown" })] },
+        changedIds: new Set<ServiceId>(),
+        starred: new Set<ServiceId>(),
+        onToggleStar: noop,
+        now: NOW,
+      }),
+    );
+    const unread = html.slice(html.indexOf('data-group="unread"'), html.indexOf('data-group="up"'));
+    expect(unread).toContain('id="service-grok"');
+    expect(unread).not.toContain('id="service-android"');
+    const attention = html.slice(html.indexOf('data-group="attention"'), html.indexOf('data-group="unread"'));
+    expect(attention).toContain('id="service-aws"');
+    expect(attention).not.toContain("service-grok");
   });
 
   it("groups the healthy services by category in catalog order and leaves empty ones out", () => {

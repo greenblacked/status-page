@@ -5,24 +5,6 @@ import type { BoardGroups } from "@/lib/status/layout";
 import type { CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
-/**
- * The groups as the board draws them. `BoardGroups.unread` arrives with the
- * copy pass (layout.ts); until it does, the unknown services are still
- * inside `attention`, and this splits them out so they never read as a
- * service that needs a look: "we couldn't fetch" says nothing about the
- * vendor.
- */
-export function splitGroups(groups: BoardGroups & { unread?: ServiceSnapshot[] }): {
-  attention: ServiceSnapshot[];
-  unread: ServiceSnapshot[];
-} {
-  if (groups.unread) return { attention: groups.attention, unread: groups.unread };
-  return {
-    attention: groups.attention.filter((service) => service.health !== "unknown"),
-    unread: groups.attention.filter((service) => service.health === "unknown"),
-  };
-}
-
 /** The healthy status services by category, in catalog order (Cloud, Gaming, Platforms, AI), empty categories left out. */
 export function upByCategory(
   services: ServiceSnapshot[],
@@ -122,14 +104,14 @@ export function BoardSections({
   onToggleStar,
   now,
 }: {
-  groups: BoardGroups & { unread?: ServiceSnapshot[] };
+  groups: BoardGroups;
   mostUrgentId?: ServiceId;
   changedIds: ReadonlySet<ServiceId>;
   starred: ReadonlySet<ServiceId>;
   onToggleStar: (id: ServiceId) => void;
   now: number;
 }) {
-  const { attention, unread } = splitGroups(groups);
+  const { attention, unread } = groups;
   const up = upByCategory(groups.operational);
   const handlers = { changedIds, starred, onToggleStar, now };
 
