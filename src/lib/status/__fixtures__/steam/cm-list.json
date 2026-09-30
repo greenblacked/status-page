@@ -1,0 +1,8 @@
+{
+  "response": {
+    "serverlist": ["162.254.196.83:27019", "155.133.248.40:27018", "146.66.152.11:27020"],
+    "serverlist_websockets": ["cmp1-fra2.steamserver.net:27021", "cmp2-ams1.steamserver.net:27022"],
+    "result": 1,
+    "message": ""
+  }
+}

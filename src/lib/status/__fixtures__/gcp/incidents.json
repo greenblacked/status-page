@@ -1,0 +1,54 @@
+[
+  {
+    "id": "gcp-compute-outage",
+    "begin": "2026-09-20T09:00:00+00:00",
+    "modified": "2026-09-20T11:00:00+00:00",
+    "external_desc": "Compute Engine instances are unreachable in europe-west1",
+    "status_impact": "SERVICE_OUTAGE",
+    "severity": "high",
+    "service_name": "Google Compute Engine",
+    "uri": "incidents/gcp-compute-outage",
+    "affected_products": [{ "title": "Google Compute Engine", "id": "L3ahVnSNoyBFW33hCzNv" }],
+    "currently_affected_locations": [{ "title": "Belgium (europe-west1)", "id": "europe-west1" }]
+  },
+  {
+    "id": "gcp-latency",
+    "begin": "2026-09-20T10:00:00+00:00",
+    "modified": "2026-09-20T11:30:00+00:00",
+    "external_desc": "Elevated latency for new deployments",
+    "status_impact": "SERVICE_DISRUPTION",
+    "severity": "medium",
+    "service_name": "Cloud Run",
+    "uri": "incidents/gcp-latency",
+    "affected_products": [
+      { "title": "Google Compute Engine", "id": "L3ahVnSNoyBFW33hCzNv" },
+      { "title": "Cloud Run", "id": "9D7AzRfuvAGkXX4BKTqL" }
+    ],
+    "currently_affected_locations": []
+  },
+  {
+    "id": "gcp-billing-notice",
+    "begin": "2026-09-19T08:00:00+00:00",
+    "modified": "2026-09-19T08:30:00+00:00",
+    "external_desc": "Billing export schema change on Sep 30",
+    "status_impact": "SERVICE_INFORMATION",
+    "severity": "low",
+    "service_name": "Google Cloud Storage",
+    "uri": "incidents/gcp-billing-notice",
+    "affected_products": [{ "title": "Google Cloud Storage", "id": "UFXaM2fW2wPS6FeH2ByW" }],
+    "currently_affected_locations": []
+  },
+  {
+    "id": "gcp-bigquery-old",
+    "begin": "2026-09-10T08:00:00+00:00",
+    "end": "2026-09-10T10:00:00+00:00",
+    "modified": "2026-09-10T10:00:00+00:00",
+    "external_desc": "BigQuery queries failing",
+    "status_impact": "SERVICE_OUTAGE",
+    "severity": "high",
+    "service_name": "BigQuery",
+    "uri": "incidents/gcp-bigquery-old",
+    "affected_products": [{ "title": "BigQuery", "id": "bCLb4zfPFyGb9MQ9f6MP" }],
+    "currently_affected_locations": []
+  }
+]

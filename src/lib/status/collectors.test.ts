@@ -9,6 +9,10 @@ import type { ServiceId, ServiceSnapshot } from "./types.ts";
 // Keep these in sync with the URLs the collectors actually fetch.
 const URLS = {
   gcp: "https://status.cloud.google.com/incidents.json",
+  gcpProducts: "https://status.cloud.google.com/products.json",
+  androidProducts: "https://status.play.google.com/products.json",
+  steamCm: "https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0",
+  grokComponents: "https://status.x.ai/v2/components.json",
   steamServerInfo: "https://api.steampowered.com/ISteamWebAPIUtil/GetServerInfo/v1/",
   steamFeatured: "https://store.steampowered.com/api/featured/",
   cs2Sdr: "https://api.steampowered.com/ISteamApps/GetSDRConfig/v1/?appid=730",
@@ -77,6 +81,7 @@ function googleIncident(
     severity: string;
     service_name: string;
     uri: string;
+    affected_products: Array<{ id?: string; title?: string }>;
   }>,
 ) {
   return {
@@ -726,7 +731,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       // The Lambda event reports resolved and the CloudFront one is 30 days
       // old, so neither shows up as a component or an incident.
       expect(aws.components).toEqual([
-        { name: "Amazon Elastic Compute Cloud (N. Virginia)", health: "degraded", detail: "Increased API Error Rates" },
+        { name: "Amazon Elastic Compute Cloud", health: "degraded", detail: "Increased API Error Rates" },
       ]);
       expect(aws.incidents).toEqual([
         {
@@ -864,6 +869,421 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(appleOs.health).toBe("unknown");
       expect(appleOs.failure).toEqual({ kind: "parser", message: "Apple OS release feed had no OS items." });
       expect(appleOs.components).toEqual([]);
+    });
+  });
+
+  // Component lists for the vendors whose main feed names none. The payloads
+  // under __fixtures__ are hand-written from the documented shapes (see the
+  // fixtures README); the clock is pinned like the fixtures block above.
+  describe("component lists", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function collect(id: ServiceId): Promise<ServiceSnapshot> {
+      const snapshot = (await collectAllServices()).find((s) => s.id === id);
+      if (!snapshot) throw new Error(`no snapshot for ${id}`);
+      return snapshot;
+    }
+
+    const googleProducts = (count: number) => ({
+      products: Array.from({ length: count }, (_, i) => ({ title: `Product ${i}`, id: `p${i}` })),
+    });
+
+    describe("Google Cloud products.json", () => {
+      it("lists every product; open incidents degrade the products they name, the worst one wins", async () => {
+        stubFetch({
+          [URLS.gcp]: text(fixture("gcp/incidents.json")),
+          [URLS.gcpProducts]: text(fixture("gcp/products.json")),
+        });
+        const gcp = await collect("gcp");
+        expect(gcp.failure).toBeUndefined();
+        // The overall status is the incidents' alone, as before.
+        expect(gcp.health).toBe("outage");
+        expect(gcp.componentCount).toBeUndefined();
+        expect(gcp.components).toEqual([
+          { name: "Google Compute Engine", health: "outage", detail: "Belgium (europe-west1)" },
+          { name: "Cloud Run", health: "degraded", detail: "Elevated latency for new deployments" },
+          // SERVICE_INFORMATION is a notice: operational, with its title.
+          { name: "Google Cloud Storage", health: "operational", detail: "Billing export schema change on Sep 30" },
+          { name: "Cloud Build", health: "operational" },
+          { name: "Cloud SQL", health: "operational" },
+          // Its only incident has ended.
+          { name: "BigQuery", health: "operational" },
+          { name: "Google Cloud Pub/Sub", health: "operational" },
+          { name: "Vertex AI", health: "operational" },
+        ]);
+      });
+
+      it("adds an affected product the catalogue does not list, and matches by title when ids differ", async () => {
+        stubFetch({
+          [URLS.gcp]: json([
+            googleIncident({
+              id: "a",
+              status_impact: "SERVICE_DISRUPTION",
+              affected_products: [
+                { title: "cloud build", id: "renamed" },
+                { title: "Cloud Armor", id: "armor" },
+              ],
+            }),
+          ]),
+          [URLS.gcpProducts]: json({ products: [{ title: "Cloud Build" }] }),
+        });
+        const gcp = await collect("gcp");
+        expect(gcp.components).toEqual([
+          { name: "Cloud Build", health: "degraded", detail: "Elevated errors" },
+          { name: "Cloud Armor", health: "degraded", detail: "Elevated errors" },
+        ]);
+      });
+
+      it("keeps the per-incident components when the catalogue is empty", async () => {
+        stubFetch({
+          [URLS.gcp]: text(fixture("gcp/incidents.json")),
+          [URLS.gcpProducts]: json({ products: [] }),
+        });
+        const gcp = await collect("gcp");
+        expect(gcp.components.map((c) => c.name)).toEqual([
+          "Google Compute Engine",
+          "Cloud Run",
+          "Google Cloud Storage",
+        ]);
+      });
+
+      it("keeps the per-incident components when the catalogue is malformed", async () => {
+        for (const body of [json("nope"), json({ products: "x" }), json(null), text("<html>blocked</html>")]) {
+          stubFetch({ [URLS.gcp]: text(fixture("gcp/incidents.json")), [URLS.gcpProducts]: body });
+          const gcp = await collect("gcp");
+          expect(gcp.failure).toBeUndefined();
+          expect(gcp.components).toHaveLength(3);
+        }
+      });
+
+      it("caps a long catalogue at 24 with the broken product first and reports the total", async () => {
+        stubFetch({
+          [URLS.gcp]: json([
+            googleIncident({
+              status_impact: "SERVICE_OUTAGE",
+              affected_products: [{ title: "Product 40", id: "p40" }],
+            }),
+          ]),
+          [URLS.gcpProducts]: json(googleProducts(45)),
+        });
+        const gcp = await collect("gcp");
+        expect(gcp.components).toHaveLength(24);
+        expect(gcp.componentCount).toBe(45);
+        expect(gcp.components[0]).toEqual({ name: "Product 40", health: "outage", detail: "Elevated errors" });
+        expect(gcp.components[1].name).toBe("Product 0");
+      });
+
+      it("a catalogue that fails (404, 503, network error) leaves the card and its status intact", async () => {
+        const incidents = json([googleIncident({ status_impact: "SERVICE_DISRUPTION" })]);
+        for (const products of [
+          undefined,
+          text("Unavailable", { status: 503, statusText: "Service Unavailable" }),
+          networkError(),
+        ]) {
+          stubFetch({ [URLS.gcp]: incidents, [URLS.gcpProducts]: products });
+          const gcp = await collect("gcp");
+          expect(gcp.failure).toBeUndefined();
+          expect(gcp.health).toBe("degraded");
+          expect(gcp.components).toEqual([{ name: "Compute Engine", health: "degraded", detail: "Elevated errors" }]);
+        }
+      });
+
+      it("fetches the catalogue alongside the incidents, not after them", async () => {
+        let productsAsked!: () => void;
+        const asked = new Promise<void>((resolve) => {
+          productsAsked = resolve;
+        });
+        stubFetch({
+          // Answers only once the catalogue request has been made: a serial
+          // collector would wait here forever.
+          [URLS.gcp]: async () => {
+            await asked;
+            return json([])();
+          },
+          [URLS.gcpProducts]: () => {
+            productsAsked();
+            return json(googleProducts(2))();
+          },
+        });
+        const gcp = await collect("gcp");
+        expect(gcp.failure).toBeUndefined();
+        expect(gcp.components.map((c) => c.name)).toEqual(["Product 0", "Product 1"]);
+      });
+
+      it("a failing incidents feed still fails the card, whatever the catalogue says", async () => {
+        stubFetch({ [URLS.gcpProducts]: json(googleProducts(3)) });
+        const gcp = await collect("gcp");
+        expect(gcp.health).toBe("unknown");
+        expect(gcp.failure?.kind).toBe("http");
+        expect(gcp.components).toEqual([]);
+      });
+    });
+
+    describe("Google Play products.json", () => {
+      it("uses the same shape at status.play.google.com", async () => {
+        stubFetch({
+          [URLS.android]: text(fixture("play/incidents.json")),
+          [URLS.androidProducts]: text(fixture("play/products.json")),
+        });
+        const android = await collect("android");
+        expect(android.health).toBe("degraded");
+        expect(android.components).toEqual([
+          { name: "Google Play Billing", health: "degraded", detail: "Some purchases fail to complete" },
+          { name: "Google Play Store", health: "operational" },
+          { name: "Google Play Console", health: "operational" },
+        ]);
+      });
+
+      it("a missing products.json (404) keeps the per-incident components", async () => {
+        stubFetch({ [URLS.android]: text(fixture("play/incidents.json")) });
+        const android = await collect("android");
+        expect(android.failure).toBeUndefined();
+        expect(android.components).toEqual([
+          { name: "Google Play Billing", health: "degraded", detail: "Some purchases fail to complete" },
+        ]);
+      });
+
+      it("a quiet Play with no catalogue has no component list", async () => {
+        stubFetch({ [URLS.android]: json([]) });
+        const android = await collect("android");
+        expect(android.health).toBe("operational");
+        expect(android.components).toEqual([]);
+      });
+    });
+
+    describe("Steam connection managers", () => {
+      const steamOk = {
+        [URLS.steamServerInfo]: json({ servertime: 1758000000 }),
+        [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
+      };
+
+      it("is an operational component when the directory lists servers", async () => {
+        stubFetch({ ...steamOk, [URLS.steamCm]: text(fixture("steam/cm-list.json")) });
+        const steam = await collect("steam");
+        expect(steam.health).toBe("operational");
+        expect(steam.components).toEqual([
+          { name: "Steam Web API", health: "operational" },
+          { name: "Steam Store", health: "operational" },
+          { name: "Steam Connection Managers", health: "operational", detail: "5 servers listed" },
+        ]);
+      });
+
+      it("is Unknown, never an outage, for an empty list or an unexpected shape", async () => {
+        for (const body of [
+          json({ response: { serverlist: [], serverlist_websockets: [], result: 1 } }),
+          json({ response: {} }),
+          json({ unexpected: true }),
+          json(null),
+        ]) {
+          stubFetch({ ...steamOk, [URLS.steamCm]: body });
+          const steam = await collect("steam");
+          expect(steam.health).toBe("operational");
+          expect(steam.components.at(-1)).toEqual({
+            name: "Steam Connection Managers",
+            health: "unknown",
+            detail: "No servers listed.",
+          });
+        }
+      });
+
+      it("is Unknown, and the card unaffected, when the directory cannot be fetched", async () => {
+        for (const cm of [
+          undefined,
+          text("Unavailable", { status: 503, statusText: "Service Unavailable" }),
+          networkError("connection reset"),
+        ]) {
+          stubFetch({ ...steamOk, [URLS.steamCm]: cm });
+          const steam = await collect("steam");
+          expect(steam.failure).toBeUndefined();
+          expect(steam.health).toBe("operational");
+          expect(steam.components.at(-1)).toMatchObject({ name: "Steam Connection Managers", health: "unknown" });
+        }
+      });
+
+      it("does not rescue a card whose two main endpoints both failed", async () => {
+        stubFetch({ [URLS.steamCm]: text(fixture("steam/cm-list.json")) });
+        const steam = await collect("steam");
+        expect(steam.health).toBe("unknown");
+        expect(steam.failure).toBeDefined();
+        expect(steam.components).toEqual([]);
+      });
+    });
+
+    describe("Grok components", () => {
+      const feed = () => text(fixture("grok/feed.xml"));
+
+      it("lists the vendor's Instatus components (parents replaced by their children); health stays the feed's", async () => {
+        stubFetch({ [URLS.grok]: feed(), [URLS.grokComponents]: text(fixture("grok/components.json")) });
+        const grok = await collect("grok");
+        expect(grok.failure).toBeUndefined();
+        // The feed's one active, degraded item decides the card, even though
+        // a component reports a major outage.
+        expect(grok.health).toBe("degraded");
+        expect(grok.components).toEqual([
+          { name: "grok.com", health: "degraded" },
+          { name: "Image generation", health: "maintenance", detail: "Maintenance window" },
+          { name: "Voice mode", health: "outage" },
+          { name: "iOS app", health: "operational" },
+          { name: "API", health: "operational" },
+        ]);
+      });
+
+      it("derives components from the titles' service prefixes when there is no component endpoint", async () => {
+        stubFetch({ [URLS.grok]: text(fixture("grok/feed-prefixed.xml")) });
+        const grok = await collect("grok");
+        expect(grok.health).toBe("outage");
+        // API has two active items: the worst health and the newest detail.
+        // Voice mode is resolved and the unprefixed title names no service.
+        expect(grok.components).toEqual([
+          { name: "API", health: "outage", detail: "Requests failing for some models" },
+          { name: "grok.com", health: "degraded", detail: "Slow page loads" },
+        ]);
+        expect(grok.incidents).toHaveLength(4);
+      });
+
+      it("falls back to the titles when the endpoint is empty, malformed or failing", async () => {
+        for (const components of [
+          json({ components: [] }),
+          json({ components: "x" }),
+          json([]),
+          text("<html>Just a moment...</html>"),
+          text("Forbidden", { status: 403, statusText: "Forbidden" }),
+          networkError(),
+          undefined,
+        ]) {
+          stubFetch({ [URLS.grok]: text(fixture("grok/feed-prefixed.xml")), [URLS.grokComponents]: components });
+          const grok = await collect("grok");
+          expect(grok.failure).toBeUndefined();
+          expect(grok.components.map((c) => c.name)).toEqual(["API", "grok.com"]);
+        }
+      });
+
+      it("shows no components, and invents none, when the feed titles carry no prefix", async () => {
+        stubFetch({ [URLS.grok]: feed() });
+        const grok = await collect("grok");
+        expect(grok.health).toBe("degraded");
+        expect(grok.components).toEqual([]);
+        expect(grok.componentCount).toBeUndefined();
+      });
+
+      it("caps a long component list at 24 and reports the total", async () => {
+        const components = Array.from({ length: 30 }, (_, i) => ({
+          id: String(i),
+          name: `Part ${i}`,
+          status: i === 29 ? "MAJOROUTAGE" : "OPERATIONAL",
+        }));
+        stubFetch({ [URLS.grok]: feed(), [URLS.grokComponents]: json({ components }) });
+        const grok = await collect("grok");
+        expect(grok.components).toHaveLength(24);
+        expect(grok.componentCount).toBe(30);
+        expect(grok.components[0]).toEqual({ name: "Part 29", health: "outage" });
+      });
+
+      it("fetches the component list alongside the feed, not after it", async () => {
+        let componentsAsked!: () => void;
+        const asked = new Promise<void>((resolve) => {
+          componentsAsked = resolve;
+        });
+        stubFetch({
+          [URLS.grok]: async () => {
+            await asked;
+            return feed()();
+          },
+          [URLS.grokComponents]: () => {
+            componentsAsked();
+            return json({ components: [{ name: "API", status: "OPERATIONAL" }] })();
+          },
+        });
+        const grok = await collect("grok");
+        expect(grok.failure).toBeUndefined();
+        expect(grok.components).toEqual([{ name: "API", health: "operational" }]);
+      });
+    });
+
+    describe("AWS components", () => {
+      const at = Math.floor(Date.now() / 1000) - 3600;
+      function awsEvent(overrides: Record<string, unknown> = {}) {
+        return {
+          date: String(at),
+          arn: `arn:aws:health:${Math.random()}`,
+          region_name: "N. Virginia",
+          status: "1",
+          service: "ec2-us-east-1",
+          service_name: "Amazon Elastic Compute Cloud",
+          summary: "Increased API Error Rates",
+          event_log: [{ summary: "Increased API Error Rates", message: "Investigating.", status: 1, timestamp: at }],
+          ...overrides,
+        };
+      }
+      const serve = (events: unknown[]) => stubFetch({ [URLS.aws]: bytes(utf16(JSON.stringify(events))) });
+
+      it("merges events per service: worst health wins, the newest event's summary is the detail", async () => {
+        serve([
+          awsEvent({ summary: "Older regional issue", date: String(at - 600), event_log: [{ timestamp: at - 600 }] }),
+          awsEvent({
+            region_name: "",
+            summary: "Newest: multi-region outage",
+            event_log: [
+              { summary: "Service outage", message: "The service is unavailable.", status: 1, timestamp: at },
+            ],
+          }),
+          awsEvent({ service_name: "AWS Lambda", service: "lambda-eu-west-1", summary: "Invoke latency" }),
+        ]);
+        const aws = await collect("aws");
+        expect(aws.components).toEqual([
+          { name: "Amazon Elastic Compute Cloud", health: "outage", detail: "Newest: multi-region outage" },
+          { name: "AWS Lambda", health: "degraded", detail: "Invoke latency" },
+        ]);
+        expect(aws.componentCount).toBeUndefined();
+        expect(aws.incidents).toHaveLength(3);
+      });
+
+      it("has no component list when nothing is active, and invents none", async () => {
+        serve([awsEvent({ status: "0", summary: "[RESOLVED] Increased API Error Rates" })]);
+        const aws = await collect("aws");
+        expect(aws.health).toBe("operational");
+        expect(aws.components).toEqual([]);
+        expect(aws.componentCount).toBeUndefined();
+      });
+
+      it("skips an event that names no service", async () => {
+        serve([awsEvent({ service_name: undefined, service: undefined })]);
+        const aws = await collect("aws");
+        expect(aws.health).toBe("degraded");
+        expect(aws.components).toEqual([]);
+      });
+
+      it("caps at 24 services and reports the total", async () => {
+        serve(
+          Array.from({ length: 30 }, (_, i) =>
+            awsEvent({
+              service_name: `Service ${i}`,
+              service: `svc-${i}`,
+              region_name: "",
+              summary: i === 27 ? "Outage" : "Elevated latency",
+              event_log: [
+                {
+                  summary: i === 27 ? "Outage" : "Elevated latency",
+                  message: i === 27 ? "The service is unavailable." : "Slow.",
+                  status: 1,
+                  timestamp: at,
+                },
+              ],
+            }),
+          ),
+        );
+        const aws = await collect("aws");
+        expect(aws.components).toHaveLength(24);
+        expect(aws.componentCount).toBe(30);
+        expect(aws.components.map((c) => c.name)).toEqual(Array.from({ length: 24 }, (_, i) => `Service ${i}`));
+      });
     });
   });
 });

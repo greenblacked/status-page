@@ -1,0 +1,7 @@
+{
+  "products": [
+    { "title": "Google Play Store", "id": "play-store" },
+    { "title": "Google Play Console", "id": "play-console" },
+    { "title": "Google Play Billing", "id": "play-billing" }
+  ]
+}

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>xAI Status</title>
+    <link>https://status.x.ai/</link>
+    <description>Incident history for xAI services</description>
+    <item>
+      <title>API: Elevated error rates</title>
+      <link>https://status.x.ai/incidents/01K5R8Q2V7M3</link>
+      <pubDate>Sun, 20 Sep 2026 09:30:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Severity:</strong> Degraded performance</p><p><strong>Status:</strong> Identified</p>]]></description>
+    </item>
+    <item>
+      <title>API: Requests failing for some models</title>
+      <link>https://status.x.ai/incidents/01K5R9AAAAAA</link>
+      <pubDate>Sun, 20 Sep 2026 10:30:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Severity:</strong> Partial outage</p><p><strong>Status:</strong> Investigating</p>]]></description>
+    </item>
+    <item>
+      <title>grok.com: Slow page loads</title>
+      <link>https://status.x.ai/incidents/01K5R9BBBBBB</link>
+      <pubDate>Sun, 20 Sep 2026 08:00:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Severity:</strong> Degraded performance</p><p><strong>Status:</strong> Monitoring</p>]]></description>
+    </item>
+    <item>
+      <title>Voice mode: Unavailable</title>
+      <link>https://status.x.ai/incidents/01K5N4D9T1C8</link>
+      <pubDate>Sat, 19 Sep 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Severity:</strong> Partial outage</p><p><strong>Status:</strong> Resolved</p>]]></description>
+    </item>
+    <item>
+      <title>Investigating elevated errors</title>
+      <link>https://status.x.ai/incidents/01K5R9CCCCCC</link>
+      <pubDate>Sun, 20 Sep 2026 07:00:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Status:</strong> Investigating</p>]]></description>
+    </item>
+  </channel>
+</rss>
