@@ -12,12 +12,24 @@ test("head carries the format-detection meta", async ({ page }) => {
   );
 });
 
-test("manifest has a maskable icon and a language", async ({ request }) => {
+test("manifest has a maskable icon of its own, a name and a language", async ({ request }) => {
   const response = await request.get("/manifest.webmanifest");
   expect(response.ok()).toBe(true);
-  const manifest = (await response.json()) as { lang?: string; icons: { src: string; purpose?: string }[] };
+  const manifest = (await response.json()) as {
+    lang?: string;
+    name?: string;
+    short_name?: string;
+    icons: { src: string; sizes?: string; purpose?: string }[];
+  };
   expect(manifest.lang).toBe("en");
-  expect(manifest.icons.some((icon) => icon.purpose === "maskable" && icon.src === "/icon-512.png")).toBe(true);
+  expect(manifest.name).toBe("Status");
+  expect(manifest.short_name).toBe("Status");
+  const maskable = manifest.icons.find((icon) => icon.purpose === "maskable");
+  const any512 = manifest.icons.find((icon) => icon.sizes === "512x512" && icon.purpose === "any");
+  // Drawn for the mask's safe zone, so not the "any" icon reused.
+  expect(maskable?.src).toBe("/icon-512-maskable.png");
+  expect(maskable?.src).not.toBe(any512?.src);
+  for (const icon of manifest.icons) expect((await request.get(icon.src)).ok(), icon.src).toBe(true);
 });
 
 test("loads apple.css and logs no console errors", async ({ page }) => {

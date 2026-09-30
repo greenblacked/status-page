@@ -1,99 +1,88 @@
 <!doctype html>
 <!--
   Source for public/og.jpg, the 1200x630 link-preview image.
-  It shows only what Status Page really does: the fourteen services it reads and
-  the five states it reports. No live status, so a preview never shows a stale
-  outage. Colors and the mark come from src/styles.css and public/favicon.svg.
+  Paper, the name, one question, and the fourteen services as fourteen outline
+  marks. No live status, so a preview never shows a stale outage. Colours, the
+  type and the mark come from src/styles.css and public/favicon.svg; the pen
+  underline is the page's own (scripts/icons.mjs sets its path from
+  src/components/status/pen-marks.ts).
 
-  Regenerate after changing the service list (Chromium or Chrome):
-    chromium --headless=new --hide-scrollbars --window-size=1200,630 \
-      --screenshot=og.png docs/og-image.html
-  then convert og.png to public/og.jpg (JPEG, quality about 88).
+  Regenerate after changing the service list or the look:
+    node scripts/icons.mjs
+  which also redraws the favicon and the app icons.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Status Page link preview</title>
+<title>Status link preview</title>
 <style>
+  @font-face {
+    font-family: "Inter";
+    src: url("../public/fonts/inter-var.woff2") format("woff2");
+    font-weight: 400 700;
+    font-style: normal;
+  }
   :root {
-    --bg: #0c1018;
-    --fg: #f4f6fa;
-    --muted: color-mix(in oklab, var(--fg) 68%, transparent);
-    --subtle: color-mix(in oklab, var(--fg) 46%, transparent);
-    --surface: color-mix(in oklab, white 7%, transparent);
-    --border: color-mix(in oklab, white 14%, transparent);
-    --accent: #e8eef6;
-    --ok: #7dcea0;
-    --warn: #e0c086;
-    --down: #e08b84;
-    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Liberation Sans", "DejaVu Sans", sans-serif;
+    --bg: #f4f1eb;
+    --fg: #1b1a17;
+    --muted: #57534b;
+    --subtle: #6a655c;
+    --accent: #2c4a72;
+    --ok: #1b7048;
+    --font: "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1200px; height: 630px; overflow: hidden; }
   body {
     font-family: var(--font);
+    font-optical-sizing: auto;
+    font-variant-numeric: tabular-nums;
     color: var(--fg);
-    background:
-      radial-gradient(900px 520px at 88% 8%, color-mix(in oklab, var(--ok) 13%, transparent), transparent 62%),
-      radial-gradient(760px 480px at 6% 104%, color-mix(in oklab, var(--accent) 9%, transparent), transparent 60%),
-      var(--bg);
-    display: grid;
-    grid-template-columns: 470px 1fr;
-    gap: 44px;
-    padding: 64px 64px 56px 72px;
+    background: var(--bg);
+    padding: 88px 96px 72px;
+    display: flex;
+    flex-direction: column;
   }
-  .brand { display: flex; flex-direction: column; }
-  .mark { width: 72px; height: 72px; margin-bottom: 28px; }
-  h1 { font-size: 72px; font-weight: 700; letter-spacing: -2.5px; line-height: 1; white-space: nowrap; }
-  .tagline { margin-top: 18px; font-size: 32px; font-weight: 500; color: var(--muted); letter-spacing: -0.4px; }
-  .states { margin-top: auto; display: flex; flex-wrap: wrap; gap: 10px; }
-  .state {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 8px 14px; border-radius: 999px;
-    font-size: 17px; font-weight: 500; color: var(--muted);
-    background: var(--surface); box-shadow: 0 0 0 1px var(--border);
+  h1 {
+    position: relative;
+    align-self: flex-start;
+    font-size: 176px;
+    line-height: 176px;
+    font-weight: 640;
+    letter-spacing: -0.028em;
   }
-  .state i { width: 10px; height: 10px; border-radius: 50%; display: block; }
-  .footnote { margin-top: 22px; font-size: 17px; color: var(--subtle); }
-  .groups { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-content: center; }
-  .group {
-    padding: 18px 20px; border-radius: 18px;
-    background: var(--surface);
-    box-shadow: inset 0 1px 0 color-mix(in oklab, white 22%, transparent), 0 0 0 1px var(--border);
+  #pen {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -18px;
+    width: 100%;
+    height: 30px;
+    overflow: visible;
+    color: var(--accent);
   }
-  .group.wide { grid-column: span 2; }
-  .group h2 { font-size: 14px; font-weight: 600; letter-spacing: 1.6px; text-transform: uppercase; color: var(--subtle); margin-bottom: 10px; }
-  .group ul { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 18px; }
-  .group li { font-size: 21px; font-weight: 500; display: flex; align-items: center; gap: 9px; }
-  .group li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--subtle); }
+  .question {
+    margin-top: 48px;
+    font-size: 56px;
+    line-height: 64px;
+    font-weight: 450;
+    letter-spacing: -0.02em;
+    color: var(--muted);
+  }
+  .marks { margin-top: auto; width: 1008px; height: 56px; display: block; color: var(--ok); }
+  .site { margin-top: 28px; font-size: 26px; line-height: 32px; color: var(--subtle); letter-spacing: -0.01em; }
 </style>
 </head>
 <body>
-  <section class="brand">
-    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
-      <rect width="32" height="32" rx="8" fill="#161b25"/>
-      <circle cx="16" cy="16" r="9.5" fill="none" stroke="#e8eef6" stroke-width="2.6"/>
-      <circle cx="16" cy="16" r="2.2" fill="#e8eef6"/>
-      <path d="M16 16 L22.8 10.8" stroke="#e8eef6" stroke-width="2.2" stroke-linecap="round"/>
-      <circle cx="23.2" cy="10.6" r="3.4" fill="#7dcea0"/>
-    </svg>
-    <h1>Status Page</h1>
-    <p class="tagline">Official sources. One board.</p>
-    <div class="states">
-      <span class="state"><i style="background: var(--ok)"></i>Operational</span>
-      <span class="state"><i style="background: var(--accent)"></i>Maintenance</span>
-      <span class="state"><i style="background: var(--warn)"></i>Degraded</span>
-      <span class="state"><i style="background: var(--down)"></i>Outage</span>
-      <span class="state"><i style="background: var(--subtle)"></i>Unknown</span>
-    </div>
-    <p class="footnote">14 services · vendor status sources only · no API keys</p>
-  </section>
-  <section class="groups">
-    <div class="group"><h2>Cloud</h2><ul><li>Google Cloud</li><li>AWS</li></ul></div>
-    <div class="group"><h2>AI</h2><ul><li>Grok</li><li>ChatGPT</li><li>Claude</li></ul></div>
-    <div class="group wide"><h2>Gaming</h2><ul><li>Steam</li><li>CS2 Europe</li><li>Epic Games</li><li>Fortnite</li></ul></div>
-    <div class="group wide"><h2>Platforms</h2><ul><li>Spotify</li><li>Apple</li><li>Android / Google Play</li></ul></div>
-    <div class="group wide"><h2>Updates</h2><ul><li>MikroTik RouterOS</li><li>Apple OS releases</li></ul></div>
-  </section>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="ok" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9.4" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M7.7 12.5l3 2.9 5.7-6.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+  </svg>
+  <h1>Status<svg id="pen" viewBox="0 0 240 12" preserveAspectRatio="none" aria-hidden="true"><path d="" fill="currentColor"/></svg></h1>
+  <p class="question">Is it them or is it me?</p>
+  <svg class="marks" viewBox="0 0 1008 56" aria-hidden="true"><use href="#ok" x="0.0" width="56" height="56"/><use href="#ok" x="73.2" width="56" height="56"/><use href="#ok" x="146.5" width="56" height="56"/><use href="#ok" x="219.7" width="56" height="56"/><use href="#ok" x="292.9" width="56" height="56"/><use href="#ok" x="366.2" width="56" height="56"/><use href="#ok" x="439.4" width="56" height="56"/><use href="#ok" x="512.6" width="56" height="56"/><use href="#ok" x="585.8" width="56" height="56"/><use href="#ok" x="659.1" width="56" height="56"/><use href="#ok" x="732.3" width="56" height="56"/><use href="#ok" x="805.5" width="56" height="56"/><use href="#ok" x="878.8" width="56" height="56"/><use href="#ok" x="952.0" width="56" height="56"/></svg>
+  <p class="site">status.szolotov.com</p>
 </body>
 </html>

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ALERTS_BOOT_SCRIPT } from "@/lib/status/alerts-support";
 import { APPEARANCE_BOOT_SCRIPT } from "@/lib/status/background";
 import { APP_NAME } from "@/lib/status/catalog";
+import { CANONICAL_URL, OG_IMAGE, SITE_DESCRIPTION } from "@/lib/status/site-meta";
 import appleCss from "../apple.css?url";
 import appCss from "../styles.css?url";
 
@@ -47,19 +48,19 @@ function RootDocument() {
   );
 }
 
-const DESCRIPTION =
-  "Live status board for GCP, AWS, Steam, CS2 Europe, Epic, Fortnite, Spotify, Apple, Android, Grok, ChatGPT, Claude, MikroTik RouterOS, and Apple OS.";
-
 export const Route = createRootRoute({
-  head: () => ({
+  head: ({ matches }) => ({
     meta: [
       { charSet: "utf-8" },
       // viewport-fit=cover lets the page run under the notch and the home
       // indicator, so env(safe-area-inset-*) has values to keep content out
       // of them; Safari 26 also needs it to tint its bottom toolbar.
       { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
-      { title: APP_NAME },
-      { name: "description", content: DESCRIPTION },
+      // A URL that is not on the board says so in the tab too (NotFoundPage draws the page). The router
+      // marks the root match `_notFound` for an unmatched URL, on the server and in the browser; its
+      // `error` is not set yet when head runs. e2e/not-found.spec.ts holds this to account.
+      { title: matches.some((match) => match._notFound) ? `Not found · ${APP_NAME}` : APP_NAME },
+      { name: "description", content: SITE_DESCRIPTION },
       { name: "color-scheme", content: "light dark" },
       // Safari turns anything shaped like a phone number, date, address or
       // email into a tappable link, which would rewrite incident text.
@@ -74,14 +75,17 @@ export const Route = createRootRoute({
       { property: "og:type", content: "website" },
       { property: "og:title", content: APP_NAME },
       { property: "og:site_name", content: APP_NAME },
-      { property: "og:description", content: DESCRIPTION },
-      { name: "twitter:card", content: "summary" },
-      // og:image and og:url are deliberately absent: scrapers resolve them
-      // against nothing, so they need the deployed origin spelled out, and
-      // this repository does not record one yet. Add them, pointing at the
-      // existing public/og.jpg (1200x630), once the board has a canonical URL.
+      { property: "og:description", content: SITE_DESCRIPTION },
+      { property: "og:url", content: CANONICAL_URL },
+      // Absolute, because a scraper resolves these against nothing.
+      { property: "og:image", content: OG_IMAGE.url },
+      { property: "og:image:width", content: String(OG_IMAGE.width) },
+      { property: "og:image:height", content: String(OG_IMAGE.height) },
+      { property: "og:image:alt", content: OG_IMAGE.alt },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [
+      { rel: "canonical", href: CANONICAL_URL },
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
       // 180x180, square and unrounded: iOS applies its own corner mask.
       { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
