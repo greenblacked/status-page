@@ -1,5 +1,6 @@
 import {
   emptyHistory,
+  HISTORY_ORDER,
   HISTORY_RETENTION_DAYS,
   type HistoryDay,
   type HistoryDocument,
@@ -8,7 +9,7 @@ import {
   type PublicHistory,
   publicHistory,
 } from "./history";
-import type { BoardSnapshot, Health } from "./types";
+import type { BoardSnapshot } from "./types";
 
 /**
  * The slice of a D1 database this module uses, so tests can stand in a
@@ -33,14 +34,6 @@ export interface HistoryDb {
 /** One board sample every five minutes, on the cron's own clock. */
 export const HISTORY_SLOT_MS = 300_000;
 const SLOTS_PER_DAY = 86_400_000 / HISTORY_SLOT_MS;
-
-/**
- * Storage order of `worst`, worst last. It mirrors the private HISTORY_RANK in
- * history.ts (operational, unknown, maintenance, degraded, outage), and
- * history-store.test.ts checks it against worseHistoryHealth so the two
- * cannot drift apart.
- */
-export const HISTORY_ORDER: readonly Health[] = ["operational", "unknown", "maintenance", "degraded", "outage"];
 
 /**
  * One row per service per UTC day. `last_slot` makes the upsert idempotent: a

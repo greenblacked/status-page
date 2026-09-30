@@ -2,10 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { D1Fake } from "@/test/d1-fake";
 import { board, service } from "@/test/fixtures";
-import { HISTORY_RETENTION_DAYS, oldestRetainedDate, parseHistory, worseHistoryHealth } from "./history";
+import { HISTORY_ORDER, HISTORY_RETENTION_DAYS, oldestRetainedDate, parseHistory, worseHistoryHealth } from "./history";
 import {
   ensureSchema,
-  HISTORY_ORDER,
   HISTORY_SLOT_MS,
   type HistoryDb,
   readPublicHistory,
@@ -207,7 +206,11 @@ describe("recordBoardSample", () => {
 });
 
 describe("HISTORY_ORDER", () => {
-  it("ranks health exactly as history.ts does", () => {
+  it("keeps the stored order, which D1 rows depend on", () => {
+    expect(HISTORY_ORDER).toEqual(["operational", "unknown", "maintenance", "degraded", "outage"]);
+  });
+
+  it("ranks health exactly as worseHistoryHealth does", () => {
     for (const a of HISTORY_ORDER) {
       for (const b of HISTORY_ORDER) {
         const expected = HISTORY_ORDER[Math.max(HISTORY_ORDER.indexOf(a), HISTORY_ORDER.indexOf(b))];

@@ -5,18 +5,16 @@ export const HISTORY_TIMEZONE = "UTC";
 export const HISTORY_RETENTION_DAYS = 30;
 
 /**
- * History severity: outage is worst, operational is best. The same order as
- * the board's card urgency in layout.ts (outage, degraded, maintenance,
- * unknown), and distinct from the overall-health rank in health.ts, where
- * unknown outranks degraded.
+ * History severity, best first and worst last: outage is worst, operational is
+ * best. The same order as the board's card urgency in layout.ts (outage,
+ * degraded, maintenance, unknown), and distinct from the overall-health rank in
+ * health.ts, where unknown outranks degraded. The D1 store persists a day's
+ * worst health as an index into this list, so never reorder it: append only,
+ * or add a new schema version.
  */
-const HISTORY_RANK: Record<Health, number> = {
-  operational: 0,
-  unknown: 1,
-  maintenance: 2,
-  degraded: 3,
-  outage: 4,
-};
+export const HISTORY_ORDER: readonly Health[] = ["operational", "unknown", "maintenance", "degraded", "outage"];
+
+const HISTORY_RANK = Object.fromEntries(HISTORY_ORDER.map((health, rank) => [health, rank])) as Record<Health, number>;
 
 const HEALTHS = new Set<string>(Object.keys(HISTORY_RANK));
 
