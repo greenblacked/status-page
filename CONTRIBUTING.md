@@ -351,6 +351,7 @@ Do not scrape unofficial aggregators.
   - Status, event and aurora colours are written once in OKLCH, with no separate Display P3 block. Keep status and text colours inside sRGB, so the contrast the tests measure is the contrast shown. Only the aurora may use colours beyond sRGB, and today one dark stop does
   - Type: the system faces only, no web font. Mono uppercase with wide tracking for labels, and `font-serif` italic for one short phrase (the empty board), nowhere else
   - The coordinate grid (`.aurora-grid`) is static: never animate it. It goes with the aurora under Reduce glass and under forced colours
+  - The background layer (aurora, grid and the four `.lens` glass lenses) is painted only: never `backdrop-filter`, never above the content. The lens geometry is static and only `transform` may animate, as the rim light does under `(hover: hover) and (pointer: fine)`. The lens tokens (`--lens-*`) must keep `--color-subtle` at 4.5:1 or better on the worst-case bezel; the contrast test cannot see them, so check by hand (the comment beside the tokens gives the budget)
   - The card index (01 to 14) follows the catalog order and is `aria-hidden`: decoration, never part of a name
 - Three materials, and nothing else is translucent:
   - `.glass-chrome` for controls that float above the content (the compact header, the settings dialog), one on screen at a time

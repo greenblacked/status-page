@@ -160,6 +160,36 @@
   --grid-line: light-dark(rgb(10 15 25 / 0.04), rgb(255 255 255 / 0.035));
   --grid-size: 64px;
   --grain-opacity: 0.08;
+
+  /*
+    The glass lenses over the grid. Contrast budget: on the worst-case bezel
+    (light: shade .06, body-lo .04 and rim-lo .06 stacked) --color-subtle
+    still measures 4.69:1, above the 4.5:1 floor. The contrast test cannot
+    see these layers, so keep dark hairline alphas at .4 or less and re-check
+    the ratio by hand when any of them change.
+  */
+  --lens-grid-line: light-dark(rgb(10 15 25 / 0.13), rgb(255 255 255 / 0.13));
+  --lens-body-hi: light-dark(rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.07));
+  --lens-body-lo: light-dark(rgb(70 90 150 / 0.04), rgb(0 0 0 / 0.22));
+  --lens-rim-hi: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.4));
+  --lens-rim-mid: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.14));
+  --lens-rim-lo: light-dark(rgb(16 24 40 / 0.07), rgb(255 255 255 / 0.09));
+  --lens-shade: light-dark(rgb(38 52 84 / 0.06), rgb(0 0 0 / 0.5));
+  --lens-fringe-a: light-dark(oklch(0.78 0.12 200 / 0.5), oklch(0.8 0.13 200 / 0.42));
+  --lens-fringe-b: light-dark(oklch(0.74 0.16 340 / 0.45), oklch(0.72 0.17 340 / 0.38));
+  /* Centre (percent of the viewport) and diameter of each lens. */
+  --lens-1-x: 19;
+  --lens-1-y: 30;
+  --lens-1-d: clamp(190px, 46vmin, 520px);
+  --lens-2-x: 86;
+  --lens-2-y: 20;
+  --lens-2-d: clamp(120px, 30vmin, 340px);
+  --lens-3-x: 68;
+  --lens-3-y: 80;
+  --lens-3-d: clamp(170px, 40vmin, 460px);
+  --lens-4-x: 9;
+  --lens-4-y: 88;
+  --lens-4-d: clamp(100px, 24vmin, 270px);
 }
 
 @media (min-width: 40rem) {
@@ -293,6 +323,157 @@
     linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
   background-size: var(--grid-size) var(--grid-size);
   background-position: 50% 0;
+}
+
+/*
+  Four glass lenses that bend the drafting grid. Painted only: no
+  backdrop-filter, nothing above the content. Each lens draws its own copy
+  of the grid (.lens-fx) through the lens-refract SVG filter, and the real
+  grid has a matching hole under it so the two never double. The geometry
+  is static; the only motion is the rim light turning (transform only),
+  and only where a pointer can hover. Same z-index as the grid, so the
+  later DOM order puts it on top.
+*/
+.lenses {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  contain: strict;
+  container-type: size;
+}
+
+.lens {
+  position: absolute;
+  left: calc(var(--x) * 1%);
+  top: calc(var(--y) * 1%);
+  width: var(--d);
+  height: var(--d);
+  margin: calc(var(--d) / -2) 0 0 calc(var(--d) / -2);
+  border-radius: 50%;
+  overflow: hidden;
+  isolation: isolate;
+  /* Clear glass: a soft cap of light top left, a little weight at the edge. */
+  background:
+    radial-gradient(70% 60% at 30% 18%, var(--lens-body-hi), transparent 70%),
+    radial-gradient(100% 100% at 50% 50%, transparent 62%, var(--lens-body-lo) 100%);
+  box-shadow:
+    inset 0 0 0 1px var(--lens-rim-lo),
+    inset 2px 3px 5px -1px var(--lens-rim-hi),
+    inset -2px -3px 6px -2px var(--lens-rim-mid),
+    inset 0 0 28px 2px var(--lens-shade);
+}
+
+.lens:nth-child(1) {
+  --x: var(--lens-1-x);
+  --y: var(--lens-1-y);
+  --d: var(--lens-1-d);
+}
+
+.lens:nth-child(2) {
+  --x: var(--lens-2-x);
+  --y: var(--lens-2-y);
+  --d: var(--lens-2-d);
+}
+
+.lens:nth-child(3) {
+  --x: var(--lens-3-x);
+  --y: var(--lens-3-y);
+  --d: var(--lens-3-d);
+}
+
+.lens:nth-child(4) {
+  --x: var(--lens-4-x);
+  --y: var(--lens-4-y);
+  --d: var(--lens-4-d);
+}
+
+/* The colour fringe: two hairlines nudged apart, never filtered. */
+.lens::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow:
+    inset 1.5px 1.5px 0 0 var(--lens-fringe-a),
+    inset -1.5px -1.5px 0 0 var(--lens-fringe-b);
+}
+
+/* The rim light: a conic ring, masked to 2px. Turns slowly on a Mac. */
+.lens::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  padding: 2px;
+  background: conic-gradient(
+    from 210deg,
+    var(--lens-rim-hi),
+    transparent 16%,
+    transparent 48%,
+    var(--lens-rim-mid) 62%,
+    transparent 78%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lens::after {
+    animation: lens-orbit 120s linear infinite;
+  }
+}
+
+@keyframes lens-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+  The bent grid: the page grid drawn again, aligned to it (a 64px tile
+  centred on the viewport, as .aurora-grid sets it) and pushed through the
+  refraction filter. Oversized so the filter never shows an edge.
+*/
+.lens-fx {
+  position: absolute;
+  inset: -15%;
+  z-index: -1;
+  filter: url(#lens-refract);
+  background-image:
+    linear-gradient(to right, var(--lens-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--lens-grid-line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  background-position:
+    calc(50cqw - 32px - var(--x) * 1cqw + var(--d) * 0.65)
+    calc(var(--d) * 0.65 - var(--y) * 1cqh);
+}
+
+/*
+  The hole in the real grid under each lens. Four radial masks, intersected.
+  Both spellings, written out: the minifier folds a lone prefixed pair.
+*/
+.aurora-grid {
+  -webkit-mask-image:
+    radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1%), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1%), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1%), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1%), transparent 99%, #000 100%);
+  mask-image:
+    radial-gradient(circle calc(var(--lens-1-d) / 2 - 0.5px) at calc(var(--lens-1-x) * 1%) calc(var(--lens-1-y) * 1%), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-2-d) / 2 - 0.5px) at calc(var(--lens-2-x) * 1%) calc(var(--lens-2-y) * 1%), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-3-d) / 2 - 0.5px) at calc(var(--lens-3-x) * 1%) calc(var(--lens-3-y) * 1%), transparent 99%, #000 100%),
+    radial-gradient(circle calc(var(--lens-4-d) / 2 - 0.5px) at calc(var(--lens-4-x) * 1%) calc(var(--lens-4-y) * 1%), transparent 99%, #000 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
 }
 
 .liquid-content {
@@ -1063,7 +1244,8 @@ article[id^="service-"],
 
 /* No backdrop at all: nothing left to show through solid panels, and nothing to animate. */
 .aurora,
-.aurora-grid {
+.aurora-grid,
+.lenses {
   @variant reduce-glass {
     display: none;
   }
@@ -1097,6 +1279,16 @@ article[id^="service-"],
     --color-tick: light-dark(rgb(10 15 25 / 0.42), rgb(255 255 255 / 0.48));
   }
 
+  /* Solid panels, flat page: no lenses, and the grid whole again. */
+  .lenses {
+    display: none;
+  }
+
+  .aurora-grid {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+
   .glass,
   .glass-chrome,
   .glass-whisper {
@@ -1112,7 +1304,8 @@ article[id^="service-"],
     border: 1px solid CanvasText;
   }
 
-  .aurora-grid {
+  .aurora-grid,
+  .lenses {
     display: none;
   }
 }
@@ -1126,6 +1319,7 @@ article[id^="service-"],
   .live-signal::before,
   .live-signal::after,
   .aurora::before,
+  .lens::after,
   .hero-recede,
   .period-motion[data-running] > .period-sweep,
   .period-motion[data-running] > .period-hand {
