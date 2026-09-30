@@ -107,7 +107,20 @@ jobs:
       - name: Build for Cloudflare Workers
         env:
           DEPLOY_TARGET: cloudflare
+          # Only this build shows the uptime strips; the Worker fills them
+          # from D1. Node and Docker builds leave the flag unset.
+          VITE_STATUS_HISTORY: "1"
         run: npm run build
+
+      # The scheduled event and the D1 binding come from wrangler.jsonc. If
+      # either is missing from the generated config, the strips would stay
+      # empty for good, so fail here rather than ship that quietly.
+      - name: Check the built Worker config
+        run: |
+          if ! jq -e '(.triggers.crons | length > 0) and (.d1_databases | length > 0)' dist/server/wrangler.json >/dev/null; then
+            echo "::error::dist/server/wrangler.json needs a cron trigger and a D1 database. Check triggers.crons and d1_databases in wrangler.jsonc."
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

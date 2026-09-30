@@ -149,8 +149,8 @@ run_checks() {
   check_version /api/history.json
   if [ "$status" != 200 ]; then
     fail "/api/history.json: $status, expected 200"
-  elif ! jq -e '.schema == 1 and .timezone == "UTC" and .retentionDays == 30 and (.services | type) == "object" and (.services | length) == 0' "$work/body" >/dev/null 2>&1; then
-    fail "/api/history.json: not JSON with schema 1, UTC, retentionDays 30 and services"
+  elif ! jq -e '.schema == 1 and .timezone == "UTC" and .retentionDays == 30 and (.services | type) == "object"' "$work/body" >/dev/null 2>&1; then
+    fail "/api/history.json: not JSON with schema 1, UTC, retentionDays 30 and a services object"
   fi
 
   get /feed.xml
