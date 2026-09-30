@@ -6,15 +6,21 @@ import type { PreferenceStorage } from "@/lib/status/glass";
  * maths from a motion sample to a light position, and the smoothing);
  * src/components/status/use-tilt-lighting.ts wires it to the browser.
  *
- * The light reaches the CSS only through two custom properties on <html>,
- * --light-x and --light-y, each from -1 to 1. Nothing may depend on them:
- * unset, the board looks exactly as it did before this existed.
+ * The light reaches the CSS only through two custom properties,
+ * --light-x and --light-y, each from -1 to 1, set on the pseudo-elements
+ * that draw it (TILT_LIGHT_SELECTOR). Nothing may depend on them: unset, the
+ * board looks exactly as it did before this existed.
  */
 export const TILT_STORAGE_KEY = "status-bar:tilt-lighting";
 /** Set on <html> while the light is really being driven, and only then. */
 export const TILT_ATTRIBUTE = "data-tilt";
 export const TILT_VAR_X = "--light-x";
 export const TILT_VAR_Y = "--light-y";
+/**
+ * What carries the variables: the sheen of glass and chrome, and the glint on
+ * a card. Not <html>: an inherited property changing there re-styles the whole page.
+ */
+export const TILT_LIGHT_SELECTOR = ".glass::before, .glass-chrome::before, .spotlight::after";
 
 /**
  * Which way the light moves for a given tilt. The one place to flip it: 1

@@ -4,6 +4,7 @@ import {
   needsPermission,
   readTiltLighting,
   TILT_ATTRIBUTE,
+  TILT_LIGHT_SELECTOR,
   TILT_VAR_X,
   TILT_VAR_Y,
   tiltFromStorageEvent,
@@ -15,6 +16,44 @@ const storage = () => window.localStorage;
 
 /** How long a page that was allowed motion before waits for the first reading before asking again. */
 const NO_READING_MS = 1500;
+
+/**
+ * Where --light-x and --light-y are written. A custom property set on
+ * <html> is inherited, so every change re-styles the whole page (about 7 ms
+ * for a full board on a desktop, 3x that at 4x CPU throttle). Set on the
+ * few pseudo-elements that draw the light instead, through one rule of a
+ * constructed style sheet, it re-styles only those. Where constructed
+ * sheets are missing (Safari before 16.4) it falls back to <html>.
+ */
+function createLightSink(): { set: (x: string, y: string) => void; remove: () => void } {
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`${TILT_LIGHT_SELECTOR} {}`);
+    const style = (sheet.cssRules[0] as CSSStyleRule).style;
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+    return {
+      set: (x, y) => {
+        style.setProperty(TILT_VAR_X, x);
+        style.setProperty(TILT_VAR_Y, y);
+      },
+      remove: () => {
+        document.adoptedStyleSheets = document.adoptedStyleSheets.filter((other) => other !== sheet);
+      },
+    };
+  } catch {
+    const root = document.documentElement;
+    return {
+      set: (x, y) => {
+        root.style.setProperty(TILT_VAR_X, x);
+        root.style.setProperty(TILT_VAR_Y, y);
+      },
+      remove: () => {
+        root.style.removeProperty(TILT_VAR_X);
+        root.style.removeProperty(TILT_VAR_Y);
+      },
+    };
+  }
+}
 
 export type TiltStatus = "off" | "on" | "denied" | "no-sensor" | "needs-permission" | "paused";
 
@@ -30,8 +69,8 @@ const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-t
  * Tilt lighting: on a touch device with motion sensors, the light on the
  * glass follows how the device is held (src/lib/status/tilt.ts has the
  * maths). It is off until switched on, because iOS asks for motion access
- * first, and it writes only --light-x and --light-y on <html>, plus
- * data-tilt="on" while it really is driving them.
+ * first, and it writes only --light-x and --light-y (see createLightSink),
+ * plus data-tilt="on" on <html> while it really is driving them.
  *
  * `supported` is worked out after hydration, so the server and the first
  * client render agree that there is nothing to show. `paused` is Reduce
@@ -85,6 +124,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
   useEffect(() => {
     if (!active) return;
     const root = document.documentElement;
+    const light = createLightSink();
     const viaTap = askedByTap.current;
     askedByTap.current = false;
 
@@ -97,8 +137,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
 
     const controller = createTiltController({
       apply: (x, y) => {
-        root.style.setProperty(TILT_VAR_X, x.toFixed(3));
-        root.style.setProperty(TILT_VAR_Y, y.toFixed(3));
+        light.set(x.toFixed(3), y.toFixed(3));
         if (!driving) {
           driving = true;
           root.setAttribute(TILT_ATTRIBUTE, "on");
@@ -168,8 +207,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       window.removeEventListener("pagehide", detach);
       window.removeEventListener("pageshow", onPageShow);
       detach();
-      root.style.removeProperty(TILT_VAR_X);
-      root.style.removeProperty(TILT_VAR_Y);
+      light.remove();
       root.removeAttribute(TILT_ATTRIBUTE);
     };
   }, [active]);

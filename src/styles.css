@@ -339,7 +339,7 @@
 }
 
 /* The specular sweep: light entering from the upper left. With Tilt lighting
-   on, --light-x (-1..1, set on <html> by use-tilt-lighting.ts) turns the
+   on, --light-x (-1..1, set on these pseudo-elements by use-tilt-lighting.ts) turns the
    angle by up to 28deg; unset, it is the fixed 125deg it always was. The
    variable is stepped by script and never transitioned. */
 .glass::before,

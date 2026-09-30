@@ -63,8 +63,12 @@ async function tilt(page: Page, beta: number | null, gamma: number | null): Prom
   );
 }
 
+/** The light as a card's sheen sees it; empty when nothing sets it. */
 const lightVar = (page: Page, name: "--light-x" | "--light-y") =>
-  page.evaluate((name) => document.documentElement.style.getPropertyValue(name), name);
+  page.evaluate((name) => {
+    const card = document.querySelector('article[id^="service-"]');
+    return card ? getComputedStyle(card, "::before").getPropertyValue(name).trim() : "no card";
+  }, name);
 
 /**
  * Feeds the same reading until the light shows it (the listener attaches a
