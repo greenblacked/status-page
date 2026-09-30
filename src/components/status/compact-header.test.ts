@@ -45,7 +45,7 @@ describe("CompactHeader", () => {
     const html = render({ name: "Acme Board", live: "stale", tone: "outage", title: "Outage: ChatGPT" });
     expect(html).toContain('<span class="max-sm:sr-only">Acme Board</span>');
     expect(html).toContain('data-state="stale"');
-    expect(html).toContain('<span class="truncate">Outage: ChatGPT</span>');
+    expect(html).toContain('<span class="truncate" title="Outage: ChatGPT">Outage: ChatGPT</span>');
     expect(html).toContain("bg-down");
   });
 

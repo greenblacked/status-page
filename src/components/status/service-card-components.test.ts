@@ -226,7 +226,7 @@ describe("service card truncation", () => {
 });
 
 describe("service card incident labels and links", () => {
-  const link = (html: string) => /href="([^"]+)"[^>]*>\s*<span class="truncate">([^<]+)</.exec(html)?.slice(1);
+  const link = (html: string) => /href="([^"]+)"[^>]*>\s*<span class="min-w-0">([^<]+)</.exec(html)?.slice(1);
 
   it("labels an informational notice a Notice, never Operational", () => {
     const html = render("claude", {

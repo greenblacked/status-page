@@ -138,7 +138,13 @@ export function ServiceCard({
                 {serviceIndex(service.id)} ·
               </span>
               {service.shortName}
-              {emphasized ? " · changed" : ""}
+              {/* Its own unbreakable piece, so the dot never ends a line with "changed" alone on the next. */}
+              {emphasized ? (
+                <>
+                  {" "}
+                  <span className="whitespace-nowrap">· changed</span>
+                </>
+              ) : null}
             </p>
           </div>
         </div>
@@ -232,7 +238,10 @@ export function ServiceCard({
       ) : null}
 
       <div className="mt-auto flex items-center justify-between gap-3 pt-4">
-        <p className="font-mono text-[11px] tabular-nums text-subtle" title="Time the official source took to answer">
+        <p
+          className="font-mono text-[11px] tabular-nums whitespace-nowrap text-subtle"
+          title="Time the official source took to answer"
+        >
           {service.latencyMs} ms
         </p>
         <a
@@ -241,7 +250,7 @@ export function ServiceCard({
           rel="noreferrer"
           className="focus-ring pressable inline-flex min-h-11 min-w-0 items-center gap-1 rounded-full px-2 text-xs text-muted hover:text-fg"
         >
-          <span className="truncate">{incidentUrl ? "View incident" : service.sourceName}</span>
+          <span className="min-w-0">{incidentUrl ? "View incident" : service.sourceName}</span>
           <ArrowUpRight className="size-3.5 shrink-0" />
         </a>
       </div>
