@@ -610,6 +610,8 @@ test("renders cards without requesting persistent uptime history", async ({ page
   const problems = watchConsole(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  // The request would come from a query that starts only once React has hydrated.
+  await hydrated(page);
   await page.waitForLoadState("networkidle");
   expect(historyRequests).toBe(0);
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
@@ -649,6 +651,7 @@ test("shows an uptime strip on a card once /api/history.json has days", { tag: "
   const problems = watchConsole(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
   await expect(page.locator("#service-aws").getByRole("img", { name: /uptime history/i })).toBeVisible();
   // Only the service the document lists gets one.
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(1);
@@ -677,8 +680,11 @@ test("renders cards without a strip when /api/history.json is the empty document
   const problems = watchConsole(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  // The history query starts only once React has hydrated, and networkidle can
+  // resolve before that on a slow runner: wait for the request itself.
+  await hydrated(page);
+  await expect.poll(() => historyRequests).toBeGreaterThan(0);
   await page.waitForLoadState("networkidle");
-  expect(historyRequests).toBeGreaterThan(0);
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
   expect(problems).toEqual([]);
 });
