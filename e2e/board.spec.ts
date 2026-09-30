@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { CATALOG } from "../src/lib/status/catalog.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, serveBoard } from "./fixture-board";
 
@@ -2119,3 +2120,71 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
   const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
   expect(shift, "cumulative layout shift").toBeLessThan(0.1);
 });
+
+/** The fixture board with twelve services degraded, so the Issues count has two digits. */
+function busyBoard(): BoardSnapshot {
+  const board = fixtureBoard(Date.now());
+  const services = board.services.map((service, index) =>
+    index < 12 && service.health === "operational"
+      ? { ...service, health: "degraded" as const, summary: "Slower than usual", incidents: [] }
+      : service,
+  );
+  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const service of services) counts[service.health] += 1;
+  return { ...board, services, counts };
+}
+
+for (const width of [1024, 1440]) {
+  test(`keeps the filter row on one line, and the board still, when a star is added at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, busyBoard);
+    const row = async () =>
+      page.evaluate(() => {
+        const segments = document.querySelector('[role="group"][aria-label="Category"]') as HTMLElement;
+        const toggles = segments.nextElementSibling as HTMLElement;
+        const field = document.querySelector(".search-field") as HTMLElement;
+        const box = (element: Element) => element.getBoundingClientRect();
+        return {
+          segmentsBottom: box(segments).bottom,
+          togglesTop: box(toggles).top,
+          togglesRight: box(toggles).right,
+          sectionRight: box(segments.parentElement as Element).right,
+          mainTop: box(document.querySelector("main#services") as Element).top,
+          fieldMid: box(field).top + box(field).height / 2,
+          rowMid: (box(segments).top + box(segments).bottom) / 2,
+          togglesText: toggles.textContent ?? "",
+        };
+      });
+    const bare = await row();
+    // Not vacuous: two digits on Issues only.
+    expect(bare.togglesText).toMatch(/Issues only\s*1\d/);
+
+    const one = page.getByRole("button", { name: /^Star / }).first();
+    await toggleStar(page, () => one.click());
+    const starred = await row();
+    expect(starred.togglesText).toMatch(/Starred\s*1$/);
+    // The toggles stay beside the segments: their top is not below the segments' bottom.
+    expect(starred.togglesTop).toBeLessThan(starred.segmentsBottom);
+    expect(starred.togglesRight).toBeLessThanOrEqual(starred.sectionRight + 0.5);
+    // Nothing on the page moves, and the field in the margin still lines up with the row.
+    expect(starred.mainTop).toBeCloseTo(bare.mainTop, 0);
+    expect(Math.abs(starred.fieldMid - starred.rowMid)).toBeLessThan(2);
+
+    // And with two digits on Starred as well: eleven more stars.
+    await page.evaluate(
+      (ids) => localStorage.setItem("status-bar:starred", JSON.stringify(ids)),
+      CATALOG.slice(0, 11).map((entry) => entry.id),
+    );
+    await page.reload();
+    await hydrated(page);
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    const many = await row();
+    expect(many.togglesText).toMatch(/Starred\s*11$/);
+    expect(many.togglesTop).toBeLessThan(many.segmentsBottom);
+    expect(many.togglesRight).toBeLessThanOrEqual(many.sectionRight + 0.5);
+    expect(many.mainTop).toBeCloseTo(bare.mainTop, 0);
+  });
+}
