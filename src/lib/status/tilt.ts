@@ -24,8 +24,7 @@ export const TILT_VAR_Y = "--light-y";
  * about 30 times a second, and only when it moved: each write re-styles these
  * panels and what is inside them.
  */
-// Also the transitional .glass and .glass-chrome that src/legacy.css maps to .surface and .float.
-export const TILT_LIGHT_SELECTOR = ".surface, .float, .sheet, .spotlight, .glass, .glass-chrome";
+export const TILT_LIGHT_SELECTOR = ".surface, .float, .sheet, .spotlight";
 
 /**
  * Which way the light moves for a given tilt. The one place to flip it: 1

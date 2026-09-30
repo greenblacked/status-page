@@ -22,10 +22,6 @@
   colours switch the layers off again and make the panels opaque, whatever
   is chosen. Those overrides are written after the gates with a higher
   specificity, so they always win.
-
-  Transitional: .glass, .glass-inset, .glass-whisper and .glass-chrome are the
-  old names of .surface, .inset, .control and .float. They are listed beside
-  the new ones for as long as src/legacy.css exists.
 */
 
 /*
@@ -399,7 +395,7 @@
   */
 
   /* Glass: the content panels. A handful per screen. */
-  :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .glass) {
+  :root:is([data-background="glass"], [data-background="full"]) :is(.surface) {
     position: relative;
     isolation: isolate;
     background-color: var(--glass-fill);
@@ -412,7 +408,7 @@
   }
 
   /* Chrome: the floating bar and the dialog, tinted. One at a time. */
-  :root:is([data-background="glass"], [data-background="full"]) :is(.float, .glass-chrome, .sheet) {
+  :root:is([data-background="glass"], [data-background="full"]) :is(.float, .sheet) {
     background-image: linear-gradient(180deg, var(--chrome-tint-top), var(--chrome-tint-bottom));
     border-color: transparent;
     box-shadow: var(--shadow-rim-strong);
@@ -426,7 +422,7 @@
     backdrop-filter: var(--chrome-filter);
   }
 
-  :root:is([data-background="glass"], [data-background="full"]) :is(.float, .glass-chrome) {
+  :root:is([data-background="glass"], [data-background="full"]) :is(.float) {
     isolation: isolate;
   }
 
@@ -451,7 +447,7 @@
   /* The specular sweep: light entering from the upper left. With Tilt lighting
      on, --light-x turns the angle by up to 28deg; unset, it is the fixed 125deg
      it always was. The variable is stepped by script and never transitioned. */
-  :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .glass, .float, .glass-chrome, .sheet)::before {
+  :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet)::before {
     content: "";
     pointer-events: none;
     position: absolute;
@@ -468,7 +464,7 @@
     opacity: 0.55;
   }
 
-  :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .glass, .float, .glass-chrome, .sheet) > * {
+  :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet) > * {
     position: relative;
     z-index: 1;
   }
@@ -478,7 +474,7 @@
     costs nothing to scroll. The only surface, with .inset, that may sit
     inside a blurred one: never glass on glass.
   */
-  :root:is([data-background="glass"], [data-background="full"]) :is(.control, .glass-whisper) {
+  :root:is([data-background="glass"], [data-background="full"]) :is(.control) {
     background-color: var(--whisper-fill);
     box-shadow:
       inset 0 1px 0 var(--whisper-rim),
@@ -486,13 +482,13 @@
   }
 
   @media (hover: hover) {
-    :root:is([data-background="glass"], [data-background="full"]) :is(a, button):is(.control, .glass-whisper):hover {
+    :root:is([data-background="glass"], [data-background="full"]) :is(a, button):is(.control):hover {
       background-color: var(--whisper-fill-hover);
     }
   }
 
   /* A recess inside a panel: icon chips, rows, <kbd>. */
-  :root:is([data-background="glass"], [data-background="full"]) :is(.inset, .glass-inset) {
+  :root:is([data-background="glass"], [data-background="full"]) :is(.inset) {
     background-color: var(--inset-fill);
     box-shadow:
       inset 0 1px 0 var(--inset-rim),
@@ -766,7 +762,7 @@
     display: none;
   }
 
-  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.surface, .glass, .float, .glass-chrome, .sheet, .control, .glass-whisper, .inset, .glass-inset) {
+  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet, .control, .inset) {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     box-shadow: none;
@@ -777,7 +773,7 @@
     box-shadow: var(--shadow-float);
   }
 
-  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.surface, .glass, .float, .glass-chrome, .sheet)::before,
+  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet)::before,
   :root[data-reduce-transparency="true"][data-tilt="on"] .spotlight::after,
   :root[data-reduce-transparency="true"][data-background="full"] .spotlight::after {
     display: none;
@@ -788,7 +784,7 @@
       display: none;
     }
 
-    :root:root:is([data-background="glass"], [data-background="full"]) :is(.surface, .glass, .float, .glass-chrome, .sheet, .control, .glass-whisper, .inset, .glass-inset) {
+    :root:root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet, .control, .inset) {
       -webkit-backdrop-filter: none;
       backdrop-filter: none;
       box-shadow: none;
@@ -799,7 +795,7 @@
       box-shadow: var(--shadow-float);
     }
 
-    :root:root:is([data-background="glass"], [data-background="full"]) :is(.surface, .glass, .float, .glass-chrome, .sheet)::before,
+    :root:root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet)::before,
     :root:root[data-background="full"] .spotlight::after,
     :root:root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {
       display: none;

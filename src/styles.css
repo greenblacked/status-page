@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "./background.css";
-@import "./legacy.css";
 
 /*
   Quiet Hand: warm paper (true black in the dark), opaque panels with a
@@ -125,29 +124,6 @@
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-}
-
-/*
-  Transitional tokens, for the components that still use the Lucid Vigil names
-  (see src/legacy.css). Here rather than there because they must follow the
-  resets in the block above: an @theme in an earlier import would be wiped by
-  --font-*: initial and --radius-*: initial. Delete with legacy.css.
-*/
-@theme static {
-  --font-display: var(--font-sans);
-  --font-mono: var(--font-sans);
-  --font-serif: var(--font-sans);
-
-  --color-surface: light-dark(rgb(16 24 40 / 0.06), rgb(255 255 255 / 0.1));
-  --color-surface-2: light-dark(rgb(16 24 40 / 0.1), rgb(255 255 255 / 0.14));
-  --color-border: light-dark(rgb(16 24 40 / 0.12), rgb(255 255 255 / 0.15));
-  --color-event: light-dark(oklch(47.9% 0.1124 59.93), oklch(82.38% 0.1408 70.17));
-  --color-tick: light-dark(rgb(10 15 25 / 0.22), rgb(255 255 255 / 0.28));
-
-  /* The old radii, on the new steps: 2xs -> sm, xs -> md, xl -> lg. */
-  --radius-2xs: 6px;
-  --radius-xs: 10px;
-  --radius-xl: 16px;
 }
 
 /*
@@ -343,7 +319,7 @@
     float    the compact bar, the only translucent layer on the page
     sheet    the settings dialog's panel
   */
-  :is(.surface, .glass) {
+  :is(.surface) {
     background-color: var(--color-card);
     border: var(--hair) solid var(--color-hairline);
     border-radius: var(--radius-lg);
@@ -368,17 +344,17 @@
     background: var(--color-hairline);
   }
 
-  :is(.inset, .glass-inset) {
+  :is(.inset) {
     background-color: var(--color-inset);
   }
 
-  :is(.control, .glass-whisper) {
+  :is(.control) {
     background-color: var(--color-inset);
     border-radius: var(--radius-md);
   }
 
   @media (hover: hover) {
-    :is(a, button):is(.control, .glass-whisper):hover {
+    :is(a, button):is(.control):hover {
       background-color: color-mix(in oklab, var(--color-inset) 92%, var(--color-fg));
     }
   }
@@ -389,7 +365,7 @@
     property alone, which Chromium and Firefox ignore, so nothing blurred
     there. The browser tests check the blur survives (e2e/board.spec.ts).
   */
-  :is(.float, .glass-chrome) {
+  :is(.float) {
     background-color: var(--bar-fill);
     -webkit-backdrop-filter: var(--bar-filter);
     backdrop-filter: var(--bar-filter);
@@ -399,7 +375,7 @@
   }
 
   @supports not (backdrop-filter: blur(1px)) {
-    :is(.float, .glass-chrome) {
+    :is(.float) {
       background-color: var(--color-card);
     }
   }
@@ -780,10 +756,10 @@ article[id^="service-"],
 
 /* Forced colours drop backgrounds and shadows; a border keeps each panel drawn. */
 @media (forced-colors: active) {
-  :is(.surface, .glass),
-  :is(.float, .glass-chrome),
+  :is(.surface),
+  :is(.float),
   .sheet,
-  :is(.control, .glass-whisper),
+  :is(.control),
   .card-list {
     border: 1px solid CanvasText;
   }
@@ -839,7 +815,7 @@ article[id^="service-"],
     color: #000;
   }
 
-  :is(.surface, .glass),
+  :is(.surface),
   .card-list {
     border: 1px solid #000;
     break-inside: avoid;

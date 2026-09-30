@@ -1,7 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { Badge } from "./badge";
 import { Button } from "./button";
 import { Input } from "./input";
 import { Segmented } from "./segmented";
@@ -70,15 +69,6 @@ describe("Tag", () => {
   });
 });
 
-describe("Badge (transitional)", () => {
-  it("still tells a status by its word, on an inset, with no capitals", () => {
-    const html = renderToStaticMarkup(createElement(Badge, { tone: "outage" }, "Outage"));
-    expect(html).toContain("text-down");
-    expect(html).toContain("inset");
-    expect(html).not.toContain("uppercase");
-  });
-});
-
 describe("Button", () => {
   it("has a control variant that lifts to the card when pressed", () => {
     const html = renderToStaticMarkup(createElement(Button, { variant: "control", "aria-pressed": true }, "Starred"));
@@ -88,8 +78,7 @@ describe("Button", () => {
     expect(html).toContain("rounded-md");
   });
 
-  it("keeps outline as the control's old name, and a ghost", () => {
-    expect(renderToStaticMarkup(createElement(Button, { variant: "outline" }, "x"))).toContain("control");
+  it("has a quiet ghost variant for the icon buttons", () => {
     expect(renderToStaticMarkup(createElement(Button, { variant: "ghost" }, "x"))).toContain("hover:bg-inset");
   });
 

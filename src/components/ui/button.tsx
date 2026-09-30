@@ -14,8 +14,6 @@ const buttonVariants = cva(
         default: "bg-accent text-bg hover:opacity-90",
         // The inset fill; pressed (a toggle) it becomes the card with a hairline, as a segment's thumb does.
         control: CONTROL,
-        // Transitional name for `control`, until the last caller says control.
-        outline: CONTROL,
         ghost: "bg-transparent text-muted hover:text-fg hover:bg-inset",
       },
       size: {
