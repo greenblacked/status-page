@@ -41,51 +41,67 @@ function watchConsole(page: Page): string[] {
  * remembers a grant, and rejects with NotAllowedError otherwise. Only calls
  * made in a tap are counted. "absent" leaves requestPermission out altogether,
  * as Android and older iOS have it.
+ *
+ * It also pins screen.orientation.angle, 0 unless a test says otherwise. An
+ * iPhone or iPad held upright reports 0, but Playwright's WebKit on Linux
+ * reports 90 for the same emulation (the host screen is landscape), which turns
+ * an upright tilt into a sideways light and would make every test wait for the
+ * wrong axis.
  */
 async function stubMotionPermission(
   page: Page,
   answer: "granted" | "denied" | "throws" | "absent" = "granted",
+  angle = 0,
 ): Promise<void> {
-  await page.addInitScript((answer) => {
-    const w = window as unknown as { __permCalls: number; __gesture: boolean };
-    w.__permCalls = 0;
-    w.__gesture = false;
-    if (typeof DeviceOrientationEvent === "undefined") {
-      (window as unknown as { DeviceOrientationEvent: unknown }).DeviceOrientationEvent =
-        class DeviceOrientationEvent extends Event {};
-    }
-    // A browser with no sensor fires one empty reading of its own as soon as
-    // something listens. Only the tests' readings should count.
-    window.addEventListener("deviceorientation", (event) => event.isTrusted && event.stopImmediatePropagation(), true);
-    // The click handlers run inside this event's dispatch, so a flag up for one task marks "in a tap".
-    document.addEventListener(
-      "click",
-      () => {
-        w.__gesture = true;
-        setTimeout(() => {
-          w.__gesture = false;
-        }, 0);
-      },
-      true,
-    );
-    if (answer === "absent") {
-      Reflect.deleteProperty(DeviceOrientationEvent, "requestPermission");
-      return;
-    }
-    Object.defineProperty(DeviceOrientationEvent, "requestPermission", {
-      value: async () => {
-        if (!w.__gesture) {
-          if (sessionStorage.getItem("__tiltGranted") === "1") return "granted";
-          throw new DOMException("A tap is needed to ask for motion access.", "NotAllowedError");
-        }
-        w.__permCalls++;
-        if (answer === "throws") throw new Error("refused");
-        if (answer === "granted") sessionStorage.setItem("__tiltGranted", "1");
-        return answer;
-      },
-      configurable: true,
-    });
-  }, answer);
+  await page.addInitScript(
+    ([answer, angle]) => {
+      const w = window as unknown as { __permCalls: number; __gesture: boolean };
+      w.__permCalls = 0;
+      w.__gesture = false;
+      if (typeof DeviceOrientationEvent === "undefined") {
+        (window as unknown as { DeviceOrientationEvent: unknown }).DeviceOrientationEvent =
+          class DeviceOrientationEvent extends Event {};
+      }
+      if (!screen.orientation) Object.defineProperty(screen, "orientation", { value: {}, configurable: true });
+      Object.defineProperty(screen.orientation, "angle", { get: () => angle, configurable: true });
+      // A browser with no sensor fires one empty reading of its own as soon as
+      // something listens. Only the tests' readings should count.
+      window.addEventListener(
+        "deviceorientation",
+        (event) => event.isTrusted && event.stopImmediatePropagation(),
+        true,
+      );
+      // The click handlers run inside this event's dispatch, so a flag up for one task marks "in a tap".
+      document.addEventListener(
+        "click",
+        () => {
+          w.__gesture = true;
+          setTimeout(() => {
+            w.__gesture = false;
+          }, 0);
+        },
+        true,
+      );
+      if (answer === "absent") {
+        Reflect.deleteProperty(DeviceOrientationEvent, "requestPermission");
+        return;
+      }
+      Object.defineProperty(DeviceOrientationEvent, "requestPermission", {
+        value: async () => {
+          if (!w.__gesture) {
+            if (sessionStorage.getItem("__tiltGranted") === "1") return "granted";
+            throw new DOMException("A tap is needed to ask for motion access.", "NotAllowedError");
+          }
+          w.__permCalls++;
+          if (answer === "throws") throw new Error("refused");
+          if (answer === "granted") sessionStorage.setItem("__tiltGranted", "1");
+          return answer;
+        },
+        configurable: true,
+      });
+    },
+    [answer, angle] as const,
+  );
 }
 
 const permissionCalls = (page: Page) => page.evaluate(() => (window as unknown as { __permCalls: number }).__permCalls);
@@ -167,8 +183,8 @@ const lightReadings = (page: Page) =>
       hostY: card.style.getPropertyValue("--light-y"),
       beforeX: before.getPropertyValue("--light-x"),
       afterY: after.getPropertyValue("--light-y"),
-      sheen: before.backgroundImage.slice(0, 90),
-      glint: after.backgroundImage.slice(0, 90),
+      sheen: before.backgroundImage.slice(0, 400),
+      glint: after.backgroundImage.slice(0, 400),
       angle: window.screen.orientation ? window.screen.orientation.angle : "no screen.orientation",
       legacy,
     });
@@ -332,6 +348,18 @@ test.describe("on a touch device", () => {
     expect(light.glint).not.toBe("none");
     expect(light.glintImage).toContain("radial-gradient");
     expect(problems).toEqual([]);
+  });
+
+  test("turns the light with the screen: upright in landscape moves it sideways", async ({ page }) => {
+    await stubMotionPermission(page, "granted", 90);
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltUntil(page, 0, 0, "--light-x", () => true);
+    // Held upright with the screen turned a quarter, the same tilt is a sideways one.
+    await tiltUntil(page, 90, 0, "--light-x", (x) => x * LIGHT_SIGN <= -0.99);
+    expect(Math.abs(Number(await lightVar(page, "--light-y")))).toBeLessThan(0.05);
   });
 
   test("is declined without being saved, and says how to allow it", async ({ page }) => {
