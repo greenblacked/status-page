@@ -82,8 +82,6 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
-      // A raster icon for browsers that do not take the SVG one.
-      { rel: "icon", type: "image/png", sizes: "192x192", href: "/icon-192.png" },
       // 180x180, square and unrounded: iOS applies its own corner mask.
       { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
       { rel: "manifest", href: "/manifest.webmanifest" },
