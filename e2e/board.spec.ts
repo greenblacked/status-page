@@ -1777,6 +1777,19 @@ test("lays the hero out at 200% root text on a phone: no overflow, no overlap", 
   }
 });
 
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+  test(`${reducedMotion === "reduce" ? "stills" : "pulses"} an outage dot ${reducedMotion === "reduce" ? "under" : "without"} reduced motion`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion });
+    await openFixture(page, () => fixtureBoard(Date.now()));
+    const dot = page.locator('[aria-label="Services that need attention"] .bg-down').first();
+    await expect(dot).toBeVisible();
+    const animation = await dot.evaluate((element) => getComputedStyle(element).animationName);
+    expect(animation).toBe(reducedMotion === "reduce" ? "none" : "pulse");
+  });
+}
+
 test("keeps the live bar the same height while checking and live at phone widths", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
   const board = fixtureBoard(Date.now());

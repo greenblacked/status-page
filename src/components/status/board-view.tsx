@@ -863,7 +863,7 @@ function RefreshButton({
       aria-busy={fetching}
       aria-label="Refresh status now"
     >
-      <RefreshCw className={cn("size-3.5", fetching && "animate-spin")} />
+      <RefreshCw className={cn("size-3.5", fetching && "motion-safe:animate-spin")} />
       <span className="hidden sm:inline">Refresh</span>
     </Button>
   );

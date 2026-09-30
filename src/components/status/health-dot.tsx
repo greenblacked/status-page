@@ -32,7 +32,7 @@ export function HealthDot({
       className={cn(
         "inline-block size-1.5 shrink-0 rounded-full",
         DOT[health],
-        ping ? cn("ping", pingColor === "event" && "ping-event") : health === "outage" && "animate-pulse",
+        ping ? cn("ping", pingColor === "event" && "ping-event") : health === "outage" && "motion-safe:animate-pulse",
         className,
       )}
     />
