@@ -50,13 +50,15 @@ describe("CompactHeader", () => {
     expect(html).not.toContain("rounded-full");
   });
 
-  it("leads with the verdict's glyph and its short form, and keeps the words for a screen reader on a phone", () => {
+  it("leads with the verdict's glyph and its short form, shown on a phone too, where the check time is for a screen reader only", () => {
     const html = render({ tone: "outage", short: "2 need a look" });
     expect(html).toMatch(/^<section[^>]*><p data-bar-lead/);
     expect(html).toContain('data-health="outage"');
     expect(html).toContain("text-down");
-    expect(html).toContain('<span class="max-sm:sr-only">');
+    expect(html).toContain("data-bar-verdict");
+    expect(html).not.toMatch(/data-bar-verdict[^>]*max-sm:sr-only/);
     expect(html).toContain(">2 need a look</span>");
+    expect(html).toMatch(/max-sm:sr-only">Checked /);
   });
 
   it("says when the board was checked and when the next check is, in the viewer's zone once hydrated", () => {
