@@ -151,7 +151,7 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
   - **Couldn't read:** rows for the sources that could not be read (No data). This says nothing about whether they are up, and the group says so.
   - **Healthy services** are compact rows, one list per category (Cloud, Gaming, Platforms, AI).
   - **Releases:** the release trackers, as rows.
-- **One severity order** is used everywhere: the headline, the overall health in `/api/status.json`, the badge colour and a history day's worst state all rank Outage, Degraded, Unknown, Maintenance, Operational, so a real degradation is never hidden behind a source that could not be read.
+- **One severity order** is used everywhere: the overall health in `/api/status.json`, the badge colour and a history day's worst state all rank Outage, Degraded, Unknown, Maintenance, Operational, and the headline follows the same order with the sources that could not be read left out, so a real degradation is never hidden behind one.
 - **Filter** by Cloud, Gaming, Platforms, AI or Releases, search by name, or switch on **Issues only**.
 - **Star** the services you care about: they sort first in their group, though never above a more urgent service in Needs a look, and **Starred** shows only them.
 - **Share a view:** search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered.

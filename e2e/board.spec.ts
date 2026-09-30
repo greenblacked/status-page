@@ -2214,7 +2214,7 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  // Whether this machine has any font the fallback faces name (Arial, Liberation Sans or Roboto).
+  // Whether this machine has any font the fallback faces name (the local() names in styles.css).
   const fallbackFound = await page.evaluate(async () => {
     // A face whose local() names match no installed font fails to load and matches nothing.
     const loaded = await Promise.all(
@@ -2224,7 +2224,10 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
     );
     return loaded.some((faces) => faces.length > 0);
   });
-  test.skip(!fallbackFound, "this machine has no Arial, Liberation Sans or Roboto for the fallback to resize");
+  test.skip(
+    !fallbackFound,
+    'this machine has none of the fonts the fallback faces look for, so there is no fallback to resize: local() "Arial", "ArialMT", "Liberation Sans", "LiberationSans", "Arimo" (Inter Fallback) and "Roboto", "Roboto Regular", "Roboto-Regular" (Inter Fallback Roboto)',
+  );
   // The first paint was in the fallback; the swap has happened once Inter reports loaded.
   await page.waitForFunction(
     () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
