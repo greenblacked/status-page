@@ -15,7 +15,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
-- Unknown now ranks above Maintenance, so cards, the headline, the overall health, `/api/status.json` `overall`, the badge and the history days all use one order: Outage, Degraded, Unknown, Maintenance. A confirmed Degraded now outranks Unknown everywhere, where it used to be the other way round. This replaces the order listed under 0.5.0.
+- Unknown now ranks above Maintenance, and the order is one everywhere: Outage, Degraded, Unknown, Maintenance. Cards already put Degraded above Unknown (0.5.0); the overall health, `/api/status.json` `overall`, the badge and the history days now follow them, where they used to rank Unknown above Degraded, so a confirmed Degraded no longer reads as Unknown there. This replaces the order listed under 0.5.0.
 - `/feed.xml` entry ids are now stable per service, health and incident, so a reworded incident is not posted again but an escalation, such as Degraded to Outage, is. Feed readers will show the current entries once more after this update. Services whose status is Unknown are no longer in the feed.
 - An alert for a change to or from Unknown now waits for two updates in a row, so a single failed check no longer sends one.
 - Google Cloud and Google Play SERVICE_INFORMATION items show as notices and no longer make a card Degraded.

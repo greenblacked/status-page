@@ -179,11 +179,13 @@ jobs:
           # The code being released: before any bump commit, which changes
           # only the version and the changelog.
           ref: ${{ needs.plan.outputs.sha }}
-      # The npm pin (script, lockfile and packageManager) from the commit that
-      # started this run. A backfill verifies an older commit, which may
-      # predate scripts/ci/npm-pin.sh and tools/npm, so the pin cannot be
-      # taken from that checkout. Only these files, and after the checkout
-      # above, which would otherwise clean this directory away.
+      # The npm pin (its script, the signature check that script runs,
+      # the lockfile and packageManager) from the commit that started this
+      # run. A backfill verifies an older commit, which may predate
+      # scripts/ci/npm-pin.sh, scripts/ci/audit-signatures.sh and tools/npm,
+      # so the pin cannot be taken from that checkout. Only these files, and
+      # after the checkout above, which would otherwise clean this directory
+      # away. Every script npm-pin.sh runs must be listed (a unit test checks).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -192,6 +194,7 @@ jobs:
           sparse-checkout: |
             /package.json
             /scripts/ci/npm-pin.sh
+            /scripts/ci/audit-signatures.sh
             /tools/npm/
           sparse-checkout-cone-mode: false
       # No package cache: a cache entry saved by any other run could reach

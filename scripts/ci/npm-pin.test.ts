@@ -81,3 +81,36 @@ describe("npm-pin.sh check", () => {
     expect(result.output).toContain("packageManager must be");
   });
 });
+
+describe("release.yml's sparse checkout of the npm pin", () => {
+  const workflow = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
+  const script = readFileSync(join(ROOT, "scripts/ci/npm-pin.sh"), "utf8");
+
+  /** The lines under the `sparse-checkout: |` key of the checkout that writes to pin/. */
+  function sparsePaths() {
+    const lines = workflow.split("\n");
+    const start = lines.findIndex((line) => /^\s*sparse-checkout: \|\s*$/.test(line));
+    expect(start).toBeGreaterThan(-1);
+    const indent = (lines[start]?.match(/^\s*/) ?? [""])[0].length;
+    const paths: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (line.trim() === "" || (line.match(/^\s*/) ?? [""])[0].length <= indent) break;
+      paths.push(line.trim());
+    }
+    return paths;
+  }
+
+  it("lists every repo script that npm-pin.sh runs, or the release verify job dies with 127", () => {
+    const paths = sparsePaths();
+    // `./scripts/ci/foo.sh`, however it is quoted or given arguments.
+    const invoked = [...script.matchAll(/(?:^|[\s"'(])\.\/(scripts\/[\w./-]+)/gm)].map((m) => m[1]);
+    expect(invoked).toContain("scripts/ci/audit-signatures.sh");
+    for (const file of new Set(invoked)) {
+      expect(paths, `${file} is missing from the sparse checkout`).toContain(`/${file}`);
+    }
+  });
+
+  it("lists the script itself, package.json and tools/npm", () => {
+    expect(sparsePaths()).toEqual(expect.arrayContaining(["/package.json", "/scripts/ci/npm-pin.sh", "/tools/npm/"]));
+  });
+});
