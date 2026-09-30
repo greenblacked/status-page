@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-tests a running Status Page: the same checks for CI's Node preview,
+# Smoke-tests a running board: the same checks for CI's Node preview,
 # the Worker running locally in workerd, and a fresh Cloudflare deploy.
 #
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4173
@@ -29,8 +29,8 @@
 set -euo pipefail
 
 SERVICES=14
-TITLE='<title>Status Page</title>'
-FOOTER='This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45 seconds.'
+TITLE='<title>Status</title>'
+FOOTER='Not affiliated with any of these vendors. I only read their public status pages.'
 usage() {
   echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
 }
