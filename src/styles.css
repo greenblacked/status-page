@@ -141,6 +141,7 @@
   --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.1));
   /* Tilt lighting's glint: stronger than the pointer's, since white on the light panels is otherwise unseen. */
   --tilt-glint: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.08));
+  --tilt-shade: light-dark(rgb(16 24 40 / 0.05), transparent);
 
   /*
     The backdrop: four slow currents of light, cool teal, indigo and a
@@ -783,7 +784,7 @@
       ),
       radial-gradient(
         320px circle at calc(50% - var(--light-x, 0) * 38%) calc(50% - var(--light-y, 0) * 38%),
-        light-dark(rgb(16 24 40 / 0.05), transparent),
+        var(--tilt-shade),
         transparent 65%
       );
     opacity: 1;
@@ -1027,6 +1028,9 @@
     --glass-tint-top: transparent;
     --glass-tint-bottom: transparent;
     --glass-sheen: transparent;
+    /* Tilt lighting's glint and shade are decoration on the panel fill that the contrast checks measure: off here. */
+    --tilt-glint: transparent;
+    --tilt-shade: transparent;
     --chrome-fill: light-dark(rgb(251 250 246 / 0.96), rgb(15 18 25 / 0.96));
     --whisper-fill: light-dark(rgb(255 255 255 / 0.9), rgb(17 20 27 / 0.9));
     --inset-fill: light-dark(rgb(15 20 35 / 0.07), rgb(0 0 0 / 0.4));
