@@ -9,6 +9,27 @@ export const MIN_FORCED_REFRESH_MS = 15_000;
 export const PULSE_INTERVAL_MS = 2 * 60 * 1000;
 export const MAX_PULSES = 60;
 
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+
+/**
+ * A duration in the words the footer uses: whole minutes up to ten are
+ * spelled out ("two minutes"), anything else in seconds ("45 seconds").
+ * Copy that quotes the cadence takes it from here, so it cannot drift from
+ * `PULSE_INTERVAL_MS` and `CACHE_TTL_MS`.
+ */
+export function spokenDuration(ms: number): string {
+  if (ms >= 60_000 && ms % 60_000 === 0) {
+    const minutes = ms / 60_000;
+    return minutes === 1 ? "one minute" : `${NUMBER_WORDS[minutes] ?? minutes} minutes`;
+  }
+  return plural(Math.max(0, Math.round(ms / 1000)), "second");
+}
+
+/** "every two minutes", "every minute", "every 45 seconds". */
+export function everyInterval(ms: number): string {
+  return ms === 60_000 ? "every minute" : `every ${spokenDuration(ms)}`;
+}
+
 export function lastPulseAt(now = Date.now()): number {
   return Math.floor(now / PULSE_INTERVAL_MS) * PULSE_INTERVAL_MS;
 }

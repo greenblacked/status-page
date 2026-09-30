@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import {
+  CACHE_TTL_MS,
+  everyInterval,
   formatAge,
   formatCountdown,
   formatDuration,
@@ -23,6 +25,7 @@ import {
   REFETCH_JITTER_MAX_MS,
   REFETCH_JITTER_MIN_MS,
   STALE_AFTER_MS,
+  spokenDuration,
 } from "./schedule.ts";
 
 describe("pulse schedule", () => {
@@ -266,5 +269,28 @@ describe("freshnessOf", () => {
     const late = seenAt + STALE_AFTER_MS + 1;
     assert.deepEqual(freshnessOf(seen, false, late), { ageMs: STALE_AFTER_MS + 1, stale: true, state: "stale" });
     assert.deepEqual(freshnessOf(seen, true, late), { ageMs: STALE_AFTER_MS + 1, stale: false, state: "checking" });
+  });
+});
+
+describe("footer cadence copy", () => {
+  it("spells out whole minutes and counts seconds", () => {
+    assert.equal(spokenDuration(60_000), "one minute");
+    assert.equal(spokenDuration(120_000), "two minutes");
+    assert.equal(spokenDuration(600_000), "ten minutes");
+    assert.equal(spokenDuration(11 * 60_000), "11 minutes");
+    assert.equal(spokenDuration(45_000), "45 seconds");
+    assert.equal(spokenDuration(1_000), "1 second");
+    assert.equal(spokenDuration(90_000), "90 seconds");
+  });
+
+  it("phrases a cadence", () => {
+    assert.equal(everyInterval(60_000), "every minute");
+    assert.equal(everyInterval(120_000), "every two minutes");
+    assert.equal(everyInterval(30_000), "every 30 seconds");
+  });
+
+  it("reads today's constants as the copy the footer used to hard-code", () => {
+    assert.equal(everyInterval(PULSE_INTERVAL_MS), "every two minutes");
+    assert.equal(spokenDuration(CACHE_TTL_MS), "45 seconds");
   });
 });
