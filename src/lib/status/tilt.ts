@@ -136,18 +136,50 @@ export const MIN_APPLY_INTERVAL_MS = 33;
 /** The slowest the light is written when frames are dropping: about 4 a second. */
 export const MAX_APPLY_INTERVAL_MS = 250;
 
+/** No display frames faster than this (120 Hz is 8.3 ms), so a glitch cannot set an impossible baseline. */
+const MIN_FRAME_MS = 8;
+/** A frame longer than this is counted as this long. */
+const MAX_FRAME_MS = 1000;
+/** A frame this many times the device's own frame period is overrunning; this few, it is on time. */
+const OVERRUN_RATIO = 1.5;
+const ON_TIME_RATIO = 1.2;
+
+export type WritePacer = {
+  /** The gap to leave between writes now. */
+  interval(): number;
+  /** Reports how long the last frame took (from the one before it, in the same run). */
+  frame(frameMs: number): void;
+};
+
 /**
- * The write interval for the next frame, given the last one. Every write
+ * Sets the gap between writes from how the frames are going. Every write
  * re-styles the panels, which on a slow device takes longer than a frame; a
- * frame that overran means the writes are too frequent, so they back off,
- * and they speed up again once frames are back on time. A gap of over half a
- * second is the loop having rested, not a slow frame.
+ * frame that overran means the writes are too frequent, so the gap widens, and
+ * it narrows again once frames are on time.
+ *
+ * "Overran" is judged against the device's own frame period, not a fixed 60 Hz:
+ * the baseline is the shortest frame seen, rising only very slowly so that a
+ * device that changes rate (iOS Low Power Mode drops to 30 Hz) is followed. A
+ * 30 Hz screen with an occasional dropped frame backs off for that frame and
+ * recovers; a fixed threshold would take every 33 ms frame for a fast one or
+ * every 66 ms frame for a slow one and ratchet up for good. Give it every frame
+ * of a run; start a new run (a new pacer, or `frame` after a rest) with no
+ * long gap in it: the caller resets its frame clock when the loop rests.
  */
-export function nextApplyInterval(current: number, frameMs: number): number {
-  if (frameMs > 500 || !(frameMs > 0)) return current;
-  if (frameMs > 45) return Math.min(MAX_APPLY_INTERVAL_MS, current * 1.5);
-  if (frameMs < 24) return Math.max(MIN_APPLY_INTERVAL_MS, current * 0.9);
-  return current;
+export function createWritePacer(): WritePacer {
+  let interval = MIN_APPLY_INTERVAL_MS;
+  let period: number | null = null;
+  return {
+    interval: () => interval,
+    frame(frameMs) {
+      if (!(frameMs > 0)) return;
+      const ms = Math.min(MAX_FRAME_MS, Math.max(MIN_FRAME_MS, frameMs));
+      // The shortest frame is the display's period. It creeps up so a lower refresh rate is followed in time.
+      period = period === null || ms < period ? ms : period + (ms - period) * 0.005;
+      if (ms > period * OVERRUN_RATIO) interval = Math.min(MAX_APPLY_INTERVAL_MS, interval * 1.5);
+      else if (ms <= period * ON_TIME_RATIO) interval = Math.max(MIN_APPLY_INTERVAL_MS, interval * 0.9);
+    },
+  };
 }
 
 /** The filter counts as caught up with the device within this distance. */
@@ -176,7 +208,7 @@ export function createTiltController({
 }: {
   apply: (x: number, y: number) => void;
   now: () => number;
-  /** How long to leave between writes; see nextApplyInterval. */
+  /** How long to leave between writes; see createWritePacer. */
   minIntervalMs?: () => number;
 }): TiltController {
   let filtered: Vec2 | null = null;

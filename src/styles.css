@@ -545,7 +545,7 @@
 
   They were once registered with @property as non-inherited and handed to the
   pseudo-elements with `inherit`, to save the restyle of everything inside a
-  card on each write (about 2 to 3x in Chromium). WebKit mishandles that: the
+  card on each write (about 5x cheaper per write in Chromium). WebKit mishandles that: the
   pseudo-element reports the value, but its gradients are computed as if the
   variable were unset, so on an iPhone the light did not move. Nothing
   interpolates these (no transition or animation), so the registration bought

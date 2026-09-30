@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createTiltController,
-  MIN_APPLY_INTERVAL_MS,
+  createWritePacer,
   needsPermission,
-  nextApplyInterval,
   readTiltLighting,
   screenAngle,
   TILT_ATTRIBUTE,
@@ -28,12 +27,13 @@ const NO_READING_MS = 3000;
  * Not on <html>, and not through a rule of a style sheet: a change to a rule
  * makes WebKit rebuild its rule sets and re-style the document. The
  * properties are plain, inherited custom properties, so an inline write
- * re-styles the panel and what is inside it (about 8 ms for 18 panels in
- * Chromium, and several times that on a throttled CPU). The deadband and the
- * frame cap in the controller keep it affordable, and the cap widens by itself
- * while frames overrun (nextApplyInterval), so a slow device writes less often
- * instead of dropping frames. Registering them as non-inherited would save most of that but
- * WebKit then draws the pseudo-elements as if they were unset; see src/styles.css.
+ * re-styles the panel and what is inside it (about 18 ms for 18 panels on a
+ * loaded Chromium, and several times that on a throttled CPU). Registering
+ * them as non-inherited is about 5 times cheaper per write, but WebKit then
+ * draws the pseudo-elements as if they were unset; see src/styles.css. The
+ * deadband and the frame cap in the controller keep the plain form affordable,
+ * and the cap widens by itself while frames overrun (createWritePacer), so a
+ * slow device writes less often instead of dropping frames.
  *
  * Panels come and go when a refresh re-renders the board, so a new one gets
  * the current value from a MutationObserver, before it paints. It watches
@@ -180,7 +180,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
     let cancelled = false;
     let gotReading = false;
     let driving = false;
-    let interval = MIN_APPLY_INTERVAL_MS;
+    const pacer = createWritePacer();
     let lastFrame = 0;
 
     const controller = createTiltController({
@@ -192,14 +192,14 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
         }
       },
       now: () => performance.now(),
-      minIntervalMs: () => interval,
+      minIntervalMs: () => pacer.interval(),
     });
 
     const tick = (time: number) => {
       frame = 0;
       if (!latest) return;
       // Frames that overrun mean the writes cost more than the device can spare: write less often.
-      if (lastFrame) interval = nextApplyInterval(interval, time - lastFrame);
+      if (lastFrame) pacer.frame(time - lastFrame);
       lastFrame = time;
       const result = controller.sample(latest.beta, latest.gamma, latest.angle, time);
       if (result.settled) lastFrame = 0;
@@ -269,6 +269,8 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       attached = false;
       window.removeEventListener("deviceorientation", onReading);
       window.clearTimeout(readingTimer);
+      // The loop rests here: the next frame is not a slow one for having waited.
+      lastFrame = 0;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
     };

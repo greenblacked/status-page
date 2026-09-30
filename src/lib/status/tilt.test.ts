@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BASELINE_TAU_MS,
   createTiltController,
+  createWritePacer,
   DEADBAND,
   gravityFromOrientation,
   LIGHT_RANGE,
@@ -11,7 +12,6 @@ import {
   MAX_APPLY_INTERVAL_MS,
   MIN_APPLY_INTERVAL_MS,
   needsPermission,
-  nextApplyInterval,
   parseTiltPreference,
   readTiltLighting,
   screenAngle,
@@ -359,26 +359,83 @@ describe("screenAngle", () => {
   });
 });
 
-describe("nextApplyInterval", () => {
-  it("backs off when frames overrun, up to a limit", () => {
-    let interval = MIN_APPLY_INTERVAL_MS;
-    interval = nextApplyInterval(interval, 66);
-    expect(interval).toBeGreaterThan(MIN_APPLY_INTERVAL_MS);
-    for (let i = 0; i < 20; i++) interval = nextApplyInterval(interval, 100);
-    expect(interval).toBe(MAX_APPLY_INTERVAL_MS);
+describe("createWritePacer", () => {
+  /** Feeds `frames` frames of `ms`, and returns the gap after them. */
+  function run(pacer: ReturnType<typeof createWritePacer>, ms: number, frames: number) {
+    for (let i = 0; i < frames; i++) pacer.frame(ms);
+    return pacer.interval();
+  }
+
+  it("starts at the floor", () => {
+    expect(createWritePacer().interval()).toBe(MIN_APPLY_INTERVAL_MS);
   });
 
-  it("recovers once frames are on time, never below the floor", () => {
-    let interval = MAX_APPLY_INTERVAL_MS;
-    for (let i = 0; i < 100; i++) interval = nextApplyInterval(interval, 16.7);
-    expect(interval).toBe(MIN_APPLY_INTERVAL_MS);
+  it("backs off when frames overrun a 60 Hz screen, up to a limit", () => {
+    const pacer = createWritePacer();
+    run(pacer, 16.7, 10);
+    pacer.frame(66);
+    expect(pacer.interval()).toBeGreaterThan(MIN_APPLY_INTERVAL_MS);
+    expect(run(pacer, 100, 20)).toBe(MAX_APPLY_INTERVAL_MS);
   });
 
-  it("holds through in-between frames, and ignores a rest or a bad time", () => {
-    expect(nextApplyInterval(80, 33)).toBe(80);
-    expect(nextApplyInterval(80, 900)).toBe(80);
-    expect(nextApplyInterval(80, 0)).toBe(80);
-    expect(nextApplyInterval(80, Number.NaN)).toBe(80);
+  it("recovers once frames are back on time, never below the floor", () => {
+    const pacer = createWritePacer();
+    run(pacer, 16.7, 10);
+    run(pacer, 100, 20);
+    expect(pacer.interval()).toBe(MAX_APPLY_INTERVAL_MS);
+    expect(run(pacer, 16.7, 100)).toBe(MIN_APPLY_INTERVAL_MS);
+  });
+
+  it("judges a 30 Hz screen by its own period: dropped frames back off, then it recovers", () => {
+    const pacer = createWritePacer();
+    run(pacer, 33.3, 30);
+    expect(pacer.interval()).toBe(MIN_APPLY_INTERVAL_MS);
+    // A dropped frame (two periods) backs off; the 33 ms frames after it bring it down again.
+    for (let round = 0; round < 6; round++) {
+      pacer.frame(66.7);
+      expect(pacer.interval()).toBeGreaterThan(MIN_APPLY_INTERVAL_MS);
+      run(pacer, 33.3, 12);
+    }
+    expect(pacer.interval()).toBe(MIN_APPLY_INTERVAL_MS);
+  });
+
+  it("does not ratchet on a steady 30 Hz screen, and a 120 Hz one is judged against 8 ms", () => {
+    const slow = createWritePacer();
+    expect(run(slow, 33.3, 500)).toBe(MIN_APPLY_INTERVAL_MS);
+
+    const fast = createWritePacer();
+    run(fast, 8.33, 30);
+    expect(fast.interval()).toBe(MIN_APPLY_INTERVAL_MS);
+    // 16.7 ms is a dropped frame on a 120 Hz screen.
+    fast.frame(16.7);
+    expect(fast.interval()).toBeGreaterThan(MIN_APPLY_INTERVAL_MS);
+    expect(run(fast, 8.33, 40)).toBe(MIN_APPLY_INTERVAL_MS);
+  });
+
+  it("follows a screen that drops to a lower refresh rate", () => {
+    const pacer = createWritePacer();
+    run(pacer, 16.7, 60);
+    // Low Power Mode: every frame is now 33 ms. The gap first widens, then the baseline follows.
+    run(pacer, 33.3, 3000);
+    expect(pacer.interval()).toBe(MIN_APPLY_INTERVAL_MS);
+  });
+
+  it("backs off for very slow frames, counting them as at most a second", () => {
+    const pacer = createWritePacer();
+    run(pacer, 16.7, 10);
+    pacer.frame(700);
+    expect(pacer.interval()).toBeGreaterThan(MIN_APPLY_INTERVAL_MS);
+    run(pacer, 5000, 10);
+    expect(pacer.interval()).toBe(MAX_APPLY_INTERVAL_MS);
+  });
+
+  it("ignores a time that is not a duration", () => {
+    const pacer = createWritePacer();
+    run(pacer, 16.7, 5);
+    pacer.frame(0);
+    pacer.frame(-5);
+    pacer.frame(Number.NaN);
+    expect(pacer.interval()).toBe(MIN_APPLY_INTERVAL_MS);
   });
 
   it("is honoured by the controller", () => {
