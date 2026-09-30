@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { BoardSections } from "@/components/status/board-sections";
 import { CompactHeader, useDockState, useSearchDock } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
@@ -19,7 +20,6 @@ import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
 import { LocalTime } from "@/components/status/local-time";
 import { PeriodDial } from "@/components/status/period-dial";
-import { ServiceCard } from "@/components/status/service-card";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
@@ -510,7 +510,7 @@ export function BoardView({
               </p>
             ) : null}
 
-            <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="flex min-w-0 flex-col gap-10">
               <div className="flex min-w-0 flex-col gap-8">
                 {fetching && !board.services.length ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -529,63 +529,17 @@ export function BoardView({
                     </p>
                   )
                 ) : (
-                  <>
-                    <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
-                      {/* items-start: a short card keeps its own height instead of stretching to its row's tallest. */}
-                      <div className="grid grid-cols-1 items-start gap-3 @xl:grid-cols-2">
-                        {groups.attention.map((service, index) => (
-                          // One element type at every position, so a card that moves in or out of
-                          // first place is moved, not remounted: keyboard focus stays on its Star
-                          // button and the fade-in does not replay.
-                          <ServiceCard
-                            key={service.id}
-                            service={service}
-                            index={index}
-                            highlight={index === 0 && service.id === mostUrgentId}
-                            emphasized={changedIds.has(service.id)}
-                            starred={starred.has(service.id)}
-                            onToggleStar={onToggleStar}
-                            now={now}
-                          />
-                        ))}
-                      </div>
-                    </ServiceSection>
-                    <ServiceSection id="operational" title="Operational" services={groups.operational}>
-                      {/* The full card, healthy or not, in the attention grid's columns. */}
-                      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                        {groups.operational.map((service, index) => (
-                          <ServiceCard
-                            key={service.id}
-                            service={service}
-                            index={index}
-                            emphasized={changedIds.has(service.id)}
-                            starred={starred.has(service.id)}
-                            onToggleStar={onToggleStar}
-                            now={now}
-                          />
-                        ))}
-                      </div>
-                    </ServiceSection>
-                    <ServiceSection id="releases" title="Releases" services={groups.releases}>
-                      <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                        {groups.releases.map((service, index) => (
-                          <ServiceCard
-                            key={service.id}
-                            service={service}
-                            index={index}
-                            emphasized={changedIds.has(service.id)}
-                            starred={starred.has(service.id)}
-                            onToggleStar={onToggleStar}
-                            now={now}
-                          />
-                        ))}
-                      </div>
-                    </ServiceSection>
-                  </>
+                  <BoardSections
+                    groups={groups}
+                    mostUrgentId={mostUrgentId}
+                    changedIds={changedIds}
+                    starred={starred}
+                    onToggleStar={onToggleStar}
+                    now={now}
+                  />
                 )}
               </div>
-              {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
-              <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
+              <UpdateFeed pulses={pulseStore.pulses} />
             </div>
           </main>
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
@@ -681,33 +635,6 @@ export function BoardView({
         </div>
       </div>
     </div>
-  );
-}
-
-function ServiceSection({
-  id,
-  title,
-  services,
-  children,
-}: {
-  id: string;
-  title: string;
-  services: ServiceSnapshot[];
-  children: ReactNode;
-}) {
-  if (services.length === 0) return null;
-  return (
-    <section aria-labelledby={`${id}-heading`}>
-      <h2
-        id={`${id}-heading`}
-        className="mb-3 flex items-baseline gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-subtle"
-      >
-        {title}
-        <span className="tabular-nums text-muted">{services.length}</span>
-      </h2>
-      {/* A size container: the grid inside, and each card in it, lay out by their own width. */}
-      <div className="@container">{children}</div>
-    </section>
   );
 }
 
