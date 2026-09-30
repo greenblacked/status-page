@@ -357,7 +357,15 @@ const dockNatural = (page: Page) =>
 
 /** What one stop of a scroll sweep saw. */
 type DockStop = {
+  /** Where the sweep asked to scroll. */
   y: number;
+  /** Where that lands once clamped to what the page can scroll. */
+  target: number;
+  scrollY: number;
+  /** How long each of the stop's frames took to arrive, in ms. */
+  frameMs: number[];
+  /** How many of those frames were the fallback timer rather than a real one. */
+  fellBack: number;
   dock: number;
   shown: string | null;
   docking: boolean;
@@ -369,61 +377,173 @@ type DockStop = {
   input: { same: boolean; mark?: string; value?: string; caret?: number | null; count: number };
 };
 
-/**
- * Scrolls through `ys` inside the page, three frames apart, and reads the dock at every stop. Stepping in
- * the page rather than from the test keeps a sweep of ~50 stops to a moment, even on a slow browser.
- */
-const sweepDock = (page: Page, ys: number[]): Promise<DockStop[]> =>
-  page.evaluate(async (stops) => {
-    const frames = () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-      );
-    const body = document.querySelector<HTMLElement>(".board-body");
-    const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
-    const live = document.querySelector<HTMLElement>('[data-testid="live-bar"]');
-    const chips = document.querySelector<HTMLElement>(".board-chips");
-    const chip = chips?.querySelector<HTMLElement>("button") ?? null;
-    const seen: DockStop[] = [];
-    for (const y of stops) {
-      window.scrollTo(0, y);
-      await frames();
-      const input = document.querySelector<HTMLInputElement>('input[type="search"]');
-      const box = chip?.getBoundingClientRect();
-      const hit = box ? document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) : null;
-      seen.push({
-        y,
-        dock: Number.parseFloat(body?.style.getPropertyValue("--dock") || "0"),
-        shown: bar?.getAttribute("data-shown") ?? null,
-        docking: body?.hasAttribute("data-docking") ?? false,
-        liveBottom: live?.getBoundingClientRect().bottom ?? 0,
-        barTop: bar?.getBoundingClientRect().top ?? 0,
-        chipOpacity: chips ? Number.parseFloat(getComputedStyle(chips).opacity) : 1,
-        chipsClickable: chip ? getComputedStyle(chip).pointerEvents !== "none" : true,
-        chipHitByInput: Boolean(hit?.closest(".search-field")),
-        input: {
-          same: document.activeElement === input,
-          mark: (document.activeElement as (HTMLInputElement & { dockMark?: string }) | null)?.dockMark,
-          value: input?.value,
-          caret: input?.selectionStart,
-          count: document.querySelectorAll('input[type="search"]').length,
-        },
-      });
-    }
-    return seen;
-  }, ys);
+/** What the page-side half of a sweep hands back. */
+type DockSweep = { stops: DockStop[]; total: number; truncated: boolean; ms: number };
 
-/** A sweep path: the top, 100px either side of where the field docks in steps of `step`, the end, and all of it back. */
-async function dockPath(page: Page, step = 10): Promise<{ up: number[]; path: number[] }> {
+/**
+ * Frames per stop: one for the scroll and its handler, and one more because useSearchDock coalesces its
+ * write of --dock into its own requestAnimationFrame. A scroll event fires in the same rendering update as
+ * the frame callbacks, ahead of them, so that write lands in the frame right after the scroll and the
+ * second frame's callback sees it (and the state React commits from it in between).
+ */
+const DOCK_FRAMES = 2;
+/**
+ * How long a frame may take before the sweep stops waiting for it. Well above a slow software-rendered frame
+ * (0.3 to 0.4 s in WebKit on CI), so a slow frame is measured and waited out, not skipped; it only stops a
+ * frame that never comes from hanging the sweep.
+ */
+const DOCK_FRAME_FALLBACK_MS = 1000;
+/** How long a sweep may run inside the page before it gives up and reports how far it got. */
+const DOCK_SWEEP_BUDGET_MS = 30_000;
+
+/** The one-line summary of a sweep, for a failure message and the log. */
+function dockSummary(sweep: DockSweep): string {
+  const frames = sweep.stops.flatMap((stop) => stop.frameMs).sort((a, b) => a - b);
+  const median = frames.length ? frames[Math.floor(frames.length / 2)] : 0;
+  const max = frames.length ? frames[frames.length - 1] : 0;
+  return `swept ${sweep.stops.length} of ${sweep.total} stops in ${Math.round(sweep.ms)} ms; median frame ${Math.round(median)} ms, max ${Math.round(max)} ms`;
+}
+
+/** The summary of each test's last sweep, printed by afterEach if the test failed. */
+const sweepSummaries = new WeakMap<object, string>();
+
+test.afterEach(() => {
+  const testInfo = test.info();
+  const summary = sweepSummaries.get(testInfo);
+  if (summary && testInfo.status !== testInfo.expectedStatus) console.log(`[dock] ${testInfo.title}: ${summary}`);
+});
+
+/**
+ * Scrolls through `ys` inside the page, DOCK_FRAMES frames apart, and reads the dock at every stop. Stepping
+ * in the page rather than from the test keeps a sweep to a moment, even on a slow browser; the page stops
+ * early, and says so, if the sweep outruns its budget, since a test timeout inside one evaluate says nothing.
+ * Every stop's timing is attached to the test, and a sweep that was cut short or missed a scroll target fails
+ * with what it managed.
+ */
+async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
+  const sweep = await page.evaluate(
+    async ({ stops, frameCount, fallback, budget }) => {
+      const started = performance.now();
+      /** The next frame, or a fallback timer if none comes, and how long that took. */
+      const frame = () =>
+        new Promise<{ ms: number; fellBack: boolean }>((resolve) => {
+          const at = performance.now();
+          let done = false;
+          const finish = (fellBack: boolean) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve({ ms: performance.now() - at, fellBack });
+          };
+          const timer = setTimeout(() => finish(true), fallback);
+          requestAnimationFrame(() => finish(false));
+        });
+      const body = document.querySelector<HTMLElement>(".board-body");
+      const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+      const live = document.querySelector<HTMLElement>('[data-testid="live-bar"]');
+      const chips = document.querySelector<HTMLElement>(".board-chips");
+      const chip = chips?.querySelector<HTMLElement>("button") ?? null;
+      const seen: DockStop[] = [];
+      let truncated = false;
+      for (const y of stops) {
+        if (performance.now() - started > budget) {
+          truncated = true;
+          break;
+        }
+        window.scrollTo(0, y);
+        const frameMs: number[] = [];
+        let fellBack = 0;
+        for (let i = 0; i < frameCount; i++) {
+          const waited = await frame();
+          frameMs.push(waited.ms);
+          if (waited.fellBack) fellBack++;
+        }
+        const input = document.querySelector<HTMLInputElement>('input[type="search"]');
+        const box = chip?.getBoundingClientRect();
+        const hit = box ? document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) : null;
+        const limit = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+        seen.push({
+          y,
+          target: Math.max(0, Math.min(y, limit)),
+          scrollY: window.scrollY,
+          frameMs,
+          fellBack,
+          dock: Number.parseFloat(body?.style.getPropertyValue("--dock") || "0"),
+          shown: bar?.getAttribute("data-shown") ?? null,
+          docking: body?.hasAttribute("data-docking") ?? false,
+          liveBottom: live?.getBoundingClientRect().bottom ?? 0,
+          barTop: bar?.getBoundingClientRect().top ?? 0,
+          chipOpacity: chips ? Number.parseFloat(getComputedStyle(chips).opacity) : 1,
+          chipsClickable: chip ? getComputedStyle(chip).pointerEvents !== "none" : true,
+          chipHitByInput: Boolean(hit?.closest(".search-field")),
+          input: {
+            same: document.activeElement === input,
+            mark: (document.activeElement as (HTMLInputElement & { dockMark?: string }) | null)?.dockMark,
+            value: input?.value,
+            caret: input?.selectionStart,
+            count: document.querySelectorAll('input[type="search"]').length,
+          },
+        });
+      }
+      return { stops: seen, total: stops.length, truncated, ms: performance.now() - started };
+    },
+    { stops: ys, frameCount: DOCK_FRAMES, fallback: DOCK_FRAME_FALLBACK_MS, budget: DOCK_SWEEP_BUDGET_MS },
+  );
+
+  const summary = dockSummary(sweep);
+  const info = test.info();
+  sweepSummaries.set(info, summary);
+  await info.attach("dock-sweep-timing", {
+    body: JSON.stringify(
+      {
+        summary,
+        frames: DOCK_FRAMES,
+        fallbackMs: DOCK_FRAME_FALLBACK_MS,
+        budgetMs: DOCK_SWEEP_BUDGET_MS,
+        truncated: sweep.truncated,
+        stops: sweep.stops.map(({ y, target, scrollY, frameMs, fellBack, dock }) => ({
+          y,
+          target,
+          scrollY,
+          frameMs: frameMs.map((ms) => Math.round(ms)),
+          fellBack,
+          dock,
+        })),
+      },
+      null,
+      2,
+    ),
+    contentType: "application/json",
+  });
+  if (sweep.truncated) throw new Error(`the dock sweep ran out of its ${DOCK_SWEEP_BUDGET_MS} ms budget: ${summary}`);
+  const missed = sweep.stops.find((stop) => Math.abs(stop.scrollY - stop.target) > 1);
+  if (missed) {
+    throw new Error(
+      `scrolled to ${missed.y} (clamped to ${missed.target}) but landed at ${missed.scrollY}: ${summary}`,
+    );
+  }
+  return sweep.stops;
+}
+
+/**
+ * A sweep path, top to end: fine steps of `step` across the whole of the field's move into the bar (--dock
+ * from 0 to 1 takes 48px of scrolling, ending a stick offset short of where the field sits in the page),
+ * and only a few stops elsewhere, where nothing changes. `path` is the way up and all of it back.
+ */
+async function dockPath(page: Page, step = 8): Promise<{ up: number[]; path: number[] }> {
   const natural = await dockNatural(page);
   const limit = await maxScroll(page);
-  const around: number[] = [];
-  for (let y = Math.max(0, natural - 100); y <= natural + 100; y += step) around.push(Math.round(y));
-  const up = [0, ...around, limit];
+  const ramp: number[] = [];
+  for (let y = natural - 66; y <= natural - 2; y += step) ramp.push(y);
+  const coarse = [0, natural - 160, natural - 110, natural + 40, natural + 120, limit];
+  const up = [...new Set([...coarse, ...ramp].map((y) => Math.round(Math.min(Math.max(y, 0), limit))))].sort(
+    (a, b) => a - b,
+  );
   return { up, path: [...up, ...[...up].reverse()] };
 }
 
 test("keeps the floating bar clear of the live bar as it appears", async ({ page }) => {
+  test.slow();
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
@@ -432,7 +552,7 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
 
   // Down a few pixels at a time: at the first stop where the bar shows, the live
   // bar's text must already be above it, not sliding under or beside it.
-  const { up } = await dockPath(page, 8);
+  const { up } = await dockPath(page);
   const stops = await sweepDock(page, up);
   const first = stops.find((stop) => stop.shown === "true");
   expect(first, "the bar never showed").toBeDefined();
@@ -440,6 +560,7 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
 });
 
 test("keeps one search input, focus, text and caret intact through the dock", async ({ page }) => {
+  test.slow();
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
@@ -532,6 +653,7 @@ test("docks the search field inside the bar, between its dot and its buttons", a
 test("leaves the filter chips unclickable and faded while the field slides over them", async ({ page }) => {
   const width = page.viewportSize()?.width ?? 0;
   test.skip(width < 1024, "the field only shares a row with the chips from 1024px");
+  test.slow();
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
@@ -597,10 +719,11 @@ test.describe("with reduced motion", () => {
   test.use({ reducedMotion: "reduce" });
 
   test("snaps the search field into the bar and out again, never part way", async ({ page }) => {
+    test.slow();
     await page.goto("/");
     await expect(cards(page)).toHaveCount(SERVICES);
     await hydrated(page);
-    const { path } = await dockPath(page, 5);
+    const { path } = await dockPath(page);
     const stops = await sweepDock(page, path);
     expect([...new Set(stops.map((stop) => stop.dock))].sort()).toEqual([0, 1]);
   });
