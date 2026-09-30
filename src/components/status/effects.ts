@@ -80,11 +80,13 @@ function glideCards(before: Layout): boolean {
 }
 
 /**
- * What the person does to the board itself, which ends the wait for an
- * update. Not scrolling: a scroll leaves every card where it is on the page,
+ * What the person does to the board itself, or to the window around it, which
+ * ends the wait for an update: a resize or a rotation relays the cards out
+ * with no DOM change, and the next unrelated change would glide them back
+ * across. Not scrolling: a scroll leaves every card where it is on the page,
  * and a tap can scroll on its own before the update commits.
  */
-const INTERACTIONS = ["pointerdown", "keydown", "input"] as const;
+const INTERACTIONS = ["pointerdown", "keydown", "input", "resize", "orientationchange"] as const;
 
 /** Lets go of the call in progress, if it is still waiting for its update to commit. */
 let pending: (() => void) | undefined;
@@ -97,9 +99,12 @@ let pending: (() => void) | undefined;
  * update itself applies at once and touches nothing but that animation, so
  * focus and node identity are unaffected.
  *
- * The first change to the board after the update is its commit: the cards
- * are compared then, whether or not any moved, and the call is done. A later
- * change (a filter, a scroll) is never measured against this call's start.
+ * An update that React defers (a query cache write) commits after this
+ * returns, so the cards are compared on each change to the board until one
+ * has moved, and the call is done at the first glide. It also ends, having
+ * glided nothing, at the person's next input or a resize, a newer press, or
+ * after a bound, so a later filter, rotation or unrelated change is never
+ * measured against this call's start.
  *
  * Not a View Transition: naming every card makes the browser snapshot all of
  * them (and their blur) before it lets the update through, which took
@@ -124,7 +129,7 @@ export function withCardMotion(update: () => void): void {
   for (const animation of document.getAnimations()) {
     if (animation.id === GLIDE_ID) animation.cancel();
   }
-  // Read by the tests, and free: a mark costs nothing when nobody looks.
+  // Two tiny timeline entries per press, read by the tests to say why a glide did not happen.
   performance.mark("card-motion:start");
   let timer = 0;
   const stop = () => {
@@ -133,9 +138,11 @@ export function withCardMotion(update: () => void): void {
     for (const type of INTERACTIONS) window.removeEventListener(type, stop, true);
     if (pending === stop) pending = undefined;
   };
-  // A change that moves no card is not necessarily the update: the refresh
-  // button's own busy state commits before a deferred cache write does. So the
-  // wait goes on until a card has moved, and lets go on the person's input.
+  // A change that moves no card is not necessarily the update: on a slow
+  // engine something unrelated (a clock-driven text, the board log, the
+  // empty-board skeleton) can commit inside the board before a deferred cache
+  // write does. So the wait goes on until a card has moved, and lets go on
+  // the person's input or a resize.
   const glide = () => {
     if (!glideCards(before)) return false;
     performance.mark("card-motion:glide");
@@ -159,7 +166,8 @@ export function withCardMotion(update: () => void): void {
   });
   pending = stop;
   // An update that changes nothing in the board leaves the observer waiting, and whatever the person does
-  // next (a filter) would be measured against this call's start. Their input ends the wait.
+  // next (a filter, a rotation that relays the cards out with no DOM change) would be measured against
+  // this call's start. Their input or a resize ends the wait.
   for (const type of INTERACTIONS) window.addEventListener(type, stop, { capture: true, passive: true });
   // The bound on an update that never reaches the DOM, set first so nothing below can leave the observer attached.
   timer = window.setTimeout(stop, GLIDE_WAIT_MS);

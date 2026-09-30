@@ -1072,7 +1072,8 @@ test("glides the cards a refresh moves", async ({ page }) => {
   // below the fold, and a card nobody sees does not glide, so bring the second attention card up first.
   await page.evaluate(() => {
     const card = document.getElementById("service-gcp");
-    if (card) window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - 100, behavior: "instant" });
+    if (!card) throw new Error("service-gcp is not on the board");
+    window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - 100, behavior: "instant" });
   });
   grok = "degraded";
   // Clicked from the page, not by the pointer: Playwright scrolls the hero's button back into view to click it.
@@ -1098,7 +1099,8 @@ test("does not count a scroll between measuring and the commit as cards moving",
   // the phone's height. The refresh is clicked from the page: Playwright would scroll the hero's button into view.
   await page.evaluate((id) => {
     const card = id ? document.getElementById(id) : null;
-    if (card) window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - 300, behavior: "instant" });
+    if (!card) throw new Error(`${id} is not on the board`);
+    window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - 300, behavior: "instant" });
   }, first);
   // withCardMotion cancels running glides right after measuring the cards, ahead of the update. Scrolling
   // then is a page scrolling on its own (a tap focusing a control, WebKit's do) before a deferred commit.
@@ -1149,6 +1151,28 @@ test("does not glide a filter that follows a star which moved nothing", async ({
   // A filter typed at once is not part of that star, so nothing glides against its stale layout.
   await page.getByLabel("Search services").fill("Google Cloud");
   await expect(cards(page)).toHaveCount(1);
+  await motionDone(page);
+  expect(await cardGlides(page)).toBe(before);
+});
+
+test("does not glide a resize that follows a star which moved nothing", async ({ page }) => {
+  await recordAnimations(page);
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const before = await cardGlides(page);
+
+  const lead = group(page, "attention").first();
+  await toggleStar(page, () => lead.locator("button[aria-pressed]").first().click());
+  await expect(lead.locator("button[aria-pressed]").first()).toHaveAttribute("aria-pressed", "true");
+
+  // A rotation relays the cards out with no change to the page's markup...
+  const size = page.viewportSize();
+  if (!size) throw new Error("no viewport size");
+  await page.setViewportSize({ width: size.width > 800 ? 700 : 900, height: size.height });
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  // ...and the next unrelated change to the board must not glide the cards across against the old layout.
+  await page.evaluate(() => document.getElementById("services")?.appendChild(document.createTextNode(" ")));
   await motionDone(page);
   expect(await cardGlides(page)).toBe(before);
 });
