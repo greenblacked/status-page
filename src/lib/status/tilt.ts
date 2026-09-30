@@ -9,8 +9,7 @@ import type { PreferenceStorage } from "@/lib/status/glass";
  * The light reaches the CSS only through two custom properties,
  * --light-x and --light-y, each from -1 to 1, set inline on the glass
  * elements whose ::before and ::after draw it (TILT_LIGHT_SELECTOR). They are
- * registered in CSS as non-inherited, and only those pseudo-elements take
- * them from their panel. Nothing may depend on them: unset, the board looks
+ * plain custom properties that those pseudo-elements inherit from their panel. Nothing may depend on them: unset, the board looks
  * exactly as it did before this existed.
  */
 export const TILT_STORAGE_KEY = "status-bar:tilt-lighting";
@@ -22,7 +21,7 @@ export const TILT_VAR_Y = "--light-y";
  * The elements the variables are written on, inline: the panels whose sheen
  * (::before) and glint (::after) draw the light. The light is written at most
  * about 30 times a second, and only when it moved: each write re-styles these
- * panels (and, in a browser without @property, everything inside them).
+ * panels and what is inside them.
  */
 export const TILT_LIGHT_SELECTOR = ".glass, .glass-chrome, .spotlight";
 
