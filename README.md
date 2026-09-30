@@ -146,8 +146,9 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 
 ### On the board
 
-- **The board reads top to bottom in four parts:**
+- **The board reads top to bottom in five parts:**
   - **Needs a look:** a card for each service with an outage, a degradation or maintenance, most urgent first: Outage, then Degraded, then Maintenance, and within one state the incident that began most recently first. It is absent when nothing needs a look.
+  - **Recent changes** follows Needs a look, so it comes first when nothing needs a look; see below.
   - **Couldn't read:** rows for the sources that could not be read (No data). This says nothing about whether they are up, and the group says so.
   - **Healthy services** are compact rows, one list per category (Cloud, Gaming, Platforms, AI).
   - **Releases:** the release trackers, as rows.
@@ -164,7 +165,7 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Add to Home Screen** in Safari's share menu to open the board full screen, with its own icon, like an app.
 - **Know how fresh it is:** the board pulls a snapshot every two minutes, 15 to 30 seconds after each two-minute mark, by when a request can start a new collection, and the countdown ends when it does. The live line under the headline says when the snapshot on screen was taken ("Checked 14:05 UTC · next in 1:52"), in your own time zone once the page has loaded and in UTC before that; hover a time for the full UTC moment. If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did; a snapshot already more than half an hour old when the page opens shows **Stale** straight away.
 - **See how long an incident has run:** a card shows when the vendor says it began, such as "since 14:05 UTC (2h 10m)", or when planned maintenance is due, such as "scheduled for 22:00 UTC".
-- **Read Recent changes**, at the foot of the board, to see what changed in the last checks made on this device.
+- **Read Recent changes**, right after Needs a look, to see what changed in the last checks made on this device.
 - **Press Refresh** to skip the cache and ask every vendor right now. Presses within 15 seconds of the last check reuse it.
 - **Switch on Notifications** (the bell) for a browser notification when a service changes while the tab is in the background.
 - **Open any card's vendor page** for the full story.

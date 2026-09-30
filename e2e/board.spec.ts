@@ -1971,6 +1971,23 @@ test("puts the footer in a contentinfo landmark outside main, and names the rece
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
+test("puts Recent changes right after Needs a look and before the first category", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await expect(page.getByRole("region", { name: /^Needs a look/ })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Recent changes" })).toHaveCount(1);
+  // The board's sections as they sit in the page, by the heading each one is named by.
+  const headings = await page
+    .locator("main section[aria-labelledby]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-labelledby")));
+  expect(headings.slice(0, 2)).toEqual(["attention-heading", "recent-heading"]);
+  // Every other section, Couldn't read and the categories included, follows the feed.
+  const rest = headings.slice(2);
+  expect(rest.some((id) => id?.startsWith("up-"))).toBe(true);
+  expect(rest).not.toContain("recent-heading");
+  expect(rest).not.toContain("attention-heading");
+});
+
 test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   // The fixture has a fresh channel on both cards; make Apple OS's plain, as

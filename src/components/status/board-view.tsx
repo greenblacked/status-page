@@ -116,6 +116,8 @@ export function BoardView({
   const alerts = useBoardAlerts(board);
   const { starred, ready: starsReady, toggle: toggleStar } = useStarred();
   const pulseStore = store ?? emptyPulseStore();
+  // Recent changes follows Needs a look (or leads the board when nothing needs a look).
+  const feed = <UpdateFeed pulses={pulseStore.pulses} />;
   const changedIds = new Set(
     (pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? [])).map((change) => change.id),
   );
@@ -407,18 +409,24 @@ export function BoardView({
 
             <div className="flex min-w-0 flex-col gap-12">
               {fetching && !board.services.length ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
-                    <Skeleton key={index} className="h-56 rounded-lg" />
-                  ))}
-                </div>
+                <>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {Array.from({ length: 6 }).map((_, index) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
+                      <Skeleton key={index} className="h-56 rounded-lg" />
+                    ))}
+                  </div>
+                  {feed}
+                </>
               ) : visible.length === 0 ? (
-                // Stars load after hydration; until then an empty Starred view proves nothing.
-                // Not a live region: the results announcement already says this.
-                starredOnly && !starsReady ? null : (
-                  <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
-                )
+                <>
+                  {/* Stars load after hydration; until then an empty Starred view proves nothing.
+                      Not a live region: the results announcement already says this. */}
+                  {starredOnly && !starsReady ? null : (
+                    <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
+                  )}
+                  {feed}
+                </>
               ) : (
                 <BoardSections
                   groups={groups}
@@ -427,9 +435,9 @@ export function BoardView({
                   starred={starred}
                   onToggleStar={onToggleStar}
                   now={now}
+                  feed={feed}
                 />
               )}
-              <UpdateFeed pulses={pulseStore.pulses} />
             </div>
           </main>
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
