@@ -199,7 +199,7 @@ Subscribe a chat tool to the feed:
 - Microsoft Teams: the RSS connector, pointed at the same URL
 - Discord: any RSS feed bot
 
-An entry's id is the service plus its worst incident's id (its health when it has no incident), so a feed reader posts an incident once and stays quiet when its wording changes; the entry's `updated` time is the latest time the vendor itself reported, so a reader can show it as changed. A source the board could not read is not in the feed: one failed check is usually a vendor hiccup, and telling that from a real blackout takes a history of checks that a stateless feed does not have. It still shows on the board and in `/api/status.json`.
+An entry's id is the service, its health and its worst incident's id (just the health when it has no incident), so a feed reader posts an incident once, stays quiet when its wording changes, and posts it again when the service escalates or eases; the entry's `updated` time is the latest time the vendor itself reported, so a reader can show it as changed. A source the board could not read is not in the feed: one failed check is usually a vendor hiccup, and telling that from a real blackout takes a history of checks that a stateless feed does not have. It still shows on the board and in `/api/status.json`.
 
 </details>
 

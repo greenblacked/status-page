@@ -111,11 +111,21 @@ describe("atomFeed", () => {
         board([gcp({ health: "degraded", summary, incidents: [{ id: incidentId, title: "t", health: "degraded" }] })]),
         "https://s",
       );
-    expect(ids(feed("Investigating", "inc-1"))).toEqual(["urn:status-bar:gcp:inc-1"]);
+    expect(ids(feed("Investigating", "inc-1"))).toEqual(["urn:status-bar:gcp:degraded:inc-1"]);
     // A reworded summary is the same incident: same id, so no repost.
-    expect(ids(feed("Mitigated", "inc-1"))).toEqual(["urn:status-bar:gcp:inc-1"]);
+    expect(ids(feed("Mitigated", "inc-1"))).toEqual(["urn:status-bar:gcp:degraded:inc-1"]);
     // A new incident is a new entry.
-    expect(ids(feed("Investigating", "inc-2"))).toEqual(["urn:status-bar:gcp:inc-2"]);
+    expect(ids(feed("Investigating", "inc-2"))).toEqual(["urn:status-bar:gcp:degraded:inc-2"]);
+  });
+
+  it("gives the same incident a new id when the service escalates, so a feed reader posts it again", () => {
+    const feed = (health: "degraded" | "outage") =>
+      atomFeed(board([gcp({ health, incidents: [{ id: "inc-1", title: "t", health }] })]), "https://s");
+    const before = ids(feed("degraded"));
+    const after = ids(feed("outage"));
+    expect(before).toEqual(["urn:status-bar:gcp:degraded:inc-1"]);
+    expect(after).toEqual(["urn:status-bar:gcp:outage:inc-1"]);
+    expect(after).not.toEqual(before);
   });
 
   it("keys the entry on the worst incident, whatever order the incidents arrive in", () => {
@@ -132,7 +142,7 @@ describe("atomFeed", () => {
       ]),
       "https://s",
     );
-    expect(ids(xml)).toEqual(["urn:status-bar:gcp:major"]);
+    expect(ids(xml)).toEqual(["urn:status-bar:gcp:outage:major"]);
   });
 
   it("keys an entry with no incident on its health, and escapes an id with special characters", () => {
@@ -147,7 +157,7 @@ describe("atomFeed", () => {
           "https://s",
         ),
       ),
-    ).toEqual(["urn:status-bar:gcp:arn%3Aaws%3Ahealth%3Aus-east-1%3A%3Aevent%2FEC2%2FX%201"]);
+    ).toEqual(["urn:status-bar:gcp:degraded:arn%3Aaws%3Ahealth%3Aus-east-1%3A%3Aevent%2FEC2%2FX%201"]);
   });
 
   it("dates an entry by the latest real vendor time across its incidents, not the sweep time", () => {
@@ -218,13 +228,14 @@ describe("atomFeed", () => {
       board([
         gcp({
           health: "outage",
-          sourceUrl: "https://health.example.com/status",
-          incidents: [{ id: "a", title: "A", health: "outage", url: "https://health.example.com/status" }],
+          sourceUrl: "https://health.example.com/status/",
+          incidents: [{ id: "a", title: "A", health: "outage", url: "https://health.example.com/status#x" }],
         }),
       ]),
       "https://s",
     );
-    expect(dashboard).toContain('<link rel="alternate" href="https://health.example.com/status"/>');
+    expect(dashboard).toContain('<link rel="alternate" href="https://health.example.com/status/"/>');
+    expect(dashboard).not.toContain("status#x");
   });
 
   it("falls back to the board time when a vendor timestamp does not parse", () => {

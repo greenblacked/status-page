@@ -133,10 +133,11 @@ function latestVendorTime(service: ServiceSnapshot): number {
  * to it is the no-code way to get alerts: Slack's `/feed subscribe`, Microsoft
  * Teams' RSS connector, Discord feed bots and any feed reader all take it.
  *
- * An entry's id is the service plus its worst incident's id (or, with no
- * incident, its health), so it stays the same while the incident's wording
- * changes and a reader posts an incident once; a reworded or updated
- * incident is signalled by `<updated>` instead, which is the latest time the
+ * An entry's id is the service, its health and its worst incident's id (with
+ * no incident, just the health), so it stays the same while the incident's
+ * wording changes and a reader posts an incident once, but changes when the
+ * service escalates or eases (degraded to outage), so that is posted again;
+ * a reworded or updated incident is signalled by `<updated>` instead, which is the latest time the
  * vendor itself gave (never the time of this sweep, which would make every
  * poll look like news). A service with no vendor time at all (a card built
  * from components alone) falls back to the snapshot time.
@@ -154,8 +155,8 @@ export function atomFeed(board: BoardSnapshot, origin: string): string {
   const entries = affected
     .map((service) => {
       const worst = sortIncidents(service.incidents).find((incident) => !incident.informational);
-      const key = worst ? worst.id : service.health;
-      const id = `urn:status-bar:${service.id}:${encodeURIComponent(key)}`;
+      const key = worst ? `${service.health}:${encodeURIComponent(worst.id)}` : service.health;
+      const id = `urn:status-bar:${service.id}:${key}`;
       const link = incidentLink(service) ?? service.sourceUrl;
       const vendorTime = latestVendorTime(service);
       const stamp = Number.isFinite(vendorTime) ? vendorTime : Date.parse(board.generatedAt);
