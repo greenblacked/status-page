@@ -320,6 +320,209 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   await barHidden(page, header);
 });
 
+/** The floating bar, found by its markup: Playwright's role queries skip it while it is `inert`. */
+const controlBar = (page: Page) => page.locator('section[aria-label="Board controls"]');
+
+/** The search dock: the sticky wrapper whose --dock (0 to 1) drives the field into the bar. */
+const searchDock = (page: Page) => page.locator(".search-dock");
+
+/** Scrolls to `y` and waits two frames, so the dock's own frame callback has run. */
+async function scrollAndSettle(page: Page, y: number): Promise<void> {
+  await page.evaluate(
+    (top) =>
+      new Promise<void>((resolve) => {
+        window.scrollTo(0, top);
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+    y,
+  );
+}
+
+/** How far the page can scroll. */
+const maxScroll = (page: Page) =>
+  page.evaluate(() => document.documentElement.scrollHeight - document.documentElement.clientHeight);
+
+/** The dock's --dock as a number, read from its style. */
+const dockValue = (page: Page) =>
+  searchDock(page).evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--dock") || "0"));
+
+/** Waits out the bar's own fade and slide, but not the live ring inside it, which never finishes. */
+async function barSettled(page: Page): Promise<void> {
+  await controlBar(page).evaluate((bar) => Promise.all(bar.getAnimations().map((animation) => animation.finished)));
+}
+
+test("keeps the floating bar clear of the live bar as it appears", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const bar = controlBar(page);
+  await expect(bar).toHaveAttribute("data-shown", "false");
+  const liveBar = page.getByTestId("live-bar");
+  await expect(liveBar).toContainText("last check");
+
+  // Down a few pixels at a time until the bar shows: at that moment the live
+  // bar's text must already be above it, not sliding under or beside it.
+  const limit = await maxScroll(page);
+  let shown = false;
+  for (let y = 0; y <= limit && !shown; y += 12) {
+    await scrollAndSettle(page, y);
+    shown = (await bar.getAttribute("data-shown")) === "true";
+  }
+  expect(shown).toBe(true);
+  const live = await liveBar.boundingBox();
+  const floating = await bar.boundingBox();
+  expect(live).not.toBeNull();
+  expect(floating).not.toBeNull();
+  expect(live!.y + live!.height).toBeLessThanOrEqual(floating!.y);
+});
+
+test("keeps one search input, focus, text and caret intact through the dock", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const search = page.getByLabel("Search services");
+  await search.evaluate((input) => {
+    (input as HTMLInputElement & { dockMark?: string }).dockMark = "the one input";
+  });
+  await search.focus();
+  await page.keyboard.type("e");
+  await expect(search).toHaveValue("e");
+  await search.evaluate((input) => (input as HTMLInputElement).setSelectionRange(0, 0));
+  const limit = await maxScroll(page);
+  // Far enough that the field passes through the whole dock, both ways.
+  expect(limit).toBeGreaterThan(900);
+
+  const stops: number[] = [];
+  for (let y = 0; y <= limit; y += 40) stops.push(y);
+  const path = [...stops, ...[...stops].reverse()];
+  // Stepped inside the page, two frames apart, so the dock's own callbacks run at every stop.
+  const states = await page.evaluate(async (ys) => {
+    const frames = () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const seen: { y: number; same: boolean; mark?: string; value?: string; caret?: number | null; inputs: number }[] =
+      [];
+    for (const y of ys) {
+      window.scrollTo(0, y);
+      await frames();
+      const input = document.querySelector<HTMLInputElement>('input[type="search"]');
+      seen.push({
+        y,
+        same: document.activeElement === input,
+        mark: (document.activeElement as (HTMLInputElement & { dockMark?: string }) | null)?.dockMark,
+        value: input?.value,
+        caret: input?.selectionStart,
+        inputs: document.querySelectorAll('input[type="search"]').length,
+      });
+    }
+    return seen;
+  }, path);
+  for (const state of states) {
+    expect(state, `scrolled to ${state.y}`).toEqual({
+      y: state.y,
+      same: true,
+      mark: "the one input",
+      value: "e",
+      caret: 0,
+      inputs: 1,
+    });
+  }
+});
+
+test("docks the search field inside the bar, between its dot and its buttons", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const bar = controlBar(page);
+  const field = page.locator(".search-field");
+  await expect(bar).toHaveAttribute("data-shown", "false");
+  // In the hero it is wider than the bar's slot and below the summary.
+  const before = await field.boundingBox();
+
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  await expect.poll(() => dockValue(page)).toBe(1);
+  await barSettled(page);
+
+  const boxes = await page.evaluate(() => {
+    const rect = (element: Element | null) => {
+      const { left, right, top, bottom } = (element as Element).getBoundingClientRect();
+      return { left, right, top, bottom };
+    };
+    const bar = document.querySelector('section[aria-label="Board controls"]');
+    return {
+      bar: rect(bar),
+      field: rect(document.querySelector(".search-field")),
+      dot: rect(bar?.querySelector("p") ?? null),
+      firstButton: rect(bar?.querySelector("button") ?? null),
+      refresh: rect(bar?.querySelector('button[aria-label="Refresh status now"]') ?? null),
+    };
+  });
+  const near = 0.5;
+  expect(boxes.field.left).toBeGreaterThanOrEqual(boxes.bar.left - near);
+  expect(boxes.field.right).toBeLessThanOrEqual(boxes.bar.right + near);
+  expect(boxes.field.top).toBeGreaterThanOrEqual(boxes.bar.top - near);
+  expect(boxes.field.bottom).toBeLessThanOrEqual(boxes.bar.bottom + near);
+  expect(boxes.field.left).toBeGreaterThanOrEqual(boxes.dot.right - near);
+  expect(boxes.field.right).toBeLessThanOrEqual(boxes.firstButton.left + near);
+  expect(boxes.field.right).toBeLessThanOrEqual(boxes.refresh.left + near);
+  // It travelled up from below the bar, where it sat in the hero.
+  expect(before).not.toBeNull();
+  expect(before!.y).toBeGreaterThan(boxes.bar.bottom);
+});
+
+test.describe("with reduced motion", () => {
+  test.use({ reducedMotion: "reduce" });
+
+  test("snaps the search field into the bar and out again, never part way", async ({ page }) => {
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    const limit = await maxScroll(page);
+    // A few pixels at a time across the whole move (48px of scrolling), then on to the end and back.
+    const natural = await searchDock(page).evaluate((element) => element.getBoundingClientRect().top + scrollY);
+    const stops: number[] = [];
+    for (let y = Math.max(0, natural - 70); y <= natural + 40; y += 5) stops.push(Math.round(y));
+    stops.push(limit);
+    const seen = await page.evaluate(
+      async ({ ys, top }) => {
+        const frames = () =>
+          new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        const dock = document.querySelector<HTMLElement>(".search-dock");
+        const values = new Set<number>();
+        for (const y of [top, ...ys, ...[...ys].reverse(), top]) {
+          window.scrollTo(0, y);
+          await frames();
+          values.add(Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"));
+        }
+        return [...values];
+      },
+      { ys: stops, top: 0 },
+    );
+    expect(seen.sort()).toEqual([0, 1]);
+  });
+});
+
+test("marks the search field for an iPhone keyboard: search key, no autocorrect", async ({ page }) => {
+  await page.goto("/");
+  await hydrated(page);
+  const input = page.getByLabel("Search services");
+  await expect(input).toHaveAttribute("type", "search");
+  await expect(input).toHaveAttribute("enterkeyhint", "search");
+  await expect(input).toHaveAttribute("autocapitalize", "off");
+  await expect(input).toHaveAttribute("autocorrect", "off");
+  await expect(input).toHaveAttribute("autocomplete", "off");
+  await expect(input).toHaveAttribute("spellcheck", "false");
+});
+
+test("sets the search field at 16px on a touch screen, so iPhone does not zoom in", async ({ page, isMobile }) => {
+  test.skip(!isMobile, "the zoom guard is for a coarse pointer");
+  await page.goto("/");
+  await hydrated(page);
+  expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)).toBe(true);
+  const size = await page.getByLabel("Search services").evaluate((input) => getComputedStyle(input).fontSize);
+  expect(Number.parseFloat(size)).toBeGreaterThanOrEqual(16);
+});
+
 test("renders healthy services as full cards, alike whether or not the vendor lists components", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
