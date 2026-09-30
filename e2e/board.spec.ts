@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 
@@ -26,6 +26,34 @@ async function cardsSettled(page: Page): Promise<void> {
 }
 
 /**
+ * Waits until React has hydrated the page. The server's markup, cards
+ * included, paints before that, and a click on it goes nowhere: on a slow
+ * device (WebKit on a phone) a test that clicks as soon as the cards are
+ * there can beat the handlers, and the click is lost for good.
+ */
+async function hydrated(page: Page): Promise<void> {
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+}
+
+/**
+ * Waits out a view transition, which a refresh or a star runs. Its snapshot
+ * covers the page and takes the pointer until it has played.
+ */
+async function viewTransitionsSettled(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => {
+          const effect = animation.effect as (AnimationEffect & { pseudoElement?: string | null }) | null;
+          return effect?.pseudoElement?.startsWith("::view-transition");
+        })
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
+}
+
+/**
  * Loads the page, then presses Refresh so the served fixture replaces the server's first render.
  * `ready` names a card and the status word that shows the fixture has arrived.
  */
@@ -37,8 +65,12 @@ async function openFixture(
   await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  // The cards are in the server's markup already; Refresh answers only once hydrated.
+  await hydrated(page);
   await page.getByRole("button", { name: "Refresh status now" }).first().click();
   await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
+  // Its view transition would otherwise still be playing under the next click.
+  await viewTransitionsSettled(page);
 }
 
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
@@ -89,6 +121,8 @@ test("starts the tab order with a skip link that moves focus to the services", a
   test.skip(isMobile, "no Tab key on a touch device");
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  // Unhydrated, Enter follows the link's href and puts #services in the address.
+  await hydrated(page);
   const skip = page.getByRole("link", { name: "Skip to services" });
   // First in the tab order by the markup itself: nothing before it can take
   // focus, and the compact header, hidden at the top, is inert.
@@ -115,6 +149,7 @@ test("starts the tab order with a skip link that moves focus to the services", a
 
 test("opens with the search from the address and announces a new result count", async ({ page }) => {
   await page.goto("/?q=aws");
+  await hydrated(page);
   const search = page.getByRole("searchbox", { name: "Search services" }).or(page.getByLabel("Search services"));
   await expect(search).toHaveValue("aws");
   await expect(page.locator("#service-aws")).toBeVisible();
@@ -178,9 +213,25 @@ test("blurs the glass panels and never the whisper surfaces", async ({ page }) =
   expect(whisper.filter((value) => value !== "none")).toEqual([]);
 });
 
+/**
+ * The bar has gone: it is `inert` and out of the accessibility tree the moment the hero is back
+ * (Playwright's role queries do not see `inert`, so it is found by its markup), then its fade-out
+ * plays and it leaves the page. Each step is awaited in turn, so a slow frame cannot pass for
+ * the bar still showing.
+ */
+async function barHidden(page: Page, header: Locator): Promise<void> {
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  const bar = page.locator('section[aria-label="Board controls"]');
+  await expect(bar).toHaveAttribute("data-shown", "false");
+  await expect(bar).toHaveAttribute("inert", "");
+  await expect(header).toBeHidden();
+}
+
 test("floats a compact header with the controls once the hero scrolls away", async ({ page, browserName }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  // The bar shows and hides from a client-side observer.
+  await hydrated(page);
   const header = page.getByRole("region", { name: "Board controls" });
   await expect(header).toBeHidden();
   await page.locator("footer").scrollIntoViewIfNeeded();
@@ -193,7 +244,7 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   });
   expect(duplicates).toEqual([]);
   await page.evaluate(() => window.scrollTo(0, 0));
-  await expect(header).toBeHidden();
+  await barHidden(page, header);
 
   // A click leaves focus on the button in Chromium; that must not hold the
   // bar over the hero's own controls once the page is back at the top.
@@ -211,9 +262,7 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   // Safari leaves a clicked button unfocused; Chromium focuses it, the case that matters.
   if (browserName === "chromium") await expect(refresh).toBeFocused();
   await page.evaluate(() => window.scrollTo(0, 0));
-  await expect(header).toBeHidden();
-  // Hidden from the accessibility tree, so found by its markup instead.
-  await expect(page.locator('section[aria-label="Board controls"]')).toHaveAttribute("inert", "");
+  await barHidden(page, header);
 });
 
 test("renders healthy services as full cards, alike whether or not the vendor lists components", async ({ page }) => {
@@ -415,6 +464,7 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
 test("keeps Reduce glass across a reload", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
   const html = page.locator("html");
   await expect(html).not.toHaveAttribute("data-reduce-transparency");
 
@@ -430,6 +480,7 @@ test("keeps Reduce glass across a reload", async ({ page }) => {
   await page.reload();
   await expect(html).toHaveAttribute("data-reduce-transparency", "true");
   await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
   await page.getByRole("button", { name: "Settings and shortcuts" }).click();
   await expect(page.getByRole("switch", { name: "Reduce glass" })).toHaveAttribute("aria-checked", "true");
   await page.getByRole("switch", { name: "Reduce glass" }).click();
@@ -486,6 +537,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
       await page.goto("/");
       await expect(cards(page)).toHaveCount(SERVICES);
+      await hydrated(page);
       await page.getByRole("button", { name: "Refresh status now" }).first().click();
       for (const label of ["Outage", "Degraded", "Maintenance", "Unknown", "Operational"]) {
         await expect(page.locator("main").getByText(label, { exact: true }).first()).toBeVisible();

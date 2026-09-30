@@ -121,6 +121,13 @@ export function BoardView({
 
   const slot = now > 0 ? lastPulseAt(now) : null;
 
+  // Says the board's handlers are attached. The server's markup paints, and
+  // takes clicks that go nowhere, before React hydrates it; the end-to-end
+  // tests wait for this attribute (e2e/board.spec.ts) instead of guessing.
+  useEffect(() => {
+    document.documentElement.dataset.hydrated = "";
+  }, []);
+
   useEffect(() => {
     if (slot === null) return;
     const existing = store ?? loadPulseStore();
