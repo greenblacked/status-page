@@ -45,12 +45,15 @@ import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/li
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import {
   CACHE_TTL_MS,
+  everyInterval,
   type Freshness,
   formatUtcTime,
   lastPulseAt,
   nextRefetchAt,
+  PULSE_INTERVAL_MS,
   parseTimestamp,
   pickRefetchJitter,
+  spokenDuration,
 } from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
@@ -344,7 +347,7 @@ export function BoardView({
                 {APP_NAME}
               </h1>
               <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted text-pretty sm:text-base">
-                Official vendor status for {board.services.length} services, checked every two minutes.
+                Official vendor status for {board.services.length} services, checked {everyInterval(PULSE_INTERVAL_MS)}.
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -578,8 +581,8 @@ export function BoardView({
                 Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
               </p>
               <p>
-                This page checks every two minutes; the server reads the official vendor feeds and keeps them for 45
-                seconds.
+                This page checks {everyInterval(PULSE_INTERVAL_MS)}; the server reads the official vendor feeds and
+                keeps them for {spokenDuration(CACHE_TTL_MS)}.
               </p>
               <p>
                 <a
