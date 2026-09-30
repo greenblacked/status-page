@@ -1,5 +1,7 @@
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
+import { useServiceHistoryDays } from "@/components/status/board-history-provider";
+import { HistoryStrip } from "@/components/status/history-strip";
 import {
   HealthyComponents,
   type ServiceCardProps,
@@ -127,6 +129,31 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
     </RowHeader>
   );
   const withDetails = !unread && (service.components.length > 0 || extras);
+  // The 30-day uptime strip, in a build that collects history: under the row's own line, so the row
+  // stays as it is until there are days to draw. A release tracker (the changelog category) has none.
+  const days = useServiceHistoryDays(service.id);
+  const strip =
+    import.meta.env.VITE_STATUS_HISTORY === "1" && days.length > 0 && service.category !== "updates" ? (
+      <HistoryStrip days={days} nowMs={now} className="pt-1 pb-3" />
+    ) : null;
+
+  const body = withDetails ? (
+    // The chevron (styles.css) sits at the summary's middle line, which is the row's, not its top.
+    <details className="row-details min-w-0 [&>summary]:after:top-[calc(50%-0.25rem)]!">
+      <summary className="focus-ring flex min-h-(--row-h) items-center rounded-md focus-visible:-outline-offset-2!">
+        {header}
+      </summary>
+      <div className="flex flex-col gap-3 pr-6 pb-3">
+        <ServiceExtras service={service} now={now} />
+        <HealthyComponents
+          components={service.components}
+          total={service.componentCount ?? service.components.length}
+        />
+      </div>
+    </details>
+  ) : (
+    <div className="flex min-h-(--row-h) min-w-0 items-center">{header}</div>
+  );
 
   return (
     <RowFrame
@@ -138,22 +165,13 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
         <StatusGlyph health={service.health} size={20} className={cn("block", STATUS_TEXT[service.health], ROW_LEAD)} />
       }
     >
-      {withDetails ? (
-        // The chevron (styles.css) sits at the summary's middle line, which is the row's, not its top.
-        <details className="row-details min-w-0 [&>summary]:after:top-[calc(50%-0.25rem)]!">
-          <summary className="focus-ring flex min-h-(--row-h) items-center rounded-md focus-visible:-outline-offset-2!">
-            {header}
-          </summary>
-          <div className="flex flex-col gap-3 pr-6 pb-3">
-            <ServiceExtras service={service} now={now} />
-            <HealthyComponents
-              components={service.components}
-              total={service.componentCount ?? service.components.length}
-            />
-          </div>
-        </details>
+      {strip ? (
+        <div className="min-w-0">
+          {body}
+          {strip}
+        </div>
       ) : (
-        <div className="flex min-h-(--row-h) min-w-0 items-center">{header}</div>
+        body
       )}
     </RowFrame>
   );

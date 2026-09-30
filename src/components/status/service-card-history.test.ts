@@ -128,3 +128,42 @@ describe("cards with history", () => {
     expect(html).toMatch(/<div aria-hidden="true" class="flex items-end justify-between[^>]*><p[^>]*>.*uptime/);
   });
 });
+
+describe("rows with history", () => {
+  const document = history({ aws: { days: DAYS } });
+  const row = (
+    withHistory: PublicHistory | undefined,
+    overrides: Partial<ServiceSnapshot> = {},
+    id: "aws" | "gcp" = "aws",
+  ) => card(withHistory, id, { health: "operational", summary: "All systems normal", ...overrides });
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_STATUS_HISTORY", "1");
+  });
+
+  it("show the strip on a healthy row, and on one that could not be read", () => {
+    for (const health of ["operational", "unknown"] as const) {
+      const html = row(document, { health });
+      expect(html, health).toMatch(STRIP);
+      expect(html.match(/role="img"/g), health).toHaveLength(1);
+      expect(html, health).toContain("30d");
+    }
+  });
+
+  it("keep the strip outside the summary of a row that opens", () => {
+    const html = row(document, { components: [{ name: "Console", health: "operational" }] });
+    expect(html).toContain("<details");
+    expect(html.indexOf('role="img"')).toBeGreaterThan(html.indexOf("</details>"));
+  });
+
+  it("show it only on the service the history is for, and never on a release tracker", () => {
+    expect(row(document, {}, "gcp")).not.toMatch(STRIP);
+    expect(row(document, { category: "updates", health: "unknown" })).not.toMatch(STRIP);
+  });
+
+  it("render the row as it was with no days, or the flag off", () => {
+    expect(row(history({ aws: { days: [] } }))).toBe(row(undefined));
+    vi.stubEnv("VITE_STATUS_HISTORY", "0");
+    expect(row(document)).toBe(row(undefined));
+  });
+});
