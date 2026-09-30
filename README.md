@@ -130,7 +130,7 @@ Collection runs on the server, so the browser never deals with vendor CORS. Each
 
 ## Quick start
 
-You need Node 22.13.0 (pinned in `.nvmrc`), npm 11.9.0, and outbound HTTPS to the vendors above.
+You need Node 22.13.0 (pinned in `.nvmrc`), npm 11.19.1, and outbound HTTPS to the vendors above.
 
 ```bash
 git clone https://github.com/greenblacked/status-page.git
