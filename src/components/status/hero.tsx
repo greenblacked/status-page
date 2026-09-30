@@ -6,6 +6,7 @@ import { APP_NAME } from "@/lib/status/catalog";
 import { serviceAnchor } from "@/lib/status/layout";
 import type { ServiceId } from "@/lib/status/types";
 import type { Verdict } from "@/lib/status/verdict";
+import { cn } from "@/lib/utils";
 
 /**
  * The top of the page. A dateline and the wordmark with the two icon buttons
@@ -68,7 +69,15 @@ export function Hero({
               <p className="sr-only">{verdict.srSub}</p>
             </>
           ) : verdict.subParts.length > 0 ? (
-            <p className="hit-lines mt-[calc(0.5rem-var(--hit-lead))] -mb-[var(--hit-lead)] text-body text-muted md:mt-[calc(0.75rem-var(--hit-lead))]">
+            <p
+              className={cn(
+                "text-body text-muted",
+                // Lines 44pt apart on touch, so the links' tap areas never overlap: only where there are links.
+                verdict.subParts.some((part) => part.id)
+                  ? "hit-lines mt-[calc(0.5rem-var(--hit-lead))] -mb-[var(--hit-lead)] md:mt-[calc(0.75rem-var(--hit-lead))]"
+                  : "mt-2 md:mt-3",
+              )}
+            >
               {verdict.subParts.map((part, at) =>
                 part.id ? (
                   <a
