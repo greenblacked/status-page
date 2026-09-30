@@ -493,6 +493,92 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(snapshot.incidents[0].startedAt).toBe(new Date(epochMs).toISOString());
   });
 
+  it("Apple: an upcoming event is upcomingMaintenance, not maintenance, until it is ongoing", async () => {
+    const start = Date.parse("2026-09-21T02:00:00Z");
+    const end = Date.parse("2026-09-21T04:00:00Z");
+    stubFetch({
+      [URLS.apple]: json({
+        services: [
+          {
+            serviceName: "Apple Music",
+            events: [
+              {
+                eventStatus: "upcoming",
+                statusType: "maintenance",
+                message: "Scheduled maintenance",
+                epochStartDate: start,
+                epochEndDate: end,
+              },
+            ],
+          },
+          { serviceName: "App Store", events: [] },
+        ],
+      }),
+    });
+    const apple = (await collectAllServices()).find((s) => s.id === "apple")!;
+    expect(apple.health).toBe("operational");
+    expect(apple.summary).toBe("All reported systems operational.");
+    expect(apple.incidents).toEqual([]);
+    expect(apple.components).toEqual([
+      { name: "Apple Music", health: "operational" },
+      { name: "App Store", health: "operational" },
+    ]);
+    expect(apple.upcomingMaintenance).toEqual([
+      {
+        id: `Apple Music-${start}`,
+        title: "Apple Music: Scheduled maintenance",
+        scheduledFor: "2026-09-21T02:00:00.000Z",
+        scheduledUntil: "2026-09-21T04:00:00.000Z",
+        url: "https://www.apple.com/support/systemstatus/",
+      },
+    ]);
+
+    // The same event once it is ongoing is real maintenance.
+    stubFetch({
+      [URLS.apple]: json({
+        services: [
+          {
+            serviceName: "Apple Music",
+            events: [
+              {
+                eventStatus: "ongoing",
+                statusType: "maintenance",
+                message: "Scheduled maintenance",
+                epochStartDate: start,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    const later = (await collectAllServices()).find((s) => s.id === "apple")!;
+    expect(later.health).toBe("maintenance");
+    expect(later.upcomingMaintenance).toBeUndefined();
+  });
+
+  it("Apple: incidents are sorted worst first, and the summary names the worst", async () => {
+    stubFetch({
+      [URLS.apple]: json({
+        services: [
+          {
+            serviceName: "Apple Music",
+            events: [{ eventStatus: "ongoing", statusType: "issue", message: "Slow", epochStartDate: 1000 }],
+          },
+          {
+            serviceName: "iCloud Mail",
+            events: [{ eventStatus: "ongoing", statusType: "outage", message: "Down", epochStartDate: 2000 }],
+          },
+        ],
+      }),
+    });
+    const apple = (await collectAllServices()).find((s) => s.id === "apple")!;
+    expect(apple.incidents.map((i) => [i.health, i.title])).toEqual([
+      ["outage", "iCloud Mail: Down"],
+      ["degraded", "Apple Music: Slow"],
+    ]);
+    expect(apple.summary).toBe("iCloud Mail: Down");
+  });
+
   it("Statuspage: a healthy vendor lists every leaf component in the vendor's order, groups excluded", async () => {
     const summary = statuspageSummary({
       components: [

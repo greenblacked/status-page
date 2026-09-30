@@ -119,6 +119,7 @@ type AppleStatus = {
       message?: string;
       usersAffected?: string;
       epochStartDate?: number;
+      epochEndDate?: number;
       datePosted?: string;
     }>;
   }>;
@@ -1012,14 +1013,20 @@ async function collectSpotify(): Promise<ServiceSnapshot> {
   }
 }
 
+// Only events that are happening now have a health. An "upcoming" one has
+// not started, so it must not make the service read Maintenance hours
+// before it begins: it is kept as upcomingMaintenance instead.
 function appleEventHealth(event: { eventStatus?: string; statusType?: string }): Health {
   const status = (event.eventStatus ?? "").toLowerCase();
   const type = (event.statusType ?? "").toLowerCase();
-  if (status === "resolved" || status === "completed") return "operational";
-  if (status !== "ongoing" && status !== "current" && status !== "upcoming") return "operational";
+  if (status !== "ongoing" && status !== "current") return "operational";
   if (type === "outage") return "outage";
   if (type === "maintenance") return "maintenance";
   return "degraded";
+}
+
+function appleEventUpcoming(event: { eventStatus?: string }): boolean {
+  return (event.eventStatus ?? "").toLowerCase() === "upcoming";
 }
 
 async function collectApple(): Promise<ServiceSnapshot> {
@@ -1031,11 +1038,19 @@ async function collectApple(): Promise<ServiceSnapshot> {
     let health: Health = "operational";
     const incidents: Incident[] = [];
     const components: ComponentHealth[] = [];
+    const upcoming: UpcomingMaintenance[] = [];
     for (const service of value.services ?? []) {
-      const active = (service.events ?? []).filter((event) => {
-        const itemHealth = appleEventHealth(event);
-        return itemHealth !== "operational";
-      });
+      const events = service.events ?? [];
+      for (const event of events.filter(appleEventUpcoming)) {
+        upcoming.push({
+          id: `${service.serviceName}-${event.epochStartDate ?? event.datePosted ?? event.message}`,
+          title: `${service.serviceName}: ${event.message ?? event.statusType ?? "Scheduled maintenance"}`,
+          scheduledFor: epochToIso(event.epochStartDate, 1),
+          scheduledUntil: epochToIso(event.epochEndDate, 1),
+          url: "https://www.apple.com/support/systemstatus/",
+        });
+      }
+      const active = events.filter((event) => appleEventHealth(event) !== "operational");
       if (!active.length) {
         // The payload lists every service, quiet or not, so a healthy one is a
         // real operational component rather than an invented row.
@@ -1055,12 +1070,19 @@ async function collectApple(): Promise<ServiceSnapshot> {
         });
       }
     }
+    const sorted = sortIncidents(incidents);
+    upcoming.sort(
+      (a, b) =>
+        (Date.parse(a.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER) -
+        (Date.parse(b.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER),
+    );
     return {
       ...base("apple", new Date().toISOString(), ms),
       health,
-      summary: overallSummary(health, incidents.length, incidents[0]?.title),
+      summary: overallSummary(health, sorted.length, sorted[0]?.title),
       ...rankComponents(components),
-      incidents,
+      incidents: sorted,
+      ...(upcoming.length ? { upcomingMaintenance: upcoming.slice(0, MAX_UPCOMING_MAINTENANCE) } : {}),
       meta: { services: value.services?.length ?? 0 },
     };
   } catch (error) {
@@ -1281,15 +1303,17 @@ async function collectGrok(): Promise<ServiceSnapshot> {
       (worst, item) => worseHealth(worst, grokItemHealth(item.description)),
       "operational",
     );
-    const incidents: Incident[] = active.slice(0, 8).map((item, index) => {
-      return {
+    // Sorted worst first before the first 8 are kept, so the cut never drops
+    // the most urgent item.
+    const incidents: Incident[] = sortIncidents(
+      active.map((item, index) => ({
         id: item.link ?? `${item.title}-${index}`,
         title: item.title,
         health: grokItemHealth(item.description),
-        startedAt: item.pubDate ? new Date(item.pubDate).toISOString() : undefined,
+        startedAt: isoTimestamp(item.pubDate),
         url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
-      };
-    });
+      })),
+    ).slice(0, 8);
     return {
       ...base("grok", new Date().toISOString(), ms),
       health,
