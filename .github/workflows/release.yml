@@ -173,25 +173,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          # The code being released: before any bump commit, which changes
-          # only the version and the changelog.
-          ref: ${{ needs.plan.outputs.sha }}
-      # The npm pin (its script, the signature check that script runs,
-      # the lockfile and packageManager) from the commit that started this
-      # run. A backfill verifies an older commit, which may predate
-      # scripts/ci/npm-pin.sh, scripts/ci/audit-signatures.sh and tools/npm,
-      # so the pin cannot be taken from that checkout. Only these files, and
-      # after the checkout above, which would otherwise clean this directory
-      # away. Every script npm-pin.sh runs must be listed (a unit test checks).
+      # Everything this job runs from this repository before the commit being
+      # released is checked out: the npm pin (its script, the signature check
+      # that script runs, the lockfile, packageManager) and .nvmrc, all from
+      # the commit that started this run. A backfill releases an older commit,
+      # which may predate scripts/ci/npm-pin.sh, scripts/ci/audit-signatures.sh
+      # and tools/npm, so the pin cannot come from that checkout. Only these
+      # files. Every script npm-pin.sh runs must be listed (a unit test
+      # checks). It goes first, into the workspace root, because a later
+      # checkout into the root would delete it.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
-          path: pin
           sparse-checkout: |
+            /.nvmrc
             /package.json
             /scripts/ci/npm-pin.sh
             /scripts/ci/audit-signatures.sh
@@ -203,25 +199,39 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      # npm at the packageManager version, from a lockfile that records its
+      # hash (tools/npm), not installed by name. No install scripts.
+      - name: Pin npm
+        run: ./scripts/ci/npm-pin.sh install
+      - name: Check npm
+        run: ./scripts/ci/npm-pin.sh verify
+      # The code being released, last and into release/: before any bump
+      # commit, which changes only the version and the changelog. After this
+      # step the job runs only the project's own npm commands: no script of
+      # this run's commit and no cache action, so nothing it does can be saved
+      # into a cache the default branch reads (CodeQL: cache poisoning).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.plan.outputs.sha }}
+          path: release
       # The pinned npm should be the one the release commit itself names.
       - name: Check the npm pin matches the release
         run: |
-          release="$(node -p "require('./package.json').packageManager")"
-          pinned="$(node -p "require('./pin/package.json').packageManager")"
+          release="$(node -p "require('./release/package.json').packageManager")"
+          pinned="$(node -p "require('./package.json').packageManager")"
           if [ "$release" != "$pinned" ]; then
             echo "::error::the commit being released names $release, but the npm pin in this run's commit is $pinned; backfill from a ref whose packageManager matches"
             exit 1
           fi
-      # npm at the packageManager version, from a lockfile that records its
-      # hash (tools/npm), not installed by name. No install scripts.
-      - name: Pin npm
-        run: ./pin/scripts/ci/npm-pin.sh install
-      - name: Check npm
-        run: ./pin/scripts/ci/npm-pin.sh verify
       - run: npm ci
+        working-directory: release
       - run: npm run typecheck
+        working-directory: release
       - run: npm test
+        working-directory: release
       - run: npm run build
+        working-directory: release
 
   publish:
     name: publish release

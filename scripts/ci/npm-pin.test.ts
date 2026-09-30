@@ -86,7 +86,7 @@ describe("release.yml's sparse checkout of the npm pin", () => {
   const workflow = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
   const script = readFileSync(join(ROOT, "scripts/ci/npm-pin.sh"), "utf8");
 
-  /** The lines under the `sparse-checkout: |` key of the checkout that writes to pin/. */
+  /** The lines under the `sparse-checkout: |` key of the sparse checkout of the npm pin. */
   function sparsePaths() {
     const lines = workflow.split("\n");
     const start = lines.findIndex((line) => /^\s*sparse-checkout: \|\s*$/.test(line));
@@ -111,6 +111,21 @@ describe("release.yml's sparse checkout of the npm pin", () => {
   });
 
   it("lists the script itself, package.json and tools/npm", () => {
-    expect(sparsePaths()).toEqual(expect.arrayContaining(["/package.json", "/scripts/ci/npm-pin.sh", "/tools/npm/"]));
+    expect(sparsePaths()).toEqual(
+      expect.arrayContaining(["/.nvmrc", "/package.json", "/scripts/ci/npm-pin.sh", "/tools/npm/"]),
+    );
+  });
+
+  it("runs no repository script and no cache action after checking out the release commit", () => {
+    // CodeQL's "Cache poisoning via execution of untrusted code": a job that checks out a ref chosen at
+    // run time and then runs a local script is flagged. The pin is installed first; the release commit
+    // goes into release/ last and is only built with npm.
+    const verify = workflow.slice(workflow.indexOf("\n  verify:\n"), workflow.indexOf("\n  publish:\n"));
+    const marker = verify.indexOf("path: release");
+    expect(marker, "the verify job checks the release commit out into release/").toBeGreaterThan(-1);
+    const after = verify.slice(marker);
+    expect(after).not.toMatch(/(?:^|[\s"'(])\.\/scripts\//m);
+    expect(after).not.toMatch(/actions\/(?:cache|setup-[a-z]+)@/);
+    expect(after).not.toMatch(/\bcache:/);
   });
 });
