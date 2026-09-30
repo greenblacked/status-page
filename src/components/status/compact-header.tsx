@@ -1,7 +1,16 @@
 import { type ReactNode, type RefObject, useEffect, useState, useSyncExternalStore } from "react";
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveSignal } from "@/components/status/live-signal";
-import { barShownAt, dockProgress, keyboardFocus } from "@/lib/status/layout";
+import {
+  DOCK_REST,
+  type DockGeometry,
+  type DockState,
+  type DockStore,
+  dockFrame,
+  dockGeometry,
+  PHONE_RANGE,
+} from "@/lib/status/dock";
+import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
 
@@ -16,60 +25,12 @@ function pageLeft(element: HTMLElement): number {
   return x;
 }
 
-/** What the search dock has reached, for the few parts of the page that change with it. */
-export type DockState = {
-  /** The floating bar is up (phase one on a phone, most of the move on a wide screen). */
-  barShown: boolean;
-  /** The field is fully in the bar. Part way, it keeps whatever it was. */
-  docked: boolean;
-};
-
-/**
- * Where the dock keeps those two discrete states. A store outside React, read
- * with useDockState, so that the board (which holds every card) does not
- * render when the bar comes up: only the bar, the hero's two buttons and the
- * field's placeholder do.
- */
-export type DockStore = {
-  get: () => DockState;
-  subscribe: (listener: () => void) => () => void;
-  set: (next: DockState) => void;
-};
-
-const DOCK_REST: DockState = { barShown: false, docked: false };
-
-export function createDockStore(): DockStore {
-  let state = DOCK_REST;
-  const listeners = new Set<() => void>();
-  return {
-    get: () => state,
-    subscribe: (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    set: (next) => {
-      if (next.barShown === state.barShown && next.docked === state.docked) return;
-      state = next;
-      for (const listener of [...listeners]) listener();
-    },
-  };
-}
-
 export function useDockState(store: DockStore): DockState {
   return useSyncExternalStore(store.subscribe, store.get, () => DOCK_REST);
 }
 
 /** The width from which the search field shares a row with the filter chips (Tailwind's lg). */
 const WIDE = "(min-width: 64rem)";
-/** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up, and the scrolling the merge takes. */
-const PHONE_GAP = 20;
-const PHONE_RANGE = 56;
-/** On a wide screen: the scrolling the one move takes, and where in it (0 to 1) the bar comes up. */
-const WIDE_RANGE = 48;
-const WIDE_BAR_AT = 0.67;
-
 /**
  * Scroll progress of the search dock (0 in the hero, 1 in the bar). The dock is a
  * position: sticky element, so the browser moves it with the page and pins it in
@@ -120,12 +81,8 @@ export function useSearchDock({
     let lastP = -1;
     let docking = false;
     let merging = false;
-    let docked = false;
-    let barShown = false;
-    let barStart = 0;
-    let start = 0;
-    let range = PHONE_RANGE;
-    let hysteresis = 8;
+    let state: DockState = DOCK_REST;
+    let geometry: DockGeometry = { start: 0, range: PHONE_RANGE, barStart: 0, hysteresis: 8 };
     const measure = () => {
       const hostStyle = getComputedStyle(host);
       const contentTop =
@@ -136,19 +93,14 @@ export function useSearchDock({
       const dockStyle = getComputedStyle(dock);
       const pin = Number.parseFloat(dockStyle.top) || 10;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
-      if (wide.matches) {
-        range = WIDE_RANGE;
-        start = end - range;
-        // Snapping, the field is in the bar only at the end: the bar must not show over it before.
-        barStart = reduce.matches ? end : start + WIDE_BAR_AT * range;
-        hysteresis = reduce.matches ? 0 : 8;
-      } else {
-        range = PHONE_RANGE;
-        start = end - range;
-        const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
-        barStart = end - (bar.offsetHeight + PHONE_GAP - (pin - barTop));
-        hysteresis = 8;
-      }
+      geometry = dockGeometry({
+        wide: wide.matches,
+        reduce: reduce.matches,
+        end,
+        pin,
+        barTop: Number.parseFloat(getComputedStyle(bar).top) || 8,
+        barHeight: bar.offsetHeight,
+      });
       const slot = slotRef.current;
       if (!slot) return;
       dock.style.setProperty("--dock-x", `${pageLeft(slot) - pageLeft(dock)}px`);
@@ -176,19 +128,13 @@ export function useSearchDock({
     };
     const frame = () => {
       raf = 0;
-      const y = window.scrollY;
-      let p = dockProgress(y, start, range);
-      if (reduce.matches) p = p >= 1 ? 1 : 0;
-      p = Math.round(p * 500) / 500;
-      if (p !== lastP) {
-        lastP = p;
-        write(p);
+      const next = dockFrame(window.scrollY, geometry, reduce.matches, state);
+      if (next.p !== lastP) {
+        lastP = next.p;
+        write(next.p);
       }
-      barShown = barShownAt(y, barStart, barShown, hysteresis);
-      // Part way, the field is still where it was: the placeholder only changes at the two ends.
-      if (p === 1) docked = true;
-      else if (p === 0) docked = false;
-      store.set({ barShown, docked });
+      state = { barShown: next.barShown, docked: next.docked };
+      store.set(state);
     };
     const schedule = () => {
       if (alive && !raf) raf = requestAnimationFrame(frame);

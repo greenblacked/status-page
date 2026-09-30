@@ -10,13 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import {
-  CompactHeader,
-  createDockStore,
-  type DockStore,
-  useDockState,
-  useSearchDock,
-} from "@/components/status/compact-header";
+import { CompactHeader, useDockState, useSearchDock } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
 import { LensField } from "@/components/status/lens-field";
@@ -37,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
 import { APP_NAME, CATEGORIES } from "@/lib/status/catalog";
+import { createDockStore, type DockStore } from "@/lib/status/dock";
 import {
   type BoardFilters,
   DEFAULT_FILTERS,
