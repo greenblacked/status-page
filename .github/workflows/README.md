@@ -14,7 +14,7 @@
 | [`pr-title.yml`](pr-title.yml) | PRs into `main`, `stage` or `dev`, including title edits | The PR title is a Conventional Commit. A squash merge into `dev` makes it the commit that `release.yml` reads once it reaches `main` |
 | [`base-images.yml`](base-images.yml) | PRs that change `compose.yaml`, its script or the dependencies; weekly; manual | Runs `compose.yaml` against the real `ci-node22`, `ci-node24` and `ci-security` images, so a base-image change that breaks this repository shows up here first |
 
-Jobs that need Node use the shared [`../actions/setup`](../actions/setup/action.yml) action: Node from `.nvmrc` (or a given version), npm pinned to `packageManager`, `npm ci` and `npm audit signatures`. `deploy.yml` and `release.yml` install explicitly instead, so the workflows that publish can be read on their own, and the release gate never restores a shared cache.
+Jobs that need Node use the shared [`../actions/setup`](../actions/setup/action.yml) action: Node from `.nvmrc` (or a given version), npm pinned to `packageManager` (installed from the hash-locked `tools/npm` by `scripts/ci/npm-pin.sh`), `npm ci` and `npm audit signatures`. `deploy.yml` and `release.yml` install explicitly instead, so the workflows that publish can be read on their own, and the release gate never restores a shared cache.
 
 Every check in `ci.yml` has a local equivalent:
 

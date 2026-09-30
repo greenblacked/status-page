@@ -10,10 +10,13 @@ cd /workspace
 mode="${1:-verify}"
 
 # The images ship whatever npm their Node release bundles. Pin the version
-# package.json declares, the same way CI's setup action does.
+# package.json declares, the same way CI's setup action does: from the
+# hash-locked tools/npm lockfile (scripts/ci/npm-pin.sh), not by name.
 want_npm="$(node -p "require('./package.json').packageManager.split('@')[1]")"
 if [ "$(npm --version)" != "$want_npm" ]; then
-  npm install --global --no-audit --no-fund --loglevel=error "npm@${want_npm}"
+  ./scripts/ci/npm-pin.sh install
+  export PATH="$PWD/tools/npm/node_modules/.bin:$PATH"
+  ./scripts/ci/npm-pin.sh verify
 fi
 echo "node $(node --version), npm $(npm --version)"
 
