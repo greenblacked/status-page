@@ -179,18 +179,42 @@ jobs:
           # The code being released: before any bump commit, which changes
           # only the version and the changelog.
           ref: ${{ needs.plan.outputs.sha }}
+      # The npm pin (script, lockfile and packageManager) from the commit that
+      # started this run. A backfill verifies an older commit, which may
+      # predate scripts/ci/npm-pin.sh and tools/npm, so the pin cannot be
+      # taken from that checkout. Only these files, and after the checkout
+      # above, which would otherwise clean this directory away.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: pin
+          sparse-checkout: |
+            /package.json
+            /scripts/ci/npm-pin.sh
+            /tools/npm/
+          sparse-checkout-cone-mode: false
       # No package cache: a cache entry saved by any other run could reach
       # the code that gets tagged. A release is rare; a cold install is fine.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
+      # The pinned npm should be the one the release commit itself names.
+      - name: Check the npm pin matches the release
+        run: |
+          release="$(node -p "require('./package.json').packageManager")"
+          pinned="$(node -p "require('./pin/package.json').packageManager")"
+          if [ "$release" != "$pinned" ]; then
+            echo "::error::the commit being released names $release, but the npm pin in this run's commit is $pinned; backfill from a ref whose packageManager matches"
+            exit 1
+          fi
       # npm at the packageManager version, from a lockfile that records its
       # hash (tools/npm), not installed by name. No install scripts.
       - name: Pin npm
-        run: ./scripts/ci/npm-pin.sh install
+        run: ./pin/scripts/ci/npm-pin.sh install
       - name: Check npm
-        run: ./scripts/ci/npm-pin.sh verify
+        run: ./pin/scripts/ci/npm-pin.sh verify
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
