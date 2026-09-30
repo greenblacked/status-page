@@ -46,6 +46,10 @@ jobs:
       - name: Repository hygiene
         run: ./scripts/ci/hygiene.sh
 
+      # The design tokens are the only source of type, radius, material and colour.
+      - name: Design tokens
+        run: ./scripts/ci/tokens.sh
+
       - name: Documentation links
         run: ./scripts/ci/links.sh
 
