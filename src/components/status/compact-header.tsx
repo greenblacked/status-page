@@ -286,7 +286,9 @@ export function CompactHeader({
           ·
         </span>
         <HealthDot health={headline.tone} />
-        <span className="truncate">{headline.title}</span>
+        <span className="truncate" title={headline.title}>
+          {headline.title}
+        </span>
       </p>
       <div className="flex min-w-0 flex-1 justify-center" aria-hidden>
         <div ref={slotRef} className="h-11 w-full max-w-[26rem]" />
