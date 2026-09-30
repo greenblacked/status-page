@@ -27,8 +27,12 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
       summary: "Increased error rates in us-east-1",
       // Only the services the current events name, merged per service.
       components: [
-        { name: "Amazon Elastic Compute Cloud", health: "outage", detail: "Increased error rates in us-east-1" },
-        { name: "AWS Lambda", health: "degraded", detail: "Increased invoke latencies" },
+        {
+          name: "Amazon Elastic Compute Cloud",
+          health: "outage",
+          detail: "N. Virginia, Ireland · Increased error rates",
+        },
+        { name: "AWS Lambda", health: "degraded", detail: "N. Virginia · Increased invoke latencies" },
       ],
       incidents: [
         {
@@ -42,12 +46,12 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
     gcp: {
       health: "degraded",
       summary: "Elevated error rates for Cloud Run in europe-west1",
-      // Products from products.json: the ones an open incident names lead.
+      // Products from products.json: the ones an open incident names lead,
+      // the worst first.
       components: [
         { name: "Cloud Run", health: "degraded", detail: "europe-west1" },
         { name: "Cloud Build", health: "degraded" },
         { name: "Google Compute Engine", health: "operational" },
-        { name: "Google Cloud Storage", health: "operational", detail: "Billing export schema change on Sep 30" },
         { name: "BigQuery", health: "operational" },
       ],
       incidents: [
