@@ -1,4 +1,4 @@
-import type { BoardSnapshot, Health } from "./types";
+import type { Health } from "./types";
 
 export const HISTORY_SCHEMA = 1;
 export const HISTORY_TIMEZONE = "UTC";
@@ -54,6 +54,7 @@ export function emptyHistory(updatedAt: string): HistoryDocument {
   };
 }
 
+/** The worse of two healths by history severity, for a day's worst health. */
 export function worseHistoryHealth(a: Health, b: Health): Health {
   return HISTORY_RANK[a] >= HISTORY_RANK[b] ? a : b;
 }
@@ -144,88 +145,8 @@ export function parseHistory(value: unknown): HistoryDocument | null {
 }
 
 /**
- * Drops days older than the retention window and caps length at
- * HISTORY_RETENTION_DAYS so the public payload cannot grow without bound.
- */
-function trimDays(days: HistoryDay[], oldest: string): HistoryDay[] {
-  const kept = days
-    .filter((day) => day.date >= oldest)
-    .map(publicDay)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  if (kept.length <= HISTORY_RETENTION_DAYS) return kept;
-  return kept.slice(kept.length - HISTORY_RETENTION_DAYS);
-}
-
-function mergeDay(existing: HistoryDay | undefined, date: string, health: Health): HistoryDay {
-  if (!existing) {
-    return publicDay({
-      date,
-      worst: health,
-      samples: 1,
-      up: health === "operational" ? 1 : 0,
-    });
-  }
-  const samples = existing.samples + 1;
-  const operationalSamples = existing.up * existing.samples + (health === "operational" ? 1 : 0);
-  return publicDay({
-    date,
-    worst: worseHistoryHealth(existing.worst, health),
-    samples,
-    up: operationalSamples / samples,
-  });
-}
-
-/**
- * Merges one board sample per service into the UTC day of `generatedAt`.
- * Reads only `id` and `health` from each service: never failure.message,
- * vendor bodies, probe payloads, tokens or other collector fields.
- * Safe to call twice for the same snapshot: each call bumps `samples` and
- * recomputes `worst` / `up`. Corrupt or missing history starts fresh. An
- * unparseable `generatedAt` leaves history unchanged (or empty).
- */
-export function mergeBoardIntoHistory(
-  existing: HistoryDocument | null,
-  board: Pick<BoardSnapshot, "generatedAt" | "services">,
-  updatedAt: string = board.generatedAt,
-): HistoryDocument {
-  const day = utcDateString(board.generatedAt);
-  if (!day) {
-    return existing ?? emptyHistory(updatedAt);
-  }
-
-  const base = existing ?? emptyHistory(updatedAt);
-  const oldest = oldestRetainedDate(day, HISTORY_RETENTION_DAYS);
-  const services: Record<string, HistoryService> = {};
-
-  for (const [id, entry] of Object.entries(base.services)) {
-    const days = trimDays(entry.days, oldest);
-    if (days.length > 0) services[id] = { days };
-  }
-
-  for (const service of board.services) {
-    // Explicit pick: id + health only. Do not spread the ServiceSnapshot.
-    const id = service.id;
-    const health = service.health;
-    const prior = services[id]?.days ?? [];
-    const withoutToday = prior.filter((item) => item.date !== day);
-    const today = prior.find((item) => item.date === day);
-    const days = trimDays([...withoutToday, mergeDay(today, day, health)], oldest);
-    services[id] = { days };
-  }
-
-  return {
-    schema: HISTORY_SCHEMA,
-    updatedAt,
-    timezone: HISTORY_TIMEZONE,
-    retentionDays: HISTORY_RETENTION_DAYS,
-    services,
-  };
-}
-
-/**
- * Serializer for /api/history.json: only document
- * metadata and the four public day fields. Extra keys on in-memory days
- * are stripped even if a future merge kept them.
+ * Serializer for /api/history.json: only document metadata and the four
+ * public day fields. Extra keys on a day are stripped, whatever produced it.
  */
 export function publicHistory(document: HistoryDocument): PublicHistory {
   const services: Record<string, HistoryService> = {};

@@ -39,9 +39,10 @@ export function BoardHistoryQueryProvider({ children, enabled }: { children: Rea
 }
 
 /**
- * The board's history provider. Neither build collects any history today
- * (`/api/history.json` is an empty compatibility document), so unless the
- * build sets `VITE_STATUS_HISTORY=1` this returns `children` untouched: no
+ * The board's history provider. Only the Cloudflare Workers build collects
+ * history (`/api/history.json` is an empty document on Node and Docker), so
+ * unless the build sets `VITE_STATUS_HISTORY=1` this returns `children`
+ * untouched: no
  * request, no context value, and the bundler drops the query code along with
  * the strip. The env check is an inline literal so Vite can replace it at
  * build time.
