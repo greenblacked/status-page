@@ -8,11 +8,17 @@ Vendor payloads for the collector tests in `../collectors.test.ts`. Each file st
 | `grok/feed.xml` | `https://status.x.ai/feed.xml` | `collectGrok` | Hand-built |
 | `mikrotik/NEWESTa*.*` | `https://upgrade.mikrotik.com/routeros/<file>`, one per channel | `collectMikrotik` | Hand-built |
 | `mikrotik/<version>/CHANGELOG` | `https://download.mikrotik.com/routeros/<version>/CHANGELOG` | `collectMikrotik` | Hand-built |
+| `aws/currentevents-multiple.json` | `https://health.aws.amazon.com/public/currentevents`, with a "Multiple services" event carrying `impacted_services` | `collectAws` | Hand-built |
+| `gcp/incidents.json`, `gcp/products.json` | `https://status.cloud.google.com/incidents.json`, `.../products.json` | `collectGcp` | Hand-built |
+| `play/incidents.json`, `play/products.json` | `https://status.play.google.com/incidents.json`, `.../products.json` | `collectAndroid` | Hand-built |
+| `steam/cm-list.json` | `https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0` | `collectSteam` | Hand-built |
+| `grok/components.json` | `https://status.x.ai/v2/components.json` (Instatus) | `collectGrok` | Hand-built |
+| `grok/feed-prefixed.xml` | `https://status.x.ai/feed.xml`, with titles that lead with `[Service]` | `collectGrok` | Hand-built in the layout of third-party recordings of the live feed (`INC…` guids, `<h3>Status: RESOLVED</h3>` descriptions) |
 | `apple-os/releases.rss` | `https://developer.apple.com/news/releases/rss/releases.rss` | `collectAppleOs` | Recorded 2026-09-27, trimmed to 9 of 37 items |
 
 ## Hand-built and recorded
 
-The hand-built files were written from the parsing code, because those vendors were not reachable from where the tests were written. They keep every field and element the collectors read, in the vendor's layout and value types (AWS sends `date` and `status` as strings, for instance), and drop the rest. Replace them with trimmed recordings when you can (below); the tests should only need new expected values.
+The hand-built files were written from the parsing code, because those vendors were not reachable from where the tests were written. Nothing under `gcp/`, `play/`, `steam/` or `grok/components.json` was recorded from the vendor. The Google `incidents.json` fields (`affected_products`, `status_impact`, `currently_affected_locations`) and the `products` list shape were cross-checked against third-party parsers of those endpoints. The Steam `GetCMListForConnect` shape (`response.serverlist` of `{ endpoint, legacy_endpoint, type, dc, realm, load, wtd_load }` objects, `success`) and the `[Service] summary` titles of the xAI feed come from third-party recordings; the Instatus `components.json` layout is the documented one and was not recorded at all. `status.play.google.com/products.json` and `status.x.ai/v2/components.json` may not exist, which the collectors treat as "no list". Refresh all of these from a recording when you can. Component rows built from Instatus (if that endpoint is ever reachable) can be worse than the card's badge, which follows the feed alone.
 
 Each file holds a few items chosen to exercise one rule per item: an active event next to a resolved one and a stale one, a newer release listed above an older one of the same family, a non-OS release that must be skipped, and so on. The comments in `../collectors.test.ts` name which item covers what.
 

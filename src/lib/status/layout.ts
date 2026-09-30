@@ -13,6 +13,11 @@ const URGENCY: Record<Health, number> = {
   operational: 4,
 };
 
+/** How urgent a state is on the board: 0 (outage) is most urgent, then degraded, maintenance, unknown, operational. */
+export function urgencyOf(health: Health): number {
+  return URGENCY[health];
+}
+
 /** When a service's most recently started incident began, as epoch ms; -Infinity if none has a readable start. */
 function latestIncidentStart(service: ServiceSnapshot): number {
   let latest = Number.NEGATIVE_INFINITY;
