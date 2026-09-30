@@ -555,6 +555,28 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     ]);
   });
 
+  it("Statuspage: an unreadable component ranks after the confirmed problems, as on the board", async () => {
+    const summary = statuspageSummary({
+      indicator: "minor",
+      components: [
+        { id: "1", name: "Chat", status: "operational" },
+        { id: "2", name: "Mystery", status: "something_new" },
+        { id: "3", name: "Login", status: "degraded_performance" },
+        { id: "4", name: "Files", status: "under_maintenance" },
+        { id: "5", name: "Voice", status: "major_outage" },
+      ],
+    });
+    stubFetch({ [URLS.claude]: json(summary) });
+    const claude = (await collectAllServices()).find((s) => s.id === "claude")!;
+    expect(claude.components.map((c) => [c.name, c.health])).toEqual([
+      ["Voice", "outage"],
+      ["Login", "degraded"],
+      ["Files", "maintenance"],
+      ["Mystery", "unknown"],
+      ["Chat", "operational"],
+    ]);
+  });
+
   it("Statuspage: a huge page is capped at 24 components, and a broken one past the cap still leads", async () => {
     const components = Array.from({ length: 60 }, (_, i) => ({
       id: String(i),
@@ -766,13 +788,13 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       // so it is not one either. The regional N. Virginia event caps EC2's
       // disruption at Degraded, as it does for the card; the global sign-in
       // outage is an outage. EC2 merges the Virginia and Ireland events, with
-      // the newest summary.
+      // the newest one's summary and region.
       expect(aws.components).toEqual([
         { name: "AWS Identity and Access Management", health: "outage", detail: "Global sign-in outage" },
         {
           name: "Amazon Elastic Compute Cloud",
           health: "degraded",
-          detail: "N. Virginia, Ireland · Elevated Launch Failures",
+          detail: "Ireland · Elevated Launch Failures",
         },
         {
           name: "Amazon Relational Database Service",
@@ -1133,6 +1155,21 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         }
       });
 
+      it("times only the Web API and Store requests, not the slow connection-manager request", async () => {
+        stubFetch({
+          ...steamOk,
+          [URLS.steamCm]: async () => {
+            // Real timers, fake clock: the directory answers "late" by moving the clock.
+            await new Promise((resolve) => setTimeout(resolve, 30));
+            vi.setSystemTime(Date.now() + 3500);
+            return text(fixture("steam/cm-list.json"))();
+          },
+        });
+        const steam = await collect("steam");
+        expect(steam.components.at(-1)?.name).toBe("Steam Connection Managers");
+        expect(steam.latencyMs).toBe(0);
+      });
+
       it("does not rescue a card whose two main endpoints both failed", async () => {
         stubFetch({ [URLS.steamCm]: text(fixture("steam/cm-list.json")) });
         const steam = await collect("steam");
@@ -1212,6 +1249,39 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         expect(grok.components[0]).toEqual({ name: "Part 29", health: "outage" });
       });
 
+      it("ignores a component list whose statuses are all unreadable and uses the feed's [Service] titles", async () => {
+        stubFetch({
+          [URLS.grok]: text(fixture("grok/feed-prefixed.xml")),
+          [URLS.grokComponents]: json({
+            components: [
+              { name: "API", status: "SOMETHING" },
+              { name: "Chat", status: "" },
+            ],
+          }),
+        });
+        const grok = await collect("grok");
+        expect(grok.components.map((c) => c.name)).toEqual(["API", "Grok (Web)"]);
+      });
+
+      it("takes the card's health from every active item, not only the 8 listed as incidents", async () => {
+        const item = (n: number, severity: string) =>
+          `<item><title>[Service ${n}] Trouble</title><link>https://status.x.ai/svc/INC${n}</link>` +
+          `<pubDate>Sun, 20 Sep 2026 09:${String(n).padStart(2, "0")}:00 GMT</pubDate>` +
+          `<description><![CDATA[<h3>Status: ONGOING</h3><p>Severity: ${severity}</p>]]></description></item>`;
+        const items = Array.from({ length: 9 }, (_, i) => item(i, i === 8 ? "outage" : "degraded")).join("");
+        stubFetch({
+          [URLS.grok]: text(
+            `<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>${items}</channel></rss>`,
+          ),
+        });
+        const grok = await collect("grok");
+        expect(grok.incidents).toHaveLength(8);
+        expect(grok.health).toBe("outage");
+        // The worst row is listed first, and the card is no better than it.
+        expect(grok.components[0]).toMatchObject({ name: "Service 8", health: "outage" });
+        expect(grok.components).toHaveLength(9);
+      });
+
       it("fetches the component list alongside the feed, not after it", async () => {
         let componentsAsked!: () => void;
         const asked = new Promise<void>((resolve) => {
@@ -1267,7 +1337,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           {
             name: "Amazon Elastic Compute Cloud",
             health: "outage",
-            detail: "N. Virginia · Newest: multi-region outage",
+            detail: "Newest: multi-region outage",
           },
           { name: "AWS Lambda", health: "degraded", detail: "N. Virginia · Invoke latency" },
         ]);

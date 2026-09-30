@@ -30,7 +30,7 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         {
           name: "Amazon Elastic Compute Cloud",
           health: "outage",
-          detail: "N. Virginia, Ireland · Increased error rates",
+          detail: "N. Virginia · Increased error rates",
         },
         { name: "AWS Lambda", health: "degraded", detail: "N. Virginia · Increased invoke latencies" },
       ],

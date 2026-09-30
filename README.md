@@ -98,7 +98,7 @@ The two Updates services track releases, not incidents. They stay Operational an
 | Service | How it is read |
 | --- | --- |
 | Google Cloud | `incidents.json`; only incidents without an end time count. The components are the products in `products.json`: a product takes the state of the worst open incident that lists it, mapped exactly as the card maps it (an information-only notice reads as Degraded, as it does for the card). Without a readable `products.json`, the components are the services the open incidents name |
-| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days. Single-region or single-zone events are Degraded, not Outage. The components are only the AWS services those events name (a "Multiple services" event contributes one row per impacted service), one each, with the worst state, the regions and the newest summary; a quiet dashboard lists none |
+| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days. Single-region or single-zone events are Degraded, not Outage. The components are only the AWS services those events name (a "Multiple services" event contributes one row per impacted service), one each, with the worst state and the newest event's summary and region; a quiet dashboard lists none |
 | Steam | `GetServerInfo` plus the Store featured API. Both answering with the expected data is Operational, only one is Degraded and its component says why. If neither can be read, the card is Unknown. A **Steam Connection Managers** component appears, Operational, when Valve's connection-manager directory (`GetCMListForConnect`) returns a non-empty `serverlist` of server objects; when it cannot be read there is simply no such row, and it never changes the card's health |
 | CS2 Europe | European relay points of presence. Outage when the relay config reports failure or lists no European points. Degraded when fewer than 3, or fewer than 40%, of them publish relays. An Operational card shows the player count when it is available; the count never affects health |
 | Epic Games | Statuspage summary, worst component, excluding Fortnite components |
@@ -106,7 +106,7 @@ The two Updates services track releases, not incidents. They stay Operational an
 | Spotify, ChatGPT, Claude | Statuspage summary indicator |
 | Apple | `system_status_en_US.js`, services with an active event |
 | Android / Google Play | Play `incidents.json`; only incidents without an end time count. The components come from the dashboard's `products.json` the same way as Google Cloud's, when it is published |
-| Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days. Components: the status page's `v2/components.json` is attempted but is normally blocked by Cloudflare, so the card falls back to the services that active items' titles lead with (`[API] Elevated error rates`, `[Grok (iOS)] Models outage`); they add detail and never change the card's health, so a component row from the vendor's list can read worse than the card's badge, which follows the feed |
+| Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days. Components: the status page's `v2/components.json` is attempted, but it may not exist or may be blocked (its JSON sits behind Cloudflare's challenge), and a list whose statuses are all unreadable is ignored, so the card falls back to the services that active items' titles lead with (`[API] Elevated error rates`, `[Grok (iOS)] Models outage`); they add detail and never change the card's health, so a component row from the vendor's list can read worse than the card's badge, which follows the feed |
 | MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus the newest version's `CHANGELOG` |
 | Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS |
 
@@ -363,7 +363,7 @@ Valve's game-server status API needs an API key, and Status Page uses none. The 
 
 <br>
 
-The status page's JSON API sits behind a Cloudflare challenge, so the official RSS feed is the readable source. It carries the whole incident history, which is why only items from the last 14 days count. The board also tries the page's component list (`v2/components.json`) with a short timeout; when the challenge blocks it, the card lists only the services the feed's `[Service] …` titles name, and never an invented row.
+The status page's JSON API sits behind a Cloudflare challenge, so the official RSS feed is the readable source. It carries the whole incident history, which is why only items from the last 14 days count. The board also tries the page's component list (`v2/components.json`) with a short timeout; when it does not exist or the challenge blocks it, the card lists only the services the feed's `[Service] …` titles name, and never an invented row.
 
 </details>
 

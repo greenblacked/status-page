@@ -546,7 +546,7 @@ describe("awsComponents", () => {
     assert.deepEqual(awsComponents([event({ service_name: undefined }), event({ service_name: "  " })] as never), []);
   });
 
-  it("merges by service: worst health, newest summary, every region named", () => {
+  it("merges by service: worst health, and the newest event's summary with that event's region", () => {
     const rows = awsComponents([
       event({ region_name: "Ireland", summary: "Newer", event_log: [{ timestamp: 200 }] }),
       event({ region_name: "", summary: "Older outage", event_log: [{ timestamp: 100, message: "outage" }] }),
@@ -554,7 +554,7 @@ describe("awsComponents", () => {
       event({ service_name: "Amazon S3", summary: "Errors", region_name: "Ohio" }),
     ] as never);
     assert.deepEqual(rows, [
-      { name: "AWS Lambda", health: "outage", detail: "Ireland, N. Virginia · Newer" },
+      { name: "AWS Lambda", health: "outage", detail: "Ireland · Newer" },
       { name: "Amazon S3", health: "degraded", detail: "Ohio · Errors" },
     ]);
   });
@@ -580,6 +580,47 @@ describe("awsComponents", () => {
       { name: "AWS Lambda", health: "degraded", detail: "Global service outage" },
       { name: "Amazon SQS", health: "degraded", detail: "Global service outage" },
     ]);
+  });
+
+  it("names the region of the newest event only, whether that event is regional or global", () => {
+    const older = { service_name: "Amazon S3", summary: "Older", event_log: [{ timestamp: 100 }] };
+    const newer = { service_name: "Amazon S3", summary: "Newer", event_log: [{ timestamp: 200 }] };
+    assert.deepEqual(
+      awsComponents([
+        { ...older, region_name: "Ohio" },
+        { ...newer, region_name: "" },
+      ] as never),
+      [{ name: "Amazon S3", health: "degraded", detail: "Newer" }],
+    );
+    assert.deepEqual(
+      awsComponents([
+        { ...newer, region_name: "Ohio" },
+        { ...older, region_name: "" },
+      ] as never),
+      [{ name: "Amazon S3", health: "degraded", detail: "Ohio · Newer" }],
+    );
+  });
+
+  it("does not read a blank or missing `current` as recovered", () => {
+    const rows = awsComponents([
+      {
+        service_name: "Multiple services",
+        summary: "Elevated errors",
+        region_name: "Ohio",
+        impacted_services: {
+          a: { service_name: "Amazon S3", current: "" },
+          b: { service_name: "AWS Lambda", current: "  " },
+          c: { service_name: "Amazon SQS" },
+          d: { service_name: "Amazon SNS", current: "0" },
+          e: { service_name: "Amazon SES", current: 0 },
+        },
+      },
+    ] as never);
+    assert.deepEqual(
+      rows.map((row) => row.name),
+      ["Amazon S3", "AWS Lambda", "Amazon SQS"],
+    );
+    assert.ok(rows.every((row) => row.health === "degraded"));
   });
 
   it("keeps a regional disruption at Degraded, as the card does, and falls back when impacted_services is empty", () => {
