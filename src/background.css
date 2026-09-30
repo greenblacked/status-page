@@ -4,8 +4,9 @@
     Quiet  flat paper. The default, and the only thing the base file
            (styles.css) knows about. Nothing here applies.
     Glass  frosted panels over a still glow.
-    Full   adds the slow drift, the glass lenses that bend the aurora's colour, the
-           light that wanders across the cards and the period dial's sweep.
+    Full   adds the slow drift, the glass lenses that bend the aurora's
+           colour, the light that wanders across the cards and the period
+           dial's sweep.
 
   The choice is `data-background` on <html> (glass or full; Quiet is no
   attribute), set before paint by APPEARANCE_BOOT_SCRIPT and kept in step by
@@ -85,8 +86,13 @@
   --inset-fill: light-dark(rgb(15 20 35 / 0.05), rgb(0 0 0 / 0.26));
   --inset-rim: light-dark(rgb(15 20 35 / 0.06), rgb(255 255 255 / 0.06));
 
-  --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.1));
-  /* Tilt lighting's glint: stronger than the pointer's, since white on the light panels is otherwise unseen. */
+  /*
+    The card light is on every Full card at once, so in dark it is held to a
+    whisper: at 0.1 it cut --color-subtle to 3.59:1 at its centre. 0.02 keeps
+    4.5:1 (the lenses spec measures it with the light forced on).
+  */
+  --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.02));
+  /* Tilt lighting's glint: stronger than the card light's, since white on the light panels is otherwise unseen. */
   --tilt-glint: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.08));
   --tilt-shade: light-dark(rgb(16 24 40 / 0.05), transparent);
 
@@ -115,7 +121,10 @@
     is the tight side, so its alphas stay low.
   */
   --lens-caustic: light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.02));
-  /* The aurora's currents as the lens draws them: Full's colours, at half the alpha in dark, where the copy lands on the original. */
+  /*
+    The aurora's currents as the lens draws them: Full's colours, at about
+    half the alpha in dark, where the copy lands on the original.
+  */
   --lens-tint-1: light-dark(oklch(0.96 0.05 165 / 0.55), oklch(0.55 0.14 175 / 0.06));
   --lens-tint-2: light-dark(oklch(0.95 0.05 255 / 0.55), oklch(0.5 0.16 265 / 0.06));
   --lens-tint-3: light-dark(oklch(0.955 0.04 300 / 0.45), oklch(0.42 0.15 305 / 0.05));
@@ -211,11 +220,11 @@
   }
 
   /*
-    Four glass lenses that bend the aurora's colour like drops of water. Painted only: no
-    backdrop-filter, nothing above the content. Each lens draws its own copy
-    of the aurora's colour and a soft caustic (.lens-fx) through the
-    lens-refract SVG filter, over the aurora it copies. The geometry
-    is static; the only motion is the rim light turning (transform only),
+    Four glass lenses that bend the aurora's colour like drops of water.
+    Painted only: no backdrop-filter, nothing above the content. Each lens
+    draws its own copy of the aurora's colour and a soft caustic (.lens-fx)
+    through the lens-refract SVG filter, over the aurora it copies. The
+    geometry is static; the only motion is the rim light turning (transform only),
     and only where a pointer can hover. Same z-index as the aurora, so the
     later DOM order puts it on top.
   */
@@ -319,9 +328,16 @@
 
   /*
     The bent colour: the aurora's four currents drawn again, aligned to it
-    (a viewport-sized field, as .aurora::before paints it, at rest) plus a
-    soft caustic highlight and a faint dark pool opposite it, pushed through
-    the refraction filter. Oversized so the filter never shows an edge.
+    (a 160% field starting 30% up and left of the viewport, as .aurora::before
+    paints it, at rest) plus a soft caustic highlight and a faint dark pool
+    opposite it, pushed through the refraction filter. Oversized so the
+    filter never shows an edge.
+
+    The alignment: a lens's centre is at (x, y) in the viewport, its box
+    starts half a diameter before that, and .lens-fx starts another 15% of a
+    diameter before its box. So the field's origin, -30cqw - x, is
+    d * 0.65 further along in .lens-fx's own coordinates. The caustic is the
+    lens's own and stays at 0 0.
   */
   .lens-fx {
     position: absolute;
@@ -343,10 +359,10 @@
     background-repeat: no-repeat;
     background-position:
       0 0,
-      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh),
-      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh),
-      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh),
-      calc(var(--d) * 0.15 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.15 - 30cqh - var(--y) * 1cqh);
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh);
   }
 
   @keyframes aurora-drift {
