@@ -3,9 +3,8 @@
   Source for public/og.jpg, the 1200x630 link-preview image.
   Paper, the name, one question, and the fourteen services as fourteen outline
   marks. No live status, so a preview never shows a stale outage. Colours, the
-  type and the mark come from src/styles.css and public/favicon.svg; the pen
-  underline is the page's own (scripts/icons.mjs sets its path from
-  src/components/status/pen-marks.ts).
+  type and the mark come from src/styles.css and public/favicon.svg. The pen is
+  not used here: the page keeps it for the count, an outage and "all quiet".
 
   Regenerate after changing the service list or the look:
     node scripts/icons.mjs
@@ -36,7 +35,6 @@
   body {
     font-family: var(--font);
     font-optical-sizing: auto;
-    font-variant-numeric: tabular-nums;
     color: var(--fg);
     background: var(--bg);
     padding: 88px 96px 72px;
@@ -44,22 +42,11 @@
     flex-direction: column;
   }
   h1 {
-    position: relative;
     align-self: flex-start;
     font-size: 176px;
     line-height: 176px;
     font-weight: 640;
     letter-spacing: -0.028em;
-  }
-  #pen {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: -18px;
-    width: 100%;
-    height: 30px;
-    overflow: visible;
-    color: var(--accent);
   }
   .question {
     margin-top: 48px;
@@ -80,7 +67,7 @@
       <path d="M7.7 12.5l3 2.9 5.7-6.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
   </svg>
-  <h1>Status<svg id="pen" viewBox="0 0 240 12" preserveAspectRatio="none" aria-hidden="true"><path d="" fill="currentColor"/></svg></h1>
+  <h1>Status</h1>
   <p class="question">Is it them or is it me?</p>
   <svg class="marks" viewBox="0 0 1008 56" aria-hidden="true"><use href="#ok" x="0.0" width="56" height="56"/><use href="#ok" x="73.2" width="56" height="56"/><use href="#ok" x="146.5" width="56" height="56"/><use href="#ok" x="219.7" width="56" height="56"/><use href="#ok" x="292.9" width="56" height="56"/><use href="#ok" x="366.2" width="56" height="56"/><use href="#ok" x="439.4" width="56" height="56"/><use href="#ok" x="512.6" width="56" height="56"/><use href="#ok" x="585.8" width="56" height="56"/><use href="#ok" x="659.1" width="56" height="56"/><use href="#ok" x="732.3" width="56" height="56"/><use href="#ok" x="805.5" width="56" height="56"/><use href="#ok" x="878.8" width="56" height="56"/><use href="#ok" x="952.0" width="56" height="56"/></svg>
   <p class="site">status.szolotov.com</p>

@@ -14,7 +14,7 @@
 // Playwright, so the fonts come from public/fonts and nothing is fetched. Point
 // PLAYWRIGHT_CHROMIUM_EXECUTABLE at a browser Playwright did not download, as
 // playwright.config.ts does.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 
@@ -63,14 +63,6 @@ function tile(size, fraction) {
 </svg>`;
 }
 
-/** The pen underline's path, read from the constants the page draws it from. */
-function underlinePath() {
-  const source = readFileSync(`${root}src/components/status/pen-marks.ts`, "utf8");
-  const match = /UNDERLINE_PATH =\s*"([^"]+)"/.exec(source);
-  if (!match) throw new Error("UNDERLINE_PATH not found in src/components/status/pen-marks.ts");
-  return match[1];
-}
-
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined });
 try {
   writeFileSync(pub("favicon.svg"), favicon());
@@ -92,8 +84,6 @@ try {
   // The preview image is a page of its own, so its fonts load from public/fonts by relative URL.
   const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 });
   await page.goto(pathToFileURL(`${root}docs/og-image.html`).href);
-  // The pen underline is drawn from the same constants as the page's, not from a copy of them.
-  await page.evaluate((d) => document.querySelector("#pen path")?.setAttribute("d", d), underlinePath());
   await page.evaluate(() => document.fonts.ready);
   await page.screenshot({ path: pub("og.jpg"), type: "jpeg", quality: 88 });
   await page.close();
