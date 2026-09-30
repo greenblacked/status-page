@@ -1,38 +1,120 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8" ?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
-    <title>xAI Status</title>
-    <link>https://status.x.ai/</link>
-    <description>Incident history for xAI services</description>
+    <title>SpaceXAI System Status</title>
+    <link>https://status.x.ai</link>
+    <description>Current status and incident history of SpaceXAI's services and systems</description>
+    <language>en-us</language>
+    <atom:link href="https://status.x.ai/feed.xml" rel="self" type="application/rss+xml" />
+    <lastBuildDate>Sun, 20 Sep 2026 11:45:00 GMT</lastBuildDate>
+    <ttl>30</ttl>
+
     <item>
-      <title>API: Elevated error rates</title>
-      <link>https://status.x.ai/incidents/01K5R8Q2V7M3</link>
+      <title>[API] Elevated error rates</title>
+      <link>https://status.x.ai/api/INCa1b2c3d1</link>
+      <guid isPermaLink="false">INCa1b2c3d1</guid>
+      <description><![CDATA[
+           <h3>Status: ONGOING</h3>
+           <p>Severity: degraded</p>
+           <hr />
+           <h4>Updates:</h4>
+
+             <div>
+               <p><strong>Sun, 20 Sep 2026 09:30:00 GMT</strong></p>
+               <h3>Investigating elevated error rates</h3>
+               <p>We are investigating elevated error rates on the API.</p>
+             </div>
+
+      ]]></description>
       <pubDate>Sun, 20 Sep 2026 09:30:00 GMT</pubDate>
-      <description><![CDATA[<p><strong>Severity:</strong> Degraded performance</p><p><strong>Status:</strong> Identified</p>]]></description>
+      <category>degraded</category>
+      <category>ongoing</category>
     </item>
+
     <item>
-      <title>API: Requests failing for some models</title>
-      <link>https://status.x.ai/incidents/01K5R9AAAAAA</link>
+      <title>[API] Requests failing for some models</title>
+      <link>https://status.x.ai/api/INCa1b2c3d2</link>
+      <guid isPermaLink="false">INCa1b2c3d2</guid>
+      <description><![CDATA[
+           <h3>Status: ONGOING</h3>
+           <p>Severity: outage</p>
+           <hr />
+           <h4>Updates:</h4>
+
+             <div>
+               <p><strong>Sun, 20 Sep 2026 10:30:00 GMT</strong></p>
+               <h3>Investigating outage</h3>
+               <p>Requests to some models are failing. We are working on restoring service.</p>
+             </div>
+
+      ]]></description>
       <pubDate>Sun, 20 Sep 2026 10:30:00 GMT</pubDate>
-      <description><![CDATA[<p><strong>Severity:</strong> Partial outage</p><p><strong>Status:</strong> Investigating</p>]]></description>
+      <category>outage</category>
+      <category>ongoing</category>
     </item>
+
     <item>
-      <title>grok.com: Slow page loads</title>
-      <link>https://status.x.ai/incidents/01K5R9BBBBBB</link>
+      <title>[Grok (Web)] Slow page loads</title>
+      <link>https://status.x.ai/grok-com/INCa1b2c3d3</link>
+      <guid isPermaLink="false">INCa1b2c3d3</guid>
+      <description><![CDATA[
+           <h3>Status: ONGOING</h3>
+           <p>Severity: degraded</p>
+           <hr />
+           <h4>Updates:</h4>
+
+             <div>
+               <p><strong>Sun, 20 Sep 2026 08:00:00 GMT</strong></p>
+               <h3>Monitoring</h3>
+               <p>Pages on grok.com are loading slowly for some users.</p>
+             </div>
+
+      ]]></description>
       <pubDate>Sun, 20 Sep 2026 08:00:00 GMT</pubDate>
-      <description><![CDATA[<p><strong>Severity:</strong> Degraded performance</p><p><strong>Status:</strong> Monitoring</p>]]></description>
+      <category>degraded</category>
+      <category>ongoing</category>
     </item>
+
     <item>
-      <title>Voice mode: Unavailable</title>
-      <link>https://status.x.ai/incidents/01K5N4D9T1C8</link>
-      <pubDate>Sat, 19 Sep 2026 12:00:00 GMT</pubDate>
-      <description><![CDATA[<p><strong>Severity:</strong> Partial outage</p><p><strong>Status:</strong> Resolved</p>]]></description>
+      <title>[Grok (iOS)] Models outage</title>
+      <link>https://status.x.ai/ios-app/INCc33a8af</link>
+      <guid isPermaLink="false">INCc33a8af</guid>
+      <description><![CDATA[
+           <h3>Status: RESOLVED</h3>
+           <p>Severity: available</p>
+           <p>Resolved: Sat, 19 Sep 2026 17:08:11 GMT</p>
+           <hr />
+           <h4>Updates:</h4>
+
+             <div>
+               <p><strong>Sat, 19 Sep 2026 17:08:11 GMT</strong></p>
+               <h3>Traffic is healthy again</h3>
+               <p>We have resolved the situation, and traffic is healthy again.</p>
+             </div>
+
+             <div>
+               <p><strong>Sat, 19 Sep 2026 13:30:00 GMT</strong></p>
+               <h3>Investigating outage</h3>
+               <p>Grok is experiencing issues. We are working on restoring service as quickly as possible.</p>
+             </div>
+
+      ]]></description>
+      <pubDate>Sat, 19 Sep 2026 13:30:00 GMT</pubDate>
+      <category>available</category>
+      <category>resolved</category>
     </item>
+
     <item>
       <title>Investigating elevated errors</title>
-      <link>https://status.x.ai/incidents/01K5R9CCCCCC</link>
+      <link>https://status.x.ai/INCa1b2c3d4</link>
+      <guid isPermaLink="false">INCa1b2c3d4</guid>
+      <description><![CDATA[
+           <h3>Status: ONGOING</h3>
+           <p>Severity: degraded</p>
+      ]]></description>
       <pubDate>Sun, 20 Sep 2026 07:00:00 GMT</pubDate>
-      <description><![CDATA[<p><strong>Status:</strong> Investigating</p>]]></description>
+      <category>degraded</category>
+      <category>ongoing</category>
     </item>
   </channel>
 </rss>

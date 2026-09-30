@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
+import { googleImpact } from "./health.ts";
 import { PayloadError, SourceError } from "./http.ts";
 import {
   awsComponents,
@@ -366,19 +367,21 @@ describe("googleComponents", () => {
     ]);
   });
 
-  it("keeps the worst impact and never lets a notice hide an impairment", () => {
+  it("keeps the worst impact, with the same mapping as the card", () => {
     const rows = googleComponents(products, [
-      { id: "1", status_impact: "SERVICE_INFORMATION", external_desc: "FYI", affected_products: [{ id: "run" }] },
-      { id: "2", status_impact: "SERVICE_DISRUPTION", external_desc: "Slow", affected_products: [{ id: "run" }] },
-      { id: "3", status_impact: "SERVICE_OUTAGE", external_desc: "Down", affected_products: [{ id: "run" }] },
-      {
-        id: "4",
-        status_impact: "SERVICE_INFORMATION",
-        external_desc: "Later note",
-        affected_products: [{ id: "run" }],
-      },
+      { id: "1", status_impact: "SERVICE_DISRUPTION", external_desc: "Slow", affected_products: [{ id: "run" }] },
+      { id: "2", status_impact: "SERVICE_OUTAGE", external_desc: "Down", affected_products: [{ id: "run" }] },
+      { id: "3", status_impact: "SERVICE_DISRUPTION", external_desc: "Later", affected_products: [{ id: "run" }] },
     ]);
     assert.deepEqual(rows[0], { name: "Cloud Run", health: "outage", detail: "Down" });
+  });
+
+  it("reads an information-only notice like the card does: Degraded, with its description", () => {
+    const rows = googleComponents(products, [
+      { id: "n", status_impact: "SERVICE_INFORMATION", external_desc: "FYI", affected_products: [{ id: "run" }] },
+    ]);
+    assert.deepEqual(rows[0], { name: "Cloud Run", health: googleImpact("SERVICE_INFORMATION"), detail: "FYI" });
+    assert.equal(rows[0].health, "degraded");
   });
 
   it("falls back to service_name when an incident lists no products", () => {
@@ -396,16 +399,41 @@ describe("googleComponents", () => {
 });
 
 describe("steamCmCount", () => {
-  it("counts the socket and websocket servers", () => {
-    assert.equal(steamCmCount({ response: { serverlist: ["a:1", "b:2"], serverlist_websockets: ["c:3"] } }), 3);
-    assert.equal(steamCmCount({ response: { serverlist_websockets: ["c:3"] } }), 1);
+  const server = (endpoint: string, type = "websockets") => ({
+    endpoint,
+    legacy_endpoint: endpoint,
+    type,
+    dc: "fra2",
+    realm: "steamglobal",
+    load: 5,
+    wtd_load: 3.1,
   });
 
-  it("is 0 for an empty list, a wrong shape or garbage", () => {
-    for (const value of [null, undefined, "x", {}, { response: null }, { response: { serverlist: [] } }]) {
+  it("counts the serverlist objects that have an endpoint", () => {
+    const serverlist = [server("cmp1-fra2.steamserver.net:27021"), server("155.133.248.39:27019", "netfilter")];
+    assert.equal(steamCmCount({ response: { serverlist, success: true, message: "" } }), 2);
+    assert.equal(steamCmCount({ response: { serverlist } }), 2);
+  });
+
+  it("skips rows that are not server objects", () => {
+    const serverlist = [server("cm1:27017"), "cm2:27017", null, {}, { endpoint: "" }, { endpoint: 4 }];
+    assert.equal(steamCmCount({ response: { serverlist } }), 1);
+  });
+
+  it("is 0 when success is false, or for an empty list, a wrong shape or garbage", () => {
+    assert.equal(steamCmCount({ response: { serverlist: [server("cm1:27017")], success: false } }), 0);
+    for (const value of [
+      null,
+      undefined,
+      "x",
+      {},
+      { response: null },
+      { response: { serverlist: [] } },
+      { response: { serverlist: "cm1:27017" } },
+      { response: { serverlist_websockets: ["cm1:27017"] } },
+    ]) {
       assert.equal(steamCmCount(value), 0, String(value));
     }
-    assert.equal(steamCmCount({ response: { serverlist: "a:1", serverlist_websockets: [1, null, ""] } }), 0);
   });
 });
 
@@ -429,6 +457,25 @@ describe("parseInstatusComponents", () => {
     ]);
   });
 
+  it("replaces a component with its children at any depth", () => {
+    const rows = parseInstatusComponents({
+      components: [
+        {
+          name: "Platform",
+          status: "PARTIALOUTAGE",
+          children: [
+            { name: "Web", status: "OPERATIONAL", children: [{ name: "Login", status: "MAJOROUTAGE" }] },
+            { name: "Mobile", status: "OPERATIONAL" },
+          ],
+        },
+      ],
+    });
+    assert.deepEqual(rows, [
+      { name: "Login", health: "outage" },
+      { name: "Mobile", health: "operational" },
+    ]);
+  });
+
   it("returns nothing for an empty or malformed payload", () => {
     for (const value of [null, undefined, "x", [], {}, { components: {} }, { components: [null, {}, { name: 3 }] }]) {
       assert.deepEqual(parseInstatusComponents(value), [], String(value));
@@ -437,17 +484,28 @@ describe("parseInstatusComponents", () => {
 });
 
 describe("grok feed components", () => {
-  it("reads the service a title leads with, and only that", () => {
-    assert.deepEqual(grokTitleService("API: Elevated error rates"), { name: "API", detail: "Elevated error rates" });
-    assert.deepEqual(grokTitleService("grok.com:Slow"), { name: "grok.com", detail: "Slow" });
+  it("reads the [Service] a title leads with, keeping the whole bracket text", () => {
+    assert.deepEqual(grokTitleService("[Grok (iOS)] Models outage"), { name: "Grok (iOS)", detail: "Models outage" });
+    assert.deepEqual(grokTitleService("[API (us-east-1.api.x.ai)] Models outage"), {
+      name: "API (us-east-1.api.x.ai)",
+      detail: "Models outage",
+    });
+    assert.deepEqual(grokTitleService("[API Console]Console not loading"), {
+      name: "API Console",
+      detail: "Console not loading",
+    });
+  });
+
+  it("names no service for a title without a bracket lead, and does not read colons", () => {
     for (const title of [
       "Elevated error rates on Grok",
+      "API: Elevated error rates",
       "Update: we are investigating",
-      "Resolved: API errors",
-      "A very long prefix that is clearly a sentence: details",
-      "One two three four five: details",
-      "API:",
-      ": details",
+      "[] Nothing named",
+      "[API]",
+      "[API]   ",
+      `[${"x".repeat(65)}] too long`,
+      "Trailing [API] mention",
       "",
     ]) {
       assert.equal(grokTitleService(title), null, title);
@@ -456,9 +514,21 @@ describe("grok feed components", () => {
 
   it("merges items per service: worst health, newest detail", () => {
     const rows = grokFeedComponents([
-      { title: "API: Older", description: "Severity: Degraded performance", pubDate: "Sun, 20 Sep 2026 08:00:00 GMT" },
-      { title: "API: Newer", description: "Severity: Partial outage", pubDate: "Sun, 20 Sep 2026 10:00:00 GMT" },
-      { title: "No prefix here", description: "Severity: Major outage", pubDate: "Sun, 20 Sep 2026 10:00:00 GMT" },
+      {
+        title: "[API] Older",
+        description: "<h3>Status: ONGOING</h3><p>Severity: degraded</p>",
+        pubDate: "Sun, 20 Sep 2026 08:00:00 GMT",
+      },
+      {
+        title: "[API] Newer",
+        description: "<h3>Status: ONGOING</h3><p>Severity: outage</p>",
+        pubDate: "Sun, 20 Sep 2026 10:00:00 GMT",
+      },
+      {
+        title: "No lead here",
+        description: "<h3>Status: ONGOING</h3><p>Severity: outage</p>",
+        pubDate: "Sun, 20 Sep 2026 10:00:00 GMT",
+      },
     ]);
     assert.deepEqual(rows, [{ name: "API", health: "outage", detail: "Newer" }]);
   });
@@ -476,15 +546,55 @@ describe("awsComponents", () => {
     assert.deepEqual(awsComponents([event({ service_name: undefined }), event({ service_name: "  " })] as never), []);
   });
 
-  it("merges by service: worst health, newest event's summary", () => {
+  it("merges by service: worst health, newest summary, every region named", () => {
     const rows = awsComponents([
       event({ region_name: "Ireland", summary: "Newer", event_log: [{ timestamp: 200 }] }),
       event({ region_name: "", summary: "Older outage", event_log: [{ timestamp: 100, message: "outage" }] }),
+      event({ region_name: "N. Virginia", summary: "Oldest", event_log: [{ timestamp: 50 }] }),
       event({ service_name: "Amazon S3", summary: "Errors", region_name: "Ohio" }),
     ] as never);
     assert.deepEqual(rows, [
-      { name: "AWS Lambda", health: "outage", detail: "Newer" },
-      { name: "Amazon S3", health: "degraded", detail: "Errors" },
+      { name: "AWS Lambda", health: "outage", detail: "Ireland, N. Virginia · Newer" },
+      { name: "Amazon S3", health: "degraded", detail: "Ohio · Errors" },
+    ]);
+  });
+
+  it("emits a row per impacted service of a multi-service event, never the umbrella name", () => {
+    const rows = awsComponents([
+      {
+        service_name: "Multiple services",
+        summary: "Global service outage",
+        region_name: "",
+        impacted_services: {
+          a: { service_name: "Amazon S3", current: "3", max: "3" },
+          b: { service_name: "AWS Lambda", current: 2 },
+          c: { service_name: "Amazon SQS", current: "1" },
+          d: { service_name: "Amazon SNS", current: "0" },
+          e: { service_name: "  ", current: "3" },
+          f: { current: "3" },
+        },
+      },
+    ] as never);
+    assert.deepEqual(rows, [
+      { name: "Amazon S3", health: "outage", detail: "Global service outage" },
+      { name: "AWS Lambda", health: "degraded", detail: "Global service outage" },
+      { name: "Amazon SQS", health: "degraded", detail: "Global service outage" },
+    ]);
+  });
+
+  it("keeps a regional disruption at Degraded, as the card does, and falls back when impacted_services is empty", () => {
+    const rows = awsComponents([
+      {
+        service_name: "Multiple services",
+        summary: "Elevated errors",
+        region_name: "Ohio",
+        impacted_services: { a: { service_name: "Amazon S3", current: "3" } },
+      },
+      { service_name: "Amazon EC2", summary: "Slow", region_name: "Ohio", impacted_services: {} },
+    ] as never);
+    assert.deepEqual(rows, [
+      { name: "Amazon S3", health: "degraded", detail: "Ohio · Elevated errors" },
+      { name: "Amazon EC2", health: "degraded", detail: "Ohio · Slow" },
     ]);
   });
 });

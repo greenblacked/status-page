@@ -1,0 +1,67 @@
+[
+  {
+    "date": "1789898400",
+    "arn": "arn:aws:health:us-east-1::event/MULTIPLE_SERVICES/AWS_MULTIPLE_SERVICES_OPERATIONAL_ISSUE/AWS_MULTIPLE_SERVICES_OPERATIONAL_ISSUE_7A1D3C5E9B20",
+    "region_name": "N. Virginia",
+    "status": "3",
+    "service": "multipleservices-us-east-1",
+    "service_name": "Multiple services",
+    "summary": "Increased Error Rates and Latencies",
+    "impacted_services": {
+      "ec2-us-east-1": { "service_name": "Amazon Elastic Compute Cloud", "current": "3", "max": "3" },
+      "rds-us-east-1": { "service_name": "Amazon Relational Database Service", "current": "2", "max": "2" },
+      "lambda-us-east-1": { "service_name": "AWS Lambda", "current": "0", "max": "2" }
+    },
+    "event_log": [
+      {
+        "summary": "Increased Error Rates and Latencies",
+        "message": "We are investigating increased error rates and latencies for multiple services in the US-EAST-1 Region.",
+        "status": 3,
+        "timestamp": 1789898400
+      },
+      {
+        "summary": "Increased Error Rates and Latencies",
+        "message": "AWS Lambda has recovered. We continue to work on EC2 and RDS.",
+        "status": 3,
+        "timestamp": 1789902000
+      }
+    ]
+  },
+  {
+    "date": "1789903200",
+    "arn": "arn:aws:health:eu-west-1::event/EC2/AWS_EC2_OPERATIONAL_ISSUE/AWS_EC2_OPERATIONAL_ISSUE_2F6B8D4A1C73",
+    "region_name": "Ireland",
+    "status": "2",
+    "service": "ec2-eu-west-1",
+    "service_name": "Amazon Elastic Compute Cloud",
+    "summary": "Elevated Launch Failures",
+    "event_log": [
+      {
+        "summary": "Elevated Launch Failures",
+        "message": "We are investigating elevated instance launch failures in the EU-WEST-1 Region.",
+        "status": 2,
+        "timestamp": 1789904400
+      }
+    ]
+  },
+  {
+    "date": "1789900200",
+    "arn": "arn:aws:health:global::event/IAM/AWS_IAM_OPERATIONAL_ISSUE/AWS_IAM_OPERATIONAL_ISSUE_C90E1B7D5A46",
+    "region_name": "",
+    "status": "3",
+    "service": "iam",
+    "service_name": "Multiple services",
+    "summary": "Global sign-in outage",
+    "impacted_services": {
+      "iam": { "service_name": "AWS Identity and Access Management", "current": "3", "max": "3" }
+    },
+    "event_log": [
+      {
+        "summary": "Global sign-in outage",
+        "message": "Sign-in is unavailable for some customers.",
+        "status": 3,
+        "timestamp": 1789900200
+      }
+    ]
+  }
+]

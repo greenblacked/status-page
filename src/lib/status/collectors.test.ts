@@ -535,7 +535,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(chatgpt.components.map((c) => c.name)).toEqual(["A one", "A two", "B one", "B two"]);
   });
 
-  it("Statuspage: non-operational components lead, then operational ones, each in the vendor's order", async () => {
+  it("Statuspage: non-operational components lead, worst first, then operational ones in the vendor's order", async () => {
     const summary = statuspageSummary({
       indicator: "minor",
       components: [
@@ -548,8 +548,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     stubFetch({ [URLS.claude]: json(summary) });
     const claude = (await collectAllServices()).find((s) => s.id === "claude")!;
     expect(claude.components.map((c) => [c.name, c.health])).toEqual([
-      ["Login", "degraded"],
       ["Voice", "outage"],
+      ["Login", "degraded"],
       ["Chat", "operational"],
       ["Files", "operational"],
     ]);
@@ -731,7 +731,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       // The Lambda event reports resolved and the CloudFront one is 30 days
       // old, so neither shows up as a component or an incident.
       expect(aws.components).toEqual([
-        { name: "Amazon Elastic Compute Cloud", health: "degraded", detail: "Increased API Error Rates" },
+        { name: "Amazon Elastic Compute Cloud", health: "degraded", detail: "N. Virginia · Increased API Error Rates" },
       ]);
       expect(aws.incidents).toEqual([
         {
@@ -754,6 +754,32 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(aws.failure?.kind).toBe("parser");
       expect(aws.components).toEqual([]);
       expect(aws.incidents).toEqual([]);
+    });
+
+    it("AWS currentevents: a multi-service event yields one row per impacted service, merged across events and regions", async () => {
+      stubFetch({ [URLS.aws]: bytes(utf16(fixture("aws/currentevents-multiple.json"))) });
+      const aws = await collect("aws");
+      expect(aws.failure).toBeUndefined();
+      expect(aws.health).toBe("outage");
+      expect(aws.incidents).toHaveLength(3);
+      // "Multiple services" is never a row. Lambda has recovered (current 0)
+      // so it is not one either. The regional N. Virginia event caps EC2's
+      // disruption at Degraded, as it does for the card; the global sign-in
+      // outage is an outage. EC2 merges the Virginia and Ireland events, with
+      // the newest summary.
+      expect(aws.components).toEqual([
+        { name: "AWS Identity and Access Management", health: "outage", detail: "Global sign-in outage" },
+        {
+          name: "Amazon Elastic Compute Cloud",
+          health: "degraded",
+          detail: "N. Virginia, Ireland · Elevated Launch Failures",
+        },
+        {
+          name: "Amazon Relational Database Service",
+          health: "degraded",
+          detail: "N. Virginia · Increased Error Rates and Latencies",
+        },
+      ]);
     });
 
     it("Grok feed.xml: a recent unresolved item is an incident; resolved and stale items are not", async () => {
@@ -906,11 +932,12 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         // The overall status is the incidents' alone, as before.
         expect(gcp.health).toBe("outage");
         expect(gcp.componentCount).toBeUndefined();
+        // Worst first, then catalogue order. The information-only notice is
+        // Degraded like the card's own mapping of it, not hidden as Operational.
         expect(gcp.components).toEqual([
           { name: "Google Compute Engine", health: "outage", detail: "Belgium (europe-west1)" },
+          { name: "Google Cloud Storage", health: "degraded", detail: "Billing export schema change on Sep 30" },
           { name: "Cloud Run", health: "degraded", detail: "Elevated latency for new deployments" },
-          // SERVICE_INFORMATION is a notice: operational, with its title.
-          { name: "Google Cloud Storage", health: "operational", detail: "Billing export schema change on Sep 30" },
           { name: "Cloud Build", health: "operational" },
           { name: "Cloud SQL", health: "operational" },
           // Its only incident has ended.
@@ -1064,36 +1091,35 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
       };
 
-      it("is an operational component when the directory lists servers", async () => {
+      it("adds an operational component when the directory lists connection managers", async () => {
         stubFetch({ ...steamOk, [URLS.steamCm]: text(fixture("steam/cm-list.json")) });
         const steam = await collect("steam");
         expect(steam.health).toBe("operational");
         expect(steam.components).toEqual([
           { name: "Steam Web API", health: "operational" },
           { name: "Steam Store", health: "operational" },
-          { name: "Steam Connection Managers", health: "operational", detail: "5 servers listed" },
+          { name: "Steam Connection Managers", health: "operational", detail: "3 servers listed" },
         ]);
       });
 
-      it("is Unknown, never an outage, for an empty list or an unexpected shape", async () => {
+      it("leaves the row out, and the card alone, for an empty list or an unexpected shape", async () => {
         for (const body of [
-          json({ response: { serverlist: [], serverlist_websockets: [], result: 1 } }),
+          json({ response: { serverlist: [], success: true } }),
+          json({ response: { serverlist: [{ endpoint: "cm1:27017" }], success: false } }),
+          json({ response: { serverlist: ["cm1:27017"] } }),
           json({ response: {} }),
           json({ unexpected: true }),
           json(null),
         ]) {
           stubFetch({ ...steamOk, [URLS.steamCm]: body });
           const steam = await collect("steam");
+          expect(steam.failure).toBeUndefined();
           expect(steam.health).toBe("operational");
-          expect(steam.components.at(-1)).toEqual({
-            name: "Steam Connection Managers",
-            health: "unknown",
-            detail: "No servers listed.",
-          });
+          expect(steam.components.map((c) => c.name)).toEqual(["Steam Web API", "Steam Store"]);
         }
       });
 
-      it("is Unknown, and the card unaffected, when the directory cannot be fetched", async () => {
+      it("leaves the row out, and the card alone, when the directory cannot be fetched", async () => {
         for (const cm of [
           undefined,
           text("Unavailable", { status: 503, statusText: "Service Unavailable" }),
@@ -1103,7 +1129,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           const steam = await collect("steam");
           expect(steam.failure).toBeUndefined();
           expect(steam.health).toBe("operational");
-          expect(steam.components.at(-1)).toMatchObject({ name: "Steam Connection Managers", health: "unknown" });
+          expect(steam.components.map((c) => c.name)).toEqual(["Steam Web API", "Steam Store"]);
         }
       });
 
@@ -1127,23 +1153,23 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         // a component reports a major outage.
         expect(grok.health).toBe("degraded");
         expect(grok.components).toEqual([
+          { name: "Voice mode", health: "outage" },
           { name: "grok.com", health: "degraded" },
           { name: "Image generation", health: "maintenance", detail: "Maintenance window" },
-          { name: "Voice mode", health: "outage" },
           { name: "iOS app", health: "operational" },
           { name: "API", health: "operational" },
         ]);
       });
 
-      it("derives components from the titles' service prefixes when there is no component endpoint", async () => {
+      it("derives components from the titles' [Service] leads when there is no component endpoint", async () => {
         stubFetch({ [URLS.grok]: text(fixture("grok/feed-prefixed.xml")) });
         const grok = await collect("grok");
         expect(grok.health).toBe("outage");
-        // API has two active items: the worst health and the newest detail.
-        // Voice mode is resolved and the unprefixed title names no service.
+        // [API] has two active items: the worst health and the newest detail.
+        // [Grok (iOS)] is resolved and the unbracketed title names no service.
         expect(grok.components).toEqual([
           { name: "API", health: "outage", detail: "Requests failing for some models" },
-          { name: "grok.com", health: "degraded", detail: "Slow page loads" },
+          { name: "Grok (Web)", health: "degraded", detail: "Slow page loads" },
         ]);
         expect(grok.incidents).toHaveLength(4);
       });
@@ -1161,7 +1187,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           stubFetch({ [URLS.grok]: text(fixture("grok/feed-prefixed.xml")), [URLS.grokComponents]: components });
           const grok = await collect("grok");
           expect(grok.failure).toBeUndefined();
-          expect(grok.components.map((c) => c.name)).toEqual(["API", "grok.com"]);
+          expect(grok.components.map((c) => c.name)).toEqual(["API", "Grok (Web)"]);
         }
       });
 
@@ -1238,8 +1264,12 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         ]);
         const aws = await collect("aws");
         expect(aws.components).toEqual([
-          { name: "Amazon Elastic Compute Cloud", health: "outage", detail: "Newest: multi-region outage" },
-          { name: "AWS Lambda", health: "degraded", detail: "Invoke latency" },
+          {
+            name: "Amazon Elastic Compute Cloud",
+            health: "outage",
+            detail: "N. Virginia · Newest: multi-region outage",
+          },
+          { name: "AWS Lambda", health: "degraded", detail: "N. Virginia · Invoke latency" },
         ]);
         expect(aws.componentCount).toBeUndefined();
         expect(aws.incidents).toHaveLength(3);
@@ -1260,7 +1290,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         expect(aws.components).toEqual([]);
       });
 
-      it("caps at 24 services and reports the total", async () => {
+      it("caps at 24 services, keeping the worst, and reports the total", async () => {
         serve(
           Array.from({ length: 30 }, (_, i) =>
             awsEvent({
@@ -1282,7 +1312,11 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         const aws = await collect("aws");
         expect(aws.components).toHaveLength(24);
         expect(aws.componentCount).toBe(30);
-        expect(aws.components.map((c) => c.name)).toEqual(Array.from({ length: 24 }, (_, i) => `Service ${i}`));
+        // The outage sits past the 24th event, and still leads the list.
+        expect(aws.components[0]).toEqual({ name: "Service 27", health: "outage", detail: "Outage" });
+        expect(aws.components.slice(1).map((c) => c.name)).toEqual(
+          Array.from({ length: 23 }, (_, i) => `Service ${i}`),
+        );
       });
     });
   });
