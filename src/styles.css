@@ -139,6 +139,8 @@
   --inset-rim: light-dark(rgb(15 20 35 / 0.06), rgb(255 255 255 / 0.06));
 
   --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.1));
+  /* Tilt lighting's glint: stronger than the pointer's, since white on the light panels is otherwise unseen. */
+  --tilt-glint: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.08));
 
   /*
     The backdrop: four slow currents of light, cool teal, indigo and a
@@ -339,7 +341,7 @@
 }
 
 /* The specular sweep: light entering from the upper left. With Tilt lighting
-   on, --light-x (-1..1, set on these pseudo-elements by use-tilt-lighting.ts) turns the
+   on, --light-x (-1..1, set inline on the glass panels by use-tilt-lighting.ts) turns the
    angle by up to 28deg; unset, it is the fixed 125deg it always was. The
    variable is stepped by script and never transitioned. */
 .glass::before,
@@ -743,12 +745,19 @@
     inset: 0;
     z-index: 0;
     border-radius: inherit;
-    background: radial-gradient(
-      320px circle at calc(50% + var(--light-x, 0) * 38%) calc(50% + var(--light-y, 0) * 38%),
-      var(--spot-color),
-      transparent 65%
-    );
-    opacity: 0.8;
+    /* The glint, and in light mode a faint shade on the opposite side: white light on a white panel shows nothing alone. */
+    background:
+      radial-gradient(
+        320px circle at calc(50% + var(--light-x, 0) * 38%) calc(50% + var(--light-y, 0) * 38%),
+        var(--tilt-glint),
+        transparent 65%
+      ),
+      radial-gradient(
+        320px circle at calc(50% - var(--light-x, 0) * 38%) calc(50% - var(--light-y, 0) * 38%),
+        light-dark(rgb(16 24 40 / 0.05), transparent),
+        transparent 65%
+      );
+    opacity: 1;
   }
 }
 

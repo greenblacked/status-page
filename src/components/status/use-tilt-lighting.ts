@@ -3,6 +3,7 @@ import {
   createTiltController,
   needsPermission,
   readTiltLighting,
+  screenAngle,
   TILT_ATTRIBUTE,
   TILT_LIGHT_SELECTOR,
   TILT_VAR_X,
@@ -14,50 +15,78 @@ import {
 
 const storage = () => window.localStorage;
 
-/** How long a page that was allowed motion before waits for the first reading before asking again. */
-const NO_READING_MS = 1500;
+/** How long a page that was allowed motion before waits for the first reading before asking again (iOS). */
+const NO_PERMISSION_MS = 1500;
+/** How long any page waits for a first reading before saying none is coming. */
+const NO_READING_MS = 3000;
 
 /**
- * Where --light-x and --light-y are written. A custom property set on
- * <html> is inherited, so every change re-styles the whole page (about 7 ms
- * for a full board on a desktop, 3x that at 4x CPU throttle). Set on the
- * few pseudo-elements that draw the light instead, through one rule of a
- * constructed style sheet, it re-styles only those. Where constructed
- * sheets are missing (Safari before 16.4) it falls back to <html>.
+ * Writes --light-x and --light-y inline on every glass panel (the elements
+ * TILT_LIGHT_SELECTOR names); their ::before and ::after inherit them.
+ *
+ * Not on <html>, and not through a rule of a style sheet: a change to a rule
+ * makes WebKit rebuild its rule sets and re-style the document. An inline
+ * write re-styles only the panel it is on and what is inside it. A custom
+ * property is inherited, so that is still most of a full board (about 8 ms
+ * for 18 panels in Chromium, against 9 ms on <html>); the frame cap and the
+ * deadband in the controller are what keep it affordable.
+ *
+ * Panels come and go when a refresh re-renders the board, so a new one gets
+ * the current value from a MutationObserver, before it paints. It watches
+ * only while the light is on, and remove() puts everything back.
  */
 function createLightSink(): { set: (x: string, y: string) => void; remove: () => void } {
-  try {
-    const sheet = new CSSStyleSheet();
-    sheet.replaceSync(`${TILT_LIGHT_SELECTOR} {}`);
-    const style = (sheet.cssRules[0] as CSSStyleRule).style;
-    document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-    return {
-      set: (x, y) => {
-        style.setProperty(TILT_VAR_X, x);
-        style.setProperty(TILT_VAR_Y, y);
-      },
-      remove: () => {
-        document.adoptedStyleSheets = document.adoptedStyleSheets.filter((other) => other !== sheet);
-      },
-    };
-  } catch {
-    const root = document.documentElement;
-    return {
-      set: (x, y) => {
-        root.style.setProperty(TILT_VAR_X, x);
-        root.style.setProperty(TILT_VAR_Y, y);
-      },
-      remove: () => {
-        root.style.removeProperty(TILT_VAR_X);
-        root.style.removeProperty(TILT_VAR_Y);
-      },
-    };
-  }
+  const written = new Set<HTMLElement>();
+  let last: { x: string; y: string } | null = null;
+  let observer: MutationObserver | null = null;
+
+  const write = (host: HTMLElement) => {
+    if (!last) return;
+    host.style.setProperty(TILT_VAR_X, last.x);
+    host.style.setProperty(TILT_VAR_Y, last.y);
+    written.add(host);
+  };
+
+  const onMutations = (records: MutationRecord[]) => {
+    const fresh = records.some((record) =>
+      Array.from(record.addedNodes).some(
+        (node) =>
+          node instanceof Element && (node.matches(TILT_LIGHT_SELECTOR) || node.querySelector(TILT_LIGHT_SELECTOR)),
+      ),
+    );
+    if (!fresh) return;
+    for (const host of Array.from(written)) if (!host.isConnected) written.delete(host);
+    for (const host of document.querySelectorAll<HTMLElement>(TILT_LIGHT_SELECTOR)) {
+      if (!written.has(host)) write(host);
+    }
+  };
+
+  return {
+    set: (x, y) => {
+      last = { x, y };
+      for (const host of Array.from(written)) if (!host.isConnected) written.delete(host);
+      for (const host of document.querySelectorAll<HTMLElement>(TILT_LIGHT_SELECTOR)) write(host);
+      if (!observer) {
+        observer = new MutationObserver(onMutations);
+        observer.observe(document.body, { childList: true, subtree: true });
+      }
+    },
+    remove: () => {
+      observer?.disconnect();
+      observer = null;
+      for (const host of written) {
+        host.style.removeProperty(TILT_VAR_X);
+        host.style.removeProperty(TILT_VAR_Y);
+      }
+      written.clear();
+      last = null;
+    },
+  };
 }
 
-export type TiltStatus = "off" | "on" | "denied" | "no-sensor" | "needs-permission" | "paused";
+export type TiltStatus = "off" | "on" | "denied" | "no-sensor" | "needs-permission" | "no-readings" | "paused";
 
-type Problem = "denied" | "no-sensor" | "needs-permission" | null;
+type Problem = "denied" | "no-sensor" | "needs-permission" | "no-readings" | null;
 
 /** iOS 13+ only: motion is behind a permission that a tap has to ask for. */
 type MotionPermissionApi = { requestPermission?: () => Promise<"granted" | "denied"> };
@@ -79,8 +108,10 @@ const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-t
  *
  * A motion event only records the latest reading. One animation frame loop
  * turns it into the two properties, and stops as soon as the light has
- * caught up, so a device lying still costs nothing and React never
- * re-renders per reading.
+ * caught up, so React never re-renders per reading. It is not free while the
+ * device is held: iOS fires deviceorientation continuously (about 60 a second,
+ * still or not), and sensor noise keeps moving the light a little. The
+ * deadband and the frame cap keep the writes low then, but not at zero.
  */
 export function useTiltLighting({ paused }: { paused: boolean }): {
   supported: boolean;
@@ -130,7 +161,8 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
 
     let latest: { beta: number; gamma: number; angle: number } | null = null;
     let frame = 0;
-    let timer = 0;
+    let permissionTimer = 0;
+    let readingTimer = 0;
     let attached = false;
     let gotReading = false;
     let driving = false;
@@ -159,20 +191,35 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
         return;
       }
       gotReading = true;
-      window.clearTimeout(timer);
-      latest = { beta: event.beta, gamma: event.gamma, angle: window.screen.orientation?.angle ?? 0 };
+      window.clearTimeout(permissionTimer);
+      window.clearTimeout(readingTimer);
+      latest = { beta: event.beta, gamma: event.gamma, angle: screenAngle(window) };
       if (!frame) frame = requestAnimationFrame(tick);
+    };
+
+    const clearTimers = () => {
+      window.clearTimeout(permissionTimer);
+      window.clearTimeout(readingTimer);
     };
 
     const attach = () => {
       if (attached) return;
       attached = true;
       window.addEventListener("deviceorientation", onReading);
+      // The waits run only while listening, and only until the first reading. A saved "on"
+      // never asks by itself (iOS wants a tap), so silence there means it has to ask again;
+      // silence after a tap, or anywhere else, means no motion is coming at all.
+      if (gotReading) return;
+      if (!viaTap && needsPermission(window)) {
+        permissionTimer = window.setTimeout(() => setProblem("needs-permission"), NO_PERMISSION_MS);
+      }
+      readingTimer = window.setTimeout(() => setProblem("no-readings"), NO_READING_MS);
     };
     const detach = () => {
       if (!attached) return;
       attached = false;
       window.removeEventListener("deviceorientation", onReading);
+      clearTimers();
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
     };
@@ -191,18 +238,11 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
     };
 
     if (document.visibilityState !== "hidden") attach();
-    // A saved "on" never asks by itself: iOS wants a tap. Motion that has not arrived shortly after load means it has to ask again.
-    if (!viaTap && needsPermission(window)) {
-      timer = window.setTimeout(() => {
-        if (!gotReading) setProblem("needs-permission");
-      }, NO_READING_MS);
-    }
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", detach);
     window.addEventListener("pageshow", onPageShow);
 
     return () => {
-      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", detach);
       window.removeEventListener("pageshow", onPageShow);
@@ -232,6 +272,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       setPreferred(true);
       setProblem(null);
     };
+    // Declined: the saved choice goes too, so the note about asking again stops with it.
     const denied = () => {
       writeTiltLighting(storage, false);
       setPreferred(false);

@@ -122,9 +122,10 @@ export function SettingsDialog({
 
 /** What Tilt lighting says when it is not simply on or off. */
 const TILT_NOTES: Partial<Record<TiltStatus, string>> = {
-  denied: "Motion access was declined. To allow it, close Safari completely and reopen this page.",
+  denied: "Motion access was declined. To allow it, close your browser completely and reopen this page.",
   "no-sensor": "This device has no motion sensor.",
-  "needs-permission": "Tap the switch to allow motion access again.",
+  "no-readings": "No motion readings arrived from this device.",
+  "needs-permission": "Tap the switch to allow motion access again, or leave it off to stop this note.",
   paused: "Paused while Reduce glass or Reduce Motion is on.",
 };
 
