@@ -1,10 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect as baseExpect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { LIGHT_SIGN, TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
-
-// Several waits here are for the page's own timers (up to 3 s of silence before it says no
-// readings are coming) on top of a slow load, so give assertions longer than the default 5 s.
-const expect = baseExpect.configure({ timeout: 15_000 });
 
 // Tilt lighting reads the device's motion sensors, which a test browser does
 // not have. These tests stand in for them: they dispatch synthetic
@@ -168,7 +164,7 @@ async function tiltUntil(
         const value = await lightVar(page, name);
         return value !== "" && reached(Number(value));
       },
-      { timeout: 20_000, intervals: [50, 100, 200] },
+      { timeout: 10_000, intervals: [50, 100, 200] },
     )
     .toBe(true);
 }
@@ -218,7 +214,6 @@ test.describe("without touch", () => {
 
 test.describe("on a touch device", () => {
   test.skip(({ hasTouch }) => !hasTouch, "needs a touch device");
-  test.describe.configure({ timeout: 90_000 });
 
   test.beforeEach(async ({ page }) => {
     await stubMotionPermission(page);
@@ -325,7 +320,7 @@ test.describe("on a touch device", () => {
           await tilt(page, null, null);
           return page.getByText("This device has no motion sensor.").count();
         },
-        { timeout: 20_000 },
+        { timeout: 10_000 },
       )
       .toBe(1);
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
@@ -410,7 +405,7 @@ test.describe("on a touch device", () => {
     await page.reload();
     await hydrated(page);
     // Motion is allowed for the session, so a slow sensor is not a missing permission.
-    await expect(html(page)).toHaveAttribute("data-tilt", "on", { timeout: 20_000 });
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
     expect(await storedChoice(page)).toBe("on");
     await expect(page.getByText("Motion access needs allowing again")).toHaveCount(0);
   });
@@ -440,8 +435,9 @@ test.describe("on a touch device", () => {
     await page.reload();
     await hydrated(page);
     await openSettings(page);
+    // The note comes 3 s after the page starts listening (its silence timer), too close to the default 5 s.
     await expect(page.getByText("No motion readings arrived from this device, so Tilt lighting is off.")).toBeVisible({
-      timeout: 20_000,
+      timeout: 10_000,
     });
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     expect(await storedChoice(page)).toBe("off");
@@ -461,7 +457,8 @@ test.describe("on a touch device", () => {
     await openSettings(page);
     await tiltSwitch(page).click();
     expect(await permissionCalls(page)).toBe(1);
-    await expect(page.getByText("No motion readings arrived from this device.")).toBeVisible({ timeout: 20_000 });
+    // The note comes 3 s after the page starts listening (its silence timer), too close to the default 5 s.
+    await expect(page.getByText("No motion readings arrived from this device.")).toBeVisible({ timeout: 10_000 });
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     await expect(html(page)).not.toHaveAttribute("data-tilt");
     // Not the note for a saved choice: this one was just allowed.
