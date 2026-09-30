@@ -69,8 +69,17 @@ describe("alertChanges", () => {
     expect(run(["degraded", "unknown", "outage"])).toEqual([[], ["degraded>outage"]]);
   });
 
-  it("restarts the count when the pending state changes", () => {
+  it("a real transition clears a pending Unknown", () => {
     expect(run(["outage", "unknown", "operational", "operational"])).toEqual([[], ["outage>operational"], []]);
+  });
+
+  it("restarts the count when the pending target changes", () => {
+    expect(run(["unknown", "unknown", "operational", "degraded", "degraded"])).toEqual([
+      [],
+      [],
+      [],
+      ["unknown>degraded"],
+    ]);
   });
 
   it("keeps separate counts per service", () => {
