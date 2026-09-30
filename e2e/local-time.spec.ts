@@ -5,8 +5,8 @@ import { expect, test } from "@playwright/test";
 // The suite pins UTC (playwright.config.ts), so the zone is set here. The `title` of every time is
 // the whole moment in UTC, in any zone.
 
-/** The board's as-of time in the hero. */
-const asOf = (page: import("@playwright/test").Page) => page.getByText("as of").locator("time");
+/** The time in the live line: when the board was last checked. */
+const asOf = (page: import("@playwright/test").Page) => page.getByTestId("live-bar").locator("time");
 
 test.describe("in Berlin", () => {
   test.use({ timezoneId: "Europe/Berlin", locale: "en-GB" });

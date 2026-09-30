@@ -481,7 +481,8 @@ test.describe("contrast", () => {
       test.skip(testInfo.project.name !== "desktop", "measured once, in Chromium on a desktop");
       const board = fixtureBoard(Date.now());
       await serveBoard(page, () => board);
-      await page.setViewportSize({ width: 1280, height: 900 });
+      // Tall enough for the hero and the first lists, so plenty of subtle and muted runs are whole on screen.
+      await page.setViewportSize({ width: 1280, height: 1200 });
       await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
       await page.goto("/");
       await hydrated(page);
@@ -509,6 +510,9 @@ test.describe("contrast", () => {
           const element = node.parentElement;
           const text = node.textContent?.trim();
           if (!element || !text || !element.closest(".surface, .glass") || element.closest(".sr-only")) continue;
+          // The body of a closed <details> is not drawn, though it still has a box.
+          const details = element.closest("details:not([open])");
+          if (details && !element.closest("summary")) continue;
           const color =
             getComputedStyle(element)
               .color.match(/[\d.]+/g)

@@ -643,7 +643,7 @@ test.describe("on a touch device", () => {
     expect(await lightHolders(page)).toBeGreaterThan(0);
     const added = await page.evaluate(async () => {
       const panel = document.createElement("div");
-      panel.className = "glass";
+      panel.className = "surface";
       panel.id = "late-panel";
       document.body.appendChild(panel);
       // The observer's callback runs as a microtask, before the next paint.

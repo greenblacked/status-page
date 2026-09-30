@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
-import { fixtureBoard, serveBoard } from "./fixture-board";
+import { calmBoard, fixtureBoard, serveBoard } from "./fixture-board";
 
 const SERVICES = 14;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
@@ -11,22 +11,6 @@ const group = (page: Page, id: "attention" | "unread" | "up" | "releases") =>
 /** The healthy services of one category's list, such as "ai". */
 const upList = (page: Page, category: string) =>
   page.locator(`section[aria-labelledby="up-${category}-heading"] article[id^="service-"]`);
-
-/**
- * Waits out every card's fade-in. A card mid-animation is partly transparent,
- * and axe would measure its text at that opacity instead of the colour it
- * settles on.
- */
-async function cardsSettled(page: Page): Promise<void> {
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((animation) => (animation as CSSAnimation).animationName === "rise-in")
-        .map((animation) => animation.finished.catch(() => undefined)),
-    ),
-  );
-}
 
 /**
  * Waits until React has hydrated the page. The server's markup, cards
@@ -218,7 +202,10 @@ test("renders every service with no console errors or hydration warnings", async
 test("has no serious or critical accessibility violations", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await cardsSettled(page);
+  // Cards no longer rise in one after another: no stagger animation is ever started.
+  expect(
+    await page.evaluate(() => document.getAnimations().some((a) => (a as CSSAnimation).animationName === "rise-in")),
+  ).toBe(false);
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
     .analyze();
@@ -723,7 +710,7 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
-  await expect(page.getByTestId("live-bar")).toContainText("last check");
+  await expect(page.getByTestId("live-bar")).toContainText("Checked");
 
   // Down a few pixels at a time: at the first stop where the bar shows, the live
   // bar's text must already be above it, not sliding under or beside it.
@@ -835,12 +822,17 @@ test("changes the search placeholder only where the field is at rest", async ({ 
   const stops = await sweepDock(page, path);
   const half = stops.length / 2;
   const long = "Search GCP, CS2 Europe, RouterOS…";
-  // Down, it is the long one until the field is in the bar; back up, the short one until it is out.
+  // At rest it is the long one where the field has room for it, and the short one in the 200px margin column of
+  // a wide screen. Either way it never changes part way: down, it changes only once the field is in the bar,
+  // and back up only once the field is out of it.
+  const rest = stops[0].placeholder;
+  expect(stops[0].dock).toBe(0);
+  expect([long, "Search…"]).toContain(rest);
   for (const stop of stops.slice(0, half)) {
-    expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : long);
+    expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : rest);
   }
   for (const stop of stops.slice(half)) {
-    expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? long : "Search…");
+    expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? rest : "Search…");
   }
 });
 
@@ -852,7 +844,7 @@ test("never clips the search placeholder, at any width", async ({ page }, testIn
   const search = page.getByRole("searchbox", { name: "Search services" }).or(page.getByLabel("Search services"));
   const long = "Search GCP, CS2 Europe, RouterOS…";
   for (const [width, placeholder] of [
-    [1280, long],
+    [1280, "Search…"],
     [1100, "Search…"],
     [1024, "Search…"],
     [768, long],
@@ -1794,18 +1786,12 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   await hydrated(page);
   const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
   test.skip(!coarse, "the touch sizes are for a coarse pointer, which this project does not have");
-  // The fixture board has services that need attention, so their chips are on screen.
+  // The fixture board has services that need attention, so its cards and their links are on screen.
   await openFixture(page, () => fixtureBoard(Date.now()));
   const small = await page.evaluate(() => {
     const targets = [
       ...document.querySelectorAll<HTMLElement>(
-        [
-          "header button",
-          '[role="group"][aria-label="Filter services"] button',
-          '[aria-label="Services that need attention"] a',
-          "footer a",
-          "footer button",
-        ].join(","),
+        ["header button", 'section[aria-label="Filter services"] button', "footer a", "footer button"].join(","),
       ),
     ];
     return {
@@ -1819,7 +1805,7 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
         .map(({ name, box }) => `${name}: ${Math.round(box.width)}x${Math.round(box.height)}`),
     };
   });
-  // Not vacuous: two hero buttons (one on an iPhone), the chips, the attention chips and the footer's links.
+  // Not vacuous: two hero buttons (one on an iPhone), the segments and toggles, and the footer's links.
   expect(small.count).toBeGreaterThan(12);
   expect(small.small).toEqual([]);
 });
@@ -1838,44 +1824,59 @@ test("lays the hero out at 200% root text on a phone: no overflow, no overlap", 
     await page.setViewportSize({ width, height: 800 });
     await openFixture(page, () => board);
     const layout = await page.evaluate(() => {
-      const box = (selector: string) => {
-        const rect = document.querySelector(selector)?.getBoundingClientRect();
-        if (!rect) throw new Error(`no ${selector}`);
-        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
+      const box = (element: Element | undefined | null, name: string) => {
+        const rect = element?.getBoundingClientRect();
+        if (!rect) throw new Error(`no ${name}`);
+        return { name, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width };
       };
+      const buttons = [...document.querySelectorAll("header button")].map((button, at) => box(button, `button ${at}`));
       return {
         rootPx: getComputedStyle(document.documentElement).fontSize,
         overflow: document.documentElement.scrollWidth - window.innerWidth,
-        dial: box(".period-dial"),
-        counts: box("section[aria-labelledby='board-headline'] dl"),
-        blurb: box("header p.max-w-xl"),
-        buttons: box("header .shrink-0"),
         viewport: window.innerWidth,
+        dateline: box(document.querySelector("header time"), "dateline"),
+        headline: box(document.querySelector("h1#board-headline"), "headline"),
+        sub: box(document.querySelector("header h1 + p"), "sub"),
+        live: box(document.querySelector('[data-testid="live-bar"]'), "live line"),
+        buttons,
       };
     });
     const at = `at ${width}px`;
     expect(layout.rootPx).toBe("32px");
     expect(layout.overflow, `horizontal overflow ${at}`).toBeLessThanOrEqual(0);
-    // The counts keep their width, and the dial sits below them rather than over them.
-    expect(layout.counts.width, `counts ${at}`).toBeGreaterThan(120);
-    expect(layout.dial.top, `dial under the counts ${at}`).toBeGreaterThanOrEqual(layout.counts.bottom - 1);
-    // The blurb keeps a readable measure, and stays inside the screen with the buttons under it.
-    expect(layout.blurb.width, `blurb ${at}`).toBeGreaterThan(200);
-    expect(layout.blurb.right, `blurb inside the screen ${at}`).toBeLessThanOrEqual(layout.viewport);
-    expect(layout.buttons.top, `buttons under the blurb ${at}`).toBeGreaterThanOrEqual(layout.blurb.bottom - 1);
+    // Everything stays inside the screen, and the headline and its sub line keep a readable measure.
+    for (const part of [layout.dateline, layout.headline, layout.sub, layout.live, ...layout.buttons]) {
+      expect(part.right, `${part.name} inside the screen ${at}`).toBeLessThanOrEqual(layout.viewport + 0.5);
+      expect(part.left, `${part.name} inside the screen ${at}`).toBeGreaterThanOrEqual(-0.5);
+    }
+    expect(layout.headline.width, `headline ${at}`).toBeGreaterThan(200);
+    // Nothing sits over anything else: the dateline, the two buttons, the headline, the sub line and the live line.
+    const parts = [layout.dateline, ...layout.buttons, layout.headline, layout.sub, layout.live];
+    for (const [i, a] of parts.entries()) {
+      for (const b of parts.slice(i + 1)) {
+        const apart =
+          a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5;
+        expect(apart, `${a.name} and ${b.name} overlap ${at}`).toBe(true);
+      }
+    }
   }
 });
 
+// Nothing loops on a Quiet board: with the check done, no animation is left running, whatever the motion setting.
 for (const reducedMotion of ["no-preference", "reduce"] as const) {
-  test(`${reducedMotion === "reduce" ? "stills" : "pulses"} an outage dot ${reducedMotion === "reduce" ? "under" : "without"} reduced motion`, async ({
+  test(`keeps nothing moving on a settled board (${reducedMotion === "reduce" ? "Reduce Motion" : "motion allowed"})`, async ({
     page,
   }) => {
     await page.emulateMedia({ reducedMotion });
     await openFixture(page, () => fixtureBoard(Date.now()));
-    const dot = page.locator('[aria-label="Services that need attention"] .bg-down').first();
-    await expect(dot).toBeVisible();
-    const animation = await dot.evaluate((element) => getComputedStyle(element).animationName);
-    expect(animation).toBe(reducedMotion === "reduce" ? "none" : "pulse");
+    await expect(page.getByTestId("live-bar")).toContainText("Checked");
+    const looping = await page.evaluate(() =>
+      document
+        .getAnimations()
+        .filter((animation) => animation.effect?.getComputedTiming().iterations === Number.POSITIVE_INFINITY)
+        .map((animation) => (animation as CSSAnimation).animationName || animation.id),
+    );
+    expect(looping).toEqual([]);
   });
 }
 
@@ -1912,4 +1913,88 @@ test("keeps the live bar the same height while checking and live at phone widths
   } finally {
     release();
   }
+});
+
+test("reads the board as one sentence in the h1, with the count underlined by hand and the services linked", async ({
+  page,
+}) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const headline = page.getByRole("heading", { level: 1 });
+  await expect(headline).toHaveText("Three things need a look.");
+  await expect(headline).toHaveAttribute("id", "board-headline");
+  // One pen stroke, under the count only, drawn from constants (aria-hidden, no text of its own).
+  await expect(headline.locator("svg.pen-underline")).toHaveCount(1);
+  await expect(headline.locator("svg.pen-underline")).toHaveAttribute("aria-hidden", "true");
+  // The sentence under it names the services and links each to its card.
+  const sub = page.locator("h1 + p");
+  await expect(sub).toContainText("The other ten are running normally.");
+  await expect(sub).toContainText("I couldn't read 1.");
+  const links = sub.getByRole("link");
+  await expect(links).toHaveText(["AWS", "GCP", "Epic"]);
+  await expect(links.first()).toHaveAttribute("href", "#service-aws");
+  // Nothing hand-written while there is something to look at.
+  await expect(page.getByText("all quiet")).toHaveCount(0);
+  await expect(page.locator("#service-aws svg.pen-loop")).toHaveCount(1);
+});
+
+test("writes all quiet by hand, and says so in words, when all fourteen are up", async ({ page }) => {
+  await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Everything is up.");
+  await expect(page.locator("h1 svg.pen-underline")).toHaveCount(0);
+  const note = page.getByText("all quiet", { exact: true });
+  await expect(note).toBeVisible();
+  await expect(note).toHaveAttribute("aria-hidden", "true");
+  expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
+  await expect(page.getByText("All fourteen services are running normally.")).toHaveClass(/sr-only/);
+  // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
+  await expect(page).toHaveTitle("Status");
+  await expect(group(page, "attention")).toHaveCount(0);
+  await expect(page.locator("[data-highlight]")).toHaveCount(0);
+});
+
+test("keeps Alerts and Refresh as icon buttons with a name and a tooltip", async ({ page }) => {
+  await page.goto("/");
+  await hydrated(page);
+  const refresh = page.locator("header").getByRole("button", { name: "Refresh status now" });
+  await expect(refresh).toHaveAttribute("title", "Refresh status now");
+  await expect(refresh).toHaveText("");
+  const box = await refresh.boundingBox();
+  expect(box?.width).toBeGreaterThanOrEqual(43.5);
+  expect(box?.height).toBeGreaterThanOrEqual(43.5);
+  const alerts = page.locator("header").getByRole("button", { name: "Notifications" });
+  // Where the browser can send them (an iPhone cannot, and has no button at all).
+  if (await alerts.count()) {
+    await expect(alerts).toHaveText("");
+    await expect(alerts).toHaveAttribute("title", "Notify me when a service changes");
+    await expect(alerts).toHaveAttribute("aria-pressed", "false");
+  }
+});
+
+test("shows the period dial only on the Full background, and the live line's words on every one", async ({ page }) => {
+  await page.goto("/");
+  await hydrated(page);
+  await expect(page.locator(".period-dial")).toHaveCount(0);
+  const live = page.getByTestId("live-bar");
+  await expect(live).toContainText(/Checked \d\d:\d\d\sUTC/);
+  await expect(live).toContainText(/next in \d:\d\d/);
+  await page.evaluate(() => localStorage.setItem("status-bar:background", "full"));
+  await page.reload();
+  await hydrated(page);
+  await expect(page.locator("html")).toHaveAttribute("data-background", "full");
+  const dial = page.locator(".period-dial");
+  await expect(dial).toHaveCount(1);
+  expect((await dial.boundingBox())?.width).toBe(24);
+  await expect(live).toContainText(/Checked \d\d:\d\d\sUTC/);
+});
+
+test("puts the floating bar's verdict, check time and countdown beside the docked field", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const bar = controlBar(page);
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  const lead = bar.locator("p[data-bar-lead]");
+  await expect(lead).toContainText("3 need a look");
+  await expect(lead).toContainText(/Checked \d\d:\d\d\sUTC · next in \d:\d\d/);
+  // The bar is a float: the one translucent element on a Quiet page.
+  await expect(bar).toHaveClass(/\bfloat\b/);
 });

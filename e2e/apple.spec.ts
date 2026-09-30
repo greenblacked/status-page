@@ -55,7 +55,7 @@ test("never shows the Alerts button on an iPhone, before or after hydration", as
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator("html")).toHaveAttribute("data-alerts", "unsupported");
   const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
-  const alerts = page.getByRole("button", { name: "Browser alerts" });
+  const alerts = page.getByRole("button", { name: "Notifications" });
   // Hidden by the boot script from the first paint, while the server's markup still has it.
   await expect(alerts).toBeHidden();
   const before = await refresh.boundingBox();
@@ -70,7 +70,7 @@ test("shows the Alerts button in the first paint where alerts work", async ({ pa
   // Chrome on Android can show them, and so can a desktop.
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator("html")).not.toHaveAttribute("data-alerts", /.*/);
-  await expect(page.getByRole("button", { name: "Browser alerts" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Notifications" })).toBeVisible();
 });
 
 test("buttons opt out of double-tap zoom on a touch device", async ({ page, isMobile }) => {

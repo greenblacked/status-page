@@ -159,6 +159,25 @@ export function fixtureBoard(now: number, { grok = "operational" }: { grok?: Hea
   return { generatedAt: new Date(now).toISOString(), durationMs: 480, services, counts };
 }
 
+/** The same fourteen services with nothing wrong anywhere: every one operational, no incident, no failure. */
+export function calmBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const services = board.services.map((service) => ({
+    ...service,
+    health: "operational" as const,
+    summary: "All systems operational",
+    incidents: [],
+    upcomingMaintenance: [],
+    failure: undefined,
+    components: service.components.map((component) => ({ ...component, health: "operational" as const })),
+  }));
+  return {
+    ...board,
+    services,
+    counts: { operational: services.length, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
+  };
+}
+
 /**
  * Answers the board's server functions (the Refresh POST and the
  * scheduled GET) with `board()` instead of the vendors, in the same
