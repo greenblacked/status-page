@@ -1031,18 +1031,37 @@
 */
 .compact-header {
   /* Here, not as a utility: the material's own position: relative would win over one. */
-  position: sticky;
+  /*
+    On a phone the bar is out of the flow, fixed at the top, so it can come up on
+    its own while the search field is still on its way (see useSearchDock). Its
+    sides are the page content's: the body's gutters, which sit inside the safe area.
+  */
+  position: fixed;
   top: calc(env(safe-area-inset-top) + 0.5rem);
+  left: max(var(--gutter), env(safe-area-inset-left));
+  right: max(var(--gutter), env(safe-area-inset-right));
   z-index: 40;
-  /* The first item of .board-body: the width of the page content, which already sits inside the safe area. */
-  width: 100%;
-  /* Its own height: it floats over the search field's row instead of pushing it down. */
-  margin-bottom: -3rem;
   background-color: var(--bar-fill);
   transition:
     opacity var(--motion-quick) var(--ease-out),
     transform var(--motion-fast) var(--ease-smooth-out),
     visibility 0s linear 0s;
+}
+
+/*
+  From 64rem the field shares a row with the chips, so the bar stays in that row
+  as the first item of .board-body, sticky: the width of the page content. It
+  has no height of its own there (it floats over the search field's row instead
+  of pushing it down).
+*/
+@media (min-width: 64rem) {
+  .compact-header {
+    position: sticky;
+    left: auto;
+    right: auto;
+    width: 100%;
+    margin-bottom: -3rem;
+  }
 }
 
 /*
@@ -1067,16 +1086,11 @@
 /*
   The board body holds the bar, the search field, the filter chips and the
   cards. It is at least one screen tall, so a search with few or no results
-  cannot shorten the page under a docked field and scroll it back out. On a
-  phone the field is docked 70px of scrolling below the body's top (the bar's
-  offset, the pause and the merge), so it is 5rem taller there.
-  --dock (0 to 1, written by useSearchDock) lives on the search dock, so a
-  write restyles the field and nothing else; only from 64rem, where the chips
-  sit beside the field and follow it, is it written here too.
+  cannot shorten the page under a docked field and scroll it back out.
 */
 .board-body {
-  min-height: calc(100lvh + 5rem);
-  --dock: 0;
+  /* On a phone the field docks 2.5rem of scrolling into the body (its margin less its pin), so the page needs that much more to hold it there. */
+  min-height: calc(100lvh + 3rem);
 }
 
 @media (min-width: 64rem) {
@@ -1086,19 +1100,20 @@
 }
 
 /*
-  The search field: sticky, so the browser docks it. On a phone it comes to
-  rest below the bar (its 3rem and a 0.5rem gap lower than the bar's top,
-  plus the field's two pixels), so the bar can come up on its own; the merge
-  then lifts the field by that much (see .search-field). From 64rem the field
-  shares its row with the chips and goes straight to its place in the bar: two
-  pixels under the bar's top, centred in its 48px.
+  The search field: sticky, so the browser docks it. Two pixels under the bar's
+  top, centred in its 48px. --dock (0 to 1, written by useSearchDock) lives on
+  the search dock, so a write restyles the field and nothing else. On a phone
+  the field sits 3rem lower in the page than the hero's spacing alone would
+  put it: room for the bar to come up (clear of the summary's last line) with the
+  field still a good way below it, before the field scrolls up into the bar.
 */
 .search-dock {
   position: sticky;
-  top: calc(env(safe-area-inset-top) + 0.5rem + 2px + 3.5rem);
+  top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
   z-index: 41;
   height: 2.75rem;
   min-width: 0;
+  margin-top: calc(2px + 3rem);
   pointer-events: none;
   --dock: 0;
   --dock-x: 0px;
@@ -1112,21 +1127,17 @@
   contain: layout style;
   pointer-events: auto;
   width: calc(100% - (100% - var(--dock-w)) * var(--dock));
-  transform: translate(calc(var(--dock-x) * var(--dock)), calc(-3.5rem * var(--dock)));
+  transform: translateX(calc(var(--dock-x) * var(--dock)));
 }
 
-/* Only while it moves: a layer held for the whole page would cost memory for nothing. */
-.search-dock[data-docking] .search-field {
+/* Only while it changes: a layer held for the whole page would cost memory for nothing. */
+.search-dock[data-merging] .search-field {
   will-change: transform;
 }
 
 @media (min-width: 64rem) {
   .search-dock {
-    top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
-  }
-
-  .search-field {
-    transform: translateX(calc(var(--dock-x) * var(--dock)));
+    margin-top: 2px;
   }
 }
 
@@ -1150,10 +1161,12 @@
 */
 @media (min-width: 64rem) {
   .board-chips {
+    /* Written on the chips by useSearchDock from 64rem, so a write restyles only them. */
+    --dock: 0;
     opacity: calc(1 - var(--dock) * 2);
   }
 
-  .board-body[data-docking] .board-chips {
+  .board-chips[data-docking] {
     pointer-events: none;
   }
 }

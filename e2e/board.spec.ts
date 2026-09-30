@@ -638,7 +638,7 @@ type DockOffsets = {
   /** From 64rem the field shares a row with the chips and moves in one go. */
   wide: boolean;
   natural: number;
-  /** The bar comes up: on a phone by itself, with the field waiting below it. */
+  /** The bar comes up: on a phone by itself, with the field still on its way, a good way below it. */
   barStart: number;
   /** --dock leaves 0, and returns to 1 at moveEnd. */
   moveStart: number;
@@ -647,22 +647,27 @@ type DockOffsets = {
 
 async function dockOffsets(page: Page): Promise<DockOffsets> {
   const natural = await dockNatural(page);
-  const { wide, barStick, dockStick } = await page.evaluate(() => ({
-    wide: matchMedia("(min-width: 64rem)").matches,
-    barStick: Number.parseFloat(
-      getComputedStyle(document.querySelector('section[aria-label="Board controls"]') as Element).top,
-    ),
-    dockStick: Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
-  }));
+  const { wide, reduced, barStick, barHeight, dockStick } = await page.evaluate(() => {
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    return {
+      wide: matchMedia("(min-width: 64rem)").matches,
+      reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
+      barStick: Number.parseFloat(getComputedStyle(bar).top),
+      barHeight: bar.offsetHeight,
+      dockStick: Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
+    };
+  });
+  // The field reaches its pin, and --dock its 1, at moveEnd.
+  const moveEnd = natural - dockStick;
   if (wide) {
-    // One move of 48px, ending where the field sticks; the bar comes up about two thirds of the way through.
-    const moveStart = natural - dockStick - 48;
-    return { wide, natural, barStart: moveStart + 0.67 * 48, moveStart, moveEnd: moveStart + 48 };
+    // One move of 48px; the bar comes up about two thirds of the way through, or at the end when the field snaps.
+    const moveStart = moveEnd - 48;
+    return { wide, natural, barStart: reduced ? moveEnd : moveStart + 0.67 * 48, moveStart, moveEnd };
   }
-  // The bar sits at the top of the board body, two pixels above the field, until it sticks; 24px later the field
-  // starts to merge into it, over 56px.
-  const barStart = natural - 2 - barStick;
-  return { wide, natural, barStart, moveStart: barStart + 24, moveEnd: barStart + 24 + 56 };
+  // The bar is fixed and comes up while the field is still 20px below its bottom edge; the field merges into it
+  // over its last 56px before the pin.
+  const barStart = moveEnd - (barHeight + 20 - (dockStick - barStick));
+  return { wide, natural, barStart, moveStart: moveEnd - 56, moveEnd };
 }
 
 /**
@@ -708,7 +713,7 @@ test("brings the bar up on its own first, then merges the field into it", async 
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  const { wide, barStart, moveStart, moveEnd } = await dockOffsets(page);
+  const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field shares a row with the chips and moves in one go");
 
   const { up } = await dockPath(page);
@@ -717,7 +722,27 @@ test("brings the bar up on its own first, then merges the field into it", async 
   const firstMoving = stops.findIndex((stop) => stop.dock > 0);
   expect(firstShown, "the bar never showed").toBeGreaterThanOrEqual(0);
   expect(firstMoving, "the field never moved").toBeGreaterThanOrEqual(0);
-  // Phase one: the bar is up while the field has not moved at all.
+  // Before the bar, the field is in the flow: it rises 1:1 with the page and is never pinned on its own.
+  const pin = await page.evaluate(() =>
+    Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
+  );
+  const before = stops.filter((stop) => stop.shown === "false" && stop.fieldTop > pin + 1);
+  expect(before.length).toBeGreaterThan(3);
+  for (const [index, stop] of before.entries()) {
+    const previous = before[index - 1];
+    if (previous)
+      expect(stop.fieldTop - previous.fieldTop, `at ${stop.y}`).toBeCloseTo(previous.scrollY - stop.scrollY, 0);
+    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
+  }
+  // With the bar hidden nothing sits over the chips: a tap on one reaches the chip, not the search input.
+  for (const stop of stops.filter((stop) => stop.shown === "false")) {
+    expect(stop.chipHitByInput, `at ${stop.y}`).toBe(false);
+  }
+  // Where the bar comes up, the field is still well below it and not yet moving.
+  const first = stops[firstShown];
+  expect(first?.dock).toBe(0);
+  expect(first?.fieldTop ?? 0).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 12);
+  // Phase one: the bar is up while the field has not started to merge.
   const alone = stops.filter((stop) => stop.shown === "true" && stop.dock === 0);
   expect(alone.length, "the bar never showed by itself").toBeGreaterThan(1);
   for (const stop of alone) {
@@ -725,9 +750,6 @@ test("brings the bar up on its own first, then merges the field into it", async 
     // The field waits below the bar, not under it.
     expect(stop.fieldTop, `at ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
   }
-  // Waiting, the field stands still: it is pinned below the bar.
-  const waiting = alone.map((stop) => stop.fieldTop);
-  expect(Math.max(...waiting) - Math.min(...waiting)).toBeLessThanOrEqual(0.5);
   // --dock rises only once the bar is up, and each phase sits at its own offsets.
   expect(firstMoving).toBeGreaterThan(firstShown);
   for (const stop of stops) {
@@ -931,6 +953,18 @@ test("tabs from the bar's Refresh to the search field, not back up the page", as
   );
 });
 
+test("lands a link to #services below the docked field, not part way into the bar", async ({ page }) => {
+  await page.goto("/#services");
+  await hydrated(page);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  const { fieldBottom, servicesTop } = await page.evaluate(() => ({
+    fieldBottom: (document.querySelector(".search-field") as Element).getBoundingClientRect().bottom,
+    servicesTop: (document.querySelector("#services") as Element).getBoundingClientRect().top,
+  }));
+  expect(servicesTop).toBeGreaterThanOrEqual(fieldBottom - 0.5);
+});
+
 test("shows a clear button once there is a search, and it keeps the field focused", async ({ page }) => {
   await page.goto("/?q=aws");
   await hydrated(page);
@@ -959,6 +993,12 @@ test.describe("with reduced motion", () => {
     const { path } = await dockPath(page);
     const stops = await sweepDock(page, path);
     expect([...new Set(stops.map((stop) => stop.dock))].sort()).toEqual([0, 1]);
+    // The bar never shows over a field that has not snapped into it, going down or coming back up.
+    if ((await dockOffsets(page)).wide) {
+      for (const stop of stops.filter((stop) => stop.shown === "true")) {
+        expect(stop.dock, `at ${stop.y}`).toBe(1);
+      }
+    }
     // The two phases stay apart without motion: on a phone the bar is up before the field snaps in.
     if (!(await dockOffsets(page)).wide) {
       expect(stops.some((stop) => stop.shown === "true" && stop.dock === 0)).toBe(true);

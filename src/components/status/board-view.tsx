@@ -95,9 +95,10 @@ export function BoardView({
   const dockRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
+  const chipsRef = useRef<HTMLElement>(null);
   // The dock's two discrete states live outside this component: the board must not render mid-move.
   const [dock] = useState(createDockStore);
-  useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, store: dock });
+  useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, chipsRef, store: dock });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
@@ -395,7 +396,7 @@ export function BoardView({
             <RefreshButton bar fetching={fetching} onRefresh={() => void handleRefresh()} />
           </CompactHeader>
           {/* biome-ignore lint/a11y/useSemanticElements: <search> is Safari 17+; role="search" on a div names the same landmark everywhere. */}
-          <div ref={dockRef} role="search" className="search-dock mt-0.5 basis-full lg:flex-1 lg:basis-0">
+          <div ref={dockRef} role="search" className="search-dock basis-full lg:flex-1 lg:basis-0">
             <div className="search-field">
               <label className="relative block min-w-0 flex-1">
                 <span className="sr-only">Search services</span>
@@ -442,6 +443,7 @@ export function BoardView({
           {/* One scrolling row on phones instead of three wrapped ones. */}
           {/* The row's landmark, and its flex item: the group inside bleeds to the screen edges on a phone. */}
           <section
+            ref={chipsRef}
             aria-label="Filters"
             className="board-chips mt-3 min-w-0 basis-full lg:mt-0 lg:basis-auto lg:self-center"
           >

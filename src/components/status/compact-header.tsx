@@ -63,8 +63,8 @@ export function useDockState(store: DockStore): DockState {
 
 /** The width from which the search field shares a row with the filter chips (Tailwind's lg). */
 const WIDE = "(min-width: 64rem)";
-/** On a phone: the scrolling, in px, between the bar appearing and the field starting to merge, and the merge itself. */
-const PHONE_GAP = 24;
+/** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up, and the scrolling the merge takes. */
+const PHONE_GAP = 20;
 const PHONE_RANGE = 56;
 /** On a wide screen: the scrolling the one move takes, and where in it (0 to 1) the bar comes up. */
 const WIDE_RANGE = 48;
@@ -72,32 +72,40 @@ const WIDE_BAR_AT = 0.67;
 
 /**
  * Scroll progress of the search dock (0 in the hero, 1 in the bar). The dock is a
- * position: sticky element, so the browser moves it with the page; this only
- * maps the scroll position to --dock (plus the slot geometry) on the dock
- * itself. On a wide screen --dock is also written on `hostRef`, the board
- * body, because the filter chips beside the field follow it; on a phone that
- * would restyle every card on every write. While the move is under way (--dock
- * above 0) the dock and the host carry data-docking.
+ * position: sticky element, so the browser moves it with the page and pins it in
+ * the bar's slot; this only maps the scroll position to --dock (plus the slot
+ * geometry) on the dock itself. On a wide screen --dock is also written on
+ * `chipsRef`, the filter chips beside the field, which follow it; nothing else
+ * reads it, so a write restyles only the field and them. While the move is under
+ * way (--dock above 0) the dock (and the chips) carry data-docking, and the dock
+ * data-merging while it is part way.
  *
  * Progress comes from window.scrollY against offsets measured when the layout
- * changes, never from a rect read on every frame. On a phone the move has two
- * phases: the bar comes up on its own at `barStart`, the scroll offset at which
- * it sits in its stuck place; the field waits pinned below it; PHONE_GAP px
- * later it merges up into the bar over PHONE_RANGE px. On a wide screen the
- * field shares its row with the chips, so it is a single move and the bar comes
- * up three quarters of the way through it.
+ * changes, never from a rect read on every frame. Every offset is worked out from
+ * `end`, the scroll position at which the field reaches its pin.
+ *
+ * On a phone the bar is fixed at the top and the field is in the flow, so the
+ * bar can come up on its own: at `end` minus the bar's height and PHONE_GAP, when
+ * the field is still that far below it. The field then scrolls on up at the
+ * page's pace, and over the last PHONE_RANGE px before it pins it merges into
+ * the bar (its x and width follow --dock). Nothing is ever pinned over the page
+ * without the bar behind it. On a wide screen the field shares its row with the
+ * chips, so it is a single move, and the bar comes up 67% of the way through it
+ * (only once it is done under Reduce Motion, where the field snaps).
  */
 export function useSearchDock({
   hostRef,
   dockRef,
   barRef,
   slotRef,
+  chipsRef,
   store,
 }: {
   hostRef: RefObject<HTMLElement | null>;
   dockRef: RefObject<HTMLElement | null>;
   barRef: RefObject<HTMLElement | null>;
   slotRef: RefObject<HTMLElement | null>;
+  chipsRef: RefObject<HTMLElement | null>;
   store: DockStore;
 }): void {
   useEffect(() => {
@@ -107,13 +115,17 @@ export function useSearchDock({
     if (!dock || !host || !bar) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     const wide = window.matchMedia(WIDE);
+    let alive = true;
     let raf = 0;
     let lastP = -1;
+    let docking = false;
+    let merging = false;
     let docked = false;
     let barShown = false;
     let barStart = 0;
     let start = 0;
     let range = PHONE_RANGE;
+    let hysteresis = 8;
     const measure = () => {
       const hostStyle = getComputedStyle(host);
       const contentTop =
@@ -121,17 +133,21 @@ export function useSearchDock({
         window.scrollY +
         (Number.parseFloat(hostStyle.paddingTop) || 0) +
         (Number.parseFloat(hostStyle.borderTopWidth) || 0);
+      const dockStyle = getComputedStyle(dock);
+      const pin = Number.parseFloat(dockStyle.top) || 10;
+      const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
       if (wide.matches) {
-        const dockStyle = getComputedStyle(dock);
-        const natural = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0);
         range = WIDE_RANGE;
-        start = natural - (Number.parseFloat(dockStyle.top) || 10) - range;
-        barStart = start + WIDE_BAR_AT * range;
+        start = end - range;
+        // Snapping, the field is in the bar only at the end: the bar must not show over it before.
+        barStart = reduce.matches ? end : start + WIDE_BAR_AT * range;
+        hysteresis = reduce.matches ? 0 : 8;
       } else {
-        // The bar is the first thing in the body, so it sits at the body's top until it sticks.
         range = PHONE_RANGE;
-        barStart = contentTop - (Number.parseFloat(getComputedStyle(bar).top) || 8);
-        start = barStart + PHONE_GAP;
+        start = end - range;
+        const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+        barStart = end - (bar.offsetHeight + PHONE_GAP - (pin - barTop));
+        hysteresis = 8;
       }
       const slot = slotRef.current;
       if (!slot) return;
@@ -141,11 +157,21 @@ export function useSearchDock({
     const write = (p: number) => {
       const value = String(p);
       dock.style.setProperty("--dock", value);
-      if (wide.matches) host.style.setProperty("--dock", value);
-      else host.style.removeProperty("--dock");
-      for (const element of [dock, host]) {
-        if (p > 0) element.setAttribute("data-docking", "");
-        else element.removeAttribute("data-docking");
+      const chips = chipsRef.current;
+      if (chips && wide.matches) chips.style.setProperty("--dock", value);
+      const nextDocking = p > 0;
+      const nextMerging = p > 0 && p < 1;
+      if (nextDocking !== docking) {
+        docking = nextDocking;
+        for (const element of [dock, chips]) {
+          if (docking) element?.setAttribute("data-docking", "");
+          else element?.removeAttribute("data-docking");
+        }
+      }
+      if (nextMerging !== merging) {
+        merging = nextMerging;
+        if (merging) dock.setAttribute("data-merging", "");
+        else dock.removeAttribute("data-merging");
       }
     };
     const frame = () => {
@@ -158,17 +184,20 @@ export function useSearchDock({
         lastP = p;
         write(p);
       }
-      barShown = barShownAt(y, barStart, barShown);
+      barShown = barShownAt(y, barStart, barShown, hysteresis);
       // Part way, the field is still where it was: the placeholder only changes at the two ends.
       if (p === 1) docked = true;
       else if (p === 0) docked = false;
       store.set({ barShown, docked });
     };
     const schedule = () => {
-      if (!raf) raf = requestAnimationFrame(frame);
+      if (alive && !raf) raf = requestAnimationFrame(frame);
     };
     const remeasure = () => {
+      if (!alive) return;
       measure();
+      // Across the wide/phone split the chips' copy of --dock has to come or go.
+      if (!wide.matches) chipsRef.current?.style.removeProperty("--dock");
       lastP = -1;
       schedule();
     };
@@ -177,6 +206,7 @@ export function useSearchDock({
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", remeasure);
     wide.addEventListener("change", remeasure);
+    reduce.addEventListener("change", remeasure);
     void document.fonts?.ready.then(remeasure);
     const ro = new ResizeObserver(remeasure);
     ro.observe(dock);
@@ -189,13 +219,15 @@ export function useSearchDock({
       if (slotRef.current.parentElement) ro.observe(slotRef.current.parentElement);
     }
     return () => {
+      alive = false;
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", remeasure);
       wide.removeEventListener("change", remeasure);
+      reduce.removeEventListener("change", remeasure);
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [hostRef, dockRef, barRef, slotRef, store]);
+  }, [hostRef, dockRef, barRef, slotRef, chipsRef, store]);
 }
 
 /**
