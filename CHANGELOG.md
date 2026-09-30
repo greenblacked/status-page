@@ -17,7 +17,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
 - A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
-- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in once the live line has scrolled clear of it, and the field merges into it over the last stretch of the scroll. The field has its own clear button, a full-size touch target.
+- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field still a little way below; the field then rises with the page and merges into it over the next stretch of the scroll. The field has its own clear button, a full-size touch target.
 
 ### Changed
 

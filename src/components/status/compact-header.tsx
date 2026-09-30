@@ -46,12 +46,14 @@ const WIDE = "(min-width: 64rem)";
  * `end`, the scroll position at which the field reaches its pin.
  *
  * On a phone the bar is fixed at the top and the field is in the flow, so the
- * bar can come up on its own: at `end` minus the bar's height and PHONE_GAP, when
- * the field is still that far below it, or later if the hero's last line is
- * still in the bar's way. The field then scrolls on up at the page's pace,
- * and over the last PHONE_RANGE px before it pins (fewer when the bar came up
- * late) it merges into the bar (its x and width follow --dock). Nothing is
- * ever pinned over the page without the bar behind it. On a wide screen the field shares its row with the
+ * bar comes up on its own: at `end` minus the bar's height and PHONE_GAP, when
+ * the field is still that far below it and the hero's last line (the live line)
+ * has just scrolled out from under the bar's slide-in. The page's spacing puts
+ * them at the same scroll position. The field then scrolls on up at the page's
+ * pace, alone with the bar, and over the last PHONE_RANGE px before it pins it
+ * merges into the bar (its x and width follow --dock). Nothing is ever pinned
+ * over the page without the bar behind it, and the field never covers the bar.
+ * On a wide screen the field shares its row with the
  * chips, so it is a single move, and the bar comes up 67% of the way through it
  * (only once it is done under Reduce Motion, where the field snaps).
  */

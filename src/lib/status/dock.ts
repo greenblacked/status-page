@@ -43,7 +43,7 @@ export function createDockStore(): DockStore {
 }
 
 /** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up, and the scrolling the merge takes. */
-export const PHONE_GAP = 20;
+export const PHONE_GAP = 16;
 export const PHONE_RANGE = 56;
 /** How far above its place the hidden bar sits, in px (the translateY of .compact-header[data-shown="false"] in styles.css): the bar slides down this far as it comes up. */
 export const BAR_RISE = 8;
@@ -70,11 +70,14 @@ export type DockGeometry = {
  * `barHeight` the bar's height (phone only).
  *
  * `contentBottom` (phone only) is where the hero's last line ends in the page.
- * The bar is never raised over it: if the field sits so close under that line
- * that the bar's usual moment would cover it, the bar waits until the line has
- * scrolled up past the highest point the sliding bar reaches, and the merge
- * then starts with it (the bar is always up before the field moves into it).
- * With the usual room between the two, nothing changes.
+ * The bar is never raised over it. The page's spacing is sized so this never
+ * has to act: the line is `barHeight + BAR_RISE + PHONE_GAP` px above the field
+ * (see .search-dock in styles.css), which is exactly when the sliding bar's top
+ * edge clears the line and the bar's bottom edge is PHONE_GAP above the field.
+ * If some page ever sits the two closer (a smaller text size than the spacing
+ * was drawn for), the bar waits for the line to scroll up past the highest
+ * point the sliding bar reaches, and the merge starts with it, so the bar is
+ * still always up before the field moves into it.
  */
 export function dockGeometry({
   wide,

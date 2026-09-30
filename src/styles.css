@@ -604,10 +604,12 @@
   The search field: sticky, so the browser docks it. Two pixels under the bar's
   top, centred in its 48px. --dock (0 to 1, written by useSearchDock) lives on
   the search dock, so a write restyles the field and nothing else. Below 64rem
-  the field sits 0.5rem lower than the hero's spacing alone would put it, so
-  the live line and the field are about 26px apart, as in the phone mock. The
-  bar then waits until that line has scrolled clear of it (dockGeometry), and
-  the field merges into the bar over the scrolling that is left.
+  the bar comes up on its own before the field merges into it, and it must not
+  cover the live line, so the field sits 4.5rem under the live line: the bar's
+  3rem, the 8px it slides in from, and 1rem of clear page between the bar and
+  the field when the bar appears, at the moment the live line has just scrolled
+  out from under it. The hero's own bottom padding is part of the 4.5rem (1rem,
+  then 1.5rem from 48rem), so the dock adds the rest. See dockGeometry.
 */
 .search-dock {
   position: sticky;
@@ -615,7 +617,7 @@
   z-index: 41;
   height: 2.75rem;
   min-width: 0;
-  margin-top: calc(2px + 0.5rem);
+  margin-top: 3.5rem;
   pointer-events: none;
   --dock: 0;
   --dock-x: 0px;
@@ -635,6 +637,12 @@
 /* Only while it changes: a layer held for the whole page would cost memory for nothing. */
 .search-dock[data-merging] .search-field {
   will-change: transform;
+}
+
+@media (min-width: 48rem) {
+  .search-dock {
+    margin-top: 3rem;
+  }
 }
 
 @media (min-width: 64rem) {
