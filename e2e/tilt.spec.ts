@@ -1,0 +1,371 @@
+import AxeBuilder from "@axe-core/playwright";
+import { expect, type Page, test } from "@playwright/test";
+import { LIGHT_SIGN, TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
+
+// Tilt lighting reads the device's motion sensors, which a test browser does
+// not have. These tests stand in for them: they dispatch synthetic
+// `deviceorientation` events, and (as iOS does) put a requestPermission on
+// DeviceOrientationEvent that counts its calls and answers as told. The
+// browser's own readings (a null one, without a sensor) are shut out.
+
+const SERVICES = 14;
+const cards = (page: Page) => page.locator('article[id^="service-"]');
+const html = (page: Page) => page.locator("html");
+
+/** Waits until React has hydrated the page: the switch handlers are attached only then. */
+async function hydrated(page: Page): Promise<void> {
+  await expect(html(page)).toHaveAttribute("data-hydrated", "");
+}
+
+/** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
+function watchConsole(page: Page): string[] {
+  const problems: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") problems.push(message.text());
+  });
+  page.on("pageerror", (error) => problems.push(`uncaught: ${error.message}`));
+  return problems;
+}
+
+/** Puts iOS's permission prompt in place, answering `answer`, before any page script runs. */
+async function stubMotionPermission(page: Page, answer: "granted" | "denied" | "throws" = "granted"): Promise<void> {
+  await page.addInitScript((answer) => {
+    const w = window as unknown as { __permCalls: number };
+    w.__permCalls = 0;
+    if (typeof DeviceOrientationEvent === "undefined") return;
+    // A browser with no sensor fires one empty reading of its own as soon as
+    // something listens. Only the tests' readings should count.
+    window.addEventListener("deviceorientation", (event) => event.isTrusted && event.stopImmediatePropagation(), true);
+    Object.defineProperty(DeviceOrientationEvent, "requestPermission", {
+      value: async () => {
+        w.__permCalls++;
+        if (answer === "throws") throw new Error("not from a user gesture");
+        return answer;
+      },
+      configurable: true,
+    });
+  }, answer);
+}
+
+const permissionCalls = (page: Page) => page.evaluate(() => (window as unknown as { __permCalls: number }).__permCalls);
+
+/** One synthetic reading from the motion sensor; a null angle is what a device without one reports. */
+async function tilt(page: Page, beta: number | null, gamma: number | null): Promise<void> {
+  await page.evaluate(
+    ([beta, gamma]) => {
+      const event = new Event("deviceorientation");
+      for (const [key, value] of Object.entries({ alpha: 0, beta, gamma, absolute: false })) {
+        Object.defineProperty(event, key, { value });
+      }
+      window.dispatchEvent(event);
+    },
+    [beta, gamma],
+  );
+}
+
+const lightVar = (page: Page, name: "--light-x" | "--light-y") =>
+  page.evaluate((name) => document.documentElement.style.getPropertyValue(name), name);
+
+/**
+ * Feeds the same reading until the light shows it (the listener attaches a
+ * moment after hydration, and the smoothing needs a few frames).
+ */
+async function tiltUntil(
+  page: Page,
+  beta: number,
+  gamma: number,
+  name: "--light-x" | "--light-y",
+  reached: (value: number) => boolean,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        await tilt(page, beta, gamma);
+        const value = await lightVar(page, name);
+        return value !== "" && reached(Number(value));
+      },
+      { timeout: 10_000, intervals: [50, 100, 200] },
+    )
+    .toBe(true);
+}
+
+/** A reading at rest, which the light takes as neutral, then one upright, which moves it. */
+async function tiltFromRest(page: Page): Promise<void> {
+  await tiltUntil(page, 0, 0, "--light-y", () => true);
+  await tiltUntil(page, 90, 0, "--light-y", (y) => y !== 0);
+}
+
+async function open(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+}
+
+async function openSettings(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Settings and shortcuts" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+}
+
+const tiltSwitch = (page: Page) => page.getByRole("switch", { name: "Tilt lighting" });
+const storedChoice = (page: Page) => page.evaluate((key) => localStorage.getItem(key), TILT_STORAGE_KEY);
+
+/** The first card's light-carrying pseudo-elements, as the browser computes them. */
+const cardLight = (page: Page) =>
+  cards(page)
+    .first()
+    .evaluate((card) => ({
+      sheen: getComputedStyle(card, "::before").backgroundImage,
+      glint: getComputedStyle(card, "::after").content,
+      glintImage: getComputedStyle(card, "::after").backgroundImage,
+    }));
+
+test.describe("without touch", () => {
+  test.skip(({ hasTouch }) => hasTouch, "the switch is for touch devices");
+
+  test("shows no Tilt lighting switch and leaves the light alone", async ({ page }) => {
+    await open(page);
+    await openSettings(page);
+    await expect(page.getByRole("switch", { name: "Reduce glass" })).toBeVisible();
+    await expect(page.getByText("Tilt lighting")).toHaveCount(0);
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightVar(page, "--light-x")).toBe("");
+  });
+});
+
+test.describe("on a touch device", () => {
+  test.skip(({ hasTouch }) => !hasTouch, "needs a touch device");
+
+  test.beforeEach(async ({ page }) => {
+    await stubMotionPermission(page);
+    await page.goto("/");
+    test.skip(await page.evaluate(() => typeof DeviceOrientationEvent === "undefined"), "no motion API in this engine");
+  });
+
+  test("is off until switched on, and asks for motion access on that tap", async ({ page }) => {
+    const problems = watchConsole(page);
+    await page.reload();
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    await openSettings(page);
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await permissionCalls(page)).toBe(0);
+    expect(await cardLight(page)).toMatchObject({ glint: "none" });
+    expect((await cardLight(page)).sheen).toContain("125deg");
+
+    await tiltSwitch(page).click();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    expect(await permissionCalls(page)).toBe(1);
+    expect(await storedChoice(page)).toBe("on");
+    // Nothing moves the light until a reading arrives.
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+    expect(problems).toEqual([]);
+  });
+
+  test("moves the light with the tilt, and clamps it", async ({ page }) => {
+    const problems = watchConsole(page);
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    // The first reading is neutral.
+    await tiltUntil(page, 0, 0, "--light-x", () => true);
+    expect(Math.abs(Number(await lightVar(page, "--light-x")))).toBeLessThan(0.05);
+
+    // Held upright: the vertical light reaches its end.
+    await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
+    // Left edge down and right edge down go opposite ways (upright, gamma says nothing: it is the edge case).
+    await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+    await tiltUntil(page, 30, 45, "--light-x", (x) => x * LIGHT_SIGN <= -0.5);
+    for (const name of ["--light-x", "--light-y"] as const) {
+      const value = Number(await lightVar(page, name));
+      expect(Math.abs(value)).toBeLessThanOrEqual(1);
+    }
+    expect(await lightVar(page, "--light-x")).toMatch(/^-?\d(\.\d{1,3})?$/);
+
+    // The sheen turns and the glint sits on the card.
+    const light = await cardLight(page);
+    expect(light.sheen).not.toContain("125deg");
+    expect(light.glint).not.toBe("none");
+    expect(light.glintImage).toContain("radial-gradient");
+    expect(problems).toEqual([]);
+  });
+
+  test("is declined without being saved, and says how to allow it", async ({ page }) => {
+    await stubMotionPermission(page, "denied");
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await expect(page.getByRole("status").filter({ hasText: "Motion access was declined" })).toContainText(
+      "close Safari completely and reopen this page",
+    );
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    expect(await permissionCalls(page)).toBe(1);
+    expect(await storedChoice(page)).not.toBe("on");
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightVar(page, "--light-x")).toBe("");
+
+    // The dialog with its note still passes the accessibility scan.
+    const results = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+      .analyze();
+    expect(results.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
+  });
+
+  test("treats a refused permission request as declined", async ({ page }) => {
+    await stubMotionPermission(page, "throws");
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await expect(page.getByText("Motion access was declined")).toBeVisible();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    expect(await storedChoice(page)).not.toBe("on");
+  });
+
+  test("says so when the device has no motion sensor", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await expect
+      .poll(
+        async () => {
+          await tilt(page, null, null);
+          return page.getByText("This device has no motion sensor.").count();
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(1);
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+  });
+
+  test("keeps the choice across a reload without asking again", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+
+    const problems = watchConsole(page);
+    await page.reload();
+    await hydrated(page);
+    // A saved "on" attaches at once and never prompts: iOS wants a tap for that.
+    expect(await permissionCalls(page)).toBe(0);
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+    expect(await permissionCalls(page)).toBe(0);
+    await openSettings(page);
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    expect(problems).toEqual([]);
+  });
+
+  test("asks to be allowed again when a saved choice gets no motion, and a tap retries", async ({ page }) => {
+    await page.evaluate((key) => localStorage.setItem(key, "on"), TILT_STORAGE_KEY);
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await expect(page.getByText("Tap the switch to allow motion access again.")).toBeVisible();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    expect(await permissionCalls(page)).toBe(0);
+    expect(await storedChoice(page)).toBe("on");
+
+    await tiltSwitch(page).click();
+    expect(await permissionCalls(page)).toBe(1);
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+    await expect(page.getByText("Tap the switch to allow motion access again.")).toHaveCount(0);
+  });
+
+  test("switches off cleanly", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltFromRest(page);
+    await tiltSwitch(page).click();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightVar(page, "--light-x")).toBe("");
+    expect(await lightVar(page, "--light-y")).toBe("");
+    expect(await storedChoice(page)).toBe("off");
+    // Readings after that go nowhere.
+    await tilt(page, 0, 0);
+    await page.waitForTimeout(200);
+    expect(await lightVar(page, "--light-x")).toBe("");
+  });
+
+  test("stands down under Reduce glass, and comes back with it", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+
+    await page.getByRole("switch", { name: "Reduce glass" }).click();
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightVar(page, "--light-x")).toBe("");
+    expect(await lightVar(page, "--light-y")).toBe("");
+    await expect(page.getByRole("status").filter({ hasText: "Paused while Reduce glass" })).toBeVisible();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    expect((await cardLight(page)).glint).toBe("none");
+
+    await page.getByRole("switch", { name: "Reduce glass" }).click();
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+  });
+
+  test("stands down under Reduce Motion, and comes back without it", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightVar(page, "--light-x")).toBe("");
+    await tilt(page, 0, 0);
+    await page.waitForTimeout(200);
+    expect(await lightVar(page, "--light-x")).toBe("");
+    expect((await cardLight(page)).glint).toBe("none");
+
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+  });
+
+  test("stops listening while the tab is hidden", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
+
+    const visibility = (state: "hidden" | "visible") =>
+      page.evaluate((state) => {
+        Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }, state);
+
+    await visibility("hidden");
+    const frozen = await lightVar(page, "--light-y");
+    await tilt(page, 0, 0);
+    await page.waitForTimeout(400);
+    expect(await lightVar(page, "--light-y")).toBe(frozen);
+
+    await visibility("visible");
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await page.waitForTimeout(100);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+  });
+});
