@@ -8,7 +8,6 @@ import {
   incidentLink,
   keyboardFocus,
   serviceAnchor,
-  serviceIndex,
   sortByUrgency,
   sortIncidents,
 } from "./layout";
@@ -38,7 +37,7 @@ function board(services: ServiceSnapshot[]): BoardSnapshot {
 }
 
 describe("groupServices", () => {
-  it("puts every non-operational service first, most urgent first, keeping catalog order within a severity", () => {
+  it("puts what needs a look first, most urgent first, keeping catalog order within a severity", () => {
     const groups = groupServices([
       service("gcp", "degraded"),
       service("aws", "operational"),
@@ -48,15 +47,30 @@ describe("groupServices", () => {
       service("fortnite", "degraded", "gaming"),
       service("mikrotik", "operational", "updates"),
     ]);
-    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "gcp", "fortnite", "grok", "steam"]);
+    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "gcp", "fortnite", "steam"]);
+    expect(groups.unread.map((s) => s.id)).toEqual(["grok"]);
     expect(groups.operational.map((s) => s.id)).toEqual(["aws"]);
     expect(groups.releases.map((s) => s.id)).toEqual(["mikrotik"]);
   });
 
-  it("lists a release tracker under attention when its source fails", () => {
+  it("lists a release tracker whose source fails as unread, not as attention or a release", () => {
     const groups = groupServices([service("apple-os", "unknown", "updates")]);
-    expect(groups.attention.map((s) => s.id)).toEqual(["apple-os"]);
+    expect(groups.unread.map((s) => s.id)).toEqual(["apple-os"]);
+    expect(groups.attention).toEqual([]);
     expect(groups.releases).toEqual([]);
+  });
+
+  it("keeps every service in exactly one group", () => {
+    const input = [
+      service("gcp", "operational"),
+      service("aws", "unknown"),
+      service("steam", "degraded", "gaming"),
+      service("apple", "maintenance", "platforms"),
+      service("mikrotik", "operational", "updates"),
+    ];
+    const groups = groupServices(input);
+    const ids = [...groups.attention, ...groups.unread, ...groups.operational, ...groups.releases].map((s) => s.id);
+    expect(ids.sort()).toEqual(input.map((s) => s.id).sort());
   });
 
   it("does not reorder the caller's array", () => {
@@ -131,56 +145,67 @@ describe("sortByUrgency", () => {
 });
 
 describe("boardHeadline", () => {
-  it("reads all clear only when every service is operational", () => {
+  it("reads everything is up only when every service is operational", () => {
     expect(boardHeadline(board([service("gcp", "operational")]))).toEqual({
       tone: "operational",
-      title: "All systems operational",
+      title: "Everything is up.",
     });
   });
 
-  it("names up to two services, then counts", () => {
-    expect(boardHeadline(board([service("apple", "outage", "platforms", "Apple")])).title).toBe("Outage: Apple");
-    expect(
-      boardHeadline(
-        board([service("gcp", "degraded", "cloud", "Google Cloud"), service("aws", "degraded", "cloud", "AWS")]),
-      ).title,
-    ).toBe("Degraded: Google Cloud and AWS");
+  it("counts what needs a look, in words, with one shape", () => {
+    expect(boardHeadline(board([service("apple", "outage", "platforms", "Apple")])).title).toBe(
+      "One thing needs a look.",
+    );
+    expect(boardHeadline(board([service("gcp", "degraded"), service("aws", "degraded")])).title).toBe(
+      "Two things need a look.",
+    );
     expect(
       boardHeadline(board([service("gcp", "degraded"), service("aws", "degraded"), service("steam", "degraded")]))
         .title,
-    ).toBe("3 services degraded");
+    ).toBe("Three things need a look.");
   });
 
-  it("names confirmed breakage before an unreadable source, and says so in the tone", () => {
-    const headline = boardHeadline(
-      board([service("grok", "unknown", "ai"), service("gcp", "degraded", "cloud", "Google Cloud")]),
-    );
-    expect(headline).toEqual({ tone: "degraded", title: "Degraded: Google Cloud" });
+  it("takes its tone from the worst thing that needs a look, and never from an unreadable source", () => {
+    const headline = boardHeadline(board([service("grok", "unknown", "ai"), service("gcp", "degraded")]));
+    expect(headline).toEqual({ tone: "degraded", title: "One thing needs a look." });
+    expect(
+      boardHeadline(board([service("gcp", "maintenance"), service("aws", "unknown"), service("steam", "outage")])).tone,
+    ).toBe("outage");
   });
 
-  it("reports unreadable sources and maintenance when nothing is broken", () => {
-    expect(boardHeadline(board([service("grok", "unknown", "ai", "Grok")])).title).toBe("Grok could not be read");
-    expect(boardHeadline(board([service("claude", "maintenance", "ai", "Claude")])).title).toBe("Maintenance: Claude");
+  it("says nothing needs a look when the only trouble is unreadable sources", () => {
+    expect(boardHeadline(board([service("grok", "unknown", "ai", "Grok")]))).toEqual({
+      tone: "unknown",
+      title: "Nothing needs a look.",
+    });
+  });
+
+  it("counts maintenance as something to look at", () => {
+    expect(boardHeadline(board([service("claude", "maintenance", "ai", "Claude")]))).toEqual({
+      tone: "maintenance",
+      title: "One thing needs a look.",
+    });
   });
 });
 
 describe("documentTitle and serviceAnchor", () => {
-  it("prefixes the tab title with the attention count only when there is one", () => {
-    expect(documentTitle(board([service("gcp", "operational")]), "Status Page")).toBe("Status Page");
-    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status Page")).toBe(
-      "(2) Status Page",
-    );
+  it("prefixes the tab title with the number of outages and degradations, and only then", () => {
+    expect(documentTitle(board([service("gcp", "operational")]), "Status")).toBe("Status");
+    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "outage")]), "Status")).toBe("(2) Status");
+  });
+
+  it("does not count an unreadable source or planned maintenance in the tab", () => {
+    expect(documentTitle(board([service("gcp", "degraded"), service("aws", "unknown")]), "Status")).toBe("(1) Status");
+    expect(
+      documentTitle(
+        board([service("gcp", "maintenance"), service("aws", "unknown"), service("steam", "unknown")]),
+        "Status",
+      ),
+    ).toBe("Status");
   });
 
   it("builds a stable element id per service", () => {
     expect(serviceAnchor("cs2-europe")).toBe("service-cs2-europe");
-  });
-
-  it("numbers each service by its catalog place, not its place on the board", () => {
-    expect(serviceIndex("gcp")).toBe("01");
-    expect(serviceIndex("cs2-europe")).toBe("04");
-    expect(serviceIndex("apple-os")).toBe("14");
-    expect(serviceIndex("nope" as ServiceId)).toBe("");
   });
 });
 
@@ -361,7 +386,7 @@ describe("release trackers and the board's attention", () => {
     const snapshot = board([service("gcp", "operational"), tracker]);
     expect(groupServices(snapshot.services).attention).toEqual([]);
     expect(groupServices(snapshot.services).releases.map((item) => item.id)).toEqual(["mikrotik"]);
-    expect(documentTitle(snapshot, "Status Page")).toBe("Status Page");
-    expect(boardHeadline(snapshot)).toEqual({ tone: "operational", title: "All systems operational" });
+    expect(documentTitle(snapshot, "Status")).toBe("Status");
+    expect(boardHeadline(snapshot)).toEqual({ tone: "operational", title: "Everything is up." });
   });
 });

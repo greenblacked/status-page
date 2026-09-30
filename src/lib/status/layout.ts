@@ -1,6 +1,6 @@
-import { CATALOG } from "./catalog.ts";
 import { urgencyOf } from "./health.ts";
 import type { BoardSnapshot, Health, Incident, ServiceSnapshot } from "./types.ts";
+import { verdict } from "./verdict.ts";
 
 // Severity is the one order in health.ts (SEVERITY_ORDER), so the cards, the
 // headline, the overall health and a history day's worst state never disagree.
@@ -84,19 +84,32 @@ export function incidentLink(service: ServiceSnapshot): string | undefined {
 }
 
 export type BoardGroups = {
-  /** Anything not operational, most urgent first (see `sortByUrgency`); its first entry is the board's highlight. */
+  /**
+   * Something a person should open: outage, degraded or maintenance, most
+   * urgent first (see `sortByUrgency`). Its first outage or degraded entry is the board's highlight.
+   */
   attention: ServiceSnapshot[];
+  /**
+   * Sources that could not be read (health unknown). That says nothing about
+   * the vendor, so they never sit among the problems, are never counted as
+   * "issues" and never win the highlight.
+   */
+  unread: ServiceSnapshot[];
   /** Operational status services. */
   operational: ServiceSnapshot[];
-  /** Operational release trackers (the Updates category). */
+  /** Operational release trackers (the Releases category). */
   releases: ServiceSnapshot[];
 };
 
 export function groupServices(services: ServiceSnapshot[]): BoardGroups {
-  const attention = sortByUrgency(services.filter((service) => service.health !== "operational"));
+  const attention = sortByUrgency(
+    services.filter((service) => service.health !== "operational" && service.health !== "unknown"),
+  );
+  const unread = services.filter((service) => service.health === "unknown");
   const healthy = services.filter((service) => service.health === "operational");
   return {
     attention,
+    unread,
     operational: healthy.filter((service) => service.category !== "updates"),
     releases: healthy.filter((service) => service.category === "updates"),
   };
@@ -107,71 +120,25 @@ export function serviceAnchor(id: ServiceSnapshot["id"]): string {
 }
 
 /**
- * A service's two-digit index, "01" to "14", by its place in the catalog:
- * the same number wherever the board sorts or filters the card. A
- * decorative label, never part of a name.
+ * The one sentence at the top of the board, and the tone of the mark beside it
+ * (`verdict`, which owns the wording). Kept here because the JSON API and the
+ * floating bar read it as a headline.
  */
-export function serviceIndex(id: ServiceSnapshot["id"]): string {
-  const at = CATALOG.findIndex((entry) => entry.id === id);
-  return at < 0 ? "" : String(at + 1).padStart(2, "0");
-}
-
-function names(services: ServiceSnapshot[]): string {
-  const list = services.map((service) => service.name);
-  if (list.length <= 1) return list.join("");
-  return `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+export function boardHeadline(board: BoardSnapshot): { tone: Health; title: string } {
+  const { tone, title } = verdict(board);
+  return { tone, title };
 }
 
 /**
- * The one sentence at the top of the board. It names the worst confirmed
- * problem, so a glance answers "is something I use broken?" without reading
- * the cards. Confirmed breakage (outage, then degraded) is named before an
- * unreadable source, and an unreadable source before maintenance: the same
- * order as `SEVERITY_ORDER`, so `tone` is always the board's overall health
- * (`overallHealth`) and the health of the first card in `sortByUrgency`.
+ * Browser tab title: how many services are down or degraded, if any. Only
+ * confirmed trouble counts; a source that could not be read, and planned
+ * maintenance, do not put a number in the tab.
  */
-export function boardHeadline(board: BoardSnapshot): { tone: Health; title: string } {
-  const by = (health: Health) => board.services.filter((service) => service.health === health);
-  const outage = by("outage");
-  const degraded = by("degraded");
-  const unknown = by("unknown");
-  const maintenance = by("maintenance");
-
-  if (outage.length) {
-    return {
-      tone: "outage",
-      title: outage.length <= 2 ? `Outage: ${names(outage)}` : `${outage.length} services are down`,
-    };
-  }
-  if (degraded.length) {
-    return {
-      tone: "degraded",
-      title: degraded.length <= 2 ? `Degraded: ${names(degraded)}` : `${degraded.length} services degraded`,
-    };
-  }
-  if (unknown.length) {
-    return {
-      tone: "unknown",
-      title:
-        unknown.length === 1 ? `${unknown[0].name} could not be read` : `${unknown.length} sources could not be read`,
-    };
-  }
-  if (maintenance.length) {
-    return {
-      tone: "maintenance",
-      title:
-        maintenance.length <= 2
-          ? `Maintenance: ${names(maintenance)}`
-          : `${maintenance.length} services in maintenance`,
-    };
-  }
-  return { tone: "operational", title: "All systems operational" };
-}
-
-/** Browser tab title: the number of services needing attention, if any. */
 export function documentTitle(board: BoardSnapshot, appName: string): string {
-  const attention = board.services.filter((service) => service.health !== "operational").length;
-  return attention ? `(${attention}) ${appName}` : appName;
+  const trouble = board.services.filter(
+    (service) => service.health === "outage" || service.health === "degraded",
+  ).length;
+  return trouble ? `(${trouble}) ${appName}` : appName;
 }
 
 /**

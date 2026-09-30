@@ -69,7 +69,8 @@ export function matchesFilters(
   starred: ReadonlySet<ServiceId> = new Set(),
 ): boolean {
   if (filters.category !== "all" && service.category !== filters.category) return false;
-  if (filters.issuesOnly && service.health === "operational") return false;
+  // "Issues" are things that need a look. A source that could not be read is not one of them.
+  if (filters.issuesOnly && (service.health === "operational" || service.health === "unknown")) return false;
   if (filters.starredOnly && !starred.has(service.id)) return false;
   const needle = filters.query.trim().toLowerCase();
   if (!needle) return true;
@@ -80,8 +81,8 @@ export function matchesFilters(
 /** What the board says in place of cards when the filters leave none. */
 export function emptyBoardMessage(filters: BoardFilters, starredCount: number): string {
   return filters.starredOnly && starredCount === 0
-    ? "No starred services yet. Star a card to keep it here and at the top of the board."
-    : "No services match that filter.";
+    ? "Nothing starred yet. Star a card to pin it to the top."
+    : "Nothing matches.";
 }
 
 /**
@@ -91,7 +92,7 @@ export function emptyBoardMessage(filters: BoardFilters, starredCount: number): 
  * not a live region of its own, which made two announcements race.
  */
 export function resultsAnnouncement(shown: number, total: number, emptyMessage: string): string {
-  const count = `${shown} of ${total} ${total === 1 ? "service" : "services"} shown`;
+  const count = `Showing ${shown} of ${total}`;
   return shown === 0 ? `${count}. ${emptyMessage}` : count;
 }
 

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Bell, BellOff, BellRing, RefreshCw, Search, Star, X } from "lucide-react";
+import { Bell, BellOff, BellRing, RefreshCw, Search, Star, X } from "lucide-react";
 import {
   type ComponentProps,
   type MouseEvent,
@@ -21,6 +21,7 @@ import { LiveSignal } from "@/components/status/live-signal";
 import { LocalTime } from "@/components/status/local-time";
 import { PeriodDial } from "@/components/status/period-dial";
 import { SettingsDialog } from "@/components/status/settings-dialog";
+import { SiteFooter } from "@/components/status/site-footer";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
 import { useBackground } from "@/components/status/use-background";
@@ -44,7 +45,14 @@ import {
   resultsAnnouncement,
 } from "@/lib/status/filters";
 import { attentionBreakdown } from "@/lib/status/health";
-import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
+import {
+  type BoardGroups,
+  boardHeadline,
+  documentTitle,
+  groupServices,
+  serviceAnchor,
+  sortByUrgency,
+} from "@/lib/status/layout";
 import { canvasFont, placeholderFits } from "@/lib/status/placeholder";
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import {
@@ -56,7 +64,6 @@ import {
   PULSE_INTERVAL_MS,
   parseTimestamp,
   pickRefetchJitter,
-  spokenDuration,
 } from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
@@ -246,17 +253,21 @@ export function BoardView({
     return () => window.clearTimeout(timer);
   }, [revealing]);
 
-  const issueCount = board.services.length - board.counts.operational;
+  // "Issues" are what needs a look; a source that could not be read is not one (see matchesFilters).
+  const issueCount = board.services.length - board.counts.operational - board.counts.unknown;
   // Starring moves a card, so it glides there like a refresh does.
   const onToggleStar = (id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id));
-  const groups = groupServices(visible);
+  const groups = withUnread(groupServices(visible));
   // The board's most urgent service, from the whole board rather than the
   // filtered view (starred services first among equals, as on the cards).
   // It is highlighted only while it is also the first card on screen, so a
   // filter or search that hides it leaves no highlight rather than crowning
   // whatever is left.
   const mostUrgentId = useMemo(
-    () => groupServices(starredFirst(board.services, starred)).attention[0]?.id,
+    () =>
+      groupServices(starredFirst(board.services, starred)).attention.find(
+        (service) => service.health === "outage" || service.health === "degraded",
+      )?.id,
     [board.services, starred],
   );
   const categoryCount = (id: "all" | CategoryId) =>
@@ -543,80 +554,11 @@ export function BoardView({
             </div>
           </main>
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
-          <footer className="mt-14 flex basis-full flex-col gap-2 pb-[calc(5rem+env(safe-area-inset-bottom))] text-sm text-subtle">
-            <p>
-              Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
-              Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
-            </p>
-            <p>{CADENCE_NOTE}</p>
-            <p>
-              <a
-                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="https://github.com/greenblacked/status-page"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Source on GitHub
-                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-              </a>
-              {" · "}
-              <a
-                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="https://github.com/greenblacked/status-page/blob/main/LICENSE"
-                target="_blank"
-                rel="noopener noreferrer license"
-              >
-                MIT License
-                <ArrowUpRight aria-hidden="true" className="ml-0.5 inline size-3.5 align-[-2px]" />
-              </a>
-              : free to use, copy, modify and share, with the copyright notice kept.
-            </p>
-            <p>
-              Use the board elsewhere:{" "}
-              <a
-                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/api/status.json"
-              >
-                JSON API
-              </a>
-              {" · "}
-              <a
-                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/feed.xml"
-              >
-                Atom feed
-              </a>{" "}
-              for Slack, Teams and feed readers ·{" "}
-              <a
-                className="focus-ring pressable touch-target inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/api/badge/board"
-              >
-                status badges
-              </a>
-              .
-            </p>
-            {/*
-              On every screen width: with the single-key shortcuts off, ? no
-              longer opens the list, and this button is the way back to the
-              switches, including on a desktop zoomed to a phone's width, and
-              the only way to them on a touch screen.
-            */}
-            <p>
-              <button
-                type="button"
-                className="focus-ring pressable touch-target rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                onClick={() => setSettingsOpen(true)}
-              >
-                Settings and shortcuts
-              </button>
-              {singleKey.enabled ? (
-                <span className="hidden sm:inline">
-                  {" "}
-                  (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
-                </span>
-              ) : null}
-            </p>
-          </footer>
+          <SiteFooter
+            className="mt-14 basis-full pb-[calc(5rem+env(safe-area-inset-bottom))]"
+            onOpenSettings={() => setSettingsOpen(true)}
+            singleKey={singleKey.enabled}
+          />
           <SettingsDialog
             open={settingsOpen}
             onClose={() => setSettingsOpen(false)}
@@ -657,7 +599,7 @@ function SummaryPanel({
   onReveal: (service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const total = board.services.length;
-  const attention = total - board.counts.operational;
+  const attention = total - board.counts.operational - board.counts.unknown;
   const affected = groupServices(board.services).attention;
   const generatedAt = parseTimestamp(board.generatedAt);
 
