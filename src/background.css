@@ -5,7 +5,7 @@
            (styles.css) knows about. Nothing here applies.
     Glass  frosted panels over a still glow.
     Full   adds the slow drift, the glass lenses that bend the aurora's colour, the
-           light that follows the pointer and the period dial's sweep.
+           light that wanders across the cards and the period dial's sweep.
 
   The choice is `data-background` on <html> (glass or full; Quiet is no
   attribute), set before paint by APPEARANCE_BOOT_SCRIPT and kept in step by

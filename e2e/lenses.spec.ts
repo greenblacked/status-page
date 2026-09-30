@@ -11,7 +11,7 @@ import { fixtureBoard, serveBoard } from "./fixture-board";
 // last test here measures it instead: with the content hidden and motion off,
 // it screenshots each lens disc and checks --color-subtle and --color-muted
 // against every pixel more than 3px inside the rim, in light and dark. The
-// budget is 4.5:1 there, grid lines included; only the rim hairline (the outer
+// budget is 4.5:1 there; only the rim hairline (the outer
 // 3px) is exempt. The lens colours are alpha tokens in src/background.css, so
 // this is the test to run whenever one of them changes.
 
@@ -114,7 +114,7 @@ test.describe("markup", () => {
 });
 
 test.describe("background", () => {
-  const layers = [".aurora", ".aurora-grid", ".lenses"];
+  const layers = [".aurora", ".lenses"];
 
   test("Quiet, the default, draws none of it and sets no attribute", async ({ page }) => {
     await page.goto("/");
@@ -126,23 +126,19 @@ test.describe("background", () => {
     await expect(page.locator(".lenses > .lens")).toHaveCount(4);
   });
 
-  test("Glass shows the still glow and the grid, and no lenses", async ({ page }) => {
+  test("Glass shows the still glow, and no lenses", async ({ page }) => {
     await chooseBackground(page, "glass");
     await page.goto("/");
     await hydrated(page);
     await expect(page.locator("html")).toHaveAttribute("data-background", "glass");
     expect(await shown(page, ".aurora")).toBe(true);
-    expect(await shown(page, ".aurora-grid")).toBe(true);
     expect(await shown(page, ".lenses")).toBe(false);
     // Still: the drift belongs to Full.
     const drift = await page.locator(".aurora").evaluate((node) => getComputedStyle(node, "::before").animationName);
     expect(drift).toBe("none");
-    // The grid is whole in Glass: only the lenses hole it.
-    const mask = await page.locator(".aurora-grid").evaluate((node) => getComputedStyle(node).maskImage || "none");
-    expect(mask).toBe("none");
   });
 
-  test("Full shows all three", async ({ page }) => {
+  test("Full shows the glow and the lenses", async ({ page }) => {
     await chooseBackground(page, "full");
     await page.goto("/");
     await hydrated(page);
@@ -286,16 +282,10 @@ test.describe("styling", () => {
     expect(await lenses(page).evaluate((layer) => getComputedStyle(layer).pointerEvents)).toBe("none");
   });
 
-  test("bends the grid: the real grid is holed and each lens filters its copy", async ({ page }) => {
+  test("each lens filters its copy of the aurora", async ({ page }) => {
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
-    const grid = await page.locator(".aurora-grid").evaluate((node) => {
-      const style = getComputedStyle(node);
-      return { mask: style.maskImage || style.webkitMaskImage || "none" };
-    });
-    expect(grid.mask).not.toBe("none");
-    expect(grid.mask.match(/radial-gradient/g)).toHaveLength(4);
     const filters = await page
       .locator(".lens-fx")
       .evaluateAll((all) => all.map((node) => getComputedStyle(node).filter));
@@ -343,27 +333,135 @@ test.describe("styling", () => {
     }
   });
 
-  test("forced colours hide the lenses and the grid", async ({ page }) => {
+  test("forced colours hide the lenses", async ({ page }) => {
     await page.emulateMedia({ forcedColors: "active" });
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     await expect(lenses(page)).toBeHidden();
-    await expect(page.locator(".aurora-grid")).toBeHidden();
   });
 
-  test("Increase Contrast hides the lenses and gives the grid back whole", async ({ page }) => {
+  test("Increase Contrast hides the lenses", async ({ page }) => {
     await page.emulateMedia({ contrast: "more" });
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     await expect(lenses(page)).toBeHidden();
-    // The grid is holed under each lens; with no lenses there is nothing to hole.
-    const mask = await page.locator(".aurora-grid").evaluate((grid) => {
-      const style = getComputedStyle(grid);
-      return style.maskImage || style.webkitMaskImage || "none";
+  });
+});
+
+test.describe("no ruled lines", () => {
+  for (const background of ["quiet", "glass", "full"] as const) {
+    test(`${background} has no grid element and no layer paints a line pattern`, async ({ page }) => {
+      await chooseBackground(page, background);
+      await page.goto("/");
+      await hydrated(page);
+      await expect(page.locator(".aurora-grid")).toHaveCount(0);
+      const painted = await page.evaluate(() => {
+        const found: string[] = [];
+        for (const node of document.querySelectorAll(".aurora, .aurora *, .lenses, .lenses *")) {
+          for (const pseudo of [null, "::before", "::after"]) {
+            const image = getComputedStyle(node, pseudo).backgroundImage;
+            if (/repeating-|linear-gradient\([^)]*\)\s*,\s*linear-gradient/.test(image))
+              found.push(`${node.className} ${pseudo ?? ""}`);
+          }
+        }
+        return found;
+      });
+      expect(painted).toEqual([]);
     });
-    expect(mask).toBe("none");
+  }
+});
+
+test.describe("card light", () => {
+  const lightTransform = (page: Page, index: number) =>
+    page
+      .locator(".spotlight")
+      .nth(index)
+      .evaluate((node) => getComputedStyle(node, "::after").transform);
+  const lightOpacity = (page: Page) =>
+    page
+      .locator(".spotlight")
+      .first()
+      .evaluate((node) => getComputedStyle(node, "::after").opacity);
+  const wandering = (page: Page) =>
+    page
+      .locator(".spotlight")
+      .first()
+      .evaluate((node) => node.hasAttribute("data-wander"));
+
+  test("is drawn on Full and absent on Quiet and Glass", async ({ page }) => {
+    for (const background of ["quiet", "glass"] as const) {
+      await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), background);
+      await page.goto("/");
+      await hydrated(page);
+      expect(
+        await page
+          .locator(".spotlight")
+          .first()
+          .evaluate((node) => getComputedStyle(node, "::after").content),
+      ).toMatch(/none|normal/);
+      await page.evaluate(() => localStorage.clear());
+    }
+    await chooseBackground(page, "full");
+    await page.goto("/");
+    await hydrated(page);
+    await expect.poll(() => wandering(page)).toBe(true);
+    expect(
+      await page
+        .locator(".spotlight")
+        .first()
+        .evaluate((node) => getComputedStyle(node, "::after").content),
+    ).not.toMatch(/none|normal/);
+    expect(Number(await lightOpacity(page))).toBeGreaterThan(0);
+  });
+
+  test("moves on its own and never follows the pointer", async ({ page }) => {
+    await chooseBackground(page, "full");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/");
+    await hydrated(page);
+    await expect.poll(() => wandering(page)).toBe(true);
+    const before = await lightTransform(page, 0);
+    await page.waitForTimeout(2500);
+    expect(await lightTransform(page, 0)).not.toBe(before);
+    // The pointer does not write a position any more.
+    await page.mouse.move(40, 40);
+    await page.mouse.move(400, 300);
+    const props = await page
+      .locator(".spotlight")
+      .first()
+      .evaluate((node) => [node.style.getPropertyValue("--spot-x"), node.style.getPropertyValue("--spot-y")]);
+    expect(props).toEqual(["", ""]);
+  });
+
+  test("two surfaces are not in lockstep", async ({ page }) => {
+    await chooseBackground(page, "full");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.goto("/");
+    await hydrated(page);
+    await expect.poll(() => wandering(page)).toBe(true);
+    const count = await page.locator(".spotlight").count();
+    expect(count).toBeGreaterThan(1);
+    const seen = new Set<string>();
+    for (let i = 0; i < count; i++) seen.add(await lightTransform(page, i));
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  test("stands still under reduced motion", async ({ page }) => {
+    await chooseBackground(page, "full");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+    await hydrated(page);
+    const first = await lightTransform(page, 0);
+    await page.waitForTimeout(2500);
+    expect(await lightTransform(page, 0)).toBe(first);
+    expect(
+      await page
+        .locator(".spotlight")
+        .first()
+        .evaluate((node) => getComputedStyle(node, "::after").display),
+    ).toBe("none");
   });
 });
 
