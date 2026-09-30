@@ -1322,6 +1322,55 @@ test("gives an attention card the same dropdown, with the working components in 
   await expect(page.locator("article#service-aws details")).toHaveCount(0);
 });
 
+test("shows the dropdown for a Statuspage vendor on a healthy row and on an attention card, and a 300-component list expands whole", async ({
+  page,
+}) => {
+  const board = fixtureBoard(Date.now());
+  const claude = board.services.find((service) => service.id === "claude");
+  const chatgpt = board.services.find((service) => service.id === "chatgpt");
+  if (!claude || !chatgpt) throw new Error("the fixture has no Claude or ChatGPT");
+  // Claude is broken with one degraded component among 299 working ones, the most a collector keeps.
+  claude.health = "degraded";
+  claude.summary = "Elevated errors on Claude API";
+  claude.components = [
+    { name: "Claude API", health: "degraded" },
+    ...Array.from({ length: 299 }, (_, index) => ({
+      name: `Claude part ${index + 1}`,
+      health: "operational" as const,
+    })),
+  ];
+  claude.incidents = [
+    {
+      id: "claude-1",
+      title: "Elevated errors",
+      health: "degraded",
+      startedAt: new Date(Date.now() - 600_000).toISOString(),
+    },
+  ];
+  await openFixture(page, () => board);
+
+  // The attention card: the broken component in view, the working ones in the dropdown.
+  const card = page.locator("article#service-claude");
+  await expect(card.locator("[data-component-row]")).toHaveCount(1);
+  const dropdown = card.locator("details[data-healthy-components]");
+  await expect(dropdown.locator("summary")).toContainText("Working components");
+  await dropdown.locator("summary").click();
+  const list = dropdown.getByRole("list", { name: "Components" });
+  await expect(list.getByRole("listitem")).toHaveCount(6);
+  await dropdown.getByRole("button", { name: /^Show all 299/ }).click();
+  await expect(list.getByRole("listitem")).toHaveCount(299);
+  await expect(list.getByText("Claude part 299", { exact: true })).toBeVisible();
+  await dropdown.getByRole("button", { name: /^Show fewer/ }).click();
+  await expect(list.getByRole("listitem")).toHaveCount(6);
+
+  // A healthy Statuspage row keeps the same dropdown.
+  const row = page.locator("article#service-chatgpt");
+  await expect(group(page, "up").and(row)).toHaveCount(1);
+  await row.locator("summary").click();
+  await expect(row.getByRole("list", { name: "Components" }).getByRole("listitem")).toHaveCount(5);
+  await expect(row.getByRole("button", { name: /^Show all/ })).toHaveCount(0);
+});
+
 test("leads Needs attention with the most urgent service and follows the data", async ({ page }) => {
   let board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
