@@ -6,7 +6,10 @@ import { LIGHT_SIGN, TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
 // not have. These tests stand in for them: they dispatch synthetic
 // `deviceorientation` events, and (as iOS does) put a requestPermission on
 // DeviceOrientationEvent that counts its calls and answers as told. The
-// browser's own readings (a null one, without a sensor) are shut out.
+// browser's own readings (a null one, without a sensor) are shut out. Where
+// the engine has no DeviceOrientationEvent at all (Playwright's WebKit on
+// Linux is built without it), the stub supplies an empty one, so the touch
+// tests run there too; the no-switch test for non-touch devices never uses it.
 
 const SERVICES = 14;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
@@ -32,7 +35,10 @@ async function stubMotionPermission(page: Page, answer: "granted" | "denied" | "
   await page.addInitScript((answer) => {
     const w = window as unknown as { __permCalls: number };
     w.__permCalls = 0;
-    if (typeof DeviceOrientationEvent === "undefined") return;
+    if (typeof DeviceOrientationEvent === "undefined") {
+      (window as unknown as { DeviceOrientationEvent: unknown }).DeviceOrientationEvent =
+        class DeviceOrientationEvent extends Event {};
+    }
     // A browser with no sensor fires one empty reading of its own as soon as
     // something listens. Only the tests' readings should count.
     window.addEventListener("deviceorientation", (event) => event.isTrusted && event.stopImmediatePropagation(), true);
@@ -48,6 +54,26 @@ async function stubMotionPermission(page: Page, answer: "granted" | "denied" | "
 }
 
 const permissionCalls = (page: Page) => page.evaluate(() => (window as unknown as { __permCalls: number }).__permCalls);
+
+/**
+ * A device that keeps reporting, as iOS does: the same reading every 30 ms from
+ * the start of each page load. It queues ahead of any wait for a first reading,
+ * so a slow browser cannot make the page think none is coming.
+ */
+async function pumpReadings(page: Page, beta: number, gamma: number): Promise<void> {
+  await page.addInitScript(
+    ([beta, gamma]) => {
+      setInterval(() => {
+        const event = new Event("deviceorientation");
+        for (const [key, value] of Object.entries({ alpha: 0, beta, gamma, absolute: false })) {
+          Object.defineProperty(event, key, { value });
+        }
+        window.dispatchEvent(event);
+      }, 30);
+    },
+    [beta, gamma],
+  );
+}
 
 /** One synthetic reading from the motion sensor; a null angle is what a device without one reports. */
 async function tilt(page: Page, beta: number | null, gamma: number | null): Promise<void> {
@@ -142,7 +168,6 @@ test.describe("on a touch device", () => {
   test.beforeEach(async ({ page }) => {
     await stubMotionPermission(page);
     await page.goto("/");
-    test.skip(await page.evaluate(() => typeof DeviceOrientationEvent === "undefined"), "no motion API in this engine");
   });
 
   test("is off until switched on, and asks for motion access on that tap", async ({ page }) => {
@@ -205,7 +230,7 @@ test.describe("on a touch device", () => {
     await openSettings(page);
     await tiltSwitch(page).click();
     await expect(page.getByRole("status").filter({ hasText: "Motion access was declined" })).toContainText(
-      "close Safari completely and reopen this page",
+      "close your browser completely and reopen this page",
     );
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     expect(await permissionCalls(page)).toBe(1);
@@ -257,11 +282,11 @@ test.describe("on a touch device", () => {
     await tiltUntil(page, 0, 0, "--light-y", () => true);
 
     const problems = watchConsole(page);
+    await pumpReadings(page, 0, 0);
     await page.reload();
     await hydrated(page);
     // A saved "on" attaches at once and never prompts: iOS wants a tap for that.
     expect(await permissionCalls(page)).toBe(0);
-    await tiltUntil(page, 0, 0, "--light-y", () => true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
     expect(await permissionCalls(page)).toBe(0);
     await openSettings(page);
@@ -274,7 +299,9 @@ test.describe("on a touch device", () => {
     await page.reload();
     await hydrated(page);
     await openSettings(page);
-    await expect(page.getByText("Tap the switch to allow motion access again.")).toBeVisible();
+    await expect(
+      page.getByText("Tap the switch to allow motion access again, or leave it off to stop this note."),
+    ).toBeVisible();
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     expect(await permissionCalls(page)).toBe(0);
     expect(await storedChoice(page)).toBe("on");
@@ -284,7 +311,77 @@ test.describe("on a touch device", () => {
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
     await tiltUntil(page, 0, 0, "--light-y", () => true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
-    await expect(page.getByText("Tap the switch to allow motion access again.")).toHaveCount(0);
+    await expect(
+      page.getByText("Tap the switch to allow motion access again, or leave it off to stop this note."),
+    ).toHaveCount(0);
+  });
+
+  test("says so when a tap gets no readings, and a second tap tries again", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    expect(await permissionCalls(page)).toBe(1);
+    await expect(page.getByText("No motion readings arrived from this device.")).toBeVisible({ timeout: 10_000 });
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    // Not the note for a saved choice: this one was just allowed.
+    await expect(page.getByText("Tap the switch to allow motion access again")).toHaveCount(0);
+
+    await tiltSwitch(page).click();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await expect(page.getByText("No motion readings arrived from this device.")).toHaveCount(0);
+  });
+
+  test("does not ask again while the page loads hidden", async ({ page }) => {
+    await page.evaluate((key) => localStorage.setItem(key, "on"), TILT_STORAGE_KEY);
+    await page.addInitScript(() => {
+      const w = window as unknown as { __hidden: boolean };
+      w.__hidden = true;
+      Object.defineProperty(document, "visibilityState", {
+        get: () => (w.__hidden ? "hidden" : "visible"),
+        configurable: true,
+      });
+    });
+    await page.reload();
+    await hydrated(page);
+    // Longer than either wait for a first reading: nothing listened, so nothing is missing.
+    await page.waitForTimeout(3500);
+    await openSettings(page);
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("status").filter({ hasText: /Tap the switch|No motion readings/ })).toHaveCount(0);
+
+    await page.evaluate(() => {
+      (window as unknown as { __hidden: boolean }).__hidden = false;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+    await expect(page.getByRole("status").filter({ hasText: /Tap the switch|No motion readings/ })).toHaveCount(0);
+  });
+
+  test("lights a panel that appears after the light is on, and clears it when off", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltFromRest(page);
+    const added = await page.evaluate(async () => {
+      const panel = document.createElement("div");
+      panel.className = "glass";
+      panel.id = "late-panel";
+      document.body.appendChild(panel);
+      // The observer's callback runs as a microtask, before the next paint.
+      await Promise.resolve();
+      return getComputedStyle(panel).getPropertyValue("--light-y").trim();
+    });
+    expect(added).not.toBe("");
+    await tiltSwitch(page).click();
+    const cleared = await page.evaluate(() =>
+      document.getElementById("late-panel")?.style.getPropertyValue("--light-y"),
+    );
+    expect(cleared).toBe("");
   });
 
   test("switches off cleanly", async ({ page }) => {
