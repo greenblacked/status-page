@@ -16,7 +16,8 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-11 px-4",
-        sm: "h-9 px-3 text-xs",
+        // A finger is bigger than the 36px chip: on a touch screen it is 44pt, and never narrower.
+        sm: "h-9 px-3 text-xs pointer-coarse:h-11 pointer-coarse:min-w-11",
         lg: "h-12 px-5",
         icon: "size-11",
       },
