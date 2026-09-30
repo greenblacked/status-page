@@ -1,4 +1,4 @@
-import { formatUtcTime } from "@/lib/status/schedule";
+import { formatUtcTime, THIN_SPACE } from "@/lib/status/schedule";
 
 /**
  * Times on the board are the viewer's own once the page has hydrated, and UTC
@@ -60,12 +60,15 @@ function dayKey(at: number, { timeZone, locale }: ZoneOptions): string {
  */
 export function formatLocalTime(at: number, reference: number = at, options: ZoneOptions = {}): string {
   const { timeZone, locale } = options;
+  // A thin no-break space before the zone, like formatUtcTime's, so "12:04 CET" never breaks in two.
   const clock = new Intl.DateTimeFormat(locale, {
     timeZone,
     hour: "2-digit",
     minute: "2-digit",
     timeZoneName: "short",
-  }).format(at);
+  })
+    .format(at)
+    .replace(/\s+(?=\S+$)/, THIN_SPACE);
   if (dayKey(at, options) === dayKey(reference, options)) return clock;
   const parts = (moment: number) =>
     Object.fromEntries(

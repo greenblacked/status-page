@@ -93,14 +93,18 @@ export function formatCountdown(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+/** A thin no-break space: keeps a number and its unit (or a clock and its zone) on one line. */
+export const THIN_SPACE = "\u202f";
+
+/** How long ago, short and in one shape: "just now", "12 s ago", "3 min ago", "2 h ago". */
 export function formatAge(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   if (seconds < 10) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 60) return `${seconds}${THIN_SPACE}s ago`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return `${minutes}${THIN_SPACE}min ago`;
   const hours = Math.floor(minutes / 60);
-  return `${hours}h ago`;
+  return `${hours}${THIN_SPACE}h ago`;
 }
 
 // The board refetches every slot, so a snapshot that has not moved for
@@ -185,7 +189,7 @@ export function freshnessOf(seen: SnapshotSeen | null, fetching: boolean, now: n
 /** An age in words a screen reader reads well: "7 min ago", "2 hours ago". */
 export function formatStaleAge(ms: number): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
-  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 60) return `${minutes}${THIN_SPACE}min ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
   return `${Math.floor(hours / 24)} days ago`;
@@ -218,7 +222,7 @@ const pad = (n: number) => n.toString().padStart(2, "0");
 export function formatUtcTime(at: number, reference: number = at): string {
   const date = new Date(at);
   const ref = new Date(reference);
-  const clock = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
+  const clock = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}${THIN_SPACE}UTC`;
   const sameDay =
     date.getUTCFullYear() === ref.getUTCFullYear() &&
     date.getUTCMonth() === ref.getUTCMonth() &&

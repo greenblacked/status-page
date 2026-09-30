@@ -26,7 +26,7 @@ describe("LiveBar", () => {
     const html = render(live);
     expect(html).toContain('data-testid="live-bar"');
     expect(html).toContain('aria-live="polite">Live</span>');
-    expect(html).toContain("· last check 45s ago");
+    expect(html).toContain("· last check 45\u202fs ago");
     expect(html).toContain('Next update <span class="text-fg">1:50</span>');
   });
 
@@ -46,7 +46,7 @@ describe("LiveBar", () => {
   it("marks a stale board with a badge and an age in words", () => {
     const html = render({ ageMs: 7 * 60_000, stale: true, state: "stale" });
     expect(html).toContain("Stale");
-    expect(html).toContain("<span>last check 7 min ago</span>");
+    expect(html).toContain("<span>last check 7\u202fmin ago</span>");
     expect(html).not.toContain("· last check");
     expect(html).not.toContain(">Live<");
   });

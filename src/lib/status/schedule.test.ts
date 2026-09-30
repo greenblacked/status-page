@@ -48,8 +48,10 @@ describe("pulse schedule", () => {
     assert.equal(formatCountdown(4 * 60 * 1000 + 2_000), "4:02");
     assert.equal(formatCountdown(500), "0:01");
     assert.equal(formatAge(4_000), "just now");
-    assert.equal(formatAge(23_000), "23s ago");
-    assert.equal(formatAge(3 * 60 * 1000), "3m ago");
+    assert.equal(formatAge(23_000), "23\u202fs ago");
+    assert.equal(formatAge(3 * 60 * 1000), "3\u202fmin ago");
+    assert.equal(formatAge(59 * 60 * 1000), "59\u202fmin ago");
+    assert.equal(formatAge(2 * 3600 * 1000), "2\u202fh ago");
   });
 });
 
@@ -180,7 +182,7 @@ describe("stale snapshots", () => {
   });
 
   it("says the age in words", () => {
-    assert.equal(formatStaleAge(7 * 60_000 + 30_000), "7 min ago");
+    assert.equal(formatStaleAge(7 * 60_000 + 30_000), "7\u202fmin ago");
     assert.equal(formatStaleAge(60 * 60_000), "1 hour ago");
     assert.equal(formatStaleAge(5 * 60 * 60_000), "5 hours ago");
     assert.equal(formatStaleAge(72 * 60 * 60_000), "3 days ago");
@@ -197,16 +199,16 @@ describe("incident times", () => {
   });
 
   it("labels a board log slot in UTC, whatever the visitor's time zone", () => {
-    assert.equal(formatSlotTime(Date.parse("2026-09-27T17:44:00Z")), "17:44 UTC");
-    assert.equal(formatSlotTime(Date.parse("2026-09-28T00:04:00Z")), "00:04 UTC");
+    assert.equal(formatSlotTime(Date.parse("2026-09-27T17:44:00Z")), "17:44\u202fUTC");
+    assert.equal(formatSlotTime(Date.parse("2026-09-28T00:04:00Z")), "00:04\u202fUTC");
   });
 
   it("formats a start as UTC clock time, adding the date only when it differs", () => {
     const at = Date.parse("2026-09-22T09:05:00Z");
-    assert.equal(formatUtcTime(at), "09:05 UTC");
-    assert.equal(formatUtcTime(at, Date.parse("2026-09-22T23:59:00Z")), "09:05 UTC");
-    assert.equal(formatUtcTime(at, Date.parse("2026-09-24T01:00:00Z")), "22 Sep 09:05 UTC");
-    assert.equal(formatUtcTime(at, Date.parse("2027-01-02T01:00:00Z")), "22 Sep 2026 09:05 UTC");
+    assert.equal(formatUtcTime(at), "09:05\u202fUTC");
+    assert.equal(formatUtcTime(at, Date.parse("2026-09-22T23:59:00Z")), "09:05\u202fUTC");
+    assert.equal(formatUtcTime(at, Date.parse("2026-09-24T01:00:00Z")), "22 Sep 09:05\u202fUTC");
+    assert.equal(formatUtcTime(at, Date.parse("2027-01-02T01:00:00Z")), "22 Sep 2026 09:05\u202fUTC");
   });
 
   it("formats how long an incident has lasted", () => {
