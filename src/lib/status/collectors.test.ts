@@ -555,7 +555,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     ]);
   });
 
-  it("Statuspage: an unreadable component ranks after the confirmed problems, as on the board", async () => {
+  it("Statuspage: an unreadable component ranks after the confirmed problems and before maintenance, as on the board", async () => {
     const summary = statuspageSummary({
       indicator: "minor",
       components: [
@@ -571,8 +571,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(claude.components.map((c) => [c.name, c.health])).toEqual([
       ["Voice", "outage"],
       ["Login", "degraded"],
-      ["Files", "maintenance"],
       ["Mystery", "unknown"],
+      ["Files", "maintenance"],
       ["Chat", "operational"],
     ]);
   });

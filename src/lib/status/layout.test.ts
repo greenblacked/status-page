@@ -46,7 +46,7 @@ describe("groupServices", () => {
       service("fortnite", "degraded", "gaming"),
       service("mikrotik", "operational", "updates"),
     ]);
-    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "gcp", "fortnite", "steam", "grok"]);
+    expect(groups.attention.map((s) => s.id)).toEqual(["apple", "gcp", "fortnite", "grok", "steam"]);
     expect(groups.operational.map((s) => s.id)).toEqual(["aws"]);
     expect(groups.releases.map((s) => s.id)).toEqual(["mikrotik"]);
   });
@@ -71,14 +71,14 @@ describe("sortByUrgency", () => {
     incidents: starts.map(incident),
   });
 
-  it("orders outage, degraded, maintenance, unknown", () => {
+  it("orders outage, degraded, unknown, maintenance", () => {
     const sorted = sortByUrgency([
       service("grok", "unknown"),
       service("steam", "maintenance"),
       service("gcp", "degraded"),
       service("apple", "outage"),
     ]);
-    expect(sorted.map((s) => s.id)).toEqual(["apple", "gcp", "steam", "grok"]);
+    expect(sorted.map((s) => s.id)).toEqual(["apple", "gcp", "grok", "steam"]);
   });
 
   it("puts the most recently started incident first within a severity", () => {
