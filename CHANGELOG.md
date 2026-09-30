@@ -9,6 +9,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Added
 
 - The page footer links to the source on GitHub and to the MIT License (free to use, copy, modify and share, with the copyright notice kept), and says how often the board is checked: every two minutes in the page, with the server keeping vendor feeds for 45 seconds.
+- **Tilt lighting** switch in **Settings and shortcuts** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. Off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
 
 ### Changed
 
@@ -46,7 +47,6 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The production board lives at [status.szolotov.com](https://status.szolotov.com). Builds of `stage` are a Worker Preview named `stage` of the same Cloudflare Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com), and never receive production traffic. `dev` deploys nothing: the owner promotes work from `dev` to `stage` to `main`.
 - An optional uptime strip on service cards, built only with `VITE_STATUS_HISTORY=1` and shown when `/api/history.json` has days; off by default, and empty until a history source exists.
 - A **Single-key shortcuts** switch in **Settings and shortcuts** (`?`) turns off every shortcut but `Esc`, for speech input or anyone who presses them by accident. The search box stays a Tab away, the **Settings and shortcuts** button at the foot of the page, shown on every screen size, opens the list again, and the choice is kept in this browser.
-- **Tilt lighting** switch in **Settings and shortcuts** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. Off by default, asks for motion access on first use, and pauses under Reduce glass and Reduce Motion.
 - A **Reduce glass** switch in **Settings and shortcuts** turns the frosted panels solid and stops the background moving. Safari does not pass the system's Reduce Transparency setting to web pages, so this is the way to get it on an iPhone, iPad or Mac; browsers that do pass it on get the same result automatically. The choice is kept in this browser.
 - A light appearance. The board now follows your system's light or dark setting and switches when it does.
 - Scroll past the top of the board and a compact bar floats in with the live signal, the headline, **Alerts** and **Refresh**, so you never have to scroll back up to refresh.
