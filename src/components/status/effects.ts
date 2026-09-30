@@ -189,35 +189,32 @@ export function withCardMotion(update: () => void): void {
   }
 }
 
+const WANDER_PATHS = 4;
+
 /**
- * Tracks the pointer over any `.spotlight` element inside `container` and
- * exposes it as --spot-x/--spot-y, which the CSS turns into a soft light.
- * One delegated listener and one frame per move, however many cards.
+ * Gives every `.spotlight` element inside `container` its own wander: one of
+ * a few paths, a duration and a phase (a negative delay), set once after
+ * hydration so the server markup carries no random value. Elements that
+ * appear later are picked up too. The CSS does the moving.
  */
-export function useSpotlight(container: RefObject<HTMLElement | null>): void {
+export function useWanderLight(container: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const root = container.current;
-    if (!root || !window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
-    let frame = 0;
-    let last: PointerEvent | null = null;
-    const paint = () => {
-      frame = 0;
-      const event = last;
-      const target = event?.target instanceof Element ? event.target.closest<HTMLElement>(".spotlight") : null;
-      if (!event || !target) return;
-      const box = target.getBoundingClientRect();
-      target.style.setProperty("--spot-x", `${event.clientX - box.left}px`);
-      target.style.setProperty("--spot-y", `${event.clientY - box.top}px`);
+    if (!root) return;
+    const seed = (el: HTMLElement) => {
+      if (el.dataset.wander !== undefined) return;
+      const dur = 44 + Math.random() * 36;
+      el.style.setProperty("--wander-dur", `${dur.toFixed(1)}s`);
+      el.style.setProperty("--wander-delay", `${(-Math.random() * dur * 2).toFixed(1)}s`);
+      el.dataset.wander = String(Math.floor(Math.random() * WANDER_PATHS));
     };
-    const onMove = (event: PointerEvent) => {
-      last = event;
-      if (!frame) frame = requestAnimationFrame(paint);
+    const scan = () => {
+      for (const el of root.querySelectorAll<HTMLElement>(".spotlight")) seed(el);
     };
-    root.addEventListener("pointermove", onMove, { passive: true });
-    return () => {
-      root.removeEventListener("pointermove", onMove);
-      if (frame) cancelAnimationFrame(frame);
-    };
+    scan();
+    const observer = new MutationObserver(scan);
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
   }, [container]);
 }
 
