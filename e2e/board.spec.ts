@@ -430,13 +430,19 @@ type DockSweep = { stops: DockStop[]; total: number; truncated: boolean; ms: num
  */
 const DOCK_FRAMES = 2;
 /**
- * How long a frame may take before the sweep stops waiting for it. Well above a slow software-rendered frame
- * (0.3 to 0.4 s in WebKit on CI), so a slow frame is measured and waited out, not skipped; it only stops a
- * frame that never comes from hanging the sweep.
+ * How long a frame may take before the sweep stops waiting for it. CI's WebKit, even with the paint stripped
+ * (lightenPaint), has a median frame of 350 to 470 ms and a tail past 1 s (up to 1003 ms seen), so anything
+ * near a second cuts real frames short and leaves the stop read too early. 3 s clears that tail with room;
+ * it only stops a frame that never comes from hanging the sweep.
  */
-const DOCK_FRAME_FALLBACK_MS = 1000;
-/** How long a sweep may run inside the page before it gives up and reports how far it got. */
-const DOCK_SWEEP_BUDGET_MS = 30_000;
+const DOCK_FRAME_FALLBACK_MS = 3000;
+/**
+ * How long a sweep may run inside the page before it gives up and reports how far it got. The worst honest
+ * sweep is 30 stops of 2 frames at about 0.5 s (30 s) plus a few 3 s fallbacks, so 40 to 50 s; 30 s was too
+ * tight. 60 s leaves headroom, and with one stop's overrun (2 frames of up to 3 s) and the page load still
+ * fits inside test.slow()'s 135 s, so a sweep reports its own budget before the test timeout can hide it.
+ */
+const DOCK_SWEEP_BUDGET_MS = 60_000;
 /** The share of a sweep's frames that may fall back before its readings can no longer be trusted. */
 const DOCK_MAX_FELL_BACK = 0.1;
 
