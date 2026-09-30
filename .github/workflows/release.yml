@@ -173,26 +173,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # Everything this job runs from this repository before the commit being
-      # released is checked out: the npm pin (its script, the signature check
-      # that script runs, the lockfile, packageManager) and .nvmrc, all from
-      # the commit that started this run. A backfill releases an older commit,
-      # which may predate scripts/ci/npm-pin.sh, scripts/ci/audit-signatures.sh
-      # and tools/npm, so the pin cannot come from that checkout. Only these
-      # files. Every script npm-pin.sh runs must be listed (a unit test
-      # checks). It goes first, into the workspace root, because a later
-      # checkout into the root would delete it.
+      # The commit that started this run, in full: its npm pin (npm-pin.sh,
+      # the audit-signatures.sh it runs, tools/npm, packageManager) and its
+      # .nvmrc. A backfill releases an older commit, which may predate those
+      # files, so the pin cannot come from the commit being released. The
+      # whole history comes with it (plan checked that the release commit is
+      # on main), so that commit is already here and needs no second fetch.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
-          sparse-checkout: |
-            /.nvmrc
-            /package.json
-            /scripts/ci/npm-pin.sh
-            /scripts/ci/audit-signatures.sh
-            /tools/npm/
-          sparse-checkout-cone-mode: false
+          fetch-depth: 0
       # No package cache: a cache entry saved by any other run could reach
       # the code that gets tagged. A release is rare; a cold install is fine.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -206,15 +197,17 @@ jobs:
       - name: Check npm
         run: ./scripts/ci/npm-pin.sh verify
       # The code being released, last and into release/: before any bump
-      # commit, which changes only the version and the changelog. After this
-      # step the job runs only the project's own npm commands: no script of
-      # this run's commit and no cache action, so nothing it does can be saved
-      # into a cache the default branch reads (CodeQL: cache poisoning).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.plan.outputs.sha }}
-          path: release
+      # commit, which changes only the version and the changelog. It comes
+      # from the history above with git, not from a second actions/checkout
+      # of a ref chosen at run time (CodeQL flags that as an untrusted
+      # checkout that can poison the default branch's cache, although plan
+      # only ever picks a commit already on main). After this step the job
+      # runs only the project's own npm commands: no script of this run's
+      # commit and no cache action.
+      - name: Check out the release commit
+        env:
+          RELEASE_SHA: ${{ needs.plan.outputs.sha }}
+        run: git worktree add --detach release "$RELEASE_SHA"
       # The pinned npm should be the one the release commit itself names.
       - name: Check the npm pin matches the release
         run: |

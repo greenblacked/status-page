@@ -82,51 +82,44 @@ describe("npm-pin.sh check", () => {
   });
 });
 
-describe("release.yml's sparse checkout of the npm pin", () => {
+describe("release.yml's verify job", () => {
   const workflow = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
   const script = readFileSync(join(ROOT, "scripts/ci/npm-pin.sh"), "utf8");
+  const verify = workflow.slice(workflow.indexOf("\n  verify:\n"), workflow.indexOf("\n  publish:\n"));
+  const checkouts = [...verify.matchAll(/uses: actions\/checkout@[^\n]*\n((?:\s+[^\n]+\n)*)/g)].map((m) => m[1] ?? "");
 
-  /** The lines under the `sparse-checkout: |` key of the sparse checkout of the npm pin. */
-  function sparsePaths() {
-    const lines = workflow.split("\n");
-    const start = lines.findIndex((line) => /^\s*sparse-checkout: \|\s*$/.test(line));
-    expect(start).toBeGreaterThan(-1);
-    const indent = (lines[start]?.match(/^\s*/) ?? [""])[0].length;
-    const paths: string[] = [];
-    for (const line of lines.slice(start + 1)) {
-      if (line.trim() === "" || (line.match(/^\s*/) ?? [""])[0].length <= indent) break;
-      paths.push(line.trim());
-    }
-    return paths;
-  }
-
-  it("lists every repo script that npm-pin.sh runs, or the release verify job dies with 127", () => {
-    const paths = sparsePaths();
-    // `./scripts/ci/foo.sh`, however it is quoted or given arguments.
+  it("takes the npm pin from the commit that started the run, in full", () => {
+    // A backfill releases an older commit, which may predate npm-pin.sh, audit-signatures.sh and
+    // tools/npm. The run's own commit has them all, so the checkout must not be sparse: a sparse list
+    // would have to name every file npm-pin.sh runs, and forgetting one dies with 127 mid-release.
+    expect(checkouts).toHaveLength(1);
+    const [checkout = ""] = checkouts;
+    expect(checkout).toMatch(/^\s+ref: \$\{\{ github\.sha \}\}\s*$/m);
+    expect(checkout).not.toMatch(/sparse-checkout/);
+    expect(checkout).toMatch(/^\s+fetch-depth: 0\s*$/m);
     const invoked = [...script.matchAll(/(?:^|[\s"'(])\.\/(scripts\/[\w./-]+)/gm)].map((m) => m[1]);
     expect(invoked).toContain("scripts/ci/audit-signatures.sh");
-    for (const file of new Set(invoked)) {
-      expect(paths, `${file} is missing from the sparse checkout`).toContain(`/${file}`);
-    }
+    expect(verify).toContain("./scripts/ci/npm-pin.sh install");
   });
 
-  it("lists the script itself, package.json and tools/npm", () => {
-    expect(sparsePaths()).toEqual(
-      expect.arrayContaining(["/.nvmrc", "/package.json", "/scripts/ci/npm-pin.sh", "/tools/npm/"]),
-    );
+  it("gets the release commit from that history with git, not from a second actions/checkout", () => {
+    // CodeQL's "Cache poisoning via execution of untrusted code" and "Checkout of untrusted code in a
+    // non-privileged context" fire on an actions/checkout whose ref comes from `needs.<job>.outputs.sha`,
+    // followed by npm steps. Plan only picks a commit that is on main, and the history is already here.
+    expect(verify).not.toMatch(/ref: \$\{\{\s*needs\./);
+    expect(verify).toMatch(/RELEASE_SHA: \$\{\{ needs\.plan\.outputs\.sha \}\}/);
+    expect(verify).toMatch(/git worktree add --detach release "\$RELEASE_SHA"/);
   });
 
-  it("runs no repository script and no cache action after checking out the release commit", () => {
-    // CodeQL's "Cache poisoning via execution of untrusted code": a job that checks out a ref chosen at
-    // run time and then runs a local script is flagged. The pin is installed first; the release commit
-    // goes into release/ last and is only built with npm.
-    const verify = workflow.slice(workflow.indexOf("\n  verify:\n"), workflow.indexOf("\n  publish:\n"));
-    const marker = verify.indexOf("path: release");
-    expect(marker, "the verify job checks the release commit out into release/").toBeGreaterThan(-1);
+  it("runs no repository script and no cache action after adding the release commit", () => {
+    const marker = verify.indexOf("git worktree add");
+    expect(marker, "the verify job adds the release commit as release/").toBeGreaterThan(-1);
     const after = verify.slice(marker);
     expect(after).not.toMatch(/(?:^|[\s"'(])\.\/scripts\//m);
     expect(after).not.toMatch(/actions\/(?:cache|setup-[a-z]+)@/);
     expect(after).not.toMatch(/\bcache:/);
+    // Only the project's own npm commands run in release/.
+    expect(after).toMatch(/run: npm ci\n\s+working-directory: release/);
   });
 });
 
