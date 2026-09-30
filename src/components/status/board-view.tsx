@@ -4,6 +4,7 @@ import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, use
 import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
 import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
+import { LensField } from "@/components/status/lens-field";
 import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
 import { PeriodDial } from "@/components/status/period-dial";
@@ -300,6 +301,7 @@ export function BoardView({
     <div className="liquid-stage text-fg">
       <div className="aurora" aria-hidden />
       <div className="aurora-grid" aria-hidden />
+      <LensField />
       <div className="liquid-content">
         {/*
           First in the tab order, so a keyboard user can pass the header's
