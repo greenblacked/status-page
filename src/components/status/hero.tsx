@@ -72,7 +72,7 @@ export function Hero({
             <p
               className={cn(
                 "text-body text-muted",
-                // Lines 44pt apart on touch, so the links' tap areas never overlap: only where there are links.
+                // Lines 46pt apart on touch, so the links' tap areas never overlap: only where there are links.
                 verdict.subParts.some((part) => part.id)
                   ? "hit-lines mt-[calc(0.5rem-var(--hit-lead))] -mb-[var(--hit-lead)] md:mt-[calc(0.75rem-var(--hit-lead))]"
                   : "mt-2 md:mt-3",

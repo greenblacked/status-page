@@ -440,13 +440,14 @@
   the upper one's words and takes its taps; a link that wraps is one box per
   line here, where a positioned pseudo-element would be one box spanning both.
   So the sentence gets a line pitch (hit-lines, on the paragraph) and each box
-  is 44pt tall: the words' own height (1.3em, a little over Inter's 1.21em)
-  plus padding for the rest, half above and half below. The pitch is 46pt, a
-  hair over the box, because an engine's hit test reaches up to a pixel past
-  a padded inline box's edge: with the lines exactly 44pt apart the box under
-  a link took the taps on its lower edge. A mouse keeps the line. The sideways
-  reach is a little past the words, taken back with an equal margin, so two
-  neighbours never overlap.
+  is about 44pt tall: the words' own height (1.3em, a little over Inter's
+  1.21em) plus padding for the rest, half above and half below. The box comes
+  out a little under 44pt (19px of text and 2 x 12.25px of padding is 43.5px at
+  15px), and the pitch is 46pt, because an engine's hit test reaches up to a
+  pixel past a padded inline box's edge: with the lines 44pt apart the box
+  under a link took the taps on its lower edge. A mouse keeps the line. The
+  sideways reach is a little past the words, taken back with an equal margin,
+  so two neighbours never overlap.
 */
 @utility hit-extend {
   @media (pointer: coarse) {
