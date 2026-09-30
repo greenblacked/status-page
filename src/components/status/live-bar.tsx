@@ -53,7 +53,12 @@ export function LiveBar({
 
   return (
     <div data-testid="live-bar" className={className}>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 font-mono text-[11px] tabular-nums text-subtle">
+      {/*
+        Two rows on a phone in every state. One row that wrapped only when a
+        state ran long ("Checking official sources") made the strip, and
+        everything under it, jump by a line each time a check began.
+      */}
+      <div className="flex flex-col gap-y-1 font-mono text-[11px] tabular-nums text-subtle sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-x-4">
         <p className="flex items-center gap-2">
           <Radio className={cn("size-3.5", isFetching || stale ? "text-muted" : "live-dot text-ok")} aria-hidden />
           {/*
@@ -63,7 +68,16 @@ export function LiveBar({
             once a minute for as long as it stayed stale.
           */}
           <span className="flex items-center gap-2 text-fg" aria-live="polite">
-            {isFetching ? "Checking official sources" : stale ? <Badge tone="mute">Stale</Badge> : "Live"}
+            {isFetching ? (
+              <span>
+                Checking<span className="sm:hidden">…</span>
+                <span className="max-sm:sr-only"> official sources</span>
+              </span>
+            ) : stale ? (
+              <Badge tone="mute">Stale</Badge>
+            ) : (
+              "Live"
+            )}
           </span>
           {stale ? <span>last check {formatStaleAge(ageMs)}</span> : <span>· last check {age}</span>}
         </p>
