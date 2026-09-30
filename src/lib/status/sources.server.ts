@@ -203,8 +203,8 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
       id: incident.id,
       title: incident.external_desc ?? incident.service_name ?? "Incident",
       health: itemHealth,
-      startedAt: incident.begin,
-      updatedAt: incident.modified,
+      startedAt: isoTimestamp(incident.begin),
+      updatedAt: isoTimestamp(incident.modified),
       // Resolved rather than concatenated: the feed's "incidents/<id>" form
       // has no leading slash, and concatenation produced
       // "https://status.cloud.google.comincidents/<id>". vendorUrl keeps it
@@ -359,8 +359,8 @@ function fromStatuspage(
       id: incident.id,
       title: incident.name,
       health: statuspageIndicator(incident.impact),
-      startedAt: incident.started_at,
-      updatedAt: incident.updated_at,
+      startedAt: isoTimestamp(incident.started_at),
+      updatedAt: isoTimestamp(incident.updated_at),
       // Statuspage writes incident shortlinks on stspg.io; the vendor's own
       // status host is allowed too. No shortlink stays no link, as before.
       url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
@@ -471,6 +471,30 @@ export function epochToIso(value: unknown, unitMs: number): string | undefined {
   const epoch = typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : Number.NaN;
   if (!Number.isFinite(epoch) || epoch === 0) return undefined;
   const date = new Date(epoch * unitMs);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
+const LOOSE_TIMESTAMP = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * A timestamp string from a vendor payload as an ISO string, or undefined
+ * when it is missing or unreadable. Vendors send "2026-09-16 11:32", with a
+ * space and no zone, which Safari's Date refuses (Invalid Date) where Chrome
+ * accepts it, so the browser only ever receives ISO 8601. A value without a
+ * zone is read as UTC.
+ */
+export function isoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!text) return undefined;
+  const loose = LOOSE_TIMESTAMP.exec(text);
+  let candidate = text;
+  if (loose) {
+    const zone = loose[3] ?? "Z";
+    const offset = /^[+-]\d{4}$/.test(zone) ? `${zone.slice(0, 3)}:${zone.slice(3)}` : zone.toUpperCase();
+    candidate = `${loose[1]}T${loose[2]}${offset}`;
+  }
+  const date = new Date(candidate);
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 

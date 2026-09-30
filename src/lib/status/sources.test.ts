@@ -14,6 +14,7 @@ import {
   grokItemActive,
   grokItemHealth,
   grokTitleService,
+  isoTimestamp,
   parseGoogleProducts,
   parseInstatusComponents,
   parseRssItems,
@@ -327,6 +328,26 @@ describe("epochToIso", () => {
       true,
     ]) {
       assert.equal(epochToIso(value, 1000), undefined, String(value));
+    }
+  });
+});
+
+describe("isoTimestamp", () => {
+  it("passes an ISO string through, normalised", () => {
+    assert.equal(isoTimestamp("2026-09-16T11:32:21Z"), "2026-09-16T11:32:21.000Z");
+    assert.equal(isoTimestamp("2026-09-16T13:32:21.500+02:00"), "2026-09-16T11:32:21.500Z");
+  });
+
+  it("reads a space-separated date and time, which Safari cannot parse, as UTC", () => {
+    assert.equal(isoTimestamp("2026-09-16 11:32"), "2026-09-16T11:32:00.000Z");
+    assert.equal(isoTimestamp("2026-09-16 11:32:05"), "2026-09-16T11:32:05.000Z");
+    assert.equal(isoTimestamp("2026-09-16 11:32 +0200"), "2026-09-16T09:32:00.000Z");
+    assert.equal(isoTimestamp(" 2026-09-16 11:32 Z "), "2026-09-16T11:32:00.000Z");
+  });
+
+  it("returns undefined for anything that is not a usable timestamp", () => {
+    for (const value of [undefined, null, "", "   ", "n/a", "2026-13-45 99:99", 1789558341, {}, true]) {
+      assert.equal(isoTimestamp(value), undefined, String(value));
     }
   });
 });
