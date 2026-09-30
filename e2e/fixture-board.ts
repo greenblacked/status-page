@@ -164,10 +164,16 @@ export function fixtureBoard(now: number, { grok = "operational" }: { grok?: Hea
  * scheduled GET) with `board()` instead of the vendors, in the same
  * serialized form the server sends. The page's first render still comes
  * from the server; press Refresh to bring the fixture in.
+ *
+ * `pressed`, when given, answers the Refresh POST alone, while the scheduled
+ * GET keeps answering with `board()`: a test that needs a change to arrive
+ * with its press, and not with a poll that happens to land first on a slow
+ * machine, serves the change there.
  */
-export async function serveBoard(page: Page, board: () => BoardSnapshot): Promise<void> {
+export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed?: () => BoardSnapshot): Promise<void> {
   await page.route("**/_serverFn/**", async (route) => {
-    const body = await toCrossJSONAsync({ result: board(), error: undefined, context: {} }, { refs: new Map() });
+    const answer = pressed && route.request().method() === "POST" ? pressed() : board();
+    const body = await toCrossJSONAsync({ result: answer, error: undefined, context: {} }, { refs: new Map() });
     await route.fulfill({
       status: 200,
       contentType: "application/json",
