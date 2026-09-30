@@ -1,67 +1,46 @@
-import { Badge } from "@/components/ui/badge";
-import { healthLabel } from "@/lib/status/health";
+import { LocalTime } from "@/components/status/local-time";
 import type { Pulse } from "@/lib/status/pulse";
-import { formatSlotTime } from "@/lib/status/schedule";
+import { recentRows } from "@/lib/status/recent";
 import { cn } from "@/lib/utils";
 
+/**
+ * The last few checks of this browser, newest first: what changed, and how
+ * many services were up. It is a log of this device (the pulses live in local
+ * storage), and says so. A run of checks with nothing changed is one row.
+ * The heading and its note sit in the margin column on wide screens.
+ */
 export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?: string }) {
-  const latest = pulses[0];
+  const rows = recentRows(pulses);
 
   return (
-    <section aria-labelledby="board-log-heading" className={cn("glass rounded-lg p-4", className)}>
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <p className="font-mono text-[11px] uppercase tracking-[0.16em] text-subtle">Checks and new releases</p>
-          <h2 id="board-log-heading" className="mt-1 font-display text-xl tracking-[-0.03em]">
-            Board log
-          </h2>
-        </div>
-        {latest ? <Badge tone={latest.overall}>{healthLabel(latest.overall)}</Badge> : null}
+    <section aria-labelledby="recent-heading" className={cn("board-grid", className)}>
+      <div className="board-margin">
+        <h2 id="recent-heading" className="mb-2 text-caption font-semibold text-muted md:mb-0 md:pt-4">
+          Recent changes
+        </h2>
+        <p className="hidden text-footnote text-subtle md:block">On this device</p>
       </div>
 
-      {pulses.length === 0 ? (
-        <p className="mt-4 text-sm text-muted">Recording the opening snapshot…</p>
-      ) : (
-        <ol className="mt-4 flex flex-col gap-0">
-          {pulses.slice(0, 8).map((pulse, index) => (
-            <li
-              key={pulse.slot}
-              className={cn(
-                "grid grid-cols-[4.5rem_1fr] gap-3 border-t border-border py-3 first:border-t-0 first:pt-0",
-                index === 0 && "stagger-in",
-              )}
-            >
-              <time
-                dateTime={new Date(pulse.slot).toISOString()}
-                className="font-mono text-[11px] tabular-nums text-subtle"
-              >
-                {formatSlotTime(pulse.slot)}
-              </time>
-              <div className="min-w-0">
-                <p className="text-sm text-fg">
-                  {pulse.opening
-                    ? "Opening snapshot"
-                    : pulse.changes.length === 0
-                      ? "No change"
-                      : pulse.changes.length === 1
-                        ? pulse.changes[0].from === pulse.changes[0].to
-                          ? `${pulse.changes[0].name}: ${pulse.changes[0].summary}`
-                          : `${pulse.changes[0].name} ${healthLabel(pulse.changes[0].from)} → ${healthLabel(pulse.changes[0].to)}`
-                        : `${pulse.changes.length} services changed`}
-                </p>
-                <p className="mt-0.5 font-mono text-[11px] tabular-nums text-subtle">
-                  {pulse.counts.operational}/{Object.values(pulse.counts).reduce((sum, n) => sum + n, 0)} clear
-                  {pulse.changes.length > 1
-                    ? ` · ${pulse.changes.map((change) => change.name).join(", ")}`
-                    : pulse.changes[0]?.summary
-                      ? ` · ${pulse.changes[0].summary}`
-                      : ""}
-                </p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
+      <div className="board-main">
+        {rows.length === 0 ? (
+          <p className="surface px-4 py-4 text-body text-muted">Waiting for the first check.</p>
+        ) : (
+          <ol className="surface card-list">
+            {rows.map((row) => (
+              <li key={row.key}>
+                <div className="row grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3 px-4 py-3">
+                  <LocalTime at={row.at} format="slot" className="pt-px text-footnote text-muted" />
+                  <div className="min-w-0">
+                    <p className="text-body text-fg [overflow-wrap:anywhere]">{row.text}</p>
+                    <p className="text-caption text-subtle [overflow-wrap:anywhere]">{row.caption}</p>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+        <p className="mt-2 text-footnote text-subtle md:hidden">On this device</p>
+      </div>
     </section>
   );
 }
