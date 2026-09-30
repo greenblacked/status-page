@@ -2,24 +2,22 @@ import { describe, expect, it } from "vitest";
 import { pageAlertsUnsupported } from "./alerts-support";
 
 describe("pageAlertsUnsupported", () => {
-  it("rules out iPhone and iPad Safari, which have the standalone property", () => {
-    expect(pageAlertsUnsupported({ platform: "iPhone", maxTouchPoints: 5, standalone: false }, true)).toBe(true);
-    expect(pageAlertsUnsupported({ platform: "iPad", standalone: true }, false)).toBe(true);
+  it("keeps a Mac Safari tab and a Mac Dock web app supported", () => {
+    expect(pageAlertsUnsupported({ platform: "MacIntel", maxTouchPoints: 0, standalone: false })).toBe(false);
+    expect(pageAlertsUnsupported({ platform: "MacIntel", maxTouchPoints: 0, standalone: true })).toBe(false);
   });
 
-  it("rules out an iPad in desktop mode: a Mac with touch and no push", () => {
-    expect(pageAlertsUnsupported({ platform: "MacIntel", maxTouchPoints: 5 }, false)).toBe(true);
+  it("rules out an iPad Home Screen app in desktop mode, which calls itself a Mac", () => {
+    expect(pageAlertsUnsupported({ platform: "MacIntel", maxTouchPoints: 5, standalone: true })).toBe(true);
   });
 
-  it("keeps a Mac without touch supported, with or without push", () => {
-    expect(pageAlertsUnsupported({ platform: "MacIntel", maxTouchPoints: 0 }, true)).toBe(false);
-    expect(pageAlertsUnsupported({ platform: "MacIntel", maxTouchPoints: 0 }, false)).toBe(false);
-    expect(pageAlertsUnsupported({ platform: "MacIntel" }, false)).toBe(false);
+  it("rules out an iPhone", () => {
+    expect(pageAlertsUnsupported({ platform: "iPhone", maxTouchPoints: 5, standalone: false })).toBe(true);
   });
 
-  it("keeps a touch Mac-like device that has push, and other platforms", () => {
-    expect(pageAlertsUnsupported({ platform: "MacIntel", maxTouchPoints: 5 }, true)).toBe(false);
-    expect(pageAlertsUnsupported({ platform: "Win32", maxTouchPoints: 10 }, false)).toBe(false);
-    expect(pageAlertsUnsupported({ platform: "Linux armv81", maxTouchPoints: 5 }, false)).toBe(false);
+  it("keeps browsers without the standalone property supported, touch or not", () => {
+    expect(pageAlertsUnsupported({ platform: "Win32", maxTouchPoints: 10 })).toBe(false);
+    expect(pageAlertsUnsupported({ platform: "Linux armv81", maxTouchPoints: 5 })).toBe(false);
+    expect(pageAlertsUnsupported({ platform: "Linux x86_64" })).toBe(false);
   });
 });
