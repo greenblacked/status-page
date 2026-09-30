@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import type { BoardSnapshot } from "../src/lib/status/types.ts";
+import type { BoardSnapshot, Health } from "../src/lib/status/types.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 
 const SERVICES = 14;
@@ -45,8 +45,20 @@ async function hydrated(page: Page): Promise<void> {
 async function motionDone(page: Page): Promise<void> {
   await page.evaluate(async () => {
     const glides = () => document.getAnimations().filter((animation) => animation.id === "card-move");
-    for (let running = glides(); running.length > 0; running = glides()) {
-      await Promise.all(running.map((animation) => animation.finished.catch(() => undefined)));
+    let timer: number | undefined;
+    // A glide lasts a quarter of a second; one that outlives this is stuck, and says so.
+    const stuck = new Promise<never>((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error("card glide did not finish in 10 s")), 10_000);
+    });
+    const settled = (async () => {
+      for (let running = glides(); running.length > 0; running = glides()) {
+        await Promise.all(running.map((animation) => animation.finished.catch(() => undefined)));
+      }
+    })();
+    try {
+      await Promise.race([settled, stuck]);
+    } finally {
+      window.clearTimeout(timer);
     }
   });
 }
@@ -299,8 +311,8 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   await header.evaluate((bar) => Promise.all(bar.getAnimations().map((animation) => animation.finished)));
   const box = await refresh.boundingBox();
   expect(box).not.toBeNull();
-  // The refresh moves the cards in a view transition; the bar's fade-out below
-  // is not judged until that has played out.
+  // The refresh glides the cards that moved (withCardMotion); the bar's fade-out
+  // below is not judged until that has played out.
   await pressRefresh(page, refresh, () => page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2));
   // Safari leaves a clicked button unfocused; Chromium focuses it, the case that matters.
   if (browserName === "chromium") await expect(refresh).toBeFocused();
@@ -547,6 +559,59 @@ test("moves a starred card without a glide when the system asks for reduced moti
   await expect(operational.first()).toHaveAttribute("id", farthest ?? "");
   expect(await cardGlides(page)).toBe(before);
   expect(before).toBe(0);
+});
+
+test("glides the cards a refresh moves", async ({ page }) => {
+  await recordAnimations(page);
+  let grok: Health = "operational";
+  await openFixture(page, () => fixtureBoard(Date.now(), { grok }));
+  const before = await cardGlides(page);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+
+  // Grok leaves Operational for Needs attention, and the cards between shift.
+  grok = "degraded";
+  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+  await expect(page.locator('section[aria-labelledby="attention-heading"] #service-grok')).toHaveCount(1);
+  expect(await cardGlides(page)).toBeGreaterThan(before);
+});
+
+test("does not glide a filter that follows a star which moved nothing", async ({ page }) => {
+  await recordAnimations(page);
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const before = await cardGlides(page);
+
+  // The most urgent card is already first: starring it changes no place.
+  const lead = group(page, "attention").first();
+  const leadId = await lead.getAttribute("id");
+  await toggleStar(page, () => lead.locator("button[aria-pressed]").first().click());
+  await expect(lead.locator("button[aria-pressed]").first()).toHaveAttribute("aria-pressed", "true");
+  await expect(group(page, "attention").first()).toHaveAttribute("id", leadId ?? "");
+
+  // A filter typed at once is not part of that star, so nothing glides against its stale layout.
+  await page.getByLabel("Search services").fill("Google Cloud");
+  await expect(cards(page)).toHaveCount(1);
+  await motionDone(page);
+  expect(await cardGlides(page)).toBe(before);
+});
+
+test("does not glide a scroll and filter that follow a refresh which changed nothing", async ({ page }) => {
+  await recordAnimations(page);
+  const now = Date.now();
+  await openFixture(page, () => fixtureBoard(now));
+  const before = await cardGlides(page);
+
+  const button = page.getByRole("button", { name: "Refresh status now" }).first();
+  const answered = page.waitForResponse(
+    (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
+  );
+  await button.click();
+  await answered;
+  await page.evaluate(() => window.scrollBy(0, 300));
+  await page.getByLabel("Search services").fill("Google Cloud");
+  await expect(cards(page)).toHaveCount(1);
+  await expect(button).toHaveAttribute("aria-busy", "false");
+  await motionDone(page);
+  expect(await cardGlides(page)).toBe(before);
 });
 
 test("keeps Reduce glass across a reload", async ({ page }) => {

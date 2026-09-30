@@ -11,7 +11,7 @@ const GLIDE_ID = "card-move";
 /** The values of the CSS tokens --motion-fast and --ease-smooth-out, which the cards' own motion uses. */
 const GLIDE_MS = 250;
 const GLIDE_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
-/** How long to wait for a deferred update (a refresh) to reach the DOM before giving up on the glide. */
+/** How long to wait for an update that never commits (or changes nothing in the board) before letting go. */
 const GLIDE_WAIT_MS = 400;
 
 function measureCards(): Map<string, Box> {
@@ -23,25 +23,37 @@ function measureCards(): Map<string, Box> {
   return boxes;
 }
 
-/** Glides every card that moved from where it was to where it is now; true once at least one did. */
-function glideCards(before: ReadonlyMap<string, Box>): boolean {
-  const moves = cardMoves(before, measureCards(), window.innerHeight);
-  for (const { id, dx, dy } of moves) {
+/** A card still fading in carries a few pixels of `rise-in` offset, which would fight the glide over `transform`. */
+function settleRiseIn(card: Element): void {
+  for (const animation of card.getAnimations()) {
+    if ((animation as CSSAnimation).animationName === "rise-in") animation.finish();
+  }
+}
+
+/** Glides every card that moved from where it was to where it is now. */
+function glideCards(before: ReadonlyMap<string, Box>): void {
+  // Settled first, so the measurement below is where each card really is.
+  for (const id of before.keys()) {
+    const card = document.getElementById(id);
+    if (card) settleRiseIn(card);
+  }
+  for (const { id, dx, dy } of cardMoves(before, measureCards(), window.innerHeight)) {
     // A card that crossed sections is a new node, so look it up by id.
     const card = document.getElementById(id);
     if (!card) continue;
-    // A card still fading in would fight the glide over `transform`.
-    for (const animation of card.getAnimations()) {
-      if ((animation as CSSAnimation).animationName === "rise-in") animation.finish();
-    }
     const glide = card.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], {
       duration: GLIDE_MS,
       easing: GLIDE_EASING,
     });
     glide.id = GLIDE_ID;
   }
-  return moves.length > 0;
 }
+
+/** What the person does that moves the page or the board themselves, and so ends the wait for an update. */
+const INTERACTIONS = ["scroll", "wheel", "touchstart", "pointerdown", "keydown", "input"] as const;
+
+/** Lets go of the call in progress, if it is still waiting for its update to commit. */
+let pending: (() => void) | undefined;
 
 /**
  * Applies a state update that moves cards (a star, a refresh) and glides
@@ -50,6 +62,10 @@ function glideCards(before: ReadonlyMap<string, Box>): boolean {
  * animates `transform` only, from the distance it moved back to nothing. The
  * update itself applies at once and touches nothing but that animation, so
  * focus and node identity are unaffected.
+ *
+ * The first change to the board after the update is its commit: the cards
+ * are compared then, whether or not any moved, and the call is done. A later
+ * change (a filter, a scroll) is never measured against this call's start.
  *
  * Not a View Transition: naming every card makes the browser snapshot all of
  * them (and their blur) before it lets the update through, which took
@@ -67,6 +83,8 @@ export function withCardMotion(update: () => void): void {
     update();
     return;
   }
+  // A newer press supersedes one still waiting on its commit.
+  pending?.();
   // Measured before cancelling, so a glide in flight counts as where its card is.
   const before = measureCards();
   for (const animation of document.getAnimations()) {
@@ -76,24 +94,39 @@ export function withCardMotion(update: () => void): void {
   const stop = () => {
     observer.disconnect();
     window.clearTimeout(timer);
+    for (const type of INTERACTIONS) window.removeEventListener(type, stop, true);
+    if (pending === stop) pending = undefined;
   };
   // Registered before the update: a deferred one (a query cache write reaches
   // React on a timer) lands after this function returns, and the observer sees it.
   const observer = new MutationObserver(() => {
-    if (glideCards(before)) stop();
+    try {
+      glideCards(before);
+    } finally {
+      stop();
+    }
   });
-  observer.observe(document.getElementById("services") ?? document.body, { childList: true, subtree: true });
+  observer.observe(document.getElementById("services") ?? document.body, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  pending = stop;
+  // An update that changes nothing in the board leaves the observer waiting, and whatever the person does
+  // next (a scroll, a filter) would be measured against this call's start. Their input ends the wait.
+  for (const type of INTERACTIONS) window.addEventListener(type, stop, { capture: true, passive: true });
+  // The bound on an update that never reaches the DOM, set first so nothing below can leave the observer attached.
+  timer = window.setTimeout(stop, GLIDE_WAIT_MS);
   try {
     flushSync(update);
+    if (observer.takeRecords().length > 0) {
+      glideCards(before);
+      stop();
+    }
   } catch (error) {
     stop();
     throw error;
   }
-  if (observer.takeRecords().length > 0 && glideCards(before)) {
-    stop();
-    return;
-  }
-  timer = window.setTimeout(stop, GLIDE_WAIT_MS);
 }
 
 /**
