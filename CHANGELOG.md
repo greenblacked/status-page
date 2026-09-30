@@ -6,6 +6,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-30
+
 ### Changed
 
 - Every service now shows its full card, healthy or not, so Operational services list their components and link to the vendor's page just like one that needs attention. The one-line tiles are gone.
@@ -134,7 +136,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/greenblacked/status-page/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/greenblacked/status-page/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/greenblacked/status-page/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/greenblacked/status-page/compare/v0.1.1...v0.2.0
