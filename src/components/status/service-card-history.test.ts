@@ -5,7 +5,7 @@ import type { HistoryDay, PublicHistory } from "@/lib/status/history";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
 import { BoardHistoryContext } from "./board-history-provider";
-import { ServiceCard } from "./service-card-full";
+import { ServiceCard } from "./service-card";
 
 const NOW = Date.parse("2026-09-27T12:00:00.000Z");
 const STRIP = /uptime history/;
@@ -126,5 +126,57 @@ describe("cards with history", () => {
     // Every per-day bar is hidden from assistive tech; the caption is too.
     expect(html.match(/<span aria-hidden="true" title="2026-\d\d-\d\d: /g)).toHaveLength(30);
     expect(html).toMatch(/<div aria-hidden="true" class="flex items-end justify-between[^>]*><p[^>]*>.*uptime/);
+  });
+});
+
+describe("rows with history", () => {
+  const document = history({ aws: { days: DAYS } });
+  const row = (
+    withHistory: PublicHistory | undefined,
+    overrides: Partial<ServiceSnapshot> = {},
+    id: "aws" | "gcp" = "aws",
+  ) => card(withHistory, id, { health: "operational", summary: "All systems normal", ...overrides });
+
+  beforeEach(() => {
+    vi.stubEnv("VITE_STATUS_HISTORY", "1");
+  });
+
+  it("show the strip on a healthy row, and on one that could not be read", () => {
+    for (const health of ["operational", "unknown"] as const) {
+      const html = row(document, { health });
+      expect(html, health).toMatch(STRIP);
+      expect(html.match(/role="img"/g), health).toHaveLength(1);
+      expect(html, health).toContain("30d");
+    }
+  });
+
+  it("keep the strip outside the summary of a row that opens", () => {
+    const html = row(document, { components: [{ name: "Console", health: "operational" }] });
+    expect(html).toContain("<details");
+    expect(html.indexOf('role="img"')).toBeGreaterThan(html.indexOf("</details>"));
+  });
+
+  it("show it only on the service the history is for, and never on a release tracker", () => {
+    expect(row(document, {}, "gcp")).not.toMatch(STRIP);
+    expect(row(document, { category: "updates", health: "unknown" })).not.toMatch(STRIP);
+  });
+
+  it("render the row as it was with the flag off, whatever the context holds", () => {
+    vi.stubEnv("VITE_STATUS_HISTORY", "0");
+    expect(row(document)).toBe(row(undefined));
+    expect(row(history({ aws: { days: [] } }))).toBe(row(undefined));
+  });
+
+  it("keep one structure whether or not there are days, so an open row is not remounted", () => {
+    // A row that opens: its <details> sits in the same wrapper with the strip, without it, and before the
+    // history loads, or React would replace the <details> (closing it, dropping focus) when the days arrive.
+    const components = [{ name: "Console", health: "operational" as const }];
+    const wrapped = '<div class="min-w-0"><details';
+    for (const withHistory of [document, history({ aws: { days: [] } }), undefined]) {
+      expect(row(withHistory, { components })).toContain(wrapped);
+    }
+    // And a flag-off render has no such wrapper.
+    vi.stubEnv("VITE_STATUS_HISTORY", "0");
+    expect(row(document, { components })).not.toContain(wrapped);
   });
 });

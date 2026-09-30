@@ -23,23 +23,23 @@ export function Switch({
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       onClick={() => onCheckedChange(!checked)}
-      className="focus-ring pressable flex shrink-0 items-center gap-2 rounded-full py-1 pr-1 pl-2 font-mono text-[11px] uppercase text-muted"
+      className="focus-ring pressable flex shrink-0 items-center gap-2 rounded-md py-1 pr-1 pl-2 text-footnote text-muted"
     >
       <span aria-hidden className="w-6 text-right">
         {checked ? "On" : "Off"}
       </span>
-      {/* The border and ButtonText thumb keep the switch drawn in forced-colors mode. */}
+      {/* The border and ButtonText thumb keep the switch drawn in forced-colors mode. Track md, thumb md less the 2px inset. */}
       <span
         aria-hidden
         className={cn(
-          "flex h-6 w-10 items-center rounded-full border border-border p-0.5 transition-colors duration-[var(--motion-quick)]",
-          checked ? "bg-accent" : "bg-surface-2",
+          "flex h-6 w-10 items-center rounded-md border border-hairline p-0.5 transition-colors duration-[var(--t-quick)]",
+          checked ? "bg-accent" : "bg-inset",
         )}
       >
         <span
           className={cn(
-            "size-4.5 rounded-full transition-transform duration-[var(--motion-quick)] ease-[var(--ease-out)] motion-reduce:transition-none forced-colors:bg-[ButtonText]",
-            checked ? "translate-x-4 bg-bg" : "translate-x-0 bg-fg/70",
+            "size-[18px] rounded-thumb transition-transform duration-[var(--t-quick)] ease-[var(--ease-out)] motion-reduce:transition-none forced-colors:bg-[ButtonText]",
+            checked ? "translate-x-4 bg-bg" : "translate-x-0 bg-muted",
           )}
         />
       </span>

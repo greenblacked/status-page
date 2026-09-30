@@ -18,7 +18,7 @@ function service(id: ServiceId, health: Health, category: ServiceSnapshot["categ
     shortName: id.toUpperCase(),
     category,
     health,
-    summary: "All reported systems operational.",
+    summary: "Nothing reported.",
     sourceName: "Source",
     sourceUrl: `https://status.example.com/${id}`,
     checkedAt: "2026-09-25T00:00:00Z",
@@ -84,6 +84,9 @@ describe("matchesFilters", () => {
     expect(matchesFilters(steam, { ...DEFAULT_FILTERS, category: "cloud" })).toBe(false);
     expect(matchesFilters(steam, { ...DEFAULT_FILTERS, issuesOnly: true })).toBe(false);
     expect(matchesFilters(gcp, { ...DEFAULT_FILTERS, issuesOnly: true })).toBe(true);
+    // Issues need a look; a source that could not be read is not one of them.
+    expect(matchesFilters(service("grok", "unknown", "ai"), { ...DEFAULT_FILTERS, issuesOnly: true })).toBe(false);
+    expect(matchesFilters(service("claude", "maintenance", "ai"), { ...DEFAULT_FILTERS, issuesOnly: true })).toBe(true);
     expect(matchesFilters(gcp, { ...DEFAULT_FILTERS, query: "  GOOGLE " })).toBe(true);
     expect(matchesFilters(gcp, { ...DEFAULT_FILTERS, query: "steam" })).toBe(false);
   });
@@ -114,26 +117,26 @@ describe("filtersToReveal", () => {
 });
 
 describe("resultsAnnouncement", () => {
-  const empty = "No services match that filter.";
+  const empty = "Nothing matches.";
 
   it("says how many services the filters leave", () => {
-    expect(resultsAnnouncement(3, 14, empty)).toBe("3 of 14 services shown");
-    expect(resultsAnnouncement(1, 1, empty)).toBe("1 of 1 service shown");
+    expect(resultsAnnouncement(3, 14, empty)).toBe("Showing 3 of 14");
+    expect(resultsAnnouncement(1, 1, empty)).toBe("Showing 1 of 1");
   });
 
   it("says why in the same sentence when none are left", () => {
-    expect(resultsAnnouncement(0, 14, empty)).toBe("0 of 14 services shown. No services match that filter.");
+    expect(resultsAnnouncement(0, 14, empty)).toBe("Showing 0 of 14. Nothing matches.");
     const noStars = emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true }, 0);
-    expect(resultsAnnouncement(0, 14, noStars)).toBe(`0 of 14 services shown. ${noStars}`);
+    expect(resultsAnnouncement(0, 14, noStars)).toBe(`Showing 0 of 14. ${noStars}`);
   });
 });
 
 describe("emptyBoardMessage", () => {
   it("tells an empty Starred view how to fill it, and anything else that nothing matches", () => {
-    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true }, 0)).toMatch(/^No starred services yet\./);
-    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true, query: "zzz" }, 2)).toBe(
-      "No services match that filter.",
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true }, 0)).toBe(
+      "Nothing starred yet. Star a card to pin it to the top.",
     );
-    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, query: "zzz" }, 0)).toBe("No services match that filter.");
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, starredOnly: true, query: "zzz" }, 2)).toBe("Nothing matches.");
+    expect(emptyBoardMessage({ ...DEFAULT_FILTERS, query: "zzz" }, 0)).toBe("Nothing matches.");
   });
 });

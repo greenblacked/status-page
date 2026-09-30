@@ -1,6 +1,6 @@
 import { type ReactNode, type RefObject, useEffect, useState, useSyncExternalStore } from "react";
-import { HealthDot } from "@/components/status/health-dot";
-import { LiveSignal } from "@/components/status/live-signal";
+import { LocalTime } from "@/components/status/local-time";
+import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
   DOCK_REST,
   type DockGeometry,
@@ -8,7 +8,6 @@ import {
   type DockStore,
   dockFrame,
   dockGeometry,
-  PHONE_RANGE,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
@@ -46,11 +45,17 @@ const WIDE = "(min-width: 64rem)";
  * `end`, the scroll position at which the field reaches its pin.
  *
  * On a phone the bar is fixed at the top and the field is in the flow, so the
- * bar can come up on its own: at `end` minus the bar's height and PHONE_GAP, when
- * the field is still that far below it. The field then scrolls on up at the
- * page's pace, and over the last PHONE_RANGE px before it pins it merges into
- * the bar (its x and width follow --dock). Nothing is ever pinned over the page
- * without the bar behind it. On a wide screen the field shares its row with the
+ * bar comes up on its own: at `end` minus the bar's height and PHONE_GAP, when
+ * the field is still that far below it and the hero's last line (the live line)
+ * has just scrolled out from under the bar's slide-in. The page's spacing puts
+ * them at the same scroll position. The field then scrolls on up at the page's
+ * pace, alone with the bar for PHONE_GAP px, until its top reaches the bar's
+ * bottom edge; over the rest of the way to its pin it merges into the bar (its
+ * x and width follow --dock). Nothing is ever pinned over the page without the
+ * bar behind it, and the field is under the bar (see .search-dock) until it
+ * merges, so under Reduce Motion, where it only snaps at the end, it never
+ * covers the bar's buttons.
+ * On a wide screen the field shares its row with the
  * chips, so it is a single move, and the bar comes up 67% of the way through it
  * (only once it is done under Reduce Motion, where the field snaps).
  */
@@ -82,7 +87,7 @@ export function useSearchDock({
     let docking = false;
     let merging = false;
     let state: DockState = DOCK_REST;
-    let geometry: DockGeometry = { start: 0, range: PHONE_RANGE, barStart: 0, hysteresis: 8 };
+    let geometry: DockGeometry = { start: 0, range: 1, barStart: 0, hysteresis: 8 };
     const measure = () => {
       const hostStyle = getComputedStyle(host);
       const contentTop =
@@ -92,6 +97,13 @@ export function useSearchDock({
         (Number.parseFloat(hostStyle.borderTopWidth) || 0);
       const dockStyle = getComputedStyle(dock);
       const pin = Number.parseFloat(dockStyle.top) || 10;
+      // Where the hero's last line ends: on a phone the bar waits until it has scrolled clear.
+      const hero = host.previousElementSibling;
+      const heroStyle = hero ? getComputedStyle(hero) : null;
+      const contentBottom =
+        hero && heroStyle
+          ? hero.getBoundingClientRect().bottom + window.scrollY - (Number.parseFloat(heroStyle.paddingBottom) || 0)
+          : undefined;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
       geometry = dockGeometry({
         wide: wide.matches,
@@ -100,6 +112,7 @@ export function useSearchDock({
         pin,
         barTop: Number.parseFloat(getComputedStyle(bar).top) || 8,
         barHeight: bar.offsetHeight,
+        contentBottom,
       });
       const slot = slotRef.current;
       if (!slot) return;
@@ -115,7 +128,7 @@ export function useSearchDock({
       const nextMerging = p > 0 && p < 1;
       if (nextDocking !== docking) {
         docking = nextDocking;
-        for (const element of [dock, chips]) {
+        for (const element of [dock, chips, bar]) {
           if (docking) element?.setAttribute("data-docking", "");
           else element?.removeAttribute("data-docking");
         }
@@ -177,9 +190,10 @@ export function useSearchDock({
 }
 
 /**
- * The floating control bar: the board's name, its live signal and
- * headline, and the same Alerts and Refresh controls as the hero, shown
- * once the hero has scrolled away. The one chrome surface on the page.
+ * The floating control bar: the verdict in short ("2 need a look") with when
+ * the board was last checked, the search field once it has docked, and the same
+ * Alerts and Refresh controls as the hero. It is shown once the hero has
+ * scrolled away, and it is the only translucent element on a Quiet page.
  *
  * Hidden, it is `inert`, so Tab never lands on a control nobody can see
  * and the skip link stays the first stop. It stays put while keyboard
@@ -192,24 +206,30 @@ export function CompactHeader({
   store,
   barRef,
   slotRef,
-  name,
+  verdict,
   live,
-  headline,
+  checkedAt,
+  nextIn,
   children,
 }: {
   /** Says when the bar is up; only this component renders when that changes. */
   store: DockStore;
   barRef: RefObject<HTMLElement | null>;
   slotRef: RefObject<HTMLDivElement | null>;
-  name: string;
+  /** The verdict's tone and its short form. */
+  verdict: { tone: Health; short: string };
   live: LiveState;
-  headline: { tone: Health; title: string };
+  /** When the snapshot was collected (epoch ms), if it says. */
+  checkedAt: number | null;
+  /** The countdown to the next check, "1:52". */
+  nextIn: string;
   /** The controls, rendered by the board so they share its state and handlers. */
   children: ReactNode;
 }) {
   const { barShown } = useDockState(store);
   const [heldByKeyboard, setKeyboardFocus] = useState(false);
   const visible = barShown || heldByKeyboard;
+  const when = checkedAt === null ? null : <LocalTime at={checkedAt} />;
   return (
     <section
       ref={barRef}
@@ -220,26 +240,38 @@ export function CompactHeader({
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false);
       }}
-      className="compact-header glass-chrome flex h-12 items-center gap-3 rounded-full pr-1.5 pl-4"
+      className="compact-header float flex h-12 items-center gap-3 pr-1.5 pl-3.5"
     >
-      <p className="flex shrink-0 items-center gap-2 text-sm font-medium tracking-[-0.01em]">
-        <LiveSignal state={live} />
-        <span className="max-sm:sr-only">{name}</span>
-      </p>
-      {/* The headline again, where there is room for it. */}
-      <p className="hidden min-w-0 items-center gap-2 text-sm text-muted sm:flex">
-        <span aria-hidden className="text-subtle">
-          ·
-        </span>
-        <HealthDot health={headline.tone} />
-        <span className="truncate" title={headline.title}>
-          {headline.title}
+      <p data-bar-lead data-state={live} className="flex shrink-0 items-center gap-2.5">
+        <StatusGlyph health={verdict.tone} size={20} className={STATUS_TEXT[verdict.tone]} cut="card" />
+        {/*
+          From 640px the verdict and the check time sit in the flow, before the field's slot. On a phone the
+          slot needs the room, so the short verdict is laid over it, between the glyph and the buttons, and
+          fades out as the field merges in (data-docking, written by useSearchDock); "checked" stays for
+          screen readers only.
+        */}
+        <span
+          data-bar-verdict
+          className="max-sm:pointer-events-none max-sm:absolute max-sm:top-1/2 max-sm:right-[6.75rem] max-sm:left-11 max-sm:-translate-y-1/2 max-sm:overflow-hidden max-sm:text-ellipsis max-sm:whitespace-nowrap"
+        >
+          <span className="block text-row leading-[18px]">{verdict.short}</span>
+          <span className="block text-footnote tabular-nums text-subtle max-sm:sr-only">
+            {live === "checking" ? (
+              "Checking…"
+            ) : live === "stale" ? (
+              <>Stale{when ? <> · checked {when}</> : null}</>
+            ) : (
+              <>
+                {when ? <>Checked {when} · </> : null}next in {nextIn}
+              </>
+            )}
+          </span>
         </span>
       </p>
       <div className="flex min-w-0 flex-1 justify-center" aria-hidden>
         <div ref={slotRef} className="h-11 w-full max-w-[26rem]" />
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">{children}</div>
+      <div className="flex shrink-0 items-center">{children}</div>
     </section>
   );
 }

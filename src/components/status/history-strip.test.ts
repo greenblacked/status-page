@@ -73,7 +73,7 @@ describe("HistoryStrip", () => {
     );
     expect(html).toContain('role="img"');
     expect(html).toContain("uptime history");
-    expect(html).toContain("bg-tick");
+    expect(html).toContain("bg-muted/40");
     expect(html).toContain("bg-warn");
     expect(html).toContain("bg-down");
     // One slot per UTC day of the 30-day window, days without a record included.

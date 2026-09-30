@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  attentionBreakdown,
+  ALL_CLEAR_SUMMARY,
   googleImpact,
   googleImpactInfo,
+  healthLabel,
   instatusComponent,
+  overallSummary,
   SEVERITY_ORDER,
   statuspageComponentDetail,
   statuspageIncidentImpact,
@@ -11,28 +13,27 @@ import {
   worseHealth,
 } from "./health";
 
-const none = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+describe("healthLabel", () => {
+  it("names the five states, and calls an unreadable source No data rather than Unknown", () => {
+    expect(SEVERITY_ORDER.map(healthLabel)).toEqual(["Outage", "Degraded", "No data", "Maintenance", "Operational"]);
+  });
+});
 
-describe("attentionBreakdown", () => {
-  it("names each state that needs attention, worst first", () => {
-    expect(attentionBreakdown({ ...none, operational: 9, degraded: 2, outage: 1, unknown: 2 })).toBe(
-      "1 outage · 2 degraded · 2 unknown",
-    );
+describe("overallSummary", () => {
+  it("is short, first person where it speaks of itself, and never restates the state's name", () => {
+    expect(overallSummary("operational", 0)).toBe(ALL_CLEAR_SUMMARY);
+    expect(ALL_CLEAR_SUMMARY).toBe("Nothing reported.");
+    expect(overallSummary("operational", 1)).toBe("Up. 1 resolved recently.");
+    expect(overallSummary("operational", 2)).toBe("Up. 2 resolved recently.");
+    expect(overallSummary("maintenance", 0)).toBe("Maintenance in progress.");
+    expect(overallSummary("degraded", 0)).toBe("Some parts are slow or failing.");
+    expect(overallSummary("outage", 0)).toBe("Down right now.");
+    expect(overallSummary("unknown", 0)).toBe("Couldn't read their status page.");
   });
 
-  it("pluralises the one label that is a noun", () => {
-    expect(attentionBreakdown({ ...none, operational: 12, outage: 2 })).toBe("2 outages");
-    expect(attentionBreakdown({ ...none, operational: 0, outage: 14 })).toBe("14 outages");
-    expect(attentionBreakdown({ ...none, operational: 13, outage: 1 })).toBe("1 outage");
-    expect(attentionBreakdown({ ...none, operational: 9, maintenance: 5 })).toBe("5 maintenance");
-  });
-
-  it("says Unknown when every item is Unknown, not Degraded", () => {
-    expect(attentionBreakdown({ ...none, operational: 1, unknown: 13 })).toBe("13 unknown");
-  });
-
-  it("has nothing to list on an all-clear board", () => {
-    expect(attentionBreakdown({ ...none, operational: 14 })).toBe("nothing to watch");
+  it("prefers the vendor's own words when it has some, and falls back when they are empty", () => {
+    expect(overallSummary("degraded", 1, "Elevated errors")).toBe("Elevated errors");
+    expect(overallSummary("outage", 1, "")).toBe("Down right now.");
   });
 });
 

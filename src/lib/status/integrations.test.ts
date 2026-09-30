@@ -23,7 +23,7 @@ describe("publicStatus", () => {
       ]),
     );
     expect(status.overall).toBe("degraded");
-    expect(status.headline).toBe("Degraded: Google Cloud");
+    expect(status.headline).toBe("One thing needs a look.");
     expect(status.services[0]).toEqual({
       id: "gcp",
       name: "Google Cloud",
@@ -42,11 +42,11 @@ describe("overall health across the public endpoints", () => {
 
   it("reports the degradation, not the unreadable source, as overall and as the headline", () => {
     expect(publicStatus(mixed).overall).toBe("degraded");
-    expect(publicStatus(mixed).headline).toBe("Degraded: Google Cloud");
+    expect(publicStatus(mixed).headline).toBe("One thing needs a look.");
   });
 
   it("colours the board badge by the same overall health", () => {
-    expect(shieldsBadge(mixed, "board")).toMatchObject({ message: "degraded: google cloud", color: "yellow" });
+    expect(shieldsBadge(mixed, "board")).toMatchObject({ message: "one thing needs a look", color: "yellow" });
   });
 });
 
@@ -66,7 +66,7 @@ describe("shieldsBadge", () => {
   it("summarises the whole board under the id 'board'", () => {
     expect(shieldsBadge(snapshot, "board")).toMatchObject({
       label: "status",
-      message: "outage: google cloud",
+      message: "one thing needs a look",
       color: "red",
     });
     expect(shieldsBadge(board([service("aws", { health: "operational" })]), "board")).toMatchObject({
@@ -194,14 +194,18 @@ describe("atomFeed", () => {
 
   it("titles the feed with the app name", () => {
     const xml = atomFeed(board([gcp({ health: "degraded" })]), "https://s");
-    expect(xml).toContain("  <title>Status Page</title>");
-    expect(xml).toContain("<author><name>Status Page</name></author>");
+    expect(xml).toContain("  <title>Status</title>");
+    expect(xml).toContain("<author><name>Status</name></author>");
+    expect(xml).toContain("  <subtitle>One thing needs a look.</subtitle>");
+    expect(atomFeed(board([gcp({ health: "operational" })]), "https://s")).toContain(
+      "  <subtitle>Everything is up.</subtitle>",
+    );
   });
 
   it("leaves unreadable services out: one failed sweep cannot be told from a blackout without history", () => {
     const xml = atomFeed(
       board([
-        gcp({ health: "unknown", summary: "Status could not be confirmed from the official source." }),
+        gcp({ health: "unknown", summary: "Couldn't read their status page." }),
         service("aws", { health: "degraded", name: "AWS" }),
       ]),
       "https://s",

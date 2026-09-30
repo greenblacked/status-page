@@ -8,13 +8,21 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- Four glass lenses in the background that bend the drafting grid and, with a mouse or trackpad, catch a slow highlight. They stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
-- The page footer links to the source on GitHub and to the MIT License (free to use, copy, modify and share, with the copyright notice kept), and says how often the board is checked: every two minutes in the page, with the server keeping vendor feeds for 45 seconds.
-- **Tilt lighting** switch in **Settings and shortcuts** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. Off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
-- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, and the field merges into it a little further down the page. The field has its own clear button, a full-size touch target.
+- A new look, quieter and more like a page than a dashboard. The top of the board is one sentence that says what needs a look, with the services it names linked to their cards, a pen line under the count and a loop around anything down; when all fourteen are up it says "Everything is up." and writes "all quiet" by hand. Below it, what needs a look is a card each, what could not be read has its own short list, and everything healthy is a compact row in a list per category.
+- **Background** in **Settings**: **Quiet** (the default) is flat paper, **Glass** brings back the frosted panels over a still glow, and **Full** adds the slow drift, the lenses, a light that follows your pointer and the small period dial beside the live line. Reduce glass still turns any of them solid.
+- Times show in your own time zone once the page has loaded (UTC before that, and in the tooltip).
+- The live line under the headline reads "Checked 12:04 CET · next in 1:52", and says "Stale" when a check has been missed for too long.
+- Four glass lenses on the **Full** background that bend the drafting grid and, with a mouse or trackpad, catch a slow highlight. They are not drawn on Quiet or Glass, they stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
+- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON, the Atom feed and the badges, and is signed "Made and kept by Serhii." It no longer explains how often the board is checked.
+- A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
+- A link preview image, canonical address and a maskable app icon of their own.
+- **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
+- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field a clear stretch below it; the field then rises with the page, and only when it reaches the bar does it merge into it. The field has its own clear button, a full-size touch target.
 
 ### Changed
 
+- Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until the search field takes its place). The settings button is called **Settings**.
+- The site is called **Status**, and the words are plainer and in the first person. The headline counts what needs a look ("Two things need a look.") or says "Everything is up."; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The line under the headline names one or two of them, linked ("I couldn't read Android."), and counts more than that ("I couldn't read three of them."). The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.
 - Unknown now ranks above Maintenance, and the order is one everywhere: Outage, Degraded, Unknown, Maintenance. Cards already put Degraded above Unknown (0.5.0); the overall health, `/api/status.json` `overall`, the badge and the history days now follow them, where they used to rank Unknown above Degraded, so a confirmed Degraded no longer reads as Unknown there. This replaces the order listed under 0.5.0.
 - `/feed.xml` entry ids are now stable per service, health and incident, so a reworded incident is not posted again but an escalation, such as Degraded to Outage, is. Feed readers will show the current entries once more after this update. Services whose status is Unknown are no longer in the feed.
 - An alert for a change to or from Unknown now waits for two updates in a row, so a single failed check no longer sends one.
@@ -22,14 +30,14 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - AWS uses the vendor's own severity and merges every region, so a single-region service disruption can now show as Outage.
 - `/api/status.json` adds the `informational` and `upcomingMaintenance` fields.
 - Starring and refresh move cards with a light glide instead of a page snapshot, so they respond at once on iPhone, iPad and Safari.
-- The MikroTik RouterOS and Apple OS cards no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and an Unknown badge only when the source cannot be read.
+- The MikroTik RouterOS and Apple OS trackers no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and a tracker whose source cannot be read is listed with the other sources that could not be read, as No data.
 
 ### Fixed
 
 - Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.
 - Apple's upcoming events no longer change a service's health.
 - The live bar keeps one height on a phone.
-- Controls are at least 44pt on touch screens.
+- Controls are at least 44pt on touch screens. The service links in the headline's second line have a tap area of that height too; on a touch screen the lines of that sentence are 44pt apart, so when it wraps, no link's tap area lies over another's.
 - The layout works at 200% text size.
 - The page has a footer landmark for screen readers.
 - The spin and pulse, including the live dot while a check runs, stop under Reduce Motion.
