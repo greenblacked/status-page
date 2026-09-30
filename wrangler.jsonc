@@ -6,8 +6,9 @@
   // production traffic. dev, where pull requests land, deploys nothing.
   // Uptime history: the HISTORY_DB D1 binding holds one row per service per
   // UTC day, and a Cron Trigger samples the board into it every five minutes
-  // (src/lib/status/history-cron.ts). Only the cron writes; the stage preview
-  // reads the same database. Cron Triggers do not run in previews.
+  // (src/lib/status/history-cron.ts). Only the cron's code writes; the stage
+  // preview reads the same database, through a technically read-write
+  // binding. Cron Triggers do not run in previews.
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "status-page",
   "main": "./src/server.cloudflare.ts",
@@ -71,7 +72,8 @@
     "vars": { "ROBOTS": "noindex" },
     "version_metadata": { "binding": "CF_VERSION_METADATA" },
     // The same database as production (same placeholder id, replaced
-    // together). A preview has no cron, so it only reads.
+    // together). D1 has no read-only binding, so this one is technically
+    // read-write: a preview has no cron, and only the code avoids writes.
     "d1_databases": [
       {
         "binding": "HISTORY_DB",

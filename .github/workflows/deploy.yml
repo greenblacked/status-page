@@ -113,12 +113,14 @@ jobs:
         run: npm run build
 
       # The scheduled event and the D1 binding come from wrangler.jsonc. If
-      # either is missing from the generated config, the strips would stay
-      # empty for good, so fail here rather than ship that quietly.
+      # either is missing from the generated config, or a D1 binding still has
+      # the placeholder or a malformed database_id, the strips would stay
+      # empty for good, so fail here (on pull requests too) rather than ship
+      # that quietly. Both the production and the preview binding are checked.
       - name: Check the built Worker config
         run: |
-          if ! jq -e '(.triggers.crons | length > 0) and (.d1_databases | length > 0)' dist/server/wrangler.json >/dev/null; then
-            echo "::error::dist/server/wrangler.json needs a cron trigger and a D1 database. Check triggers.crons and d1_databases in wrangler.jsonc."
+          if ! jq -e '(.triggers.crons | length > 0) and ([.d1_databases[]?, .previews.d1_databases[]?] | length == 2 and all(.binding == "HISTORY_DB" and (.database_id // "" | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and .database_id != "00000000-0000-0000-0000-000000000000"))' dist/server/wrangler.json >/dev/null; then
+            echo "::error::dist/server/wrangler.json needs a cron trigger and a HISTORY_DB binding in both d1_databases and previews.d1_databases, each with a real database_id (not the zero-UUID placeholder). Check triggers.crons and the D1 bindings in wrangler.jsonc."
             exit 1
           fi
 
