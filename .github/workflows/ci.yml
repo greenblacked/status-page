@@ -162,11 +162,33 @@ jobs:
           retention-days: 1
 
   e2e:
-    name: browser tests
+    # One shard per engine family and device. Every project runs the same 97
+    # tests (485 in all), but WebKit is several times slower than Chromium in
+    # CI, so the two Chromium projects share a shard and each WebKit project
+    # gets its own. Together the shards run every project exactly once.
+    name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Five projects, two engines, and WebKit's system libraries to install.
+    # Per shard: at most 194 tests on one engine (Chromium) or 97 on WebKit,
+    # plus the browser and its system libraries to install.
     timeout-minutes: 20
+    strategy:
+      # A slow or failing shard must not hide the results of the others.
+      fail-fast: false
+      matrix:
+        include:
+          - shard: chromium
+            browser: chromium
+            projects: desktop,mobile
+          - shard: desktop-safari
+            browser: webkit
+            projects: Desktop Safari
+          - shard: iphone
+            browser: webkit
+            projects: iPhone 17 Pro
+          - shard: ipad
+            browser: webkit
+            projects: iPad Pro 11
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -178,18 +200,29 @@ jobs:
           name: node-build
           path: dist/
 
-      # The browsers matching the @playwright/test version in the lockfile:
-      # Chromium, and WebKit for the Safari, iPhone and iPad projects.
-      - name: Install Playwright's Chromium and WebKit
-        run: npx --no-install playwright install --with-deps chromium webkit
+      # The browser matching the @playwright/test version in the lockfile,
+      # and only the one this shard runs.
+      - name: Install Playwright's browser
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: npx --no-install playwright install --with-deps "$BROWSER"
 
       - name: Browser tests (Playwright)
-        run: npm run test:e2e
+        env:
+          # Comma-separated project names from playwright.config.ts.
+          PROJECTS: ${{ matrix.projects }}
+        run: |
+          args=()
+          IFS=, read -ra names <<<"$PROJECTS"
+          for name in "${names[@]}"; do
+            args+=(--project="$name")
+          done
+          npm run test:e2e -- "${args[@]}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
@@ -322,8 +355,15 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<<"$RESULTS"
+          # `e2e` is a matrix: its result is `failure` or `cancelled` if any
+          # shard failed, was cancelled or timed out.
           # `skipped` is fine: commit and branch checks run on pull requests only.
           if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<<"$RESULTS" >/dev/null; then
             echo "::error::a required job failed or was cancelled"
+            exit 1
+          fi
+          # The browser shards must have run: never let them be skipped.
+          if ! jq -e '.e2e.result == "success"' <<<"$RESULTS" >/dev/null; then
+            echo "::error::the browser tests did not pass"
             exit 1
           fi

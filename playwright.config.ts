@@ -22,7 +22,9 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   // No retries: a test that passes on its second try is hiding a bug.
   retries: 0,
-  reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : [["list"]],
+  // "list" prints each test as it starts and ends, so a job that hits its
+  // timeout shows which tests were running; "github" alone shows only dots.
+  reporter: process.env.CI ? [["github"], ["list"], ["html", { open: "never" }]] : [["list"]],
   // The first page load reads every vendor, up to their 9-second timeout.
   timeout: 45_000,
   use: {
