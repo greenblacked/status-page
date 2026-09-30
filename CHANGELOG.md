@@ -8,7 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- Four glass lenses in the background that bend the drafting grid and, on a Mac, catch a slow highlight. They stay still on iPhone and iPad, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
+- Four glass lenses in the background that bend the drafting grid and, with a mouse or trackpad, catch a slow highlight. They stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
 - The page footer links to the source on GitHub and to the MIT License (free to use, copy, modify and share, with the copyright notice kept), and says how often the board is checked: every two minutes in the page, with the server keeping vendor feeds for 45 seconds.
 - **Tilt lighting** switch in **Settings and shortcuts** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. Off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
 - Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. The field has its own clear button, a full-size touch target.

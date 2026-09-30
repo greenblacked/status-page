@@ -1,8 +1,10 @@
 /**
- * The liquid-glass lenses behind the board: four big discs that drift over the
- * aurora and bend it like thick glass, with a coloured fringe at their rims.
- * Static markup, no state: src/styles.css places, sizes, animates and hides
- * them (Reduce glass, reduced motion and Increase Contrast turn them off).
+ * The liquid-glass lenses behind the board: four static glass discs, each
+ * drawing a copy of the drafting grid bent through thick-glass refraction with
+ * a coloured fringe at its rim (the aurora itself is not bent). Static markup,
+ * no state: src/styles.css places and sizes them. Reduced motion stops only
+ * the rim light's slow orbit; Reduce glass, prefers-reduced-transparency,
+ * Increase Contrast and forced colours hide the whole layer.
  *
  * `#lens-refract` is the filter each `.lens-fx` applies. Its displacement map
  * is /lens-map.png, baked by scripts/lens-map.mjs. The SVG holding it must stay
