@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Design-token guard. The theme clears Tailwind's default fonts and radii
 # (`--font-*: initial`, `--radius-*: initial`), so a stale utility such as
-# font-mono or rounded-xl silently does nothing (or, while src/legacy.css
-# exists, the wrong thing). This fails on:
+# font-mono or rounded-xl silently does nothing. This fails on:
 #
 #   - the retired names: font-mono, font-serif, font-display, glass-inset,
 #     glass-whisper, glass-chrome, .glass, and rounded-2xs / xs / xl / full

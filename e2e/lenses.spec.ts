@@ -509,7 +509,7 @@ test.describe("contrast", () => {
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
           const element = node.parentElement;
           const text = node.textContent?.trim();
-          if (!element || !text || !element.closest(".surface, .glass") || element.closest(".sr-only")) continue;
+          if (!element || !text || !element.closest(".surface") || element.closest(".sr-only")) continue;
           // The body of a closed <details> is not drawn, though it still has a box.
           const details = element.closest("details:not([open])");
           if (details && !element.closest("summary")) continue;

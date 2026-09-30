@@ -312,11 +312,10 @@ function backdropFilters(page: Page, selector: string): Promise<string[]> {
   );
 }
 
-// The panel classes are .surface, .control and .float; .glass, .glass-whisper and .glass-chrome are their old
-// names, still on the cards and controls that have not moved over (src/legacy.css).
-const PANELS = ".surface, .glass";
-const CONTROLS = ".control, .glass-whisper";
-const BARS = ".float, .glass-chrome";
+// The panel classes are .surface, .control and .float.
+const PANELS = ".surface";
+const CONTROLS = ".control";
+const BARS = ".float";
 
 test("Quiet, the default background, blurs no panel and no control, only the floating bar", async ({ page }) => {
   await page.goto("/");
@@ -1557,7 +1556,7 @@ test("keeps Reduce glass across a reload", async ({ page }) => {
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await expect(html).toHaveAttribute("data-reduce-transparency", "true");
-  expect((await backdropFilters(page, ".glass")).filter((value) => value !== "none")).toEqual([]);
+  expect((await backdropFilters(page, PANELS)).filter((value) => value !== "none")).toEqual([]);
 
   const problems = watchConsole(page);
   await page.reload();
