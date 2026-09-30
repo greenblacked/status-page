@@ -14,6 +14,13 @@ describe("securityHeaders", () => {
     expect(securityHeaders({ dev: true })).not.toHaveProperty("Content-Security-Policy");
     expect(securityHeaders({ dev: true })["X-Content-Type-Options"]).toBe("nosniff");
   });
+
+  it("names only Permissions-Policy features every engine knows", () => {
+    const policy = securityHeaders({ dev: false })["Permissions-Policy"];
+    // usb is Chromium-only, and Safari logs a warning for an unknown feature.
+    expect(policy).not.toContain("usb");
+    expect(policy).toBe("camera=(), microphone=(), geolocation=(), payment=()");
+  });
 });
 
 describe("withSecurityHeaders", () => {
