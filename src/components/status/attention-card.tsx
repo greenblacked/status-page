@@ -182,7 +182,7 @@ export function AttentionCard({
           <span className="sr-only"> for {service.name}</span>
           <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
         </a>
-        <span className="whitespace-nowrap text-subtle" title="How long the vendor took to answer">
+        <span className="whitespace-nowrap tabular-nums text-subtle" title="How long the vendor took to answer">
           <span aria-hidden>{`${service.latencyMs}\u202fms`}</span>
           <span className="sr-only">answered in {service.latencyMs} ms</span>
         </span>

@@ -29,7 +29,7 @@ describe("LiveBar", () => {
     expect(html).toContain('aria-live="polite"><span class="sr-only">Live</span></span>');
     expect(html).toContain("Checked <time");
     expect(html).toContain(">12:00 UTC</time>");
-    expect(html).toContain('next in <span class="text-fg">1:50</span>');
+    expect(html).toContain('next in <span class="tabular-nums text-fg">1:50</span>');
   });
 
   it("keeps the live region to the state word: the clock and the countdown sit outside it", () => {
@@ -57,7 +57,7 @@ describe("LiveBar", () => {
 
   it("holds placeholders until the client clock is mounted", () => {
     const html = render(live, { now: 0 });
-    expect(html).toContain('next in <span class="text-fg">—</span>');
+    expect(html).toContain('next in <span class="tabular-nums text-fg">—</span>');
   });
 
   it("counts down to the next slot's refetch when the slot's has not come yet", () => {

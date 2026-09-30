@@ -92,7 +92,7 @@ export function LiveBar({
                 {" · "}
               </span>
               <span className="md:block">
-                next in <span className="text-fg">{nextInText(now, refetchJitterMs)}</span>
+                next in <span className="tabular-nums text-fg">{nextInText(now, refetchJitterMs)}</span>
               </span>
             </>
           ) : null}

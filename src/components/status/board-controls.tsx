@@ -263,7 +263,7 @@ export function FilterBar({
         >
           <TriangleAlert aria-hidden />
           Issues only
-          <span className="font-normal text-subtle">{issueCount}</span>
+          <span className="font-normal tabular-nums text-subtle">{issueCount}</span>
         </Button>
         <Button
           variant="control"
@@ -274,7 +274,7 @@ export function FilterBar({
         >
           <Star aria-hidden className={cn(starredOnly && "fill-current")} />
           Starred
-          {starredCount > 0 ? <span className="font-normal text-subtle">{starredCount}</span> : null}
+          {starredCount > 0 ? <span className="font-normal tabular-nums text-subtle">{starredCount}</span> : null}
         </Button>
       </div>
     </>

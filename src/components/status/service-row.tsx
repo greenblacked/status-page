@@ -111,7 +111,10 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
       ) : (
         <>
           {" · "}
-          <span title="How long the vendor took to answer">{`${service.latencyMs}\u202fms`}</span>
+          <span
+            className="tabular-nums"
+            title="How long the vendor took to answer"
+          >{`${service.latencyMs}\u202fms`}</span>
         </>
       )}
       {extras ? ` · ${upcoming ? "Maintenance planned" : "Notice"}` : null}

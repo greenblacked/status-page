@@ -198,8 +198,7 @@
     background-color: var(--color-bg);
     font-family: var(--font-sans);
     font-optical-sizing: auto;
-    /* Numerals are tabular wherever they change, so a ticking clock never shivers. */
-    font-variant-numeric: tabular-nums;
+    /* No tabular-nums here: in Inter it also gives the hyphen a digit's width ("us - east - 1"). Use the tabular-nums class on the text that ticks or aligns. */
     font-size: var(--text-body);
     line-height: var(--text-body--line-height);
     letter-spacing: var(--text-body--letter-spacing);

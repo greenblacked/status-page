@@ -10,7 +10,9 @@ const at = Date.parse("2026-09-30T10:04:00Z");
 describe("LocalTime on the server", () => {
   it("prints UTC, with the whole moment in UTC as its title and an ISO dateTime", () => {
     const html = renderToStaticMarkup(createElement(LocalTime, { at }));
-    expect(html).toBe('<time dateTime="2026-09-30T10:04:00.000Z" title="30 Sep 2026 10:04 UTC">10:04\u202fUTC</time>');
+    expect(html).toBe(
+      '<time dateTime="2026-09-30T10:04:00.000Z" title="30 Sep 2026 10:04 UTC" class="tabular-nums">10:04\u202fUTC</time>',
+    );
   });
 
   it("puts the date first for another day than the reference, and never for a slot", () => {
@@ -39,9 +41,9 @@ describe("LocalTime on the server", () => {
     expect(renderToStaticMarkup(createElement(LocalTime, { at, reference: Number.NaN }))).toContain(">10:04\u202fUTC<");
   });
 
-  it("passes a class through", () => {
+  it("keeps its digits tabular, and passes a class through", () => {
     expect(renderToStaticMarkup(createElement(LocalTime, { at, className: "text-subtle" }))).toContain(
-      'class="text-subtle"',
+      'class="tabular-nums text-subtle"',
     );
   });
 });

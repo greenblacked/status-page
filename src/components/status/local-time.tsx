@@ -5,6 +5,7 @@ import {
   formatUtcTitle,
   type LocalTimeFormat,
 } from "@/lib/status/local-time";
+import { cn } from "@/lib/utils";
 
 const noop = () => () => undefined;
 
@@ -47,7 +48,7 @@ export function LocalTime({
   if (!Number.isFinite(at)) return null;
   const ref = Number.isFinite(reference) ? reference : at;
   return (
-    <time dateTime={new Date(at).toISOString()} title={formatUtcTitle(at)} className={className}>
+    <time dateTime={new Date(at).toISOString()} title={formatUtcTitle(at)} className={cn("tabular-nums", className)}>
       {hydrated ? formatAfterHydration(at, ref, format) : formatBeforeHydration(at, ref, format)}
     </time>
   );

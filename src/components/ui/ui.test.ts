@@ -41,9 +41,9 @@ describe("Segmented", () => {
   });
 
   it("shows counts from the desktop breakpoint, and on a phone only where asked", () => {
-    expect(html).toMatch(/<span class="font-normal text-subtle max-md:hidden">14<\/span>/);
-    expect(html).toMatch(/<span class="font-normal text-subtle max-md:hidden">2<\/span>/);
-    expect(html).toMatch(/<span class="font-normal text-subtle">3<\/span>/);
+    expect(html).toMatch(/<span class="font-normal tabular-nums text-subtle max-md:hidden">14<\/span>/);
+    expect(html).toMatch(/<span class="font-normal tabular-nums text-subtle max-md:hidden">2<\/span>/);
+    expect(html).toMatch(/<span class="font-normal tabular-nums text-subtle">3<\/span>/);
   });
 
   it("leaves the count out when there is none", () => {

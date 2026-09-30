@@ -233,7 +233,7 @@ export function CompactHeader({
         <StatusGlyph health={verdict.tone} size={20} className={STATUS_TEXT[verdict.tone]} cut="card" />
         <span className="max-sm:sr-only">
           <span className="block text-row leading-[18px]">{verdict.short}</span>
-          <span className="block text-footnote text-subtle">
+          <span className="block text-footnote tabular-nums text-subtle">
             {live === "checking" ? (
               "Checking…"
             ) : live === "stale" ? (

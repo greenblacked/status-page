@@ -110,7 +110,7 @@ export function IncidentSince({
       {duration && !scheduled ? (
         <>
           {" ("}
-          <time dateTime={duration.iso}>
+          <time dateTime={duration.iso} className="tabular-nums">
             <span aria-hidden>{duration.short}</span>
             <span className="sr-only">{duration.long}</span>
           </time>
