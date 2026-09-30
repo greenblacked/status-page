@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
 import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
 import { CompactHeader, useScrolledPast } from "@/components/status/compact-header";
-import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
+import { prefersReducedMotion, useCountUp, useSpotlight, withCardMotion } from "@/components/status/effects";
 import { HealthDot } from "@/components/status/health-dot";
 import { LiveBar, useFreshness } from "@/components/status/live-bar";
 import { LiveSignal } from "@/components/status/live-signal";
@@ -190,9 +190,9 @@ export function BoardView({
     if (!next) return;
     event.preventDefault();
     setRevealing({ id: service.id, filters: next });
-    // Plainly, not in a View Transition: a filter change has to feel
-    // instant (see withViewTransition), and the cards' stagger already
-    // animates the board that comes back.
+    // Plainly, without a glide: a filter change has to feel instant (see
+    // withCardMotion), and the cards' stagger already animates the board
+    // that comes back.
     setFilters(next);
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: `visible` is the trigger, not an input: the card to focus exists only once the cleared filters have rendered it.
@@ -216,7 +216,7 @@ export function BoardView({
 
   const issueCount = board.services.length - board.counts.operational;
   // Starring moves a card, so it glides there like a refresh does.
-  const onToggleStar = (id: ServiceSnapshot["id"]) => withViewTransition(() => toggleStar(id));
+  const onToggleStar = (id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id));
   const groups = groupServices(visible);
   // The board's most urgent service, from the whole board rather than the
   // filtered view (starred services first among equals, as on the cards).
@@ -242,7 +242,7 @@ export function BoardView({
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
       const next = await refreshStatusBoard();
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
-      withViewTransition(() => queryClient.setQueryData(["status-board"], next));
+      withCardMotion(() => queryClient.setQueryData(["status-board"], next));
     } catch {
       await boardQuery.refetch();
     } finally {

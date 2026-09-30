@@ -928,18 +928,6 @@
   }
 }
 
-/* Cards glide to their new place when a manual refresh moves them between
-   sections. Only the named cards are captured: snapshotting the whole
-   blurred page delays the update itself. */
-:root {
-  view-transition-name: none;
-}
-
-::view-transition-group(*) {
-  animation-duration: var(--motion-fast);
-  animation-timing-function: var(--ease-smooth-out);
-}
-
 /*
   Scroll-driven, decoration only: the hero's title block recedes as it
   scrolls away under the compact bar. The bar's own showing and hiding
@@ -1092,11 +1080,5 @@
 
   .star-toggle:is(:hover, :focus, :active) svg {
     transition: none;
-  }
-
-  ::view-transition-group(*),
-  ::view-transition-old(*),
-  ::view-transition-new(*) {
-    animation: none;
   }
 }

@@ -100,7 +100,7 @@ export function ServiceCard({
         highlight && "@xl:col-span-2",
         emphasized && "service-card-changed",
       )}
-      style={{ animationDelay: `${Math.min(index, 12) * 40}ms`, viewTransitionName: `vt-${service.id}` }}
+      style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
     >
       {highlight ? (
         // Neutral, like the rest: the status colour stays in the badge, and amber stays for what just moved.
