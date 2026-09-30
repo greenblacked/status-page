@@ -37,7 +37,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.
 - Apple's upcoming events no longer change a service's health.
 - The live bar keeps one height on a phone.
-- Controls are at least 44pt on touch screens.
+- Controls are at least 44pt on touch screens. The service links in the headline's second line have a tap area of that height too; on a touch screen the lines of that sentence are 44pt apart, so when it wraps, no link's tap area lies over another's.
 - The layout works at 200% text size.
 - The page has a footer landmark for screen readers.
 - The spin and pulse, including the live dot while a check runs, stop under Reduce Motion.

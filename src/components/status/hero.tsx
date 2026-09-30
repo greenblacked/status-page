@@ -68,7 +68,7 @@ export function Hero({
               <p className="sr-only">{verdict.srSub}</p>
             </>
           ) : verdict.subParts.length > 0 ? (
-            <p className="mt-2 text-body text-muted md:mt-3">
+            <p className="hit-lines mt-[calc(0.5rem-var(--hit-lead))] -mb-[var(--hit-lead)] text-body text-muted md:mt-[calc(0.75rem-var(--hit-lead))]">
               {verdict.subParts.map((part, at) =>
                 part.id ? (
                   <a

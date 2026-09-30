@@ -1875,8 +1875,9 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   expect(small.count).toBeGreaterThan(12);
   expect(small.small).toEqual([]);
 
-  // The links in the verdict's sub line sit in running text, so their reach is an invisible box round them
-  // (hit-extend), not their own box: a tap 22px above or below the words still lands on the link.
+  // The links in the verdict's sub line sit in running text, so their reach is padding round them (hit-extend)
+  // on lines 44pt apart (hit-lines), not the words' own box: a tap 21px above or below the middle of the words
+  // still lands on the link. (The next test has the sentence wrap, and checks that no two of them overlap.)
   const sentence = await page.evaluate(() => {
     const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
     const boxes = links.map((link) => {
@@ -1888,7 +1889,7 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
         name: link.textContent?.trim() ?? "",
         x: x + window.scrollX,
         y: y + window.scrollY,
-        reaches: [-21.8, 21.8].map((dy) => document.elementFromPoint(x, y + dy) === link),
+        reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
       };
     });
     return boxes;
@@ -1901,6 +1902,88 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
     if (next && Math.abs(next.y - link.y) < 4)
       expect(next.x - link.x, `${link.name} to ${next.name}`).toBeGreaterThan(24);
   }
+});
+
+test("keeps the tap areas of the verdict's links apart when the sentence wraps", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  test.skip(!coarse, "the tap areas are for a coarse pointer, which this project does not have");
+  // Three services need a look, and their names are long, so the sentence wraps at every width below: some of
+  // the links land on the line under another, and "Google Cloud Platform" is a link that wraps itself.
+  const longNames: Partial<Record<string, string>> = {
+    aws: "Amazon Web Services",
+    gcp: "Google Cloud Platform",
+    grok: "Grok from xAI",
+  };
+  const board = fixtureBoard(Date.now(), { grok: "outage" });
+  await openFixture(page, () => ({
+    ...board,
+    services: board.services.map((service) => ({ ...service, shortName: longNames[service.id] ?? service.shortName })),
+  }));
+
+  let wrapped = false;
+  for (const { width, rootPx } of [
+    { width: 320, rootPx: 16 },
+    { width: 390, rootPx: 16 },
+    { width: 390, rootPx: 24 },
+    { width: 390, rootPx: 32 },
+  ]) {
+    const at = `at ${width}px, ${rootPx}px text`;
+    await page.setViewportSize({ width, height: 800 });
+    await page.evaluate((px) => {
+      document.documentElement.style.fontSize = `${px}px`;
+    }, rootPx);
+    const links = await page.evaluate(() => {
+      const anchors = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
+      anchors[0]?.scrollIntoView({ block: "center" });
+      return anchors.map((link, index) => {
+        // The words' own boxes, one per line the link is on: Range rects have no padding in them.
+        const range = document.createRange();
+        range.selectNodeContents(link);
+        const fragments = [...range.getClientRects()].filter((box) => box.width > 1);
+        const resolve = (x: number, y: number) => {
+          const hit = document.elementFromPoint(x, y)?.closest("a");
+          return hit ? anchors.indexOf(hit) : -1;
+        };
+        return {
+          name: link.textContent?.trim() ?? "",
+          fragments: fragments.map((box) => {
+            const x = box.left + box.width / 2;
+            return {
+              top: box.top,
+              bottom: box.bottom,
+              // Just inside the words, and a little way past them: both are the link's own.
+              inside: [box.top + 1.5, box.bottom - 1.5].map((y) => resolve(x, y) === index),
+              beyond: [box.top - 8, box.bottom + 8].map((y) => resolve(x, y) === index),
+              // What answers 1.5px from either edge, for the failure message.
+              seen: [box.top + 1.5, box.bottom - 1.5, box.top - 8, box.bottom + 8].map((y) => resolve(x, y)),
+            };
+          }),
+        };
+      });
+    });
+    expect(links.length, `${at}: the sub line names services`).toBeGreaterThan(1);
+    // Not vacuous: the sentence wraps, so some link sits on a line under another, and one link is on two lines.
+    const rows = new Set(links.flatMap((link) => link.fragments.map((fragment) => Math.round(fragment.top / 4))));
+    expect(rows.size, `${at}: the sentence is on more than one line`).toBeGreaterThan(1);
+    wrapped ||= links.some((link) => link.fragments.length > 1);
+    for (const link of links) {
+      expect(link.fragments.length, `${at}: ${link.name} has a box`).toBeGreaterThan(0);
+      for (const fragment of link.fragments) {
+        expect(fragment.inside, `${at}: a tap on the words of ${link.name} (saw links ${fragment.seen})`).toEqual([
+          true,
+          true,
+        ]);
+        expect(fragment.beyond, `${at}: a tap just above and below ${link.name} (saw links ${fragment.seen})`).toEqual([
+          true,
+          true,
+        ]);
+      }
+    }
+  }
+  expect(wrapped, "a link wraps onto a second line at some width").toBe(true);
 });
 
 test("lays the hero out at 200% root text on a phone: no overflow, no overlap", async ({ page }, testInfo) => {
