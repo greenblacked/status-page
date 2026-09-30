@@ -738,3 +738,21 @@ test("renders cards without a strip when /api/history.json is the empty document
   await expect(page.getByRole("img", { name: /uptime history/i })).toHaveCount(0);
   expect(problems).toEqual([]);
 });
+
+test("keeps a long component name whole beside its badge on a narrow card", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "the narrow-card layout is what a phone shows");
+  const board = fixtureBoard(Date.now());
+  const name = board.services.find((service) => service.id === "aws")?.components[0]?.name;
+  expect(name).toBe("Amazon Elastic Compute Cloud");
+
+  await openFixture(page, () => board);
+  const label = page.locator("#service-aws [data-component-row]").first().locator("span").first();
+  await expect(label).toHaveText(name ?? "");
+  // The name wraps onto more lines instead of being cut off with an ellipsis.
+  const { overflows, ellipsis } = await label.evaluate((element) => ({
+    overflows: element.scrollWidth > element.clientWidth + 1,
+    ellipsis: getComputedStyle(element).textOverflow === "ellipsis",
+  }));
+  expect(overflows).toBe(false);
+  expect(ellipsis).toBe(false);
+});
