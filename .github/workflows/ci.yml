@@ -53,6 +53,10 @@ jobs:
       - name: Changelog covers package.json version
         run: ./scripts/ci/release-notes.sh >/dev/null
 
+      # packageManager, tools/npm/package.json and its lockfile pin one npm.
+      - name: npm pin in sync
+        run: ./scripts/ci/npm-pin.sh check
+
       - name: Shell scripts
         run: shellcheck scripts/ci/*.sh scripts/release/*.sh
 

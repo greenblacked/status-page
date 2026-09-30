@@ -1,0 +1,83 @@
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+/** A copy of the files `npm-pin.sh check` reads, in a directory the test can edit. */
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), "npm-pin-"));
+  dirs.push(dir);
+  mkdirSync(join(dir, "scripts/ci"), { recursive: true });
+  mkdirSync(join(dir, "tools/npm"), { recursive: true });
+  cpSync(join(ROOT, "scripts/ci/npm-pin.sh"), join(dir, "scripts/ci/npm-pin.sh"));
+  cpSync(join(ROOT, "package.json"), join(dir, "package.json"));
+  cpSync(join(ROOT, "tools/npm/package.json"), join(dir, "tools/npm/package.json"));
+  cpSync(join(ROOT, "tools/npm/package-lock.json"), join(dir, "tools/npm/package-lock.json"));
+  return dir;
+}
+
+type Json = { packageManager?: string; packages: Record<string, { version: string }> };
+
+function edit(file: string, change: (json: Json) => void) {
+  const json = JSON.parse(readFileSync(file, "utf8")) as Json;
+  change(json);
+  writeFileSync(file, JSON.stringify(json, null, 2));
+}
+
+function check(dir: string) {
+  const result = spawnSync("bash", [join(dir, "scripts/ci/npm-pin.sh"), "check"], { encoding: "utf8" });
+  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
+describe("npm-pin.sh check", () => {
+  it("passes on the repository: packageManager, tools/npm and its lockfile pin one npm", () => {
+    const result = check(ROOT);
+    expect(result.output).toContain("all pin npm");
+    expect(result.status).toBe(0);
+  });
+
+  it("locks the npm tarball by sha512 integrity", () => {
+    const lock = JSON.parse(readFileSync(join(ROOT, "tools/npm/package-lock.json"), "utf8"));
+    expect(lock.packages["node_modules/npm"].integrity).toMatch(/^sha512-/);
+  });
+
+  it("fails when packageManager moves without tools/npm", () => {
+    const dir = fixture();
+    edit(join(dir, "package.json"), (json) => {
+      json.packageManager = "npm@0.0.1";
+    });
+    const result = check(dir);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("tools/npm/package.json");
+    expect(result.output).toContain("packageManager pins 0.0.1");
+  });
+
+  it("fails when the lockfile is stale", () => {
+    const dir = fixture();
+    edit(join(dir, "tools/npm/package-lock.json"), (json) => {
+      json.packages["node_modules/npm"].version = "0.0.1";
+    });
+    const result = check(dir);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("tools/npm/package-lock.json");
+  });
+
+  it("fails on a range or a hash suffix in packageManager", () => {
+    const dir = fixture();
+    edit(join(dir, "package.json"), (json) => {
+      json.packageManager = "npm@11.9.0+sha512.abc";
+    });
+    const result = check(dir);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("packageManager must be");
+  });
+});

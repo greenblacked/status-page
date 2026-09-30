@@ -25,9 +25,10 @@ name: Deploy
 #     signatures), runs no build, no npm script and no project JavaScript,
 #     and only uploads what the build job made, so a compromised
 #     dependency's install script never runs beside it. The repository
-#     files it runs are two shell scripts from the same protected branch
-#     as the deploy, each in a step without the token: the signature check
-#     (scripts/ci/audit-signatures.sh) and the smoke test
+#     files it runs are three shell scripts from the same protected branch
+#     as the deploy, each in a step without the token: the npm install
+#     (scripts/ci/npm-pin.sh: npm ci from tools/npm's lockfile), the
+#     signature check (scripts/ci/audit-signatures.sh) and the smoke test
 #     (scripts/ci/smoke.sh: bash, curl and jq).
 #   - Every job reads the repository and nothing more.
 
@@ -93,8 +94,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # npm at the packageManager version, from a lockfile that records its
+      # hash (tools/npm), not installed by name. No install scripts.
       - name: Pin npm
-        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")" # zizmor: ignore[adhoc-packages] exact version from packageManager
+        run: ./scripts/ci/npm-pin.sh install
+      - name: Check npm
+        run: ./scripts/ci/npm-pin.sh verify
 
       - run: npm ci
       # Every installed tarball against the registry's signature, before
@@ -151,8 +156,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # npm at the packageManager version, from a lockfile that records its
+      # hash (tools/npm), not installed by name. No install scripts.
       - name: Pin npm
-        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")" # zizmor: ignore[adhoc-packages] exact version from packageManager
+        run: ./scripts/ci/npm-pin.sh install
+      - name: Check npm
+        run: ./scripts/ci/npm-pin.sh verify
       - run: npm ci --ignore-scripts
       # This install's wrangler is what checks the Worker below, so it is
       # verified too, not only the build job's.
@@ -185,8 +194,12 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # npm at the packageManager version, from a lockfile that records its
+      # hash (tools/npm), not installed by name. No install scripts.
       - name: Pin npm
-        run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")" # zizmor: ignore[adhoc-packages] exact version from packageManager
+        run: ./scripts/ci/npm-pin.sh install
+      - name: Check npm
+        run: ./scripts/ci/npm-pin.sh verify
       # No install scripts: nothing but wrangler runs while the token exists.
       - run: npm ci --ignore-scripts
       # And that wrangler is the registry's: this install, not the build
