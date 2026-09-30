@@ -35,95 +35,32 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
 }
 
-// Starring a card and a refresh move cards inside a view transition
-// (withViewTransition in src/components/status/effects.ts). The browser
-// first snapshots every named card and holds the update until then; with the
-// glass blur that can block a software-rendered WebKit for seconds, and the
-// page then plays a transition that takes the pointer. Every transition is
-// recorded here, capture and play alike, so tests can wait for the whole of it.
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    const tracked = window as Window & { __vts?: Promise<unknown>[] };
-    tracked.__vts = [];
-    if (typeof document.startViewTransition !== "function") return;
-    const start = document.startViewTransition.bind(document);
-    document.startViewTransition = ((...args: Parameters<typeof start>) => {
-      const transition = start(...args);
-      tracked.__vts?.push(transition.finished.catch(() => undefined));
-      return transition;
-    }) as typeof document.startViewTransition;
-  });
-});
-
-/** How long a view transition may take before the wait gives up with a clear message. */
-const TRANSITION_LIMIT_MS = 20_000;
-
 /**
- * Waits until every view transition the page has started, including any
- * started meanwhile, has finished. A software-rendered browser can take
- * seconds over one, so a wait past a second is recorded on the test and
- * logged, where a CI log shows it; one that never ends fails with its own
- * message instead of running into the test's timeout.
+ * Waits until every card glide has finished, including any started meanwhile.
+ * Starring a card and a refresh glide the cards that moved to their new place
+ * (withCardMotion in src/components/status/effects.ts) with a transform-only
+ * animation named "card-move"; the update itself has applied by then, so this
+ * only lets the motion settle before a test reads positions.
  */
-async function transitionsDone(page: Page): Promise<void> {
-  const began = Date.now();
-  let timer: NodeJS.Timeout | undefined;
-  const finished = page.evaluate(async () => {
-    const tracked = window as Window & { __vts?: Promise<unknown>[] };
-    for (let seen = 0; tracked.__vts && seen < tracked.__vts.length; ) {
-      seen = tracked.__vts.length;
-      await Promise.all(tracked.__vts);
+async function motionDone(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const glides = () => document.getAnimations().filter((animation) => animation.id === "card-move");
+    for (let running = glides(); running.length > 0; running = glides()) {
+      await Promise.all(running.map((animation) => animation.finished.catch(() => undefined)));
     }
   });
-  const stuck = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`view transition did not finish in ${TRANSITION_LIMIT_MS / 1000} s`)),
-      TRANSITION_LIMIT_MS,
-    );
-  });
-  // If the timer wins, the evaluate is left behind and may reject once the page closes.
-  finished.catch(() => undefined);
-  try {
-    await Promise.race([finished, stuck]);
-  } finally {
-    clearTimeout(timer);
-  }
-  const waited = Date.now() - began;
-  const info = test.info();
-  info.annotations.push({ type: "view-transition-ms", description: String(waited) });
-  if (waited > 1000) console.log(`[vt] ${info.title} waited ${waited} ms`);
 }
 
-/** How many view transitions the page has started so far. */
-const transitionsStarted = (page: Page) =>
-  page.evaluate(() => (window as Window & { __vts?: Promise<unknown>[] }).__vts?.length ?? 0);
-
-/**
- * Runs `press` (a click or a key that toggles a star) and waits for the whole
- * of its view transition. The star's state (aria-pressed) changes only when
- * the browser runs the transition's update callback, after it has captured
- * the old page, which can take seconds on a software-rendered browser: so
- * this proves the press landed by the transition it started, then waits the
- * transition out, and only then can the caller read the state. Without
- * view transitions (or with reduced motion) the update is synchronous and
- * nothing is started, so it goes straight to the state.
- */
+/** Runs `press` (a click or a key that toggles a star), then lets the cards' glide settle. */
 async function toggleStar(page: Page, press: () => Promise<void>): Promise<void> {
-  const animated = await page.evaluate(
-    () =>
-      typeof document.startViewTransition === "function" &&
-      !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
-  const before = await transitionsStarted(page);
   await press();
-  if (animated) await expect.poll(() => transitionsStarted(page)).toBeGreaterThan(before);
-  await transitionsDone(page);
+  await motionDone(page);
 }
 
 /**
  * Presses a Refresh button and waits for all of it: the forced response, the
- * button leaving its busy state (which comes after the transition has been
- * started), then the transition itself.
+ * button leaving its busy state, one frame for the cache write to reach the
+ * page, then the cards' glide.
  */
 async function pressRefresh(page: Page, button: Locator, press = () => button.click()): Promise<void> {
   const answered = page.waitForResponse(
@@ -132,8 +69,31 @@ async function pressRefresh(page: Page, button: Locator, press = () => button.cl
   await press();
   await answered;
   await expect(button).toHaveAttribute("aria-busy", "false");
-  await transitionsDone(page);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await motionDone(page);
 }
+
+/** Records every animation the page starts, so a test can count the card glides even after they end. */
+async function recordAnimations(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const tracked = window as Window & { __animations?: Animation[] };
+    tracked.__animations = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (this: Element, ...args: Parameters<Element["animate"]>) {
+      const animation = animate.apply(this, args);
+      tracked.__animations?.push(animation);
+      return animation;
+    };
+  });
+}
+
+const cardGlides = (page: Page) =>
+  page.evaluate(
+    () =>
+      (window as Window & { __animations?: Animation[] }).__animations?.filter(
+        (animation) => animation.id === "card-move",
+      ).length ?? 0,
+  );
 
 /**
  * Loads the page, then presses Refresh so the served fixture replaces the server's first render.
@@ -548,6 +508,45 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   await expect(group(page, "attention").first()).toHaveAttribute("id", "service-aws");
   await page.getByRole("button", { name: /^Starred/ }).click();
   await expect(cards(page)).toHaveCount(2);
+});
+
+test("glides a starred card to its place without naming the cards for a view transition", async ({ page }) => {
+  await recordAnimations(page);
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const operational = group(page, "operational");
+  const farthest = await operational.last().getAttribute("id");
+  const first = await operational.first().getAttribute("id");
+  expect(farthest).not.toBe(first);
+
+  // No card carries a view-transition-name: a named card is captured by every transition, and a star pays for all of them.
+  expect(
+    await cards(page).evaluateAll(
+      (nodes) => nodes.filter((node) => getComputedStyle(node).viewTransitionName !== "none").length,
+    ),
+  ).toBe(0);
+
+  const before = await cardGlides(page);
+  const star = page.locator(`article#${farthest}`).locator("button[aria-pressed]").first();
+  await toggleStar(page, () => star.click());
+  await expect(star).toHaveAttribute("aria-pressed", "true");
+  await expect(operational.first()).toHaveAttribute("id", farthest ?? "");
+  expect(await cardGlides(page)).toBeGreaterThan(before);
+  await expect(page.locator(`article#${farthest}`)).toHaveCSS("view-transition-name", "none");
+});
+
+test("moves a starred card without a glide when the system asks for reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await recordAnimations(page);
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  const operational = group(page, "operational");
+  const farthest = await operational.last().getAttribute("id");
+  const before = await cardGlides(page);
+  const star = page.locator(`article#${farthest}`).locator("button[aria-pressed]").first();
+  await toggleStar(page, () => star.click());
+  await expect(star).toHaveAttribute("aria-pressed", "true");
+  await expect(operational.first()).toHaveAttribute("id", farthest ?? "");
+  expect(await cardGlides(page)).toBe(before);
+  expect(before).toBe(0);
 });
 
 test("keeps Reduce glass across a reload", async ({ page }) => {
