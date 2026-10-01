@@ -222,6 +222,23 @@ describe("fetchText redirects", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("refuses a redirect to another port of the same host, without requesting it", async () => {
+    const calls = routed({
+      "https://status.example.com/a": () => redirect("https://status.example.com:8443/a"),
+      "https://status.example.com:8443/a": () => new Response("should never be fetched"),
+    });
+    await expect(fetchText("https://status.example.com/a")).rejects.toThrow(
+      "Request to status.example.com redirected to status.example.com:8443, off the vendor's host",
+    );
+    expect(calls).toHaveLength(1);
+    // The default port written out is the same host, not another one.
+    routed({
+      "https://status.example.com/a": () => redirect("https://status.example.com:443/b"),
+      "https://status.example.com/b": () => new Response("ok"),
+    });
+    expect((await fetchText("https://status.example.com/a")).body).toBe("ok");
+  });
+
   it("names the target host when a vendor moves to another domain", async () => {
     routed({ "https://spotify.statuspage.io/api": () => redirect("https://status.spotify.com/api") });
     await expect(fetchText("https://spotify.statuspage.io/api")).rejects.toThrow(

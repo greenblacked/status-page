@@ -128,8 +128,8 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
  * hosts a vendor itself spreads one data set over. Everything else is
  * refused, a sibling subdomain included, because a registrable domain can
  * also host other people's content (`sites.google.com`, any `*.amazon.com`
- * bucket or `*.statuspage.io` tenant). Keyed by the requested host; add an
- * entry only for a redirect a collector's real URL has been seen to make.
+ * bucket or `*.statuspage.io` tenant). Keyed by the requested host (name and
+ * port); add an entry only for a redirect a collector's real URL has been seen to make.
  */
 const REDIRECT_ALLOWED: Readonly<Record<string, readonly string[]>> = {
   "upgrade.mikrotik.com": ["download.mikrotik.com"],
@@ -144,9 +144,7 @@ const REDIRECT_ALLOWED: Readonly<Record<string, readonly string[]>> = {
  */
 function staysWithVendor(requested: URL, target: URL): boolean {
   if (target.protocol !== "https:" || target.username || target.password) return false;
-  return (
-    target.hostname === requested.hostname || (REDIRECT_ALLOWED[requested.hostname] ?? []).includes(target.hostname)
-  );
+  return target.host === requested.host || (REDIRECT_ALLOWED[requested.host] ?? []).includes(target.host);
 }
 
 // Where a refused redirect went, for the error: the host (never the path or
