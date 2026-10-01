@@ -1,11 +1,14 @@
 import { ArrowUpRight } from "lucide-react";
+import { useId, useState } from "react";
 import { useServiceHistoryDays } from "@/components/status/board-history-provider";
 import { HistoryStrip } from "@/components/status/history-strip";
 import { PenLoop } from "@/components/status/pen";
 import {
   ComponentRow,
+  HealthyComponents,
   hostOf,
   IncidentSince,
+  ListToggle,
   norm,
   penSeed,
   type ServiceCardProps,
@@ -67,8 +70,18 @@ export function AttentionCard({
     changelog || service.id === "cs2-europe"
       ? service.components
       : service.components.filter((component) => component.health !== "operational");
-  const rows = allRows.slice(0, MAX_ROWS);
-  const moreRows = allRows.length - rows.length;
+  const [allShown, setAllShown] = useState(false);
+  const rowsId = useId();
+  const rows = allShown ? allRows : allRows.slice(0, MAX_ROWS);
+  const moreRows = allRows.length - MAX_ROWS;
+  // The working components go in the same dropdown a healthy row has, so a service that goes down
+  // keeps its list. Changelog and relay cards already show everything they have above.
+  const healthy =
+    changelog || service.id === "cs2-europe"
+      ? []
+      : service.components.filter((component) => component.health === "operational");
+  const healthyTotal =
+    (service.componentCount ?? service.components.length) - (service.components.length - healthy.length);
   // The worst incident with a readable start says when this began; the summary
   // often is that incident's title, and then it has no row of its own.
   const startedIncident = changelog
@@ -141,26 +154,46 @@ export function AttentionCard({
       <p className="dynamic-text mt-2 ml-[34px] text-body text-fg [overflow-wrap:anywhere]">{service.summary}</p>
 
       {rows.length > 0 ? (
-        <ul aria-label="Components" className="mt-3 ml-[34px] flex flex-col gap-1.5">
-          {rows.map((component, componentIndex) => (
-            <ComponentRow
-              // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
-              key={`${component.name}-${componentIndex}`}
-              component={component}
-              changelog={changelog}
-              // A status summary often is the detail, word for word. A release
-              // row's detail is its version, which the summary may quote but
-              // the row still needs.
-              showDetail={Boolean(component.detail) && (changelog || !summary.includes(norm(component.detail ?? "")))}
-            />
-          ))}
+        <div className="mt-3 ml-[34px]" data-more-rows={moreRows > 0 ? "" : undefined}>
+          <ul id={rowsId} aria-label="Components" className="flex flex-col gap-1.5">
+            {rows.map((component, componentIndex) => (
+              <ComponentRow
+                // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
+                key={`${component.name}-${componentIndex}`}
+                component={component}
+                changelog={changelog}
+                // A status summary often is the detail, word for word. A release
+                // row's detail is its version, which the summary may quote but
+                // the row still needs.
+                showDetail={Boolean(component.detail) && (changelog || !summary.includes(norm(component.detail ?? "")))}
+              />
+            ))}
+          </ul>
           {moreRows > 0 ? (
-            <li className="text-footnote text-subtle" data-more-rows>
-              <span aria-hidden>+{moreRows} more</span>
-              <span className="sr-only">{moreRows} more components</span>
-            </li>
+            <ListToggle
+              expanded={allShown}
+              onToggle={() => setAllShown(!allShown)}
+              controls={rowsId}
+              total={allRows.length}
+              noun={changelog ? "releases" : service.id === "cs2-europe" ? "relays" : "components"}
+            />
           ) : null}
-        </ul>
+        </div>
+      ) : null}
+
+      {healthy.length > 0 ? (
+        <details className="row-details mt-2 ml-[34px]" data-healthy-components>
+          <summary className="focus-ring flex min-h-11 items-center rounded-md text-caption text-muted focus-visible:-outline-offset-2! [&]:after:top-[calc(50%-0.25rem)]!">
+            Working components · {healthyTotal}
+          </summary>
+          <HealthyComponents
+            components={healthy}
+            total={healthyTotal}
+            label="Working components"
+            sourceUrl={service.sourceUrl}
+            className="pr-6 pb-2"
+          />
+        </details>
       ) : null}
 
       <ServiceExtras service={service} hideTitle={summary} now={now} className="mt-3 ml-[34px]" />

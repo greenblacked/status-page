@@ -35,9 +35,10 @@ import type {
 import { hostOf, vendorUrl } from "./vendor-url.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
-// Upper bound on components kept per card. A vendor page can list hundreds;
-// the snapshot is cached and served as JSON, so it must not grow with them.
-const MAX_COMPONENTS = 24;
+// Upper bound on components kept per card. The largest real vendor list is
+// Google Cloud (~215 products); the snapshot is cached and served as JSON, so a
+// runaway page must still not grow it without limit.
+const MAX_COMPONENTS = 300;
 // Extra, optional fetches (component lists, the Steam connection managers)
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
