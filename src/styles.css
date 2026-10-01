@@ -674,10 +674,11 @@
   pointer-events: auto;
   width: calc(100% - (100% - var(--dock-w)) * var(--dock));
   transform: translateX(calc(var(--dock-x) * var(--dock)));
-}
-
-/* Only while it changes: a layer held for the whole page would cost memory for nothing. */
-.search-dock[data-merging] .search-field {
+  /*
+    Always its own layer, never promoted on the way: the field is one 44px strip, so the layer costs next to
+    nothing, while promoting it as the merge starts (and dropping it when it ends) re-rasterises the input
+    mid-scroll, which iOS shows as the text flashing or shifting.
+  */
   will-change: transform;
 }
 

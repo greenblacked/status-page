@@ -120,18 +120,51 @@ export function dockGeometry({
 }
 
 /**
- * What the dock looks like at `scrollY`: its progress (0 to 1, in steps of
- * 1/500 so a scroll does not rewrite a style for a change nobody can see;
- * snapped to its two ends under Reduce Motion), whether the bar is up, and
- * whether the field has docked. `prev` is the state a moment ago, which the
- * bar's hysteresis and the docked latch both depend on: part way, the field
- * is still where it was.
+ * `scrollY` held to the page: 0 to `max` (the most it can scroll). iOS lets a
+ * finger drag the page past either end and springs it back, and `window.scrollY`
+ * reports the overshoot (negative above the top, more than `max` below the
+ * bottom), so the dock must never read a position the page cannot rest at.
  */
-export function dockFrame(scrollY: number, geometry: DockGeometry, reduce: boolean, prev: DockState) {
-  let p = dockProgress(scrollY, geometry.start, geometry.range);
-  if (reduce) p = p >= 1 ? 1 : 0;
+export function clampScroll(scrollY: number, max: number): number {
+  return Math.min(Math.max(scrollY, 0), Math.max(0, max));
+}
+
+/**
+ * Whether a resize can move anything the dock measures. Only the page's width
+ * can: on iOS the address bar and toolbar collapsing mid-scroll fires resize
+ * with the width unchanged and the height 50 to 100px different, and nothing
+ * the dock is worked out from (the hero's height, the bar's size, the field's
+ * slot) follows the viewport's height.
+ */
+export function resizeMovesDock(previousWidth: number, width: number): boolean {
+  return previousWidth !== width;
+}
+
+/**
+ * What the dock looks like at `scrollY` (clamped to 0 and `maxScroll`): its
+ * progress (0 to 1, in steps of 1/500 so a scroll does not rewrite a style for
+ * a change nobody can see; under Reduce Motion it snaps to its two ends, and
+ * holds the snap through the bar's hysteresis, so a finger resting at the
+ * boundary cannot flip the field between the hero and the bar), whether the
+ * bar is up, and whether the field has docked. `prev` is the state a moment
+ * ago, which the bar's hysteresis and the docked latch both depend on: part
+ * way, the field is still where it was.
+ */
+export function dockFrame(
+  scrollY: number,
+  geometry: DockGeometry,
+  reduce: boolean,
+  prev: DockState,
+  maxScroll = Number.POSITIVE_INFINITY,
+) {
+  const y = clampScroll(scrollY, maxScroll);
+  let p = dockProgress(y, geometry.start, geometry.range);
+  if (reduce) {
+    const end = geometry.start + geometry.range;
+    p = y >= (prev.docked ? end - geometry.hysteresis : end) ? 1 : 0;
+  }
   p = Math.round(p * 500) / 500;
-  const barShown = barShownAt(scrollY, geometry.barStart, prev.barShown, geometry.hysteresis);
+  const barShown = barShownAt(y, geometry.barStart, prev.barShown, geometry.hysteresis);
   let docked = prev.docked;
   if (p === 1) docked = true;
   else if (p === 0) docked = false;

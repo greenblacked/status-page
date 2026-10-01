@@ -47,6 +47,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The summary says "2 outages", not "2 outage".
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
+- On an iPhone the search field no longer jumps or flickers as you scroll: the page is no longer measured again each time Safari's toolbar slides away or back, a bounce past the top or bottom cannot move the field or the bar, and the field is no longer re-drawn as it merges into the bar.
 
 ## [0.5.0] - 2026-09-30
 

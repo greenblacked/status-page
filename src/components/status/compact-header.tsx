@@ -8,6 +8,7 @@ import {
   type DockStore,
   dockFrame,
   dockGeometry,
+  resizeMovesDock,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
@@ -37,12 +38,15 @@ const WIDE = "(min-width: 64rem)";
  * geometry) on the dock itself. On a wide screen --dock is also written on
  * `chipsRef`, the filter chips beside the field, which follow it; nothing else
  * reads it, so a write restyles only the field and them. While the move is under
- * way (--dock above 0) the dock (and the chips) carry data-docking, and the dock
- * data-merging while it is part way.
+ * way (--dock above 0) the dock (and the chips) carry data-docking.
  *
  * Progress comes from window.scrollY against offsets measured when the layout
  * changes, never from a rect read on every frame. Every offset is worked out from
- * `end`, the scroll position at which the field reaches its pin.
+ * `end`, the scroll position at which the field reaches its pin. The position is
+ * clamped to what the page can rest at (iOS reports the rubber band's overshoot),
+ * and a resize that changes only the viewport's height, which is what iOS fires
+ * each time its toolbar collapses or returns mid-scroll, measures nothing again:
+ * only the width moves any of these offsets.
  *
  * On a phone the bar is fixed at the top and the field is in the flow, so the
  * bar comes up on its own: at `end` minus the bar's height and PHONE_GAP, when
@@ -85,10 +89,14 @@ export function useSearchDock({
     let raf = 0;
     let lastP = -1;
     let docking = false;
-    let merging = false;
+    let width = 0;
+    let maxScroll = Number.POSITIVE_INFINITY;
+    let insets = { pin: 0, barTop: 0 };
     let state: DockState = DOCK_REST;
     let geometry: DockGeometry = { start: 0, range: 1, barStart: 0, hysteresis: 8 };
     const measure = () => {
+      width = document.documentElement.clientWidth;
+      maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
       const hostStyle = getComputedStyle(host);
       const contentTop =
         host.getBoundingClientRect().top +
@@ -105,12 +113,14 @@ export function useSearchDock({
           ? hero.getBoundingClientRect().bottom + window.scrollY - (Number.parseFloat(heroStyle.paddingBottom) || 0)
           : undefined;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
+      const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+      insets = { pin, barTop };
       geometry = dockGeometry({
         wide: wide.matches,
         reduce: reduce.matches,
         end,
         pin,
-        barTop: Number.parseFloat(getComputedStyle(bar).top) || 8,
+        barTop,
         barHeight: bar.offsetHeight,
         contentBottom,
       });
@@ -125,7 +135,6 @@ export function useSearchDock({
       const chips = chipsRef.current;
       if (chips && wide.matches) chips.style.setProperty("--dock", value);
       const nextDocking = p > 0;
-      const nextMerging = p > 0 && p < 1;
       if (nextDocking !== docking) {
         docking = nextDocking;
         for (const element of [dock, chips, bar]) {
@@ -133,15 +142,17 @@ export function useSearchDock({
           else element?.removeAttribute("data-docking");
         }
       }
-      if (nextMerging !== merging) {
-        merging = nextMerging;
-        if (merging) dock.setAttribute("data-merging", "");
-        else dock.removeAttribute("data-merging");
-      }
     };
     const frame = () => {
       raf = 0;
-      const next = dockFrame(window.scrollY, geometry, reduce.matches, state);
+      // Never below the far end of the move, so a stale `maxScroll` cannot be what moves the dock.
+      const next = dockFrame(
+        window.scrollY,
+        geometry,
+        reduce.matches,
+        state,
+        Math.max(maxScroll, geometry.start + geometry.range),
+      );
       if (next.p !== lastP) {
         lastP = next.p;
         write(next.p);
@@ -160,10 +171,21 @@ export function useSearchDock({
       lastP = -1;
       schedule();
     };
+    const onResize = () => {
+      if (!alive) return;
+      // Height only (iOS collapsing or returning its toolbar mid-scroll): the offsets do not follow it. The
+      // safe-area insets the pins are built from can, and reading them is a style read, not a layout.
+      if (!resizeMovesDock(width, document.documentElement.clientWidth)) {
+        const pin = Number.parseFloat(getComputedStyle(dock).top) || 10;
+        const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+        if (pin === insets.pin && barTop === insets.barTop) return;
+      }
+      remeasure();
+    };
     measure();
     frame();
     window.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", remeasure);
+    window.addEventListener("resize", onResize);
     wide.addEventListener("change", remeasure);
     reduce.addEventListener("change", remeasure);
     void document.fonts?.ready.then(remeasure);
@@ -180,7 +202,7 @@ export function useSearchDock({
     return () => {
       alive = false;
       window.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", remeasure);
+      window.removeEventListener("resize", onResize);
       wide.removeEventListener("change", remeasure);
       reduce.removeEventListener("change", remeasure);
       ro.disconnect();
