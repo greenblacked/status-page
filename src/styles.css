@@ -738,6 +738,16 @@
     transition: transform var(--t-dock) var(--ease-out);
   }
 
+  /*
+    The first pose is not a move (useSearchDock, writeDocked): while the page opens, and for two frames after
+    a pose is written without one, the field, its fill and the bar's verdict take their place at once.
+  */
+  .search-dock[data-instant] .search-field,
+  .search-dock[data-instant] .search-chrome,
+  .compact-header[data-instant] [data-bar-verdict] {
+    transition: none;
+  }
+
   .search-dock[data-docked] .search-field {
     width: var(--dock-w);
     transform: translateX(var(--dock-x));

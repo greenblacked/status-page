@@ -115,6 +115,10 @@ export function useSearchDock({
     let lastP = -1;
     let docking = false;
     let painted = false;
+    // Whether a change of pose may play as a move: not until the page has loaded and drawn (see writeDocked).
+    let armed = false;
+    let instantFrames = 0;
+    let armFrames = 0;
     let laidOutWide = wide.matches;
     let width = 0;
     let settling = 0;
@@ -164,6 +168,26 @@ export function useSearchDock({
       dock.style.setProperty("--dock-x", `${pageLeft(slot) - pageLeft(dock)}px`);
       dock.style.setProperty("--dock-w", `${slot.offsetWidth}px`);
     };
+    /** Holds the field's, the fill's and the verdict's transitions off (data-instant) for two frames from now. */
+    const holdInstant = () => {
+      for (const element of [dock, bar]) element.setAttribute("data-instant", "");
+      cancelAnimationFrame(instantFrames);
+      instantFrames = requestAnimationFrame(() => {
+        instantFrames = requestAnimationFrame(() => {
+          instantFrames = 0;
+          for (const element of [dock, bar]) element.removeAttribute("data-instant");
+        });
+      });
+    };
+    /** Moves are on from two frames after the page has loaded (and this hook has run), never before. */
+    const arm = () => {
+      armFrames = requestAnimationFrame(() => {
+        armFrames = requestAnimationFrame(() => {
+          armFrames = 0;
+          armed = true;
+        });
+      });
+    };
     /** Wide: the move's progress, on the dock and the chips, and whether it is under way. */
     const writeProgress = (p: number) => {
       const value = String(p);
@@ -179,26 +203,31 @@ export function useSearchDock({
         }
       }
     };
-    /** Phone: the pose the field and the bar are in, which CSS moves them to over DOCK_MS. */
-    const writeDocked = (docked: boolean) => {
+    /**
+     * Phone: the pose the field and the bar are in, which CSS moves them to over DOCK_MS. Returns whether it
+     * was written as a move (the CSS transition may play) rather than as the pose the page opened in.
+     */
+    const writeDocked = (docked: boolean): boolean => {
       const set = () => {
         for (const element of [dock, bar]) element.toggleAttribute("data-docked", docked);
       };
       const chrome = dock.querySelector<HTMLElement>(".search-chrome");
-      if (chrome && painted && !reduce.matches) {
-        flipFill(chrome, set);
-      } else if (!painted) {
-        // The first pose is not a move (the page opened part way down, or came back to a scroll position):
-        // set it with the transitions off, and let the browser take it in before they are on again.
-        const still = [dock.querySelector<HTMLElement>(".search-field"), chrome];
-        for (const element of still) if (element) element.style.transition = "none";
+      // The first pose is not a move: the page opened part way down, or came back to a scroll position, which a
+      // browser may restore after this hook has run (WebKit does, up to the end of the load). Until the page has
+      // loaded and drawn, and for the first write after a change of layout, the transitions are held off by an
+      // attribute (data-instant) that stays on for two frames: a frame draws the new pose before they are back,
+      // which holds in every engine, where a style flush between two inline writes is only as good as the
+      // engine's idea of when to recalculate.
+      if (!painted || !armed) {
+        holdInstant();
         set();
-        void dock.offsetWidth;
-        for (const element of still) if (element) element.style.transition = "";
-      } else {
-        set();
+        painted = true;
+        return false;
       }
+      if (chrome && !reduce.matches) flipFill(chrome, set);
+      else set();
       painted = true;
+      return true;
     };
     /** The other layout's marks, which a change across the 64rem line leaves behind. */
     const clearMarks = () => {
@@ -225,6 +254,7 @@ export function useSearchDock({
     };
     const frame = () => {
       raf = 0;
+      let instant = false;
       const next = dockFrame(window.scrollY, geometry, reduce.matches, state);
       if (wide.matches) {
         if (next.p !== lastP) {
@@ -232,7 +262,7 @@ export function useSearchDock({
           writeProgress(next.p);
         }
       } else if (next.docked !== state.docked || !painted) {
-        writeDocked(next.docked);
+        instant = !writeDocked(next.docked);
       }
       if (next.docked !== state.docked) {
         window.clearTimeout(settling);
@@ -241,7 +271,7 @@ export function useSearchDock({
         const field = dock.querySelector<HTMLElement>(".search-field");
         // What is written in the field waits for the move when there is one, and follows at once when there
         // is none (Reduce Motion, a wide screen).
-        const moves = field !== null && transitionMs(getComputedStyle(field).transitionDuration) > 0;
+        const moves = !instant && field !== null && transitionMs(getComputedStyle(field).transitionDuration) > 0;
         state = { barShown: next.barShown, docked: next.docked, settled: moves ? state.settled : next.docked };
         // transitionend usually ends the wait; the timer is for a move that never reports (a hidden tab).
         if (moves) {
@@ -282,6 +312,8 @@ export function useSearchDock({
     };
     measure();
     frame();
+    if (document.readyState === "complete") arm();
+    else window.addEventListener("load", arm, { once: true });
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", onResize);
     dock.addEventListener("transitionend", onTransitionEnd);
@@ -300,6 +332,10 @@ export function useSearchDock({
     }
     return () => {
       alive = false;
+      window.removeEventListener("load", arm);
+      cancelAnimationFrame(armFrames);
+      cancelAnimationFrame(instantFrames);
+      for (const element of [dock, bar]) element.removeAttribute("data-instant");
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", onResize);
       dock.removeEventListener("transitionend", onTransitionEnd);

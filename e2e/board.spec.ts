@@ -1501,6 +1501,55 @@ test("opens a page that is already scrolled past the dock with the field docked,
   expect(boxes.chromeTransform).toBe("none");
 });
 
+test("takes the pose a scroll gives it before the page has loaded without playing a move", async ({ page }) => {
+  test.slow();
+  // WebKit restores a reloaded page's scroll position as late as the end of the load, after the dock's hook has
+  // run. Held here by an image that does not answer until the test says so, so the load stays open.
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/__held.png", async (route) => {
+    await held;
+    await route.abort();
+  });
+  await page.addInitScript(() => {
+    const runs: string[] = [];
+    (window as Window & { __runs?: string[] }).__runs = runs;
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        const element = event.target as Element;
+        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
+      },
+      true,
+    );
+    new Image().src = "/__held.png";
+  });
+  await page.goto("/", { waitUntil: "commit" });
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  expect(await page.evaluate(() => document.readyState), "the load is still open").not.toBe("complete");
+  const { wide, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
+  await page.evaluate((to) => window.scrollTo(0, to), Math.ceil(moveEnd) + 80);
+  await expect.poll(() => dockValue(page)).toBe(1);
+  const played = () =>
+    page.evaluate(() =>
+      ((window as Window & { __runs?: string[] }).__runs ?? []).filter((run) => run.includes("transform")),
+    );
+  expect(await played(), "the field's move played before the load").toEqual([]);
+  release();
+  await page.waitForLoadState("load");
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  expect(await played(), "the field's move played after the load").toEqual([]);
+  expect(await dockValue(page)).toBe(1);
+  const boxes = await dockBoxes(page);
+  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
+  // The transitions are back for the next pose: the hold is two frames long, not for good.
+  await expect(page.locator(".search-dock")).not.toHaveAttribute("data-instant", "");
+});
+
 test("hides the Clear button for the field's move and brings it back once the field has stopped", async ({ page }) => {
   test.slow();
   await page.goto("/?q=aws");
