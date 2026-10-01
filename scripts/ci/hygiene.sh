@@ -34,7 +34,9 @@ for f in "${files[@]}"; do
 done
 
 # The project ships no credentials and never should (CONTRIBUTING.md).
-if git ls-files | grep -qE '(^|/)\.env($|\.)' ; then
+# No -q: grep -q exits at the first match, and git ls-files, still writing,
+# dies of SIGPIPE; under pipefail that fails the pipeline and the guard passes.
+if git ls-files | grep -E '(^|/)\.env($|\.)' >/dev/null; then
   note ".env" "environment files must not be committed"
 fi
 

@@ -47,7 +47,7 @@ case "$mode" in
         feat) this="minor" ;;
         fix | perf | revert) this="patch" ;;
       esac
-      if [ -n "$bang" ] || printf '%s\n' "$body" | grep -qE '^BREAKING[ -]CHANGE: '; then
+      if [ -n "$bang" ] || grep -qE '^BREAKING[ -]CHANGE: ' <<<"$body"; then
         this="major"
       fi
       if [ "$(rank "$this")" -gt "$(rank "$level")" ]; then
