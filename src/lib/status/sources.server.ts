@@ -1094,9 +1094,53 @@ async function collectApple(): Promise<ServiceSnapshot> {
 // a letter). A blanket `<[^>]+>` also ate a decoded "Latency < 500ms", which
 // erased "Status: Resolved" from an otherwise operational item. Plain text
 // such as "a<b ... c>d" still reads as a tag; regex stripping cannot tell.
+//
+// A single pass over the `<` positions rather than a regex: `<!--[\s\S]*?-->`
+// rescans to the end of the text from every unclosed `<!--`, which is
+// quadratic on a body of repeated openers. Here a missing "-->" is looked
+// for once, and a tag body stops at the next `<` or `>`, so nothing is
+// scanned twice.
+function stripMarkup(value: string): string {
+  let out = "";
+  let from = 0;
+  let commentsClose = true;
+  for (;;) {
+    const lt = value.indexOf("<", from);
+    if (lt === -1) return out + value.slice(from);
+    out += value.slice(from, lt);
+    from = lt + 1;
+    if (value.startsWith("<!--", lt)) {
+      const end = commentsClose ? value.indexOf("-->", lt + 4) : -1;
+      if (end !== -1) {
+        out += " ";
+        from = end + 3;
+        continue;
+      }
+      commentsClose = false;
+      out += "<";
+      continue;
+    }
+    let at = lt + 1;
+    if (value[at] === "/") at += 1;
+    if (isAsciiLetter(value.charCodeAt(at))) {
+      at += 1;
+      while (at < value.length && value[at] !== "<" && value[at] !== ">") at += 1;
+      if (value[at] === ">") {
+        out += " ";
+        from = at + 1;
+        continue;
+      }
+    }
+    out += "<";
+  }
+}
+
+function isAsciiLetter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
 function stripHtml(value: string): string {
-  return value
-    .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^<>]*>/g, " ")
+  return stripMarkup(value)
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1147,48 +1191,69 @@ export function decodeXmlEntities(text: string): string {
 
 // CDATA content is already literal text, so it must never be re-decoded
 // (`<![CDATA[a &amp; b]]>` should stay `a &amp; b`). Split on CDATA sections
-// and decode only the parts outside them.
-const CDATA_RE = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-
+// and decode only the parts outside them. Found with indexOf rather than a
+// lazy regex, which rescans to the end from every unclosed opener.
 const CDATA_START = "<![CDATA[";
+const CDATA_END = "]]>";
 
 export function decodeXmlField(raw: string): string {
   let result = "";
-  let lastIndex = 0;
-  for (const match of raw.matchAll(CDATA_RE)) {
-    result += decodeXmlEntities(raw.slice(lastIndex, match.index));
-    result += match[1];
-    lastIndex = match.index + match[0].length;
+  let from = 0;
+  for (;;) {
+    const start = raw.indexOf(CDATA_START, from);
+    if (start === -1) return result + decodeXmlEntities(raw.slice(from));
+    result += decodeXmlEntities(raw.slice(from, start));
+    const end = raw.indexOf(CDATA_END, start + CDATA_START.length);
+    // An opener with no closing `]]>` anywhere later: treat everything from
+    // that marker onward as literal CDATA content (strip the marker, leave
+    // the rest undecoded), rather than decoding text the feed meant to be
+    // taken as-is.
+    if (end === -1) return result + raw.slice(start + CDATA_START.length);
+    result += raw.slice(start + CDATA_START.length, end);
+    from = end + CDATA_END.length;
   }
-  // Any `<![CDATA[` left in the tail has no closing `]]>` anywhere later in
-  // the string, or the loop above would already have consumed it. Treat
-  // everything from that marker onward as literal CDATA content: strip the
-  // marker and leave the rest undecoded, rather than decoding text the feed
-  // meant to be taken as-is.
-  const tail = raw.slice(lastIndex);
-  const unterminated = tail.indexOf(CDATA_START);
-  if (unterminated === -1) {
-    result += decodeXmlEntities(tail);
-  } else {
-    result += decodeXmlEntities(tail.slice(0, unterminated));
-    result += tail.slice(unterminated + CDATA_START.length);
-  }
-  return result;
+}
+
+/** Most `<item>`s read from a feed. Real feeds carry tens; the rest is a hostile or runaway body. */
+export const MAX_RSS_ITEMS = 200;
+
+const ITEM_CLOSE = /<\/item>/i;
+
+// The text between the first `<tag>` and the first `</tag>` after it, or
+// undefined. Two literal searches, so a field is read in one pass over its
+// item whatever the item holds; `<tag>([\s\S]*?)</tag>` rescanned the whole
+// item from every repeated, unclosed `<tag>`.
+function xmlField(chunk: string, tag: string): string | undefined {
+  const open = chunk.search(new RegExp(`<${tag}>`, "i"));
+  if (open === -1) return undefined;
+  const from = open + tag.length + 2;
+  const close = chunk.slice(from).search(new RegExp(`</${tag}>`, "i"));
+  return close === -1 ? undefined : chunk.slice(from, from + close);
 }
 
 export function parseRssItems(
   xml: string,
 ): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
   const items: Array<{ title: string; description: string; pubDate?: string; link?: string }> = [];
-  const blocks = xml.split(/<item[\s>]/i).slice(1);
-  for (const block of blocks) {
-    const chunk = block.split(/<\/item>/i)[0] ?? "";
-    const title = decodeXmlField(chunk.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
-    const description = decodeXmlField(chunk.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "").trim();
-    const pubDate = chunk.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]?.trim();
-    const rawLink = chunk.match(/<link>([\s\S]*?)<\/link>/i)?.[1];
+  // Each item runs from its `<item>` to the next one, cut at its own
+  // `</item>`; every search below stays inside that slice, so the whole feed
+  // is read once. At most MAX_RSS_ITEMS are read, before any mapping or
+  // sorting happens downstream.
+  const itemOpen = /<item[\s>]/gi;
+  let open = itemOpen.exec(xml);
+  while (open && items.length < MAX_RSS_ITEMS) {
+    const bodyStart = open.index + open[0].length;
+    const next = itemOpen.exec(xml);
+    const block = xml.slice(bodyStart, next ? next.index : xml.length);
+    const closed = block.search(ITEM_CLOSE);
+    const chunk = closed === -1 ? block : block.slice(0, closed);
+    const title = decodeXmlField(xmlField(chunk, "title") ?? "").trim();
+    const description = decodeXmlField(xmlField(chunk, "description") ?? "").trim();
+    const pubDate = xmlField(chunk, "pubDate")?.trim();
+    const rawLink = xmlField(chunk, "link");
     const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
     items.push({ title, description, pubDate, link });
+    open = next;
   }
   return items;
 }

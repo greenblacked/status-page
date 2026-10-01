@@ -65,7 +65,13 @@ function samePage(a: string, b: string): boolean {
   try {
     const first = new URL(a);
     const second = new URL(b);
-    const path = (url: URL) => url.pathname.replace(/\/+$/, "");
+    // Not `replace(/\/+$/, "")`: that rescans a run of slashes from every
+    // position in it, which is quadratic on a hostile path.
+    const path = (url: URL) => {
+      let end = url.pathname.length;
+      while (end > 0 && url.pathname[end - 1] === "/") end -= 1;
+      return url.pathname.slice(0, end);
+    };
     return first.origin === second.origin && path(first) === path(second) && first.search === second.search;
   } catch {
     return a === b;

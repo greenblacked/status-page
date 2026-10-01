@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchText, MAX_BODY_BYTES, meterBytes, PayloadError, readBodyCapped, SourceError } from "./http";
+import { fetchText, MAX_BODY_BYTES, meterBytes, PayloadError, readBodyCapped, SourceError, unwrapJsonp } from "./http";
 
 const CHUNK = 64 * 1024;
 
@@ -107,5 +107,33 @@ describe("readBodyCapped / fetchText size cap", () => {
     });
 
     expect(bytes).toBe(2000);
+  });
+});
+
+describe("unwrapJsonp", () => {
+  it("unwraps a callback call, with or without a trailing semicolon and whitespace", () => {
+    expect(unwrapJsonp('cb({"a":1})')).toBe('{"a":1}');
+    expect(unwrapJsonp('cb({"a":1});')).toBe('{"a":1}');
+    expect(unwrapJsonp('$_cb1({"a":(1)})  ;  \n')).toBe('{"a":(1)}');
+    expect(unwrapJsonp("cb([1, 2])")).toBe("[1, 2]");
+  });
+
+  it("leaves anything that is not a plain callback call unchanged", () => {
+    for (const body of [
+      '{"a":(1)}',
+      "[1]",
+      "",
+      "cb()",
+      "1cb({})",
+      "a.b({})",
+      "a b({})",
+      "(1)",
+      "cb({}) x",
+      "cb({});;",
+      "cb({}",
+      "cb{})",
+    ]) {
+      expect(unwrapJsonp(body)).toBe(body);
+    }
   });
 });

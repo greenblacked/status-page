@@ -274,6 +274,51 @@ describe("grok feed html stripping end to end", () => {
     const [item] = parseRssItems(xml);
     assert.equal(grokItemHealth(item.description), "operational");
   });
+
+  it("keeps an unclosed comment opener and stray angle brackets as text, and strips closed ones around them", () => {
+    // The unclosed "<!--" does not swallow the text after it.
+    assert.equal(grokItemHealth("<!-- never closed. Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("a <!-- unclosed, then <!-- closed --> Status: Resolved"), "operational");
+    // "<!-->" is not a closed comment, so a later "-->" is what ends it.
+    assert.equal(grokItemHealth("<!--> major outage --> Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("x < y <b>Status: Resolved</b> z > w"), "operational");
+    assert.equal(grokItemHealth("<> <1> </ > major outage"), "outage");
+  });
+});
+
+describe("parseRssItems field scanning", () => {
+  it("reads tags in any case, the first open tag with its first close, and fields past an unclosed one", () => {
+    const [item] = parseRssItems(
+      "<ITEM><Title>One</TITLE><DESCRIPTION>Two</Description><pubdate>d</PUBDATE><LINK> l </link></ITEM>",
+    );
+    assert.deepEqual(item, { title: "One", description: "Two", pubDate: "d", link: "l" });
+    const [nested] = parseRssItems("<item><title>a<title>b</title></item>");
+    assert.equal(nested.title, "a<title>b");
+    const [open] = parseRssItems("<item><title>never closed<link>https://x</link></item>");
+    assert.equal(open.title, "");
+    assert.equal(open.link, "https://x");
+  });
+
+  it("keeps each item's fields to that item, whether or not it is closed", () => {
+    const items = parseRssItems(
+      "<item><title>A</title><item><description>b</description><item attr='1'><title>C</title></item><title>outside</title>",
+    );
+    assert.deepEqual(
+      items.map((item) => [item.title, item.description]),
+      [
+        ["A", ""],
+        ["", "b"],
+        ["C", ""],
+      ],
+    );
+  });
+});
+
+describe("decodeXmlField scanning", () => {
+  it("handles several CDATA sections and an unterminated one after them", () => {
+    assert.equal(decodeXmlField("&amp;<![CDATA[&amp;]]>&amp;<![CDATA[x]]>&lt;"), "&&amp;&x<");
+    assert.equal(decodeXmlField("&amp;<![CDATA[a]]>&amp;<![CDATA[&amp;"), "&a&&amp;");
+  });
 });
 
 describe("collector failure classification", () => {

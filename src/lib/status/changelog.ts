@@ -53,13 +53,20 @@ export function summarizeMikrotikChangelog(text: string): string {
 }
 
 export function parseAppleOsTitle(title: string): { family: string; version: string; beta: boolean } | null {
-  const match = title.trim().match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)\s+(.+)$/i);
-  if (!match) return null;
-  const family = OS_FAMILIES.find((name) => name.toLowerCase() === match[1].toLowerCase());
+  // "<family> <version>": the family, whitespace, then the rest of one line.
+  // Read with startsWith and trimStart, not `^(...)\s+(.+)$`, whose `\s+`
+  // and `.+` both match spaces and backtrack against each other when the
+  // version holds a line break (quadratic in the run of spaces before it).
+  const text = title.trim();
+  const family = OS_FAMILIES.find((name) => text.slice(0, name.length).toLowerCase() === name.toLowerCase());
   if (!family) return null;
+  const rest = text.slice(family.length);
+  if (rest.trimStart() === rest) return null;
+  const version = rest.trim();
+  if (!version || /[\n\r\u2028\u2029]/.test(version)) return null;
   return {
     family,
-    version: match[2].trim(),
+    version,
     beta: /\b(beta|rc)\b/i.test(title),
   };
 }

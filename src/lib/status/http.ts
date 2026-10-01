@@ -173,7 +173,22 @@ export async function fetchJson<T>(
   return JSON.parse(jsonPayload) as T;
 }
 
-function unwrapJsonp(payload: string): string {
-  const match = payload.match(/^[A-Za-z_$][\w$]*\(([\s\S]*)\)\s*;?\s*$/);
-  return match?.[1] ? match[1] : payload;
+/**
+ * The JSON inside a JSONP wrapper (`callback({...});`), or the payload
+ * unchanged when it is not one. A linear scan, not a regex: the earlier
+ * `^id\(([\s\S]*)\)\s*;?\s*$` backtracked quadratically on `f()` followed by
+ * a long run of spaces and one more character, and the body is vendor input.
+ * The wrapper is an identifier, then the first "(", then the last ")" with
+ * only whitespace and an optional ";" after it.
+ */
+export function unwrapJsonp(payload: string): string {
+  const open = payload.indexOf("(");
+  const close = payload.lastIndexOf(")");
+  if (open < 1 || close < open + 2) return payload;
+  // Anchored and a single quantifier: it cannot backtrack against itself.
+  if (!/^[A-Za-z_$][\w$]*$/.test(payload.slice(0, open))) return payload;
+  // trim() strips exactly the characters `\s` matches.
+  const rest = payload.slice(close + 1).trim();
+  if (rest !== "" && rest !== ";") return payload;
+  return payload.slice(open + 1, close);
 }

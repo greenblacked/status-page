@@ -369,6 +369,16 @@ describe("incidentLink", () => {
     ).toBe(undefined);
   });
 
+  it("treats runs of trailing slashes as the same page", () => {
+    const page = "https://status.example.com/incidents/1";
+    expect(incidentLink(withIncidents(`${page}///`, [{ id: "1", title: "T", health: "degraded", url: page }]))).toBe(
+      undefined,
+    );
+    expect(incidentLink(withIncidents(page, [{ id: "1", title: "T", health: "degraded", url: `${page}//` }]))).toBe(
+      undefined,
+    );
+  });
+
   it("is undefined with no incidents", () => {
     expect(incidentLink(withIncidents("https://status.example.com/", []))).toBe(undefined);
   });

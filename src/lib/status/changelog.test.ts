@@ -58,6 +58,24 @@ describe("apple os releases", () => {
     assert.equal(parseAppleOsTitle("TestFlight Update"), null);
   });
 
+  it("reads a family and a version in any case, and keeps the beta flag", () => {
+    assert.deepEqual(parseAppleOsTitle("  iOS 27 beta 3 (24A5309)  "), {
+      family: "iOS",
+      version: "27 beta 3 (24A5309)",
+      beta: true,
+    });
+    assert.deepEqual(parseAppleOsTitle("MACOS\t26.1"), { family: "macOS", version: "26.1", beta: false });
+    assert.deepEqual(parseAppleOsTitle("iPadOS\n26"), { family: "iPadOS", version: "26", beta: false });
+  });
+
+  it("needs a separator and a single-line version after the family", () => {
+    assert.equal(parseAppleOsTitle("iOS"), null);
+    assert.equal(parseAppleOsTitle("iOS26"), null);
+    assert.equal(parseAppleOsTitle("iOSX 26"), null);
+    assert.equal(parseAppleOsTitle("iOS 26\nbeta"), null);
+    assert.equal(parseAppleOsTitle("watchOSE 11"), null);
+  });
+
   it("keeps the newest item per OS family", () => {
     const latest = latestAppleOsByFamily([
       { title: "iOS 27.2 beta 2 (24B5089g)", pubDate: "Mon, 21 Sep 2026 10:00:00 PDT" },
