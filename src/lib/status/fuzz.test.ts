@@ -65,6 +65,10 @@ import {
 // matching *.test.ts as a plain case.
 const SEED = Number(process.env.FUZZ_SEED ?? 20261001);
 const RUNS = Number(process.env.FUZZ_RUNS ?? 200);
+// Number("abc") is NaN, which fast-check would take as a seed and pass quietly.
+if (!Number.isInteger(SEED) || !Number.isInteger(RUNS) || RUNS < 1) {
+  throw new Error("FUZZ_SEED and FUZZ_RUNS must be integers (FUZZ_RUNS at least 1)");
+}
 const run = (numRuns = RUNS): fc.Parameters<unknown> => ({ seed: SEED, numRuns });
 
 // Any text, lone surrogates included (what JSON.parse of "\ud800" yields).
