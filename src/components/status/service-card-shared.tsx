@@ -291,7 +291,8 @@ export function ServiceExtras({
 }) {
   const all = service.incidents.filter((incident) => !hideTitle || norm(incident.title) !== hideTitle);
   const incidents = all.slice(0, MAX_INCIDENTS);
-  const more = all.length - incidents.length;
+  // Incidents the collector cut off the list count too.
+  const more = all.length - incidents.length + Math.max(0, (service.incidentCount ?? 0) - service.incidents.length);
   const upcoming = service.category === "updates" ? [] : (service.upcomingMaintenance ?? []);
   if (incidents.length === 0 && upcoming.length === 0) return null;
   const checkedAt = Date.parse(service.checkedAt);

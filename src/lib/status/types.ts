@@ -70,6 +70,12 @@ export type ServiceSnapshot = {
    */
   componentCount?: number;
   incidents: Incident[];
+  /**
+   * Total incidents the source listed before the list was capped. Set only
+   * when incidents were capped, so it is always greater than
+   * `incidents.length`; absent means `incidents` is the whole list.
+   */
+  incidentCount?: number;
   /** Scheduled, not yet started maintenance, soonest first. Absent when the vendor lists none. */
   upcomingMaintenance?: UpcomingMaintenance[];
   meta?: Record<string, string | number>;

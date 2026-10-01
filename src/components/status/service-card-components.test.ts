@@ -345,6 +345,17 @@ describe("service card truncation", () => {
     expect(html).toContain("3 more incidents");
   });
 
+  it("counts the incidents the collector cut as well as the ones the card cut", () => {
+    const html = render("chatgpt", {
+      health: "degraded",
+      summary: "Partial outage",
+      incidents: [incident(1), incident(2), incident(3), incident(4), incident(5)],
+      incidentCount: 40,
+    });
+    expect(html).toContain("+38 more");
+    expect(html).toContain("38 more incidents");
+  });
+
   it("adds no count for two incidents", () => {
     const html = render("chatgpt", { health: "degraded", incidents: [incident(1), incident(2)] });
     expect(html).not.toContain("data-more-incidents");

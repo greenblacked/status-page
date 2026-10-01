@@ -1820,11 +1820,40 @@ describe("collectors bound vendor text and counts", () => {
     });
     const claude = await collect("claude");
     expect(claude.incidents).toHaveLength(50);
+    expect(claude.incidentCount).toBe(2101);
     expect(claude.incidents[0].id).toBe("outage");
     expect(claude.summary).toBe("Total outage");
     // Among equals the newest come first, and no notice outranks a problem.
     expect(claude.incidents[1].id).toBe("minor-1499");
     expect(claude.incidents.some((incident) => incident.informational)).toBe(false);
+  });
+
+  it("Statuspage: the summary counts every incident, not only the 50 listed", async () => {
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({
+          incidents: Array.from({ length: 60 }, (_, i) => ({
+            id: `m-${i}`,
+            name: `Minor ${i}`,
+            status: "monitoring",
+            impact: "minor",
+          })),
+        }),
+      ),
+    });
+    const claude = await collect("claude");
+    expect(claude.incidents).toHaveLength(50);
+    expect(claude.incidentCount).toBe(60);
+    expect(claude.summary).toBe("Up. 60 resolved recently.");
+  });
+
+  it("an uncapped list carries no incidentCount", async () => {
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({ incidents: [{ id: "a", name: "A", status: "investigating", impact: "minor" }] }),
+      ),
+    });
+    expect("incidentCount" in (await collect("claude"))).toBe(false);
   });
 
   it("Statuspage: keeps only the three soonest of many scheduled maintenances", async () => {
@@ -1857,6 +1886,7 @@ describe("collectors bound vendor text and counts", () => {
     });
     const gcp = await collect("gcp");
     expect(gcp.incidents).toHaveLength(50);
+    expect(gcp.incidentCount).toBe(1201);
     expect(gcp.incidents[0].id).toBe("worst");
     expect(gcp.health).toBe("outage");
   });

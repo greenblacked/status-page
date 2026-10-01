@@ -230,6 +230,27 @@ function soonest(items: UpcomingMaintenance[], limit: number): UpcomingMaintenan
     .map(({ item }) => item);
 }
 
+/**
+ * The incidents to list, in board order and cut to MAX_INCIDENTS, with what
+ * the cut hides: `incidentCount` (everything the source listed) is set only
+ * when some were cut, like `componentCount`, and `problems` counts the real
+ * ones in the whole list, which is what a summary should say.
+ */
+function listIncidents(
+  all: Incident[],
+  limit = MAX_INCIDENTS,
+): {
+  incidents: Incident[];
+  problems: number;
+  incidentCount?: number;
+} {
+  return {
+    incidents: sortIncidents(all, limit),
+    problems: realIncidentCount(all),
+    ...(all.length > limit ? { incidentCount: all.length } : {}),
+  };
+}
+
 /** The title of the worst incident that is a problem (the list is sorted worst first), if any. */
 function firstProblemTitle(incidents: Incident[]): string | undefined {
   return incidents.find((incident) => !incident.informational)?.title;
@@ -269,7 +290,7 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
       url: vendorUrl(incident.uri, sourceUrl, [hostOf(sourceUrl)]),
     };
   });
-  return { health, incidents: sortIncidents(mapped, MAX_INCIDENTS), components };
+  return { health, ...listIncidents(mapped), components };
 }
 
 /**
@@ -451,7 +472,7 @@ function fromStatuspage(
     },
   );
 
-  const incidents: Incident[] = sortIncidents(
+  const { incidents, problems, incidentCount } = listIncidents(
     activeIncidents
       .filter((incident) => belongs(incident))
       .map((incident) => {
@@ -469,7 +490,6 @@ function fromStatuspage(
           url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
         };
       }),
-    MAX_INCIDENTS,
   );
 
   const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
@@ -503,9 +523,10 @@ function fromStatuspage(
   return {
     ...base(id, checkedAt, latencyMs),
     health,
-    summary: overallSummary(health, realIncidentCount(incidents), hint),
+    summary: overallSummary(health, problems, hint),
     ...rankComponents(components),
     incidents,
+    ...(incidentCount ? { incidentCount } : {}),
     ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),
   };
 }
@@ -532,9 +553,10 @@ async function collectGoogle(id: "gcp" | "android", origin: string): Promise<Ser
     return {
       ...base(id, new Date().toISOString(), ms),
       health: parsed.health,
-      summary: overallSummary(parsed.health, realIncidentCount(parsed.incidents), firstProblemTitle(parsed.incidents)),
+      summary: overallSummary(parsed.health, parsed.problems, firstProblemTitle(parsed.incidents)),
       ...rankComponents(components),
       incidents: parsed.incidents,
+      ...(parsed.incidentCount ? { incidentCount: parsed.incidentCount } : {}),
     };
   } catch (error) {
     return failed(id, started, error);
@@ -778,7 +800,7 @@ async function collectAws(): Promise<ServiceSnapshot> {
     const now = Date.now();
     const active = value.filter((event) => awsEventActive(event, now));
     let health: Health = "operational";
-    const incidents: Incident[] = sortIncidents(
+    const { incidents, problems, incidentCount } = listIncidents(
       active.map((event) => {
         const itemHealth = awsEventHealth(event);
         health = worseHealth(health, itemHealth);
@@ -804,18 +826,18 @@ async function collectAws(): Promise<ServiceSnapshot> {
           url: "https://health.aws.amazon.com/health/status",
         };
       }),
-      MAX_INCIDENTS,
     );
     return {
       ...base("aws", new Date().toISOString(), ms),
       health,
       summary: overallSummary(
         health,
-        incidents.length,
+        problems,
         incidents[0]?.title ?? `${value.length} public Health items, none currently active.`,
       ),
       ...rankComponents(awsComponents(active)),
       incidents,
+      ...(incidentCount ? { incidentCount } : {}),
       meta: { publicEvents: value.length, active: active.length },
     };
   } catch (error) {
@@ -1103,13 +1125,14 @@ async function collectApple(): Promise<ServiceSnapshot> {
         });
       }
     }
-    const sorted = sortIncidents(incidents, MAX_INCIDENTS);
+    const { incidents: sorted, problems, incidentCount } = listIncidents(incidents);
     return {
       ...base("apple", new Date().toISOString(), ms),
       health,
-      summary: overallSummary(health, sorted.length, sorted[0]?.title),
+      summary: overallSummary(health, problems, sorted[0]?.title),
       ...rankComponents(components),
       incidents: sorted,
+      ...(incidentCount ? { incidentCount } : {}),
       ...(upcoming.length ? { upcomingMaintenance: soonest(upcoming, MAX_UPCOMING_MAINTENANCE) } : {}),
       meta: { services: value.services?.length ?? 0 },
     };
@@ -1426,7 +1449,7 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     );
     // Sorted worst first before the first 8 are kept, so the cut never drops
     // the most urgent item.
-    const incidents: Incident[] = sortIncidents(
+    const { incidents, problems, incidentCount } = listIncidents(
       active.map((item, index) => ({
         id: item.link ?? `${item.title}-${index}`,
         title: item.title,
@@ -1434,16 +1457,18 @@ async function collectGrok(): Promise<ServiceSnapshot> {
         startedAt: isoTimestamp(item.pubDate),
         url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
       })),
-    ).slice(0, 8);
+      8,
+    );
     return {
       ...base("grok", new Date().toISOString(), ms),
       health,
-      summary: overallSummary(health, incidents.length, incidents[0]?.title),
+      summary: overallSummary(health, problems, incidents[0]?.title),
       // The vendor's own list when it is readable; otherwise only the
       // services the current feed's titles name. Health above is the feed's
       // alone: components add detail and never move it.
       ...rankComponents(listed.length ? listed : grokFeedComponents(active)),
       incidents,
+      ...(incidentCount ? { incidentCount } : {}),
     };
   } catch (error) {
     return failed("grok", started, error);
