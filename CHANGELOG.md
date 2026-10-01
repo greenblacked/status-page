@@ -33,6 +33,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - `/api/status.json` adds the `informational` and `upcomingMaintenance` fields.
 - Starring and refresh move cards with a light glide instead of a page snapshot, so they respond at once on iPhone, iPad and Safari.
 - The MikroTik RouterOS and Apple OS trackers no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and a tracker whose source cannot be read is listed with the other sources that could not be read, as No data.
+- "Recent changes" now sits right after "Needs a look" (first on the board when nothing does) instead of at the foot of the board, and its space is held while saved checks load, so the page does not jump. The skip link is now "Skip to the board".
 - The board now keeps up to 300 components per service (it used to keep 24), so Google Cloud's full product list is there. When a vendor lists more, a line links to the full list on its status page.
 - AWS still lists only the services named by an active event, since its public feed has no full catalogue.
 

@@ -116,6 +116,8 @@ export function BoardView({
   const alerts = useBoardAlerts(board);
   const { starred, ready: starsReady, toggle: toggleStar } = useStarred();
   const pulseStore = store ?? emptyPulseStore();
+  // Recent changes follows Needs a look (or leads the board when nothing needs a look).
+  const feed = <UpdateFeed pulses={pulseStore.pulses} />;
   const changedIds = new Set(
     (pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? [])).map((change) => change.id),
   );
@@ -262,6 +264,20 @@ export function BoardView({
   // hydration, and "Checking official sources" then replaced the server's
   // "Live" in the first client render, a hydration mismatch.
   const fetching = now > 0 && (boardQuery.isFetching || refreshing);
+  // What stands where the groups would be while there are none; Recent changes follows it either way.
+  const placeholder =
+    fetching && !board.services.length ? (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {Array.from({ length: 6 }).map((_, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
+          <Skeleton key={index} className="h-56 rounded-lg" />
+        ))}
+      </div>
+    ) : visible.length === 0 && !(starredOnly && !starsReady) ? (
+      // Stars load after hydration; until then an empty Starred view proves nothing.
+      // Not a live region: the results announcement already says this.
+      <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
+    ) : null;
   const freshness = useFreshness(board.generatedAt, fetching, now);
 
   useShortcuts(
@@ -318,7 +334,7 @@ export function BoardView({
           }}
           className="focus-ring sr-only rounded-md bg-accent px-4 py-2 text-body font-medium text-bg focus:not-sr-only focus:fixed focus:top-[calc(env(safe-area-inset-top)+0.75rem)] focus:left-[calc(env(safe-area-inset-left)+0.75rem)] focus:z-50"
         >
-          Skip to services
+          Skip to the board
         </a>
         <Hero
           generatedAt={board.generatedAt}
@@ -405,31 +421,17 @@ export function BoardView({
               </p>
             ) : null}
 
-            <div className="flex min-w-0 flex-col gap-12">
-              {fetching && !board.services.length ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
-                    <Skeleton key={index} className="h-56 rounded-lg" />
-                  ))}
-                </div>
-              ) : visible.length === 0 ? (
-                // Stars load after hydration; until then an empty Starred view proves nothing.
-                // Not a live region: the results announcement already says this.
-                starredOnly && !starsReady ? null : (
-                  <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
-                )
-              ) : (
-                <BoardSections
-                  groups={groups}
-                  mostUrgentId={mostUrgentId}
-                  changedIds={changedIds}
-                  starred={starred}
-                  onToggleStar={onToggleStar}
-                  now={now}
-                />
-              )}
-              <UpdateFeed pulses={pulseStore.pulses} />
+            <div className="min-w-0">
+              <BoardSections
+                groups={groups}
+                mostUrgentId={mostUrgentId}
+                changedIds={changedIds}
+                starred={starred}
+                onToggleStar={onToggleStar}
+                now={now}
+                feed={feed}
+                placeholder={placeholder}
+              />
             </div>
           </main>
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
