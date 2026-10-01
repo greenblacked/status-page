@@ -1040,22 +1040,28 @@ test("keeps one search input, focus, text and caret intact through the dock", as
   }
 });
 
-test("keeps a docked field docked when a search leaves almost nothing to scroll", async ({ page }) => {
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const bar = controlBar(page);
-  await scrollAndSettle(page, (await dockNatural(page)) + 100);
-  await expect(bar).toHaveAttribute("data-shown", "true");
-  await expect.poll(() => dockValue(page)).toBe(1);
+// On a board with things to look at, Recent changes sits in view under them; on a calm one it leads the board.
+// Both are served, so the page does not depend on what the vendors say today.
+for (const [name, board, ready] of [
+  ["with services to look at", fixtureBoard, { id: "aws", label: "Outage" }],
+  ["on a calm board", calmBoard, { id: "aws", label: "Operational" }],
+] as const) {
+  test(`keeps a docked field docked when a search leaves almost nothing to scroll (${name})`, async ({ page }) => {
+    await openFixture(page, () => board(Date.now()), ready);
+    await expect(cards(page)).toHaveCount(SERVICES);
+    const bar = controlBar(page);
+    await scrollAndSettle(page, (await dockNatural(page)) + 100);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    await expect.poll(() => dockValue(page)).toBe(1);
 
-  await page.getByLabel("Search services").fill("zzzzqq");
-  await expect(cards(page)).toHaveCount(0);
-  // The page has to stay tall enough to hold the field in the bar.
-  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  expect(await dockValue(page)).toBe(1);
-  await expect(bar).toHaveAttribute("data-shown", "true");
-});
+    await page.getByLabel("Search services").fill("zzzzqq");
+    await expect(cards(page)).toHaveCount(0);
+    // The page has to stay tall enough to hold the field in the bar.
+    await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+    expect(await dockValue(page)).toBe(1);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+  });
+}
 
 test("docks the search field inside the bar, between its dot and its buttons", async ({ page }) => {
   await page.goto("/");
