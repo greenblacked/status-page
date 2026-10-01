@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchText, MAX_BODY_BYTES, meterBytes, PayloadError, readBodyCapped, SourceError, unwrapJsonp } from "./http";
+import {
+  fetchJson,
+  fetchText,
+  MAX_BODY_BYTES,
+  meterBytes,
+  PayloadError,
+  readBodyCapped,
+  SourceError,
+  unwrapJsonp,
+} from "./http";
 
 const CHUNK = 64 * 1024;
 
@@ -257,5 +266,44 @@ describe("fetchText redirects", () => {
     const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
     expect((error as SourceError).status).toBe(302);
     expect((error as SourceError).message).toBe("302 Found from status.example.com");
+  });
+});
+
+describe("fetchJson on a body that is not JSON", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const answer = (body: string, contentType?: string) =>
+    stubFetch(() => new Response(body, { headers: contentType ? { "content-type": contentType } : {} }));
+  const failure = async (): Promise<PayloadError> => {
+    const error = await fetchJson("https://status.example.com/a.json").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PayloadError);
+    return error as PayloadError;
+  };
+
+  it("says it looks like HTML, and what the content type was, without quoting the body", async () => {
+    answer("  <html>SECRET-TEXT</html>", "text/html; charset=utf-8");
+    expect((await failure()).message).toBe("SyntaxError: response was not valid JSON (looks like HTML, text/html)");
+  });
+
+  it("says an empty body is empty, and adds nothing for a JSON content type", async () => {
+    answer("", "application/json");
+    expect((await failure()).message).toBe("SyntaxError: response was not valid JSON (empty body)");
+  });
+
+  it("adds no hint for text it cannot describe, and ignores a content type of an unexpected shape", async () => {
+    answer("SECRET-TEXT", "application/json");
+    expect((await failure()).message).toBe("SyntaxError: response was not valid JSON");
+    answer("SECRET-TEXT", "x/SECRET-TEXT; weird <b>");
+    expect((await failure()).message).toBe("SyntaxError: response was not valid JSON");
+    // A string body is labelled text/plain by the Response itself.
+    answer("SECRET-TEXT");
+    expect((await failure()).message).toBe("SyntaxError: response was not valid JSON (text/plain)");
+  });
+
+  it("still parses JSON, including a JSONP wrapper", async () => {
+    answer('cb({"a":1});', "text/javascript");
+    expect(await fetchJson("https://status.example.com/a.json")).toEqual({ a: 1 });
   });
 });

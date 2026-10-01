@@ -231,10 +231,32 @@ export async function fetchJson<T>(
   url: string,
   init?: RequestInit & { timeoutMs?: number; binary?: boolean },
 ): Promise<T> {
-  const { body } = await fetchText(url, init);
+  const { body, contentType } = await fetchText(url, init);
   const trimmed = body.replace(/^\uFEFF/, "").trim();
   const jsonPayload = unwrapJsonp(trimmed);
-  return JSON.parse(jsonPayload) as T;
+  try {
+    return JSON.parse(jsonPayload) as T;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    // V8's message quotes the start of the body, which is vendor text and
+    // must not reach logs, hydration data or public issues. What helps a
+    // maintainer diagnose it, and is safe, is built here instead.
+    throw new PayloadError(`SyntaxError: response was not valid JSON${notJsonHint(trimmed, contentType)}`);
+  }
+}
+
+// " (looks like HTML, text/html)": what a body that is not JSON looks like,
+// from its first character and a content type of a known, harmless shape.
+// Never any of the body's own text.
+function notJsonHint(trimmedBody: string, contentType: string): string {
+  const hints: string[] = [];
+  if (trimmedBody === "") hints.push("empty body");
+  else if (trimmedBody.startsWith("<")) hints.push("looks like HTML");
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (/^(text|application)\/[a-z0-9.+-]{1,40}$/.test(mediaType) && mediaType !== "application/json") {
+    hints.push(mediaType);
+  }
+  return hints.length ? ` (${hints.join(", ")})` : "";
 }
 
 /**

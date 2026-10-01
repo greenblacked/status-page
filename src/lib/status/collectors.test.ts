@@ -1021,7 +1021,11 @@ describe("collectAllServices against stubbed vendor payloads", () => {
   it("a body that is not JSON is a parser failure whose message does not quote the body", async () => {
     stubFetch({ [URLS.gcp]: text("<html>Attention Required: SECRET-CHALLENGE-TEXT</html>") });
     const snapshot = (await collectAllServices()).find((s) => s.id === "gcp")!;
-    expect(snapshot.failure).toEqual({ kind: "parser", message: "SyntaxError: response was not valid JSON" });
+    expect(snapshot.failure).toEqual({
+      kind: "parser",
+      // What the body looked like and how it was labelled, never its text.
+      message: "SyntaxError: response was not valid JSON (looks like HTML, text/xml)",
+    });
     expect(JSON.stringify(snapshot)).not.toContain("SECRET-CHALLENGE-TEXT");
   });
 
