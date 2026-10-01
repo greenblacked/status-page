@@ -34,6 +34,7 @@ import type {
   UpcomingMaintenance,
 } from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
+import { readHtmlTables, WINDOWS_NAME, windowsReleases, windowsShippedAt } from "./windows-release.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 // Upper bound on components kept per card. The largest real vendor list is
@@ -1624,6 +1625,46 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
   }
 }
 
+async function collectWindows(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() =>
+      fetchText(CATALOG_BY_ID.windows.sourceUrl, { headers: { Accept: "text/html, */*" } }),
+    );
+    const releases = windowsReleases(readHtmlTables(value.body));
+    if (!releases.length) throw new PayloadError("Windows release page had no readable version table.");
+
+    const shipped = windowsShippedAt;
+    const components: ComponentHealth[] = releases.map((release) => ({
+      name: `${WINDOWS_NAME} ${release.version}`,
+      health: isFreshRelease(shipped(release)) ? "maintenance" : "operational",
+      detail: [release.build, formatReleaseAge(shipped(release))].filter(Boolean).join(" · "),
+    }));
+
+    const headline = [...releases].sort((a, b) => Date.parse(shipped(b)) - Date.parse(shipped(a)))[0];
+    const title = `${WINDOWS_NAME} ${headline.version}${headline.build ? ` (build ${headline.build})` : ""}`;
+
+    return {
+      ...base("windows", new Date().toISOString(), ms),
+      health: "operational",
+      summary: `Latest: ${title} · ${formatReleaseAge(shipped(headline))}`,
+      components,
+      incidents: [],
+      meta: {
+        latest: title,
+        versions: formatVersionMap(
+          releases.map((release) => ({
+            name: `${WINDOWS_NAME} ${release.version}`,
+            version: release.build ?? release.availableAt.slice(0, 10),
+          })),
+        ),
+      },
+    };
+  } catch (error) {
+    return failed("windows", started, error);
+  }
+}
+
 // Runs one collector with its own byte meter, and logs the success line
 // that pairs with failed()'s collector_failed, so the log shows every
 // source's latency and download size per sweep, not only the broken ones.
@@ -1665,6 +1706,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectClaude,
       collectMikrotik,
       collectAppleOs,
+      collectWindows,
     ].map(metered),
   );
 }

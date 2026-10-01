@@ -56,9 +56,10 @@ const WORDS = [
   "twelve",
   "thirteen",
   "fourteen",
+  "fifteen",
 ];
 
-/** A count as a word up to fourteen (the size of the catalog), numerals after. */
+/** A count as a word up to fifteen (the size of the catalog), numerals after. */
 export function countWord(n: number): string {
   return Number.isInteger(n) && n >= 0 && n < WORDS.length ? WORDS[n] : String(n);
 }

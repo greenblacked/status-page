@@ -11,7 +11,7 @@ export type RecentRow = {
   /** The newest check the row covers, as a slot in epoch ms. */
   at: number;
   text: string;
-  /** "12 of 14 up", with the names or the reason after it when something changed. */
+  /** "12 of 15 up", with the names or the reason after it when something changed. */
   caption: string;
   /** How many checks the row stands for; more than one only for a run with no change. */
   checks: number;
