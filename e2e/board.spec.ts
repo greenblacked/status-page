@@ -1017,7 +1017,10 @@ test("takes the bar down when the hero grows under it, at every width below 64re
       });
     const before = await heroBottom();
     board = longHeroBoard(Date.now());
-    await pressRefresh(page, controlBar(page).getByRole("button", { name: "Refresh status now" }));
+    // This answer is meant to take the bar down, and a bar that is down is out of the accessibility tree (it is
+    // visibility: hidden once its fade ends), so a role query would stop finding its button before the button
+    // reports that the refresh is over. The button is found by its label instead, which a hidden bar keeps.
+    await pressRefresh(page, controlBar(page).locator('button[aria-label="Refresh status now"]'));
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
       "Four are down, four are degraded and three are in maintenance.",
     );
