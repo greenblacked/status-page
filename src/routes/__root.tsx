@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ALERTS_BOOT_SCRIPT } from "@/lib/status/alerts-support";
 import { APPEARANCE_BOOT_SCRIPT } from "@/lib/status/background";
 import { APP_NAME } from "@/lib/status/catalog";
+import { FEED_BOOT_SCRIPT } from "@/lib/status/feed-boot";
 import { CANONICAL_URL, OG_IMAGE, SITE_DESCRIPTION } from "@/lib/status/site-meta";
 import appleCss from "../apple.css?url";
 import appCss from "../styles.css?url";
@@ -96,8 +97,9 @@ export const Route = createRootRoute({
       { rel: "stylesheet", href: appleCss },
     ],
     // Applies the stored Reduce glass and Background choices, and marks a
-    // browser that cannot show page alerts, before the first paint.
-    scripts: [{ children: APPEARANCE_BOOT_SCRIPT }, { children: ALERTS_BOOT_SCRIPT }],
+    // browser that cannot show page alerts, and counts the saved checks so
+    // Recent changes holds its height, before the first paint.
+    scripts: [{ children: APPEARANCE_BOOT_SCRIPT }, { children: ALERTS_BOOT_SCRIPT }, { children: FEED_BOOT_SCRIPT }],
   }),
   component: RootDocument,
 });

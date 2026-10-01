@@ -1988,6 +1988,42 @@ test("puts Recent changes right after Needs a look and before the first category
   expect(rest).not.toContain("attention-heading");
 });
 
+test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
+  await page.addInitScript(() => {
+    // Eight saved checks, each with a change, as a returning visitor has.
+    const slot = Math.floor(Date.now() / 120_000) * 120_000;
+    const counts = { operational: 13, degraded: 1, outage: 0, maintenance: 0, unknown: 0 };
+    const pulses = Array.from({ length: 8 }, (_, index) => ({
+      slot: slot - (index + 1) * 120_000,
+      at: new Date(slot - (index + 1) * 120_000).toISOString(),
+      overall: "degraded",
+      counts,
+      changes: [{ id: "gcp", name: "Google Cloud", from: "operational", to: "degraded", summary: "Slow" }],
+      opening: false,
+    }));
+    localStorage.setItem("status-bar:pulses:v2", JSON.stringify({ lastSlot: slot - 120_000, lastBoard: null, pulses }));
+    const tracked = window as Window & { __cls?: number };
+    tracked.__cls = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
+        if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+      }
+    }).observe({ type: "layout-shift", buffered: true });
+  });
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  // The saved checks plus the one made on load: eight rows are drawn.
+  await expect(page.locator('section[aria-labelledby="recent-heading"] li')).toHaveCount(8);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  await page.waitForTimeout(500);
+  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+  expect(shift, "cumulative layout shift").toBeLessThan(0.02);
+});
+
 test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
   const board = fixtureBoard(Date.now());
   // The fixture has a fresh channel on both cards; make Apple OS's plain, as

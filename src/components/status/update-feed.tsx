@@ -23,7 +23,10 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
 
       <div className="board-main">
         {rows.length === 0 ? (
-          <p className="surface spotlight px-4 py-4 text-body text-muted">Waiting for the first check.</p>
+          // Until the saved checks load, the boot script's row count holds their height (feed-boot.ts).
+          <p className="surface spotlight min-h-[calc(var(--feed-rows,0)*4rem)] px-4 py-4 text-body text-muted">
+            Waiting for the first check.
+          </p>
         ) : (
           <ol className="surface spotlight card-list">
             {rows.map((row) => (
