@@ -719,14 +719,18 @@
   the page reaches it (data-docked, written by useSearchDock), and moves into the bar's slot over --t-dock,
   with transform and opacity only, which the compositor plays whatever the page's own thread is doing.
   The input takes its docked width at once, under the fill's transition, so nothing is laid out as it moves.
-  Until the field docks it stays under the bar, so it can never cover the bar's buttons: not even under
-  Reduce Motion, where it steps into the bar and rises through its place first. Once it docks it is over the
-  bar, from the first frame: the field is then at the bar's bottom edge, or, after a flick, already in the bar
-  and full width, which it must not hide behind.
+  The field is over the bar (z 41) all the time. With motion that is safe: an undocked field is always below
+  the bar's bottom edge, by the page's own geometry (dockGeometry), and a field that a flick carried into the
+  bar before the page could dock it must be drawn over it, full width, as it shrinks, not hidden under it for
+  a late frame and then popped on top.
+  Under Reduce Motion the field steps into the bar only when it reaches its pin, after rising through the bar's
+  own place, so until it docks it stays under the bar and can never cover the bar's buttons.
 */
 @media not all and (min-width: 64rem) {
-  .search-dock:not([data-docked]) {
-    z-index: 39;
+  @media (prefers-reduced-motion: reduce) {
+    .search-dock:not([data-docked]) {
+      z-index: 39;
+    }
   }
 
   .search-field,
@@ -737,6 +741,16 @@
   .search-dock[data-docked] .search-field {
     width: var(--dock-w);
     transform: translateX(var(--dock-x));
+  }
+
+  /*
+    The Clear button sits at the input's right edge, which jumps with the input's width while the fill is still
+    on its way. It is hidden for the move (data-moving, written by useSearchDock) and comes back by the opacity
+    transition .pressable gives it, once the field has stopped.
+  */
+  .search-dock[data-moving] .search-field button {
+    opacity: 0;
+    transition-property: none;
   }
 }
 

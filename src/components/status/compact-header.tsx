@@ -185,9 +185,19 @@ export function useSearchDock({
         for (const element of [dock, bar]) element.toggleAttribute("data-docked", docked);
       };
       const chrome = dock.querySelector<HTMLElement>(".search-chrome");
-      // The first pose is not a move (the page opened part way down, or came back to a scroll position).
-      if (chrome && painted && !reduce.matches) flipFill(chrome, set);
-      else set();
+      if (chrome && painted && !reduce.matches) {
+        flipFill(chrome, set);
+      } else if (!painted) {
+        // The first pose is not a move (the page opened part way down, or came back to a scroll position):
+        // set it with the transitions off, and let the browser take it in before they are on again.
+        const still = [dock.querySelector<HTMLElement>(".search-field"), chrome];
+        for (const element of still) if (element) element.style.transition = "none";
+        set();
+        void dock.offsetWidth;
+        for (const element of still) if (element) element.style.transition = "";
+      } else {
+        set();
+      }
       painted = true;
     };
     /** The other layout's marks, which a change across the 64rem line leaves behind. */
@@ -209,6 +219,7 @@ export function useSearchDock({
     const settle = (docked: boolean) => {
       window.clearTimeout(settling);
       settling = 0;
+      dock.removeAttribute("data-moving");
       state = { ...state, settled: docked };
       store.set(state);
     };
@@ -226,13 +237,18 @@ export function useSearchDock({
       if (next.docked !== state.docked) {
         window.clearTimeout(settling);
         settling = 0;
+        dock.removeAttribute("data-moving");
         const field = dock.querySelector<HTMLElement>(".search-field");
         // What is written in the field waits for the move when there is one, and follows at once when there
         // is none (Reduce Motion, a wide screen).
         const moves = field !== null && transitionMs(getComputedStyle(field).transitionDuration) > 0;
         state = { barShown: next.barShown, docked: next.docked, settled: moves ? state.settled : next.docked };
         // transitionend usually ends the wait; the timer is for a move that never reports (a hidden tab).
-        if (moves) settling = window.setTimeout(() => settle(next.docked), DOCK_MS + 100);
+        if (moves) {
+          // The field's own controls (Clear) are at their docked place at once; they wait out the move.
+          dock.setAttribute("data-moving", "");
+          settling = window.setTimeout(() => settle(next.docked), DOCK_MS + 100);
+        }
       } else {
         state = { ...state, barShown: next.barShown };
       }
@@ -291,6 +307,7 @@ export function useSearchDock({
       reduce.removeEventListener("change", remeasure);
       ro.disconnect();
       window.clearTimeout(settling);
+      dock.removeAttribute("data-moving");
       if (raf) cancelAnimationFrame(raf);
     };
   }, [hostRef, dockRef, barRef, slotRef, chipsRef, store]);

@@ -11,8 +11,9 @@ export type DockState = {
   docked: boolean;
   /**
    * The field has finished moving to the pose `docked` names: the same as `docked` at once when nothing moves
-   * (a wide screen, Reduce Motion), and `DOCK_MS` after it on a phone, when the transition has ended. What is
-   * written in the field (its placeholder) follows this, so it never changes under a field that is still moving.
+   * (a wide screen, Reduce Motion), and `DOCK_MS` after it on a phone, when the transition has ended. The
+   * placeholder leaves the bar's short text only on this, so it never changes under a field that is still moving
+   * out; going in, it follows `docked` itself.
    */
   settled: boolean;
 };

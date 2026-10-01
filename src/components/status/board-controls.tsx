@@ -141,20 +141,22 @@ function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null>
 
 /**
  * The search field's input. Its placeholder is the long one in the hero and the
- * short one once the field is in the bar, and changes only when the field has
- * stopped moving (`settled`: after its transition on a phone, never part way),
- * in this component rather than the board's. The short one also stands in
- * wherever the field, at rest, is too narrow to show the long one whole (a
- * small phone, or beside the chips just past 1024px).
+ * short one once the field is docked, in this component rather than the board's.
+ * It goes short the moment the field docks, because the input takes its docked
+ * width at once and the long text would be clipped for the length of the move;
+ * and it comes back long only when the field has left the bar and stopped
+ * moving (`settled`), so it never changes under a field that is still narrow.
+ * The short one also stands in wherever the field, at rest, is too narrow to
+ * show the long one whole (a small phone, or beside the chips just past 1024px).
  */
 export function SearchInput({
   store,
   dockRef,
   ...props
 }: { store: DockStore; dockRef: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
-  const { settled } = useDockState(store);
+  const { docked, settled } = useDockState(store);
   const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
-  return <Input placeholder={settled || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
+  return <Input placeholder={docked || settled || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
 }
 
 /** The magnifier, the field, the `/` hint and our own Clear button, inside the dock. */
