@@ -267,6 +267,72 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("operational");
   });
 
+  it.each([
+    [403, "Forbidden"],
+    [429, "Too Many Requests"],
+  ])(
+    "Steam: a %i from the store is not a failure: card operational, Store unknown with an honest detail",
+    async (status, statusText) => {
+      stubFetch({
+        [URLS.steamServerInfo]: json({ servertime: 1758000000 }),
+        [URLS.steamFeatured]: text("refused", { status, statusText }),
+      });
+      const services = await collectAllServices();
+      const snapshot = services.find((s) => s.id === "steam")!;
+      expect(snapshot.health).toBe("operational");
+      expect(snapshot.failure).toBeUndefined();
+      expect(snapshot.components.find((c) => c.name === "Steam Store")).toEqual({
+        name: "Steam Store",
+        health: "unknown",
+        detail: `Store refused the check (${status})`,
+      });
+      expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("operational");
+    },
+  );
+
+  it("Steam: a refused store does not hide a real failure of the Web API", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: "not-a-number" }),
+      [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("degraded");
+    stubFetch({
+      [URLS.steamServerInfo]: text("service unavailable", { status: 503, statusText: "Service Unavailable" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const both = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(both.health).toBe("unknown");
+  });
+
+  it("Steam: both endpoints refusing the check is unknown", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 403 });
+  });
+
+  it("Steam: a Cloudflare bot challenge on the store is a refusal, whatever its status", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: 1758000000 }),
+      [URLS.steamFeatured]: () =>
+        new Response("challenge", {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "cf-mitigated": "challenge" },
+        }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("operational");
+    expect(snapshot.components.find((c) => c.name === "Steam Store")).toMatchObject({
+      health: "unknown",
+      detail: "Store refused the check (503)",
+    });
+  });
+
   it("Steam: a network error on one endpoint is degraded, with that endpoint's component non-operational", async () => {
     stubFetch({
       [URLS.steamServerInfo]: networkError(),
