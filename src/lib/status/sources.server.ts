@@ -1339,7 +1339,9 @@ export function parseInstatusComponents(payload: unknown): ComponentHealth[] {
  * service. A title without that lead names no service, and none is guessed.
  */
 export function grokTitleService(title: string): { name: string; detail: string } | null {
-  const match = title.match(/^\[([^\]]{1,64})\]\s*(.+)$/);
+  // `(\S.*)`, not `\s*(.+)`: with both able to match spaces, a title holding a
+  // line break after a long run of them backtracked quadratically.
+  const match = title.match(/^\[([^\]]{1,64})\]\s*(\S.*)$/);
   const name = match?.[1]?.trim();
   const detail = match?.[2]?.trim();
   return name && detail ? { name, detail } : null;

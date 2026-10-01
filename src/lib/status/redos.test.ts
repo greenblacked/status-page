@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseAppleOsTitle } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
-import { decodeXmlField, grokItemHealth, MAX_RSS_ITEMS, parseRssItems } from "./sources.server.ts";
+import { decodeXmlField, grokItemHealth, grokTitleService, MAX_RSS_ITEMS, parseRssItems } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
 
 // Vendor bodies are untrusted input that is parsed on the Worker, so no
@@ -60,9 +60,22 @@ describe("parsers stay linear on crafted vendor input", () => {
 
   it("grokItemHealth (HTML stripping): a repeated unclosed comment and tag opener", () => {
     expect(elapsed(() => grokItemHealth("<!--".repeat(SIZE / 4)))).toBeLessThan(BUDGET_MS);
-    expect(elapsed(() => grokItemHealth("<a ".repeat(SIZE / 3)))).toBeLessThan(BUDGET_MS);
+    // Many closed comments and tags, which must all be stripped, not just survive.
+    let health = "";
+    expect(
+      elapsed(() => (health = grokItemHealth("<!-- x -->".repeat(SIZE / 10) + "<b>Status: Resolved</b>"))),
+    ).toBeLessThan(BUDGET_MS);
+    expect(health).toBe("operational");
     expect(elapsed(() => grokItemHealth(`<a${"x".repeat(SIZE)}`))).toBeLessThan(BUDGET_MS);
     expect(elapsed(() => grokItemHealth("<".repeat(SIZE)))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("grokTitleService: a bracket lead, a long run of spaces, then a line break", () => {
+    const title = `[Grok]${" ".repeat(SIZE)}a\nb`;
+    let service: ReturnType<typeof grokTitleService> = { name: "", detail: "" };
+    expect(elapsed(() => (service = grokTitleService(title)))).toBeLessThan(BUDGET_MS);
+    expect(service).toBeNull();
+    expect(grokTitleService(`[Grok]${" ".repeat(SIZE)}a b`)).toEqual({ name: "Grok", detail: "a b" });
   });
 
   it("parseAppleOsTitle: a family, a long run of spaces, then a line break", () => {
