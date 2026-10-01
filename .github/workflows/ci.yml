@@ -176,8 +176,9 @@ jobs:
     # Per shard: at most 268 tests on one engine (Chromium) or 134 on WebKit,
     # which take 3 to 5 minutes, plus the browser and its system libraries to
     # install. WebKit's libraries are about 125 MB from apt, and on a slow
-    # runner that fetch has taken over 20 minutes. apt runs as root under
-    # sudo and cannot be cut short safely, so it is waited out.
+    # runner that fetch has taken over 20 minutes. apt is not retried: a
+    # killed apt keeps the dpkg lock, so a retry in the same job would fail.
+    # The install step's 30-minute limit only catches a real hang.
     timeout-minutes: 40
     strategy:
       # A slow or failing shard must not hide the results of the others.
@@ -219,6 +220,9 @@ jobs:
           npx --no-install playwright install "$BROWSER"
 
       - name: Browser tests (Playwright)
+        # Runs take 3 to 4.3 minutes; this stops a hung suite long before
+        # the job limit does.
+        timeout-minutes: 10
         env:
           # Comma-separated project names from playwright.config.ts.
           PROJECTS: ${{ matrix.projects }}
