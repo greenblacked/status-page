@@ -1,4 +1,4 @@
-import { boundSnapshot } from "./bounds.ts";
+import { boundSnapshot, clip, MAX_TEXT_CHARS } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
   formatReleaseAge,
@@ -201,7 +201,8 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
       service: id,
       kind: failure.kind,
       status: failure.status,
-      message: failure.message,
+      // Logged before boundSnapshot sees the snapshot, so held to its limit here.
+      message: clip(failure.message, MAX_TEXT_CHARS),
       latencyMs,
       bytes: meteredBytes(),
     }),

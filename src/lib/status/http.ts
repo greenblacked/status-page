@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { clip } from "./bounds.ts";
 
 const USER_AGENT = "StatusBar/1.0 (status board; official sources only)";
 const DEFAULT_TIMEOUT_MS = 9000;
@@ -147,12 +148,17 @@ function staysWithVendor(requested: URL, target: URL): boolean {
   return target.host === requested.host || (REDIRECT_ALLOWED[requested.host] ?? []).includes(target.host);
 }
 
-// Where a refused redirect went, for the error: the host (never the path or
-// query, which are the vendor's to make long), with the scheme when that is
-// what was wrong.
+// Where a refused redirect went, for the error: the host only, never the path
+// or query, which are the vendor's to make long, and cut to a sensible length
+// since a host name is vendor text too. http names its scheme, because that is
+// what was wrong; any other scheme (`javascript:`, `data:`) is not worth echoing.
+const MAX_TARGET_CHARS = 100;
+
 function describeTarget(target: URL | undefined): string {
   if (!target) return "an unreadable location";
-  return target.protocol === "https:" ? target.host : `${target.protocol}//${target.host}`;
+  if (target.protocol === "https:") return clip(target.host, MAX_TARGET_CHARS);
+  if (target.protocol === "http:") return clip(`http://${target.host}`, MAX_TARGET_CHARS);
+  return "a non-https location";
 }
 
 // fetch with redirects followed by hand, at most MAX_REDIRECTS and only

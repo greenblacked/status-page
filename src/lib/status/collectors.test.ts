@@ -994,6 +994,17 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(failureLine).toBeDefined();
   });
 
+  it("holds the logged failure message to its limit", async () => {
+    // A transport error's own message is vendor-influenced text of any length.
+    vi.stubGlobal("fetch", () => Promise.reject(new Error("z".repeat(10_000))));
+    await collectAllServices();
+    const logged = (console.warn as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => JSON.parse(String(call[0])) as { event: string; message: string })
+      .filter((line) => line.event === "collector_failed");
+    expect(logged.length).toBeGreaterThan(0);
+    for (const line of logged) expect(line.message.length).toBeLessThanOrEqual(500);
+  });
+
   // A catalog entry without a collector would otherwise ship a card that
   // never appears, and a collector without an entry would crash base().
   it("returns exactly one snapshot per catalog entry, in catalog order, even when every vendor is down", async () => {

@@ -207,7 +207,9 @@ describe("fetchText redirects", () => {
     ["the bare parent domain", "https://example.com/", "example.com"],
     ["a plain http URL on the same host", "http://status.example.com/b?token=secret", "http://status.example.com"],
     ["a URL with credentials", "https://user:pass@elsewhere.example.org/b", "elsewhere.example.org"],
-    ["a non-http scheme", "javascript:alert(1)", "javascript://"],
+    ["a non-http scheme", "javascript:alert(1)", "a non-https location"],
+    ["a data URL", "data:text/html,SECRET-TEXT", "a non-https location"],
+    ["a ftp URL", "ftp://files.example.org/x", "a non-https location"],
     ["a location that is not a URL", "https://", "an unreadable location"],
   ])("refuses a redirect to %s, naming only where it went, without requesting it", async (_name, location, named) => {
     const calls = routed({
@@ -220,6 +222,15 @@ describe("fetchText redirects", () => {
       `Request to status.example.com redirected to ${named}, off the vendor's host`,
     );
     expect(calls).toHaveLength(1);
+  });
+
+  it("clips a very long target host in the error", async () => {
+    const host = `${"a".repeat(60)}.${"b".repeat(60)}.example.net`;
+    routed({ "https://status.example.com/a": () => redirect(`https://${host}/x`) });
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    const message = (error as SourceError).message;
+    expect(message).toBe(`Request to status.example.com redirected to ${host.slice(0, 99)}…, off the vendor's host`);
+    expect(message.length).toBeLessThan(200);
   });
 
   it("refuses a redirect to another port of the same host, without requesting it", async () => {
