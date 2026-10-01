@@ -23,7 +23,16 @@ import {
   urgencyOf,
   worseHealth,
 } from "./health.ts";
-import { fetchJson, fetchText, meterBytes, meteredBytes, NotJsonError, PayloadError, SourceError } from "./http.ts";
+import {
+  fetchJson,
+  fetchText,
+  isRefusal,
+  meterBytes,
+  meteredBytes,
+  NotJsonError,
+  PayloadError,
+  SourceError,
+} from "./http.ts";
 import { sortIncidents } from "./layout.ts";
 import type {
   ComponentHealth,
@@ -911,23 +920,32 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     const apiOk = typeof servertime === "number";
     const storeOk = store.status === "fulfilled" && Array.isArray(store.value?.featured_win);
     if (!apiOk && !storeOk) {
-      if (info.status === "rejected") throw info.reason;
-      if (store.status === "rejected") throw store.reason;
-      throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      // Name the real fault: a refusal is only reported when nothing else went wrong.
+      const rejections = [info, store].flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      const real = rejections.find((reason) => !isRefusal(reason));
+      if (real !== undefined) throw real;
+      if (info.status === "fulfilled" || store.status === "fulfilled") {
+        throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      }
+      throw rejections[0];
     }
     // The half that failed says why on its component, so a Degraded card is
-    // never left without a reason.
-    const why = (result: PromiseSettledResult<unknown>) =>
-      result.status === "rejected" ? classifyFailure(result.reason).message : "Unexpected response shape.";
-    const health: Health = apiOk && storeOk ? "operational" : "degraded";
-    const components: ComponentHealth[] = [
-      apiOk
-        ? { name: "Steam Web API", health: "operational" }
-        : { name: "Steam Web API", health: "outage", detail: why(info) },
-      storeOk
-        ? { name: "Steam Store", health: "operational" }
-        : { name: "Steam Store", health: "outage", detail: why(store) },
-    ];
+    // never left without a reason. A probe the vendor refused (403, 429, a bot
+    // challenge) proves nothing about the service, so it is Unknown and does not
+    // count against the card; only a probe that really failed does.
+    const probe = (name: string, ok: boolean, result: PromiseSettledResult<unknown>): ComponentHealth => {
+      if (ok) return { name, health: "operational" };
+      if (result.status === "rejected") {
+        if (isRefusal(result.reason)) {
+          const label = name.replace(/^Steam /, "");
+          return { name, health: "unknown", detail: `${label} refused the check (${result.reason.status})` };
+        }
+        return { name, health: "outage", detail: classifyFailure(result.reason).message };
+      }
+      return { name, health: "outage", detail: "Unexpected response shape." };
+    };
+    const components: ComponentHealth[] = [probe("Steam Web API", apiOk, info), probe("Steam Store", storeOk, store)];
+    const health: Health = components.some((c) => c.health === "outage") ? "degraded" : "operational";
     // A side list: when the directory cannot be read, or lists nothing, the
     // row is left out rather than shown as Unknown.
     const managers = cm.status === "fulfilled" ? steamCmCount(cm.value) : 0;
@@ -941,7 +959,7 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     return {
       ...base("steam", new Date().toISOString(), mainMs),
       health,
-      summary: overallSummary(health, 0, health === "operational" ? "Web API and Store responding." : undefined),
+      summary: overallSummary(health, 0),
       components,
       incidents: [],
       meta: { servertime: apiOk ? servertime : 0 },
