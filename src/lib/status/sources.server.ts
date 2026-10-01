@@ -906,9 +906,14 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     const apiOk = typeof servertime === "number";
     const storeOk = store.status === "fulfilled" && Array.isArray(store.value?.featured_win);
     if (!apiOk && !storeOk) {
-      if (info.status === "rejected") throw info.reason;
-      if (store.status === "rejected") throw store.reason;
-      throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      // Name the real fault: a refusal is only reported when nothing else went wrong.
+      const rejections = [info, store].flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      const real = rejections.find((reason) => !isRefusal(reason));
+      if (real !== undefined) throw real;
+      if (info.status === "fulfilled" || store.status === "fulfilled") {
+        throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      }
+      throw rejections[0];
     }
     // The half that failed says why on its component, so a Degraded card is
     // never left without a reason. A probe the vendor refused (403, 429, a bot
@@ -940,7 +945,7 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     return {
       ...base("steam", new Date().toISOString(), mainMs),
       health,
-      summary: overallSummary(health, 0, health === "operational" ? "Web API and Store responding." : undefined),
+      summary: overallSummary(health, 0),
       components,
       incidents: [],
       meta: { servertime: apiOk ? servertime : 0 },

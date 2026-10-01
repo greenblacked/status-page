@@ -290,19 +290,58 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     },
   );
 
-  it("Steam: a refused store does not hide a real failure of the Web API", async () => {
+  it("Steam: a Web API answering with the wrong shape while the store is fine is degraded", async () => {
     stubFetch({
       [URLS.steamServerInfo]: json({ servertime: "not-a-number" }),
       [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
     });
     const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
     expect(snapshot.health).toBe("degraded");
+    expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("outage");
+  });
+
+  it("Steam: a refused store does not make a failing Web API look fine: nothing usable is unknown, with the real fault", async () => {
     stubFetch({
       [URLS.steamServerInfo]: text("service unavailable", { status: 503, statusText: "Service Unavailable" }),
       [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
     });
-    const both = (await collectAllServices()).find((s) => s.id === "steam")!;
-    expect(both.health).toBe("unknown");
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+  });
+
+  it("Steam: a refused Web API with the store fine is operational, Web API unknown", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("operational");
+    expect(snapshot.components.find((c) => c.name === "Steam Web API")).toEqual({
+      name: "Steam Web API",
+      health: "unknown",
+      detail: "Web API refused the check (403)",
+    });
+  });
+
+  it("Steam: a refused Web API and a store that failed is unknown, with the store's real fault", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: text("service unavailable", { status: 503, statusText: "Service Unavailable" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+  });
+
+  it("Steam: a wrong-shape Web API and a refused store is unknown with a parser failure", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: "not-a-number" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure?.kind).toBe("parser");
   });
 
   it("Steam: both endpoints refusing the check is unknown", async () => {
