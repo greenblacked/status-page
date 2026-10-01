@@ -936,7 +936,7 @@ test("takes the bar down in the frame that shows a taller hero, not a frame late
         const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
         const grown = document.createElement("div");
         grown.style.height = "60px";
-        hero.append(grown);
+        hero.appendChild(grown);
         requestAnimationFrame(() =>
           requestAnimationFrame(() =>
             resolve(document.querySelector('section[aria-label="Board controls"]')?.getAttribute("data-shown") ?? null),
