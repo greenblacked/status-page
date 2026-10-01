@@ -3232,7 +3232,11 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
     "https://github.com/greenblacked/status-page/blob/main/LICENSE",
   );
   await expect(footer).toContainText("Not affiliated with any of these vendors");
-  await expect(footer).toContainText("Made and kept by Serhii.");
+  await expect(footer).toContainText("Made by greenblacked.");
+  const signature = footer.getByRole("link", { name: "greenblacked", exact: true });
+  await expect(signature).toHaveAttribute("href", "https://github.com/greenblacked");
+  await expect(signature).toHaveAttribute("target", "_blank");
+  await expect(signature).toHaveAttribute("rel", /noopener/);
   await expect(footer).not.toContainText("every two minutes");
   await expect(footer.getByRole("link", { name: "JSON" })).toHaveAttribute("href", "/api/status.json");
   await expect(footer.getByRole("link", { name: "Atom feed" })).toHaveAttribute("href", "/feed.xml");
