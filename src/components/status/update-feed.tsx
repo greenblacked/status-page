@@ -1,8 +1,37 @@
+import { type RefObject, useLayoutEffect, useRef } from "react";
 import { LocalTime } from "@/components/status/local-time";
 import { FEED_RESERVE_SCRIPT, FEED_ROW_CLASSES } from "@/lib/status/feed-reserve";
 import type { Pulse } from "@/lib/status/pulse";
 import { recentRows } from "@/lib/status/recent";
 import { cn } from "@/lib/utils";
+
+/** Whether the browser keeps what the reader looks at in place when the page above it changes size (scroll anchoring). */
+function anchorsScroll(): boolean {
+  return (
+    CSS.supports("overflow-anchor", "auto") && getComputedStyle(document.documentElement).overflowAnchor !== "none"
+  );
+}
+
+/**
+ * Keeps the page where it is when the feed changes size above the viewport. A check at the turn of a slot adds
+ * a row to a feed the reader has scrolled past, and everything under it, a button they are about to press
+ * included, drops by the row's height. Chrome and Firefox hold the reader's place themselves; Safari has no
+ * scroll anchoring, so there the page scrolls by the same distance. Only a change of the rows counts: a
+ * resize that wraps them differently is the reader's own.
+ */
+function useHoldPlace(section: RefObject<HTMLElement | null>, signature: string) {
+  const before = useRef<{ signature: string; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const element = section.current;
+    if (!element) return;
+    const { top, height } = element.getBoundingClientRect();
+    const last = before.current;
+    before.current = { signature, height };
+    if (!last || last.signature === signature || top >= 0 || height === last.height) return;
+    if (anchorsScroll()) return;
+    window.scrollBy({ top: height - last.height, behavior: "instant" });
+  }, [section, signature]);
+}
 
 /**
  * The last few checks of this browser, newest first: what changed, and how
@@ -12,11 +41,17 @@ import { cn } from "@/lib/utils";
  */
 export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?: string }) {
   const rows = recentRows(pulses);
+  const section = useRef<HTMLElement>(null);
+  useHoldPlace(section, rows.map((row) => `${row.key}:${row.text}:${row.caption}`).join("|"));
 
   return (
     // Never the scroll anchor: it sits in view under Needs a look, and when a search empties the sections above it
     // the browser would scroll up to keep it in place, out from under a field that is docked in the bar.
-    <section aria-labelledby="recent-heading" className={cn("board-grid [overflow-anchor:none]", className)}>
+    <section
+      ref={section}
+      aria-labelledby="recent-heading"
+      className={cn("board-grid [overflow-anchor:none]", className)}
+    >
       <div className="board-margin">
         <h2 id="recent-heading" className="mb-2 text-caption font-semibold text-muted md:mb-0 md:pt-4">
           Recent changes

@@ -2270,6 +2270,53 @@ test("opens a long component list with Show all and closes it with Show fewer", 
   await expect(card.getByRole("button", { name: /^Show all 32/ })).toHaveAttribute("aria-expanded", "false");
 });
 
+// The check at the turn of a slot adds a row to Recent changes, above the lists. Chrome and Firefox keep the
+// reader's place when that happens (scroll anchoring); Safari has none, so the page has to scroll by the row's
+// height itself, or the button under the reader's finger drops away from it. The second pass switches the
+// browser's anchoring off to be Safari, which is the only way to see it here. (The distance on screen is not
+// asserted: the rest of the board moves with the clock too, a "Changed" tag going out, so it is the page's own
+// scroll that is measured.)
+for (const anchoring of ["auto", "none"] as const) {
+  test(`scrolls by a new feed row's height only where the browser does not anchor (scroll anchoring ${anchoring})`, async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const scrolled: number[] = [];
+      (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
+      const scrollBy = window.scrollBy.bind(window) as (options: ScrollToOptions) => void;
+      window.scrollBy = ((options: ScrollToOptions) => {
+        scrolled.push(options.top ?? 0);
+        scrollBy(options);
+      }) as typeof window.scrollBy;
+    });
+    await page.clock.install({ time: Date.now() });
+    const board = fixtureBoard(Date.now());
+    await openFixture(page, () => board);
+    await page.evaluate((value) => {
+      document.documentElement.style.overflowAnchor = value;
+    }, anchoring);
+    const card = page.locator("article#service-spotify");
+    await card.locator("summary").click();
+    await card.getByRole("button", { name: /^Show all 32/ }).scrollIntoViewIfNeeded();
+    // The feed is wholly above the top of the window.
+    await page.evaluate(() => window.scrollBy(0, 200));
+    await page.evaluate(() => {
+      (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.splice(0);
+    });
+    const feed = page.locator('section[aria-labelledby="recent-heading"]');
+    const height = () => feed.evaluate((element) => element.getBoundingClientRect().height);
+    const rows = await feed.locator("li").count();
+    const before = await height();
+    await page.clock.fastForward("03:00");
+    await expect(feed.locator("li")).not.toHaveCount(rows);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const grew = (await height()) - before;
+    expect(grew).toBeGreaterThan(0);
+    const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy);
+    expect(scrolled).toEqual(anchoring === "none" ? [grew] : []);
+  });
+}
+
 test("operates Show all from the keyboard", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "a keyboard is the desktop project's");
   const board = fixtureBoard(Date.now());
