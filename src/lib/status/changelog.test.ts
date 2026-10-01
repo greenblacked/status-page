@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import {
+  appleOsReleases,
   describeVersionChanges,
   formatVersionMap,
   isFreshRelease,
@@ -29,6 +30,27 @@ describe("parseMikrotikNewest", () => {
     for (const body of ["../../evil 1789558341", "7.1/../../x", "7.1?x=1", "<b>7</b>", "v7.1", "7..1", "%2e%2e"]) {
       assert.equal(parseMikrotikNewest(body), null, body);
     }
+  });
+});
+
+describe("a date no Date can hold", () => {
+  it("leaves a MikroTik release without a time instead of throwing", () => {
+    // A 17-digit stamp is finite, but x1000 is far past the Date range.
+    assert.deepEqual(parseMikrotikNewest("7.24.4 99999999999999999"), { version: "7.24.4", releasedAt: undefined });
+  });
+
+  it("leaves an Apple release without a time and keeps the others", () => {
+    const releases = appleOsReleases([
+      { title: "iOS 27.2 (24B5089g)", pubDate: "not a date" },
+      { title: "macOS 27.2 (26B5091g)", pubDate: "Mon, 21 Sep 2026 10:00:00 PDT" },
+    ]);
+    assert.deepEqual(
+      releases.map((release) => [release.family, release.publishedAt]),
+      [
+        ["iOS", undefined],
+        ["macOS", "2026-09-21T17:00:00.000Z"],
+      ],
+    );
   });
 });
 
