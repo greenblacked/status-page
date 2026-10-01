@@ -34,14 +34,18 @@ export function mikrotikChangelogUrl(version: string): string | null {
   return isMikrotikVersion(version) ? `https://download.mikrotik.com/routeros/${version}/CHANGELOG` : null;
 }
 
+// A date as ISO 8601, or undefined when it is not one a Date can hold:
+// `new Date(NaN).toISOString()` throws a RangeError, and a vendor field must
+// cost at most its own line of detail, not the whole card.
+function isoOrUndefined(value: string | number): string | undefined {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 export function parseMikrotikNewest(body: string): { version: string; releasedAt?: string } | null {
   const match = body.trim().match(/^(\S+)(?:\s+(\d{9,}))?/);
   if (!match?.[1] || !isMikrotikVersion(match[1])) return null;
-  const timestamp = match[2] ? Number(match[2]) * 1000 : NaN;
-  return {
-    version: match[1],
-    releasedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined,
-  };
+  return { version: match[1], releasedAt: match[2] ? isoOrUndefined(Number(match[2]) * 1000) : undefined };
 }
 
 export function summarizeMikrotikChangelog(text: string): string {
@@ -87,7 +91,7 @@ export function appleOsReleases(items: Array<{ title: string; pubDate?: string; 
       title: item.title,
       version: parsed.version,
       beta: parsed.beta,
-      publishedAt: item.pubDate ? new Date(item.pubDate).toISOString() : undefined,
+      publishedAt: item.pubDate ? isoOrUndefined(item.pubDate) : undefined,
       link: item.link,
     });
   }

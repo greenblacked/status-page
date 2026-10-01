@@ -182,6 +182,8 @@ The tests run in five projects: `desktop` and `mobile` on Chromium, and `Desktop
 
 Coverage has thresholds in [`vitest.config.ts`](vitest.config.ts), set just under the current numbers, so `npm run test:coverage` fails if coverage drops. When coverage goes up, raise them in the same pull request. The pinned-Node test job writes coverage to its summary and uploads the HTML report, and a failed browser test shard uploads its Playwright report with traces, as `playwright-report-<shard>`.
 
+The parsers that read vendor input are also fuzzed. [`src/lib/status/fuzz.test.ts`](src/lib/status/fuzz.test.ts) uses [fast-check](https://fast-check.dev/) to feed the bounds, the changelog and Windows release parsers and the feed and payload helpers of `sources.server.ts` generated garbage (broken markup, lone surrogates, dates no `Date` holds, any JSON) and states what must hold for all of it: no throw, output inside its documented ceilings, and linear time on crafted repetition. It runs with `npm test` on a fixed seed (a few seconds), so a run is the same everywhere and a failure prints its counterexample and seed. To search wider, for example before a release: `FUZZ_SEED=<n> FUZZ_RUNS=2000 npx vitest run src/lib/status/fuzz.test.ts`. When it finds a bug, fix it and add the shrunk input to the parser's own `*.test.ts` as a plain case. This is also what OpenSSF Scorecard's Fuzzing check looks for (an import of `fast-check` in a `.ts` file), so keep the import in a test file.
+
 Workflows are linted by actionlint and audited by [zizmor](https://docs.zizmor.sh/). A deliberate exception carries a `# zizmor: ignore[<audit>]` comment with its reason on the same line.
 
 ## Releases
