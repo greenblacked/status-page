@@ -1,4 +1,5 @@
 import { Star } from "lucide-react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { CATALOG } from "@/lib/status/catalog";
@@ -179,56 +180,142 @@ export function ComponentRow({
 export const HEALTHY_COMPONENTS_SHOWN = 6;
 
 /**
+ * The "+N more" of a list, as a real button: "Show all 215" while the list is cut, "Show fewer" once it
+ * is open. It is a disclosure, so it carries aria-expanded and names the list it controls, and it is a
+ * 44px target with no chrome of its own.
+ */
+export function ListToggle({
+  expanded,
+  onToggle,
+  controls,
+  total,
+  noun = "components",
+  className,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  controls: string;
+  total: number;
+  noun?: string;
+  className?: string;
+}) {
+  const button = useRef<HTMLButtonElement>(null);
+  // Where the button sat when a list was closed, so the page can be moved back under it.
+  const closedFrom = useRef<number | null>(null);
+  // Closing a long list pulls the page up by thousands of pixels and leaves this button above the
+  // screen; once the smaller list is committed, scroll by the distance the button moved.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: it must run when `expanded` flips, and only then.
+  useLayoutEffect(() => {
+    const from = closedFrom.current;
+    closedFrom.current = null;
+    if (from === null || !button.current) return;
+    const moved = button.current.getBoundingClientRect().top - from;
+    if (moved !== 0) window.scrollBy({ top: moved, behavior: "instant" });
+  }, [expanded]);
+  return (
+    <button
+      ref={button}
+      type="button"
+      onClick={() => {
+        if (expanded && button.current) closedFrom.current = button.current.getBoundingClientRect().top;
+        onToggle();
+      }}
+      aria-expanded={expanded}
+      aria-controls={controls}
+      className={cn(
+        "focus-ring pressable inline-flex min-h-11 scroll-mt-20 items-center rounded-md text-footnote text-accent",
+        className,
+      )}
+    >
+      {expanded ? "Show fewer" : `Show all ${total}`}
+      <span className="sr-only"> {noun}</span>
+    </button>
+  );
+}
+
+/**
  * The components of a service with nothing to report, as a short list under
  * its row: a small status glyph for the eye, the status in words for a screen
- * reader. Anything past the first few is counted, not dropped silently.
- * Renders nothing when the vendor lists no components, since there is nothing
- * true to say.
+ * reader. Anything past the first few is behind a "Show all N" button that
+ * opens the whole list and "Show fewer" that closes it again. Renders nothing
+ * when the vendor lists no components, since there is nothing true to say.
  */
 export function HealthyComponents({
   components,
   total = components.length,
+  label = "Components",
+  sourceUrl,
   className,
 }: {
   components: ComponentHealth[];
   /** The vendor's true component count, when the snapshot kept fewer than it lists. */
   total?: number;
+  /** The list's accessible name, when a card holds more than one list. */
+  label?: string;
+  /** The vendor's own status page, linked when the snapshot holds fewer components than it lists. */
+  sourceUrl?: string;
   className?: string;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const listId = useId();
   if (components.length === 0) return null;
-  // A stray non-operational component still leads the list.
+  // A stray non-operational component still leads the list; the sort is stable, so the vendor's order holds.
   const ordered = [...components].sort(
     (a, b) => Number(a.health === "operational") - Number(b.health === "operational"),
   );
-  const shown = ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
-  const more = Math.max(total, ordered.length) - shown.length;
+  const shown = expanded ? ordered : ordered.slice(0, HEALTHY_COMPONENTS_SHOWN);
+  const cut = ordered.length > HEALTHY_COMPONENTS_SHOWN;
+  // The snapshot keeps at most so many components; the vendor may list more than it holds.
+  const truncated = total > ordered.length && (expanded || !cut);
   return (
-    <ul aria-label="Components" className={cn("flex flex-col gap-1.5", className)}>
-      {shown.map((component, componentIndex) => (
-        <li
-          // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
-          key={`${component.name}-${componentIndex}`}
-          className="flex max-w-full min-w-0 items-baseline gap-2 text-caption text-muted"
-        >
-          <StatusGlyph
-            health={component.health}
-            size={14}
-            className={cn("self-center", STATUS_TEXT[component.health])}
-          />
-          <span className="[overflow-wrap:anywhere]" title={component.name}>
-            {component.name}
-          </span>
-          {component.detail ? <span className="text-footnote text-subtle">{component.detail}</span> : null}
-          <span className="sr-only">{stateWord(component.health)}</span>
-        </li>
-      ))}
-      {more > 0 ? (
-        <li className="text-footnote text-subtle" data-more-components>
-          <span aria-hidden>+{more} more</span>
-          <span className="sr-only">{more} more components</span>
-        </li>
+    <div className={className} data-more-components={cut ? "" : undefined}>
+      <ul id={listId} aria-label={label} className="flex flex-col gap-1.5">
+        {shown.map((component, componentIndex) => (
+          <li
+            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can list two components with one name; the index only breaks that tie.
+            key={`${component.name}-${componentIndex}`}
+            className="flex max-w-full min-w-0 items-baseline gap-2 text-caption text-muted"
+          >
+            <StatusGlyph
+              health={component.health}
+              size={14}
+              className={cn("self-center", STATUS_TEXT[component.health])}
+            />
+            <span className="[overflow-wrap:anywhere]" title={component.name}>
+              {component.name}
+            </span>
+            {component.detail ? <span className="text-footnote text-subtle">{component.detail}</span> : null}
+            <span className="sr-only">{stateWord(component.health)}</span>
+          </li>
+        ))}
+      </ul>
+      {cut ? (
+        <ListToggle
+          expanded={expanded}
+          controls={listId}
+          total={ordered.length}
+          onToggle={() => setExpanded(!expanded)}
+        />
       ) : null}
-    </ul>
+      {truncated ? (
+        <p className="text-footnote text-subtle">
+          {ordered.length} of {total}
+          {sourceUrl ? (
+            <>
+              {" · "}
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="focus-ring rounded-md text-accent underline underline-offset-2"
+              >
+                full list on the status page
+              </a>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -291,7 +378,8 @@ export function ServiceExtras({
 }) {
   const all = service.incidents.filter((incident) => !hideTitle || norm(incident.title) !== hideTitle);
   const incidents = all.slice(0, MAX_INCIDENTS);
-  const more = all.length - incidents.length;
+  // Incidents the collector cut off the list count too.
+  const more = all.length - incidents.length + Math.max(0, (service.incidentCount ?? 0) - service.incidents.length);
   const upcoming = service.category === "updates" ? [] : (service.upcomingMaintenance ?? []);
   if (incidents.length === 0 && upcoming.length === 0) return null;
   const checkedAt = Date.parse(service.checkedAt);

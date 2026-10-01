@@ -24,6 +24,8 @@ describe("parseMikrotikNewest", () => {
   });
 
   it("refuses a version that could reshape the changelog URL or the card", () => {
+    assert.equal(parseMikrotikNewest(`7.${"1".repeat(40)} 1789558341`), null);
+    assert.equal(parseMikrotikNewest(`7.${"1".repeat(30)} 1789558341`)?.version, `7.${"1".repeat(30)}`);
     for (const body of ["../../evil 1789558341", "7.1/../../x", "7.1?x=1", "<b>7</b>", "v7.1", "7..1", "%2e%2e"]) {
       assert.equal(parseMikrotikNewest(body), null, body);
     }
@@ -56,6 +58,31 @@ describe("apple os releases", () => {
   it("ignores Xcode and TestFlight", () => {
     assert.equal(parseAppleOsTitle("Xcode 27.1 beta (27A9269)"), null);
     assert.equal(parseAppleOsTitle("TestFlight Update"), null);
+  });
+
+  it("reads a family and a version in any case, and keeps the beta flag", () => {
+    assert.deepEqual(parseAppleOsTitle("  iOS 27 beta 3 (24A5309)  "), {
+      family: "iOS",
+      version: "27 beta 3 (24A5309)",
+      beta: true,
+    });
+    assert.deepEqual(parseAppleOsTitle("MACOS\t26.1"), { family: "macOS", version: "26.1", beta: false });
+    assert.deepEqual(parseAppleOsTitle("iPadOS\n26"), { family: "iPadOS", version: "26", beta: false });
+  });
+
+  it("caps a version at 64 characters", () => {
+    const parsed = parseAppleOsTitle(`iOS ${"9".repeat(500)}`);
+    assert.equal(parsed?.version.length, 64);
+    assert.ok(parsed?.version.endsWith("…"));
+    assert.equal(parseAppleOsTitle("iOS 26.1 beta 3 (23B5045g)")?.version, "26.1 beta 3 (23B5045g)");
+  });
+
+  it("needs a separator and a single-line version after the family", () => {
+    assert.equal(parseAppleOsTitle("iOS"), null);
+    assert.equal(parseAppleOsTitle("iOS26"), null);
+    assert.equal(parseAppleOsTitle("iOSX 26"), null);
+    assert.equal(parseAppleOsTitle("iOS 26\nbeta"), null);
+    assert.equal(parseAppleOsTitle("watchOSE 11"), null);
   });
 
   it("keeps the newest item per OS family", () => {

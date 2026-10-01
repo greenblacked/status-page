@@ -18,6 +18,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
 - Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field a clear stretch below it; the field then rises with the page, and only when it reaches the bar does it merge into it. The field has its own clear button, a full-size touch target.
+- Every service whose official status page lists components now has the same dropdown on its row. "+N more" is now a "Show all N" button that opens the whole list and closes it again ("Show fewer"), keeping your place.
+- A card for a service with a problem lists its affected components first, then a collapsible "Working components · N".
 
 ### Changed
 
@@ -31,6 +33,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - `/api/status.json` adds the `informational` and `upcomingMaintenance` fields.
 - Starring and refresh move cards with a light glide instead of a page snapshot, so they respond at once on iPhone, iPad and Safari.
 - The MikroTik RouterOS and Apple OS trackers no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and a tracker whose source cannot be read is listed with the other sources that could not be read, as No data.
+- The board now keeps up to 300 components per service (it used to keep 24), so Google Cloud's full product list is there. When a vendor lists more, a line links to the full list on its status page.
+- AWS still lists only the services named by an active event, since its public feed has no full catalogue.
 
 ### Fixed
 
@@ -48,6 +52,13 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
 - On an iPhone the search field no longer jumps or flickers as it docks into the bar while you scroll. It moves in with a short animation of its own instead of following your finger frame by frame, and Safari's toolbar sliding away or back no longer makes the page measure it again. Under Reduce Motion it steps in with no animation.
+- The "+N more" under a service counts every incident it has, not only the ones the board kept.
+
+### Security
+
+- Text from a vendor is kept to sensible lengths, with "…" where it was cut: a name to 120 characters, a title to 300 and a summary or detail to 500.
+- A source that sends the board to another site, or to another port, is no longer followed. Its card reads No data, with the host it was sent to.
+- HSTS now covers subdomains.
 
 ## [0.5.0] - 2026-09-30
 

@@ -327,6 +327,18 @@ describe("sortIncidents", () => {
     expect(sortIncidents(input).map((item) => item.id)).toEqual(["b", "a", "c"]);
     expect(input.map((item) => item.id)).toEqual(["a", "b", "c"]);
   });
+
+  it("with a limit, keeps the first that many in order, so the worst is never the one cut", () => {
+    const input = [
+      incident("notice", "operational", "2026-09-25T12:00:00Z", { informational: true }),
+      incident("minor-old", "degraded", "2026-09-25T01:00:00Z"),
+      incident("minor-new", "degraded", "2026-09-25T02:00:00Z"),
+      incident("outage", "outage", "2026-09-24T00:00:00Z"),
+    ];
+    expect(sortIncidents(input, 2).map((item) => item.id)).toEqual(["outage", "minor-new"]);
+    expect(sortIncidents(input, 0)).toEqual([]);
+    expect(sortIncidents(input, 10)).toHaveLength(4);
+  });
 });
 
 describe("incidentLink", () => {
@@ -367,6 +379,16 @@ describe("incidentLink", () => {
         withIncidents(`${dashboard}/`, [{ id: "1", title: "T", health: "degraded", url: `${dashboard}#x` }]),
       ),
     ).toBe(undefined);
+  });
+
+  it("treats runs of trailing slashes as the same page", () => {
+    const page = "https://status.example.com/incidents/1";
+    expect(incidentLink(withIncidents(`${page}///`, [{ id: "1", title: "T", health: "degraded", url: page }]))).toBe(
+      undefined,
+    );
+    expect(incidentLink(withIncidents(page, [{ id: "1", title: "T", health: "degraded", url: `${page}//` }]))).toBe(
+      undefined,
+    );
   });
 
   it("is undefined with no incidents", () => {

@@ -22,6 +22,13 @@ describe("prometheusMetrics", () => {
     ]);
   });
 
+  it("exports the incidents a source listed, not only the ones the collector kept", () => {
+    const capped = prometheusMetrics(
+      board([service("gcp", { incidents: [{ id: "1", title: "Down", health: "outage" }], incidentCount: 80 })]),
+    );
+    expect(capped).toContain('statusbar_service_incidents{service="gcp",category="cloud"} 80');
+  });
+
   it("exports incidents, source reachability, latency and counts", () => {
     expect(lines).toContain('statusbar_service_incidents{service="gcp",category="cloud"} 1');
     expect(lines).toContain('statusbar_source_up{service="gcp",category="cloud"} 1');

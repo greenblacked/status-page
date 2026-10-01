@@ -274,6 +274,51 @@ describe("grok feed html stripping end to end", () => {
     const [item] = parseRssItems(xml);
     assert.equal(grokItemHealth(item.description), "operational");
   });
+
+  it("keeps an unclosed comment opener and stray angle brackets as text, and strips closed ones around them", () => {
+    // The unclosed "<!--" does not swallow the text after it.
+    assert.equal(grokItemHealth("<!-- never closed. Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("a <!-- unclosed, then <!-- closed --> Status: Resolved"), "operational");
+    // "<!-->" is not a closed comment, so a later "-->" is what ends it.
+    assert.equal(grokItemHealth("<!--> major outage --> Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("x < y <b>Status: Resolved</b> z > w"), "operational");
+    assert.equal(grokItemHealth("<> <1> </ > major outage"), "outage");
+  });
+});
+
+describe("parseRssItems field scanning", () => {
+  it("reads tags in any case, the first open tag with its first close, and fields past an unclosed one", () => {
+    const [item] = parseRssItems(
+      "<ITEM><Title>One</TITLE><DESCRIPTION>Two</Description><pubdate>d</PUBDATE><LINK> l </link></ITEM>",
+    );
+    assert.deepEqual(item, { title: "One", description: "Two", pubDate: "d", link: "l" });
+    const [nested] = parseRssItems("<item><title>a<title>b</title></item>");
+    assert.equal(nested.title, "a<title>b");
+    const [open] = parseRssItems("<item><title>never closed<link>https://x</link></item>");
+    assert.equal(open.title, "");
+    assert.equal(open.link, "https://x");
+  });
+
+  it("keeps each item's fields to that item, whether or not it is closed", () => {
+    const items = parseRssItems(
+      "<item><title>A</title><item><description>b</description><item attr='1'><title>C</title></item><title>outside</title>",
+    );
+    assert.deepEqual(
+      items.map((item) => [item.title, item.description]),
+      [
+        ["A", ""],
+        ["", "b"],
+        ["C", ""],
+      ],
+    );
+  });
+});
+
+describe("decodeXmlField scanning", () => {
+  it("handles several CDATA sections and an unterminated one after them", () => {
+    assert.equal(decodeXmlField("&amp;<![CDATA[&amp;]]>&amp;<![CDATA[x]]>&lt;"), "&&amp;&x<");
+    assert.equal(decodeXmlField("&amp;<![CDATA[a]]>&amp;<![CDATA[&amp;"), "&a&&amp;");
+  });
 });
 
 describe("collector failure classification", () => {
@@ -287,16 +332,17 @@ describe("collector failure classification", () => {
     assert.equal(classifyFailure(new SourceError("getaddrinfo ENOTFOUND x")).kind, "network");
   });
 
-  it("reports a vendor payload change as a parser failure with the real error", () => {
+  it("reports a vendor payload change as a parser failure", () => {
     let thrown: unknown;
     try {
       JSON.parse("<html>not json</html>");
     } catch (error) {
       thrown = error;
     }
-    const failure = classifyFailure(thrown);
-    assert.equal(failure.kind, "parser");
-    assert.match(failure.message, /^SyntaxError: /);
+    assert.deepEqual(classifyFailure(thrown), {
+      kind: "parser",
+      message: "SyntaxError: response was not valid JSON",
+    });
     assert.equal(classifyFailure(new TypeError("Cannot read properties of undefined")).kind, "parser");
     // A collector's own "answered, but no usable data" check is a format
     // change too, even though it carries no HTTP status.
@@ -304,6 +350,33 @@ describe("collector failure classification", () => {
       kind: "parser",
       message: "Grok feed returned no readable items.",
     });
+  });
+});
+
+describe("collector failure messages do not echo the response body", () => {
+  it("never carries the start of an unparseable body, whichever way V8 words the error", () => {
+    const secret = "TOP-SECRET-BODY-TEXT";
+    for (const body of [`<html>${secret}</html>`, `{"a":${secret}}`, `${secret}`, `[1,${secret}`, `{${secret}: 1}`]) {
+      let thrown: unknown;
+      try {
+        JSON.parse(body);
+      } catch (error) {
+        thrown = error;
+      }
+      // The raw message does quote the body, which is the leak being closed.
+      assert.ok(thrown instanceof SyntaxError);
+      const { kind, message } = classifyFailure(thrown);
+      assert.equal(kind, "parser");
+      assert.equal(message, "SyntaxError: response was not valid JSON");
+      assert.ok(!message.includes(secret));
+    }
+  });
+
+  it("still names a coding error by its own message, which is ours", () => {
+    assert.equal(
+      classifyFailure(new TypeError("value.filter is not a function")).message,
+      "TypeError: value.filter is not a function",
+    );
   });
 });
 
@@ -424,6 +497,50 @@ describe("googleComponents", () => {
     const rows = googleComponents(products, [{ id: "1", status_impact: "SERVICE_OUTAGE", affected_products: [{}] }]);
     assert.equal(rows.length, 2);
     assert.ok(rows.every((row) => row.health === "operational"));
+  });
+
+  it("matches by id or lower-cased title, the earliest product winning, and finds a product it added", () => {
+    const dup = [
+      { id: "a", title: "Alpha" },
+      { id: "b", title: "Beta" },
+    ];
+    // Id "b" names the second product, title "alpha" the first: the earlier row is the match.
+    const rows = googleComponents(dup, [
+      { id: "1", status_impact: "SERVICE_OUTAGE", affected_products: [{ id: "b", title: " ALPHA " }] },
+    ]);
+    assert.deepEqual(rows, [
+      { name: "Alpha", health: "outage" },
+      { name: "Beta", health: "operational" },
+    ]);
+    // A product the catalogue lacks is added once and then matched by later references.
+    const added = googleComponents(dup, [
+      { id: "1", status_impact: "SERVICE_DISRUPTION", affected_products: [{ id: "z", title: "Zeta" }] },
+      { id: "2", status_impact: "SERVICE_OUTAGE", affected_products: [{ title: "zeta" }, { id: "z" }] },
+    ]);
+    assert.deepEqual(
+      added.map((row) => [row.name, row.health]),
+      [
+        ["Alpha", "operational"],
+        ["Beta", "operational"],
+        ["Zeta", "outage"],
+      ],
+    );
+  });
+
+  it("stays fast with thousands of products and references", () => {
+    const many = Array.from({ length: 5000 }, (_, i) => ({ id: `p${i}`, title: `Product ${i}` }));
+    const incident = {
+      id: "1",
+      status_impact: "SERVICE_OUTAGE",
+      affected_products: many.map((product) => ({ id: product.id, title: product.title })),
+    };
+    const started = performance.now();
+    const rows = googleComponents(many, [incident]);
+    const took = performance.now() - started;
+    assert.equal(rows.length, 5000);
+    assert.ok(rows.every((row) => row.health === "outage"));
+    // The scan this replaced took seconds here; a lookup takes a few ms.
+    assert.ok(took < 200, `took ${took}ms`);
   });
 });
 

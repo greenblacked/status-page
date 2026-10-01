@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { clip } from "./bounds.ts";
 
 const USER_AGENT = "StatusBar/1.0 (status board; official sources only)";
 const DEFAULT_TIMEOUT_MS = 9000;
@@ -63,6 +64,43 @@ function sourceHost(url: string): string {
   }
 }
 
+// A body that is not JSON. Its message is a diagnostic for logs and the failure
+// record; a reader sees the generic sentence instead (see `failed`).
+export class NotJsonError extends PayloadError {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotJsonError";
+  }
+}
+
+// The standard reason phrase of the status codes a vendor is likely to answer
+// with. The phrase a server sent along is its own text (HTTP/2 has none), so it
+// never reaches a message; a code not listed here is named by its number alone.
+const REASON_PHRASES: Readonly<Record<number, string>> = {
+  301: "Moved Permanently",
+  302: "Found",
+  303: "See Other",
+  307: "Temporary Redirect",
+  308: "Permanent Redirect",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  408: "Request Timeout",
+  410: "Gone",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+
+function describeStatus(status: number): string {
+  const phrase = REASON_PHRASES[status];
+  return phrase ? `${status} ${phrase}` : String(status);
+}
+
 function tooLarge(url: string, maxBytes: number): PayloadError {
   return new PayloadError(`Response from ${sourceHost(url)} is larger than ${Math.round(maxBytes / 1024 / 1024)} MiB`);
 }
@@ -111,6 +149,73 @@ export async function readBodyCapped(
   return body.buffer;
 }
 
+const MAX_REDIRECTS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Where a request may be redirected, other than to the host it asked: the
+ * hosts a vendor itself spreads one data set over. Everything else is
+ * refused, a sibling subdomain included, because a registrable domain can
+ * also host other people's content (`sites.google.com`, any `*.amazon.com`
+ * bucket or `*.statuspage.io` tenant). Keyed by the requested host (name and
+ * port); add an entry only for a redirect a collector's real URL has been seen to make.
+ */
+const REDIRECT_ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  "upgrade.mikrotik.com": ["download.mikrotik.com"],
+  "download.mikrotik.com": ["upgrade.mikrotik.com"],
+};
+
+/**
+ * Whether a redirect to `target` stays with the vendor that was asked: https,
+ * no credentials, and exactly the requested host or one REDIRECT_ALLOWED
+ * lists for it. A redirect to anything else is not followed, so a hijacked or
+ * misconfigured vendor endpoint cannot send the Worker to an arbitrary host.
+ */
+function staysWithVendor(requested: URL, target: URL): boolean {
+  if (target.protocol !== "https:" || target.username || target.password) return false;
+  return target.host === requested.host || (REDIRECT_ALLOWED[requested.host] ?? []).includes(target.host);
+}
+
+// Where a refused redirect went, for the error: the host only, never the path
+// or query, which are the vendor's to make long, and cut to a sensible length
+// since a host name is vendor text too. http names its scheme, because that is
+// what was wrong; any other scheme (`javascript:`, `data:`) is not worth echoing.
+const MAX_TARGET_CHARS = 100;
+
+function describeTarget(target: URL | undefined): string {
+  if (!target) return "an unreadable location";
+  if (target.protocol === "https:") return clip(target.host, MAX_TARGET_CHARS);
+  if (target.protocol === "http:") return clip(`http://${target.host}`, MAX_TARGET_CHARS);
+  return "a non-https location";
+}
+
+// fetch with redirects followed by hand, at most MAX_REDIRECTS and only
+// within staysWithVendor. `redirect: "manual"` hands back the 3xx response
+// and its Location header both on Workers and in Node.
+async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
+  const requested = new URL(url);
+  let current = requested;
+  for (let hops = 0; ; hops += 1) {
+    const response = await fetch(current.href, { ...init, redirect: "manual" });
+    const location = REDIRECT_STATUSES.has(response.status) ? response.headers.get("location") : null;
+    if (location === null) return response;
+    await response.body?.cancel().catch(() => {});
+    let target: URL | undefined;
+    try {
+      target = new URL(location, current);
+    } catch {
+      target = undefined;
+    }
+    if (!target || !staysWithVendor(requested, target)) {
+      throw new SourceError(
+        `Request to ${sourceHost(url)} redirected to ${describeTarget(target)}, off the vendor's host`,
+      );
+    }
+    if (hops >= MAX_REDIRECTS) throw new SourceError(`Too many redirects from ${sourceHost(url)}`);
+    current = target;
+  }
+}
+
 export async function fetchText(
   url: string,
   init: RequestInit & { timeoutMs?: number; binary?: boolean } = {},
@@ -119,7 +224,7 @@ export async function fetchText(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
+    const response = await fetchVendor(url, {
       ...rest,
       signal: controller.signal,
       headers: {
@@ -132,7 +237,7 @@ export async function fetchText(
     if (!response.ok) {
       // Nothing in an error page is used, so it is never downloaded.
       await response.body?.cancel().catch(() => {});
-      throw new SourceError(`${response.status} ${response.statusText} from ${sourceHost(url)}`, response.status);
+      throw new SourceError(`${describeStatus(response.status)} from ${sourceHost(url)}`, response.status);
     }
     // Still under the timeout above: a vendor trickling a body in slowly
     // is aborted like one that never answers.
@@ -167,13 +272,50 @@ export async function fetchJson<T>(
   url: string,
   init?: RequestInit & { timeoutMs?: number; binary?: boolean },
 ): Promise<T> {
-  const { body } = await fetchText(url, init);
+  const { body, contentType } = await fetchText(url, init);
   const trimmed = body.replace(/^\uFEFF/, "").trim();
   const jsonPayload = unwrapJsonp(trimmed);
-  return JSON.parse(jsonPayload) as T;
+  try {
+    return JSON.parse(jsonPayload) as T;
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    // V8's message quotes the start of the body, which is vendor text and
+    // must not reach logs, hydration data or public issues. What helps a
+    // maintainer diagnose it, and is safe, is built here instead.
+    throw new NotJsonError(`SyntaxError: response was not valid JSON${notJsonHint(trimmed, contentType)}`);
+  }
 }
 
-function unwrapJsonp(payload: string): string {
-  const match = payload.match(/^[A-Za-z_$][\w$]*\(([\s\S]*)\)\s*;?\s*$/);
-  return match?.[1] ? match[1] : payload;
+// " (looks like HTML, text/html)": what a body that is not JSON looks like,
+// from its first character and a content type of a known, harmless shape.
+// Never any of the body's own text.
+function notJsonHint(trimmedBody: string, contentType: string): string {
+  const hints: string[] = [];
+  if (trimmedBody === "") hints.push("empty body");
+  else if (trimmedBody.startsWith("<")) hints.push("looks like HTML");
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (/^(text|application)\/[a-z0-9.+-]{1,40}$/.test(mediaType) && mediaType !== "application/json") {
+    hints.push(mediaType);
+  }
+  return hints.length ? ` (${hints.join(", ")})` : "";
+}
+
+/**
+ * The JSON inside a JSONP wrapper (`callback({...});`), or the payload
+ * unchanged when it is not one. A linear scan, not a regex: the earlier
+ * `^id\(([\s\S]*)\)\s*;?\s*$` backtracked quadratically on `f()` followed by
+ * a long run of spaces and one more character, and the body is vendor input.
+ * The wrapper is an identifier, then the first "(", then the last ")" with
+ * only whitespace and an optional ";" after it.
+ */
+export function unwrapJsonp(payload: string): string {
+  const open = payload.indexOf("(");
+  const close = payload.lastIndexOf(")");
+  if (open < 1 || close < open + 2) return payload;
+  // Anchored and a single quantifier: it cannot backtrack against itself.
+  if (!/^[A-Za-z_$][\w$]*$/.test(payload.slice(0, open))) return payload;
+  // trim() strips exactly the characters `\s` matches.
+  const rest = payload.slice(close + 1).trim();
+  if (rest !== "" && rest !== ";") return payload;
+  return payload.slice(open + 1, close);
 }

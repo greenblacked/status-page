@@ -62,7 +62,10 @@ export function prometheusMetrics(board: BoardSnapshot): string {
     {
       name: "statusbar_service_incidents",
       help: "Incidents the official source lists for a service.",
-      samples: board.services.map((item) => ({ labels: service(item), value: item.incidents.length })),
+      samples: board.services.map((item) => ({
+        labels: service(item),
+        value: item.incidentCount ?? item.incidents.length,
+      })),
     },
     {
       name: "statusbar_source_up",
