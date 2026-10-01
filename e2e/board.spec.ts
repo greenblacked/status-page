@@ -1550,7 +1550,10 @@ test("takes the pose a scroll gives it before the page has loaded without playin
   // armed. A pose change after the load is a move again.
   await expect(page.locator(".search-dock")).not.toHaveAttribute("data-instant", "");
   await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
-  expect((await played()).length, "the field's move comes back after the load").toBeGreaterThan(0);
+  // transitionrun is dispatched with the next frame, so it is waited for rather than read at once.
+  await expect
+    .poll(async () => (await played()).length, { message: "the field's move comes back after the load" })
+    .toBeGreaterThan(0);
   await dockRelease(page);
 });
 
