@@ -33,10 +33,10 @@ export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseC
   for (const service of next.services) {
     const before = previousById.get(service.id);
     if (!before) continue;
-    const nextVersions = versionFingerprint(service.meta);
-    const latestChanged = Boolean(nextVersions && versionFingerprint(before.meta) !== nextVersions);
-    if (before.health === service.health && !latestChanged) continue;
+    // A version that only left the list (an old post dropping out of a feed) is not a release.
     const releaseSummary = releaseChange(before, service);
+    const latestChanged = releaseSummary !== "";
+    if (before.health === service.health && !latestChanged) continue;
     changes.push({
       id: service.id,
       name: service.name,

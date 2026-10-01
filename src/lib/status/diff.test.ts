@@ -63,4 +63,32 @@ describe("diffBoards", () => {
       },
     ]);
   });
+
+  it("does not report a version that only left the list as a change", () => {
+    const previous = board([
+      service("android-os", {
+        health: "operational",
+        meta: { latest: "Android 17 QPR1", versions: "Android 17 QPR1=Sep 3|Android 17=Jun 16" },
+      }),
+    ]);
+    const next = board([
+      service("android-os", {
+        health: "operational",
+        summary: "Latest: Android 17 QPR1 · Sep 3",
+        meta: { latest: "Android 17 QPR1", versions: "Android 17 QPR1=Sep 3" },
+      }),
+    ]);
+    assert.deepEqual(diffBoards(previous, next), []);
+  });
+
+  it("still reports a health change when a version leaves the list", () => {
+    const previous = board([
+      service("android-os", { health: "operational", meta: { latest: "A", versions: "A=1|B=2" } }),
+    ]);
+    const next = board([service("android-os", { health: "unknown", summary: "Couldn't read", meta: undefined })]);
+    assert.deepEqual(
+      diffBoards(previous, next).map((change) => change.to),
+      ["unknown"],
+    );
+  });
 });

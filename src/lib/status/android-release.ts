@@ -112,29 +112,37 @@ export function parseAndroidReleaseTitle(title: string): string | null {
   if (/[\p{L}\p{N}.]/u.test(text[at] ?? "")) return null;
 
   if (text[at] === " " && text.slice(at + 1, at + 4).toLowerCase() === "qpr") {
-    const level = digitsAt(text, at + 4, 2);
-    if (level && !/[\p{L}\p{N}]/u.test(text[at + 4 + level.length] ?? "")) {
-      version = `${version} QPR${level}`;
-      at += 4 + level.length;
-    }
+    // "QPR2" or "QPR 2": one optional space, then the level. "QPR" with no level is no version.
+    let levelAt = at + 4;
+    if (text[levelAt] === " ") levelAt += 1;
+    const level = digitsAt(text, levelAt, 2);
+    if (!level || /[\p{L}\p{N}]/u.test(text[levelAt + level.length] ?? "")) return null;
+    version = `${version} QPR${level}`;
+    at = levelAt + level.length;
   }
 
-  let release = false;
-  for (const word of text
+  // What follows the version must say it is out: "is here", "are now available",
+  // "is rolling out". Anything else ("Android 17: what's new", "Android 14 for TV
+  // is here", "Android 17 privacy changes now available") is about something else.
+  const words = text
     .slice(at)
     .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)) {
-    if (PRE_RELEASE_WORDS.has(word)) return null;
-    if (RELEASE_WORDS.has(word)) release = true;
-  }
-  return release ? version : null;
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  if (words.some((word) => PRE_RELEASE_WORDS.has(word))) return null;
+  let next = 0;
+  if (words[next] !== "is" && words[next] !== "are") return null;
+  next += 1;
+  if (words[next] === "now") next += 1;
+  return RELEASE_WORDS.has(words[next] ?? "") ? version : null;
 }
 
 /**
  * The Android releases among a feed's posts, newest first, one per version
- * (when a version has two posts, the newest counts), at most MAX_RELEASES.
- * Posts with no readable date rank last. An empty list is a feed with no
- * release post in it, which is not an error.
+ * (when a version has two posts, the earliest counts: it is when the version
+ * came out, and a later post about it must not move the date or flag it as
+ * new again), at most MAX_RELEASES. Posts with no readable date rank last. An
+ * empty list is a feed with no release post in it, which is not an error.
  */
 export function androidReleases(posts: Array<{ title: string; publishedAt?: string }>): AndroidRelease[] {
   const byVersion = new Map<string, AndroidRelease>();
@@ -144,19 +152,17 @@ export function androidReleases(posts: Array<{ title: string; publishedAt?: stri
     const time = Date.parse(post.publishedAt ?? "");
     const publishedAt = Number.isFinite(time) ? new Date(time).toISOString() : undefined;
     const earlier = byVersion.get(version);
-    if (!earlier || (publishedAt ?? "") > (earlier.publishedAt ?? "")) {
+    // A dated post beats an undated one; between two dated posts the earlier wins.
+    if (!earlier || (publishedAt && (!earlier.publishedAt || publishedAt < earlier.publishedAt))) {
       byVersion.set(version, { version, name: `${ANDROID_NAME} ${version}`, publishedAt });
     }
   }
   return [...byVersion.values()]
-    .sort((a, b) =>
-      (a.publishedAt ?? "") === (b.publishedAt ?? "")
-        ? a.version < b.version
-          ? 1
-          : -1
-        : (a.publishedAt ?? "") < (b.publishedAt ?? "")
-          ? 1
-          : -1,
-    )
+    .sort((a, b) => {
+      const [x, y] = [a.publishedAt ?? "", b.publishedAt ?? ""];
+      if (x !== y) return x < y ? 1 : -1;
+      // Same time: the higher version first, compared as numbers ("17" above "9").
+      return b.version.localeCompare(a.version, "en", { numeric: true });
+    })
     .slice(0, MAX_RELEASES);
 }

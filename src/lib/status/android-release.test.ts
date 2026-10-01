@@ -5,13 +5,16 @@ import { parseAtomEntries } from "./sources.server.ts";
 describe("parseAndroidReleaseTitle", () => {
   it.each([
     ["Android 17 is here", "17"],
-    ["Android 17: the stable release is here", "17"],
-    ["The Android 17 release is here", "17"],
+    ["The Android 17 is here", "17"],
     ["Android 17 is released to AOSP", "17"],
     ["Android 17 QPR1 is rolling out", "17 QPR1"],
     ["android 17 qpr2 is now available", "17 QPR2"],
     ["Android 16.1 is live", "16.1"],
     ["Android 16 QPR3 is available for Pixel", "16 QPR3"],
+    ["Android 17 is Here", "17"],
+    ["Android 16 QPR2 is Released", "16 QPR2"],
+    ["Android 16 QPR 2 is released", "16 QPR2"],
+    ["Android 17 are now available", "17"],
     ["  Android 17 is out  ", "17"],
   ])("reads %j as version %j", (title, version) => {
     expect(parseAndroidReleaseTitle(title)).toBe(version);
@@ -27,6 +30,13 @@ describe("parseAndroidReleaseTitle", () => {
     // Not about a version, or no word that says it is out.
     "Android Bench 2.0: Pushing the frontier with challenging long-horizon tasks",
     "Android 17: what's new for developers",
+    "Android 17: check out what's new",
+    "Android 17 privacy changes now available",
+    "Android 17 security patch is live",
+    "Android 14 for TV is here",
+    "Android 16 QPR is released",
+    "Android 16 QPRx is released",
+    "Android 16 QPR 2x is released",
     "Android 17 QPR1",
     "Android 17",
     "Android",
@@ -52,7 +62,7 @@ describe("parseAndroidReleaseTitle", () => {
 describe("androidReleases", () => {
   const post = (title: string, publishedAt?: string) => ({ title, publishedAt });
 
-  it("keeps the newest post per version, newest version first, and drops everything else", () => {
+  it("keeps the earliest post per version, newest version first, and drops everything else", () => {
     const releases = androidReleases([
       post("Android 17 QPR1 is rolling out", "2026-09-24T00:00:00.000Z"),
       post("Android 17 QPR2 Beta 1 is here", "2026-09-30T00:00:00.000Z"),
@@ -62,8 +72,31 @@ describe("androidReleases", () => {
     ]);
     expect(releases).toEqual([
       { version: "17 QPR1", name: "Android 17 QPR1", publishedAt: "2026-09-24T00:00:00.000Z" },
-      { version: "17", name: "Android 17", publishedAt: "2026-08-25T00:00:00.000Z" },
+      { version: "17", name: "Android 17", publishedAt: "2026-08-20T00:00:00.000Z" },
     ]);
+  });
+
+  it("does not let a later post about a version move its date, whatever order the feed lists them in", () => {
+    const early = post("Android 17 is here", "2026-06-16T00:00:00.000Z");
+    const late = post("Android 17 is now available on more devices", "2026-08-20T00:00:00.000Z");
+    for (const posts of [
+      [late, early],
+      [early, late],
+    ]) {
+      expect(androidReleases(posts)).toEqual([
+        { version: "17", name: "Android 17", publishedAt: "2026-06-16T00:00:00.000Z" },
+      ]);
+    }
+    // A post with a date is the better record than one without.
+    expect(androidReleases([post("Android 17 is here"), early])[0].publishedAt).toBe("2026-06-16T00:00:00.000Z");
+  });
+
+  it("breaks a tie on the date by comparing version numbers, not text", () => {
+    const releases = androidReleases([
+      post("Android 9 is here", "2026-06-10T00:00:00.000Z"),
+      post("Android 17 is here", "2026-06-10T00:00:00.000Z"),
+    ]);
+    expect(releases.map((release) => release.name)).toEqual(["Android 17", "Android 9"]);
   });
 
   it("orders by date whatever order the feed lists them in", () => {

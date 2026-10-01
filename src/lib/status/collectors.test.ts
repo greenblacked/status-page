@@ -1361,11 +1361,11 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(android.meta).toBeUndefined();
     });
 
-    it("Android Developers Blog: the newest release per version, a fresh one marked, betas and other posts skipped", async () => {
+    it("Android Developers Blog: the earliest post per version, a fresh one marked, betas and other posts skipped", async () => {
       // Hand-built in the layout of the recording (see the fixtures README).
       // The clock puts only the Sep 24 post inside the 14-day window. The Sep
-      // 22 post is a beta; two posts announce Android 17 and the newer one
-      // (Aug 25) is the one that counts.
+      // 22 post is a beta; two posts announce Android 17 and the earlier one
+      // (Jun 16) is the one that counts, so the Aug 20 follow-up does not move it.
       vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
       stubFetch({ [URLS.androidOs]: text(fixture("android-os/blog-atom-releases.xml")) });
       const android = await collect("android-os");
@@ -1374,13 +1374,13 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(android.summary).toBe("Latest: Android 17 QPR1 · Sep 24");
       expect(android.components).toEqual([
         { name: "Android 17 QPR1", health: "maintenance", detail: "Sep 24" },
-        { name: "Android 17", health: "operational", detail: "Aug 25" },
-        { name: "Android 16 QPR3", health: "operational", detail: "Aug 11" },
+        { name: "Android 17", health: "operational", detail: "Jun 16" },
+        { name: "Android 16 QPR2", health: "operational", detail: "Dec 2" },
       ]);
       expect(android.incidents).toEqual([]);
       expect(android.meta).toEqual({
         latest: "Android 17 QPR1",
-        versions: "Android 17 QPR1=Sep 24|Android 17=Aug 25|Android 16 QPR3=Aug 11",
+        versions: "Android 17 QPR1=Sep 24|Android 17=Jun 16|Android 16 QPR2=Dec 2",
       });
     });
 

@@ -142,6 +142,8 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["a long run of separators", `Android 17 ${"- ".repeat(SIZE / 2)}`],
     ["repeated QPR markers", `Android 17 ${"QPR1 ".repeat(SIZE / 5)}`],
     ["repeated dots", `Android 17${".".repeat(SIZE)}`],
+    ["repeated spaced QPR markers", `Android 17 ${"QPR 1 ".repeat(SIZE / 6)}`],
+    ["a long run of release words", `Android 17 is ${"now ".repeat(SIZE / 4)}`],
   ])("parseAndroidReleaseTitle: %s", (_label, title) => {
     expect(elapsed(() => parseAndroidReleaseTitle(title))).toBeLessThan(BUDGET_MS);
   });
