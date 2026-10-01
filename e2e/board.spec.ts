@@ -2688,7 +2688,7 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   // Needs a look first, then what could not be read, then one list per category (Cloud is all down here), then Releases.
   await expect(
     page.locator('#attention-heading, #unread-heading, [id^="up-"][id$="-heading"], #releases-heading'),
-  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*2/]);
+  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*3/]);
 
   // Issues only leaves the three that need a look, the highlight among them: the unreadable
   // source in the fixture is not an issue, only a source that could not be read.
@@ -3805,7 +3805,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   await expect(headline.locator("svg.pen-underline")).toHaveAttribute("aria-hidden", "true");
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
-  await expect(sub).toContainText("The other ten are running normally.");
+  await expect(sub).toContainText("The other eleven are running normally.");
   await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
   await expect(links).toHaveText(["AWS", "GCP", "Epic", "Android"]);
