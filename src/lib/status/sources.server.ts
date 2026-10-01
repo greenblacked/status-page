@@ -1,3 +1,4 @@
+import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { boundSnapshot, clip, MAX_TEXT_CHARS } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
@@ -22,7 +23,16 @@ import {
   urgencyOf,
   worseHealth,
 } from "./health.ts";
-import { fetchJson, fetchText, meterBytes, meteredBytes, NotJsonError, PayloadError, SourceError } from "./http.ts";
+import {
+  fetchJson,
+  fetchText,
+  isRefusal,
+  meterBytes,
+  meteredBytes,
+  NotJsonError,
+  PayloadError,
+  SourceError,
+} from "./http.ts";
 import { sortIncidents } from "./layout.ts";
 import type {
   ComponentHealth,
@@ -480,25 +490,38 @@ function fromStatuspage(
     },
   );
 
-  const { incidents, problems, incidentCount } = listIncidents(
-    activeIncidents
-      .filter((incident) => belongs(incident))
-      .map((incident) => {
-        const name = incident.name || "Incident";
-        const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
-        return {
-          id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
-          title: name,
-          health: itemHealth,
-          ...(informational ? { informational: true } : {}),
-          startedAt: isoTimestamp(incident.started_at),
-          updatedAt: isoTimestamp(incident.updated_at),
-          // Statuspage writes incident shortlinks on stspg.io; the vendor's own
-          // status host is allowed too. No shortlink stays no link, as before.
-          url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
-        };
-      }),
-  );
+  const mapped: Incident[] = activeIncidents
+    .filter((incident) => belongs(incident))
+    .map((incident) => {
+      const name = incident.name || "Incident";
+      const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
+      return {
+        id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
+        title: name,
+        health: itemHealth,
+        ...(informational ? { informational: true } : {}),
+        startedAt: isoTimestamp(incident.started_at),
+        updatedAt: isoTimestamp(incident.updated_at),
+        // Statuspage writes incident shortlinks on stspg.io; the vendor's own
+        // status host is allowed too. No shortlink stays no link, as before.
+        url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
+      };
+    });
+
+  // An active incident is a statement about the service in its own right:
+  // vendors often leave every component Operational while an incident is
+  // open (Claude's "Delayed credits"), so the components and the page
+  // indicator are only a floor. A card is never better than its worst active
+  // problem, taken over the whole list (not just the part kept below). A
+  // notice with no impact (informational) never raises it. An incident whose
+  // impact the vendor left out still is a problem: it counts as Degraded, not
+  // as "No data" (the incident's own row keeps its unknown state).
+  for (const incident of mapped) {
+    if (!incident.informational)
+      health = worseHealth(health, incident.health === "unknown" ? "degraded" : incident.health);
+  }
+
+  const { incidents, problems, incidentCount } = listIncidents(mapped);
 
   const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
     data.scheduled_maintenances,
@@ -897,23 +920,32 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     const apiOk = typeof servertime === "number";
     const storeOk = store.status === "fulfilled" && Array.isArray(store.value?.featured_win);
     if (!apiOk && !storeOk) {
-      if (info.status === "rejected") throw info.reason;
-      if (store.status === "rejected") throw store.reason;
-      throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      // Name the real fault: a refusal is only reported when nothing else went wrong.
+      const rejections = [info, store].flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      const real = rejections.find((reason) => !isRefusal(reason));
+      if (real !== undefined) throw real;
+      if (info.status === "fulfilled" || store.status === "fulfilled") {
+        throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      }
+      throw rejections[0];
     }
     // The half that failed says why on its component, so a Degraded card is
-    // never left without a reason.
-    const why = (result: PromiseSettledResult<unknown>) =>
-      result.status === "rejected" ? classifyFailure(result.reason).message : "Unexpected response shape.";
-    const health: Health = apiOk && storeOk ? "operational" : "degraded";
-    const components: ComponentHealth[] = [
-      apiOk
-        ? { name: "Steam Web API", health: "operational" }
-        : { name: "Steam Web API", health: "outage", detail: why(info) },
-      storeOk
-        ? { name: "Steam Store", health: "operational" }
-        : { name: "Steam Store", health: "outage", detail: why(store) },
-    ];
+    // never left without a reason. A probe the vendor refused (403, 429, a bot
+    // challenge) proves nothing about the service, so it is Unknown and does not
+    // count against the card; only a probe that really failed does.
+    const probe = (name: string, ok: boolean, result: PromiseSettledResult<unknown>): ComponentHealth => {
+      if (ok) return { name, health: "operational" };
+      if (result.status === "rejected") {
+        if (isRefusal(result.reason)) {
+          const label = name.replace(/^Steam /, "");
+          return { name, health: "unknown", detail: `${label} refused the check (${result.reason.status})` };
+        }
+        return { name, health: "outage", detail: classifyFailure(result.reason).message };
+      }
+      return { name, health: "outage", detail: "Unexpected response shape." };
+    };
+    const components: ComponentHealth[] = [probe("Steam Web API", apiOk, info), probe("Steam Store", storeOk, store)];
+    const health: Health = components.some((c) => c.health === "outage") ? "degraded" : "operational";
     // A side list: when the directory cannot be read, or lists nothing, the
     // row is left out rather than shown as Unknown.
     const managers = cm.status === "fulfilled" ? steamCmCount(cm.value) : 0;
@@ -927,7 +959,7 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     return {
       ...base("steam", new Date().toISOString(), mainMs),
       health,
-      summary: overallSummary(health, 0, health === "operational" ? "Web API and Store responding." : undefined),
+      summary: overallSummary(health, 0),
       components,
       incidents: [],
       meta: { servertime: apiOk ? servertime : 0 },
@@ -1667,6 +1699,41 @@ async function collectWindows(): Promise<ServiceSnapshot> {
   }
 }
 
+async function collectAndroidOs(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() =>
+      fetchText(CATALOG_BY_ID["android-os"].sourceUrl, { headers: { Accept: "text/html, */*" } }),
+    );
+    const releases = androidReleases(readAndroidVersionLinks(value.body));
+    if (!releases.length) throw new PayloadError("Android releases page had no readable version list.");
+
+    // The page gives no dates, so a version is never marked fresh here: a
+    // version that appears on the page is announced as a release in the
+    // change feed, by the version map below, instead.
+    const components: ComponentHealth[] = releases.map((release) => ({
+      name: release.name,
+      health: "operational",
+      detail: "released",
+    }));
+
+    const headline = releases[0];
+    return {
+      ...base("android-os", new Date().toISOString(), ms),
+      health: "operational",
+      summary: `Latest: ${headline.name}`,
+      components,
+      incidents: [],
+      meta: {
+        latest: headline.name,
+        versions: formatVersionMap(releases.map((release) => ({ name: release.name, version: "released" }))),
+      },
+    };
+  } catch (error) {
+    return failed("android-os", started, error);
+  }
+}
+
 // Runs one collector with its own byte meter, and logs the success line
 // that pairs with failed()'s collector_failed, so the log shows every
 // source's latency and download size per sweep, not only the broken ones.
@@ -1709,6 +1776,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectMikrotik,
       collectAppleOs,
       collectWindows,
+      collectAndroidOs,
     ].map(metered),
   );
 }

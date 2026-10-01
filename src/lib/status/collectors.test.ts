@@ -29,6 +29,7 @@ const URLS = {
   mikrotikDownload: "https://download.mikrotik.com/routeros/",
   appleOs: "https://developer.apple.com/news/releases/rss/releases.rss",
   windows: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
+  androidOs: "https://developer.android.com/about/versions",
 };
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url);
@@ -265,6 +266,111 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       detail: "503 Service Unavailable from store.steampowered.com",
     });
     expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("operational");
+  });
+
+  it.each([
+    [403, "Forbidden"],
+    [429, "Too Many Requests"],
+  ])(
+    "Steam: a %i from the store is not a failure: card operational, Store unknown with an honest detail",
+    async (status, statusText) => {
+      stubFetch({
+        [URLS.steamServerInfo]: json({ servertime: 1758000000 }),
+        [URLS.steamFeatured]: text("refused", { status, statusText }),
+      });
+      const services = await collectAllServices();
+      const snapshot = services.find((s) => s.id === "steam")!;
+      expect(snapshot.health).toBe("operational");
+      expect(snapshot.failure).toBeUndefined();
+      expect(snapshot.components.find((c) => c.name === "Steam Store")).toEqual({
+        name: "Steam Store",
+        health: "unknown",
+        detail: `Store refused the check (${status})`,
+      });
+      expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("operational");
+    },
+  );
+
+  it("Steam: a Web API answering with the wrong shape while the store is fine is degraded", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: "not-a-number" }),
+      [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("degraded");
+    expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("outage");
+  });
+
+  it("Steam: a refused store does not make a failing Web API look fine: nothing usable is unknown, with the real fault", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("service unavailable", { status: 503, statusText: "Service Unavailable" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+  });
+
+  it("Steam: a refused Web API with the store fine is operational, Web API unknown", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("operational");
+    expect(snapshot.components.find((c) => c.name === "Steam Web API")).toEqual({
+      name: "Steam Web API",
+      health: "unknown",
+      detail: "Web API refused the check (403)",
+    });
+  });
+
+  it("Steam: a refused Web API and a store that failed is unknown, with the store's real fault", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: text("service unavailable", { status: 503, statusText: "Service Unavailable" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+  });
+
+  it("Steam: a wrong-shape Web API and a refused store is unknown with a parser failure", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: "not-a-number" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure?.kind).toBe("parser");
+  });
+
+  it("Steam: both endpoints refusing the check is unknown", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 403 });
+  });
+
+  it("Steam: a Cloudflare bot challenge on the store is a refusal, whatever its status", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: 1758000000 }),
+      [URLS.steamFeatured]: () =>
+        new Response("challenge", {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "cf-mitigated": "challenge" },
+        }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("operational");
+    expect(snapshot.components.find((c) => c.name === "Steam Store")).toMatchObject({
+      health: "unknown",
+      detail: "Store refused the check (503)",
+    });
   });
 
   it("Steam: a network error on one endpoint is degraded, with that endpoint's component non-operational", async () => {
@@ -798,6 +904,139 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(claude.incidents).toEqual([
         { id: "n1", title: "Scheduled database upgrade", health: "operational", informational: true },
       ]);
+    });
+
+    // Trimmed from the live Claude page: every component Operational, the page indicator "none", and
+    // one open incident that the vendor has not tied to any component.
+    const claudeWithIncident = (incident: Record<string, unknown>) =>
+      statuspageSummary({
+        indicator: "none",
+        components: [
+          { id: "c1", name: "claude.ai", status: "operational" },
+          { id: "c2", name: "Claude API (api.anthropic.com)", status: "operational" },
+          { id: "c3", name: "Claude Code", status: "operational" },
+        ],
+        incidents: [
+          {
+            id: "credits",
+            name: "Delayed credits on the Claude Platform",
+            status: "monitoring",
+            started_at: "2026-10-01T19:20:00Z",
+            components: [],
+            ...incident,
+          },
+        ],
+      });
+
+    it.each([
+      ["minor", "degraded"],
+      ["major", "outage"],
+      ["critical", "outage"],
+    ])("an active %s incident makes the card %s, though every component is Operational", async (impact, health) => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe(health);
+      expect(claude.summary).toBe("Delayed credits on the Claude Platform");
+      expect(claude.components.every((component) => component.health === "operational")).toBe(true);
+      expect(claude.incidents).toHaveLength(1);
+      expect(claude.incidents[0]).toMatchObject({ health, title: "Delayed credits on the Claude Platform" });
+      expect(claude.incidents[0].informational).toBeUndefined();
+    });
+
+    it("an active impact-none notice leaves the same Claude page Operational, with the notice listed", async () => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact: "none" })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.summary).toBe("Nothing reported.");
+      expect(claude.incidents[0]).toMatchObject({ health: "operational", informational: true });
+    });
+
+    it.each([[{ impact: undefined }], [{ impact: "" }]])(
+      "an active incident with no impact is a problem: Degraded, not No data",
+      async (incident) => {
+        stubFetch({ [URLS.claude]: json(claudeWithIncident(incident)) });
+        const claude = await claudeOf();
+        expect(claude.health).toBe("degraded");
+        expect(claude.summary).toBe("Delayed credits on the Claude Platform");
+        expect(claude.failure).toBeUndefined();
+        expect(claude.incidents[0].informational).toBeUndefined();
+      },
+    );
+
+    it("a resolved incident does not raise the card", async () => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact: "major", status: "resolved" })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.incidents).toEqual([]);
+    });
+
+    it("an incident is never masked by a notice, and never lowers a worse component or indicator", async () => {
+      const summary = claudeWithIncident({ impact: "minor" });
+      summary.incidents.push({ id: "n", name: "FYI", status: "monitoring", impact: "none" });
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("degraded");
+
+      const worse = statuspageSummary({
+        indicator: "major",
+        components: [{ id: "c1", name: "claude.ai", status: "major_outage" }],
+        incidents: [{ id: "i", name: "Slow", status: "investigating", impact: "minor" }],
+      });
+      stubFetch({ [URLS.claude]: json(worse) });
+      expect((await claudeOf()).health).toBe("outage");
+    });
+
+    it("an active incident outranks maintenance in progress, which still sets maintenance when otherwise up", async () => {
+      const summary = claudeWithIncident({ impact: "minor" });
+      summary.scheduled_maintenances = [{ id: "m", name: "Database upgrade", status: "in_progress" }];
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("degraded");
+
+      summary.incidents = [];
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("maintenance");
+    });
+
+    it("a problem incident among many notices sets the card and is listed first", async () => {
+      const incidents = Array.from({ length: 12 }, (_, i) => ({
+        id: `n${i}`,
+        name: `Notice ${i}`,
+        status: "monitoring",
+        impact: "none",
+        started_at: `2026-10-01T10:${String(i).padStart(2, "0")}:00Z`,
+      }));
+      incidents.push({
+        id: "bad",
+        name: "Real problem",
+        status: "identified",
+        impact: "major",
+        started_at: "2026-09-01T00:00:00Z",
+      });
+      stubFetch({ [URLS.claude]: json(statuspageSummary({ incidents })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("outage");
+      expect(claude.incidents[0].id).toBe("bad");
+    });
+
+    it("an Epic/Fortnite incident raises only the card it belongs to", async () => {
+      const components = [
+        { id: "g1", name: "Fortnite", status: "operational", group: true },
+        { id: "1", name: "Login", status: "operational", group_id: "g1" },
+        { id: "g2", name: "Epic Games Store", status: "operational", group: true },
+        { id: "3", name: "Login", status: "operational", group_id: "g2" },
+      ];
+      stubFetch({
+        [URLS.epicFortnite]: json(
+          statuspageSummary({
+            components,
+            incidents: [
+              { id: "b", name: "Login failures", status: "investigating", impact: "major", components: [{ id: "1" }] },
+            ],
+          }),
+        ),
+      });
+      const services = await collectAllServices();
+      expect(services.find((s) => s.id === "fortnite")!.health).toBe("outage");
+      expect(services.find((s) => s.id === "epic")!.health).toBe("operational");
     });
 
     it("sorts incidents by urgency, then recency, and names the worst one in the summary", async () => {
@@ -1343,6 +1582,111 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         kind: "parser",
         message: "Response from learn.microsoft.com is larger than 4 MiB",
       });
+    });
+
+    it("Android releases page: the newest versions, headed by the newest one, with no date to mark one fresh", async () => {
+      // A trimmed real capture of https://developer.android.com/about/versions
+      // (2026-10-01). The page gives versions and no dates, so nothing is ever
+      // "New release" here; a version that joins the list reaches the change
+      // feed through the version map instead (see diff.test.ts).
+      stubFetch({ [URLS.androidOs]: text(fixture("android-os/versions.html")) });
+      const android = await collect("android-os");
+      expect(android.failure).toBeUndefined();
+      expect(android.health).toBe("operational");
+      expect(android.summary).toBe("Latest: Android 17");
+      expect(android.components).toEqual([
+        { name: "Android 17", health: "operational", detail: "released" },
+        { name: "Android 16", health: "operational", detail: "released" },
+        { name: "Android 15", health: "operational", detail: "released" },
+        { name: "Android 14", health: "operational", detail: "released" },
+      ]);
+      expect(android.incidents).toEqual([]);
+      expect(android.meta).toEqual({
+        latest: "Android 17",
+        versions: "Android 17=released|Android 16=released|Android 15=released|Android 14=released",
+      });
+    });
+
+    it("Android releases page: a major version the page adds later becomes the headline on its own", async () => {
+      const page = fixture("android-os/versions.html").replace(
+        '<li class="devsite-nav-item"><a href="/about/versions/17"',
+        '<li class="devsite-nav-item"><a href="/about/versions/18"\n        class="devsite-nav-title"\n      ><span class="devsite-nav-text" tooltip>Android 18</span></a></li>\n\n  <li class="devsite-nav-item"><a href="/about/versions/17"',
+      );
+      stubFetch({ [URLS.androidOs]: text(page) });
+      const android = await collect("android-os");
+      expect(android.failure).toBeUndefined();
+      expect(android.summary).toBe("Latest: Android 18");
+      expect(android.components.map((component) => component.name)).toEqual([
+        "Android 18",
+        "Android 17",
+        "Android 16",
+        "Android 15",
+      ]);
+      expect(String(android.meta?.versions).startsWith("Android 18=released|Android 17=released|")).toBe(true);
+    });
+
+    it("Android releases page: the footer alone is enough, and a repeated link counts once", async () => {
+      const link = (n: number) => `<a href="/about/versions/${n}" class="x">\n  Android ${n}\n</a>`;
+      stubFetch({ [URLS.androidOs]: text(`<ul>${link(16)}${link(16)}${link(17)}</ul>`) });
+      const android = await collect("android-os");
+      expect(android.components.map((component) => component.name)).toEqual(["Android 17", "Android 16"]);
+    });
+
+    it("Android releases page: a page without the version links is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.androidOs]: text("<!DOCTYPE html><html><body><h1>We'll be right back</h1></body></html>") });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure).toEqual({
+        kind: "parser",
+        message: "Android releases page had no readable version list.",
+      });
+      expect(android.components).toEqual([]);
+      expect(android.meta).toBeUndefined();
+    });
+
+    it("Android releases page: links to other pages or with other text are not versions", async () => {
+      const page =
+        '<a href="/about/versions/17/qpr1">Android 17</a><a href="/about/versions/17">Android Beta</a>' +
+        '<a href="https://example.com/about/versions/17">Android 17</a><a href="/about/versions/pie">Android 9</a>' +
+        '<a href="/about/versions/16"><img alt="Android 16"></a><a href="/about/versions/123">Android 123</a>';
+      stubFetch({ [URLS.androidOs]: text(page) });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure?.kind).toBe("parser");
+    });
+
+    it("Android releases page: a page over the size limit is unknown, not parsed", async () => {
+      stubFetch({
+        [URLS.androidOs]: text(`<ul>${'<a href="/about/versions/17">Android 17</a>'.repeat(120_000)}</ul>`),
+      });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure).toEqual({
+        kind: "parser",
+        message: "Response from developer.android.com is larger than 4 MiB",
+      });
+    });
+
+    it("Android releases page: a redirect off the vendor's host is refused", async () => {
+      stubFetch({
+        [URLS.androidOs]: () =>
+          new Response(null, { status: 302, headers: { location: "https://example.com/about/versions" } }),
+      });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure?.kind).toBe("network");
+      expect(android.failure?.message).toContain("off the vendor's host");
+    });
+
+    it("Android releases page: a redirect within the vendor's host is followed", async () => {
+      stubFetch({
+        [URLS.androidOs]: () =>
+          new Response(null, { status: 301, headers: { location: "https://developer.android.com/about/versions/" } }),
+        "https://developer.android.com/about/versions/": text(fixture("android-os/versions.html")),
+      });
+      const android = await collect("android-os");
+      expect(android.failure).toBeUndefined();
+      expect(android.summary).toBe("Latest: Android 17");
     });
   });
 
@@ -1929,7 +2273,7 @@ describe("collectors bound vendor text and counts", () => {
     expect(claude.incidents.some((incident) => incident.informational)).toBe(false);
   });
 
-  it("Statuspage: the summary counts every incident, not only the 50 listed", async () => {
+  it("Statuspage: the card counts every incident, not only the 50 listed", async () => {
     stubFetch({
       [URLS.claude]: json(
         statuspageSummary({
@@ -1945,7 +2289,29 @@ describe("collectors bound vendor text and counts", () => {
     const claude = await collect("claude");
     expect(claude.incidents).toHaveLength(50);
     expect(claude.incidentCount).toBe(60);
-    expect(claude.summary).toBe("Up. 60 resolved recently.");
+    // Sixty open problems are a degraded card that names one of them, never "Up".
+    expect(claude.health).toBe("degraded");
+    expect(claude.summary).toBe("Minor 0");
+  });
+
+  it("Statuspage: sixty notices with no impact leave the card up and say nothing is reported", async () => {
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({
+          incidents: Array.from({ length: 60 }, (_, i) => ({
+            id: `n-${i}`,
+            name: `Notice ${i}`,
+            status: "monitoring",
+            impact: "none",
+          })),
+        }),
+      ),
+    });
+    const claude = await collect("claude");
+    expect(claude.incidents).toHaveLength(50);
+    expect(claude.incidentCount).toBe(60);
+    expect(claude.health).toBe("operational");
+    expect(claude.summary).toBe("Nothing reported.");
   });
 
   it("an uncapped list carries no incidentCount", async () => {
@@ -2026,6 +2392,19 @@ describe("collectors bound vendor text and counts", () => {
     // The version map keeps one clipped version per family.
     expect(String(appleOs.meta?.versions)).toContain("macOS=26.1");
     expect(String(appleOs.meta?.versions)).toMatch(/^iOS=9{63}…\|/);
+  });
+
+  it("Android releases page: runaway link text or a runaway tag cannot reach the summary, names or meta", async () => {
+    const page =
+      `<a href="/about/versions/17">Android 17${" ".repeat(20_000)}</a>` +
+      `<a href="/about/versions/15" ${'data-x="y" '.repeat(5_000)}>Android 15</a>` +
+      `<a href="/about/versions/16">Android 16</a>`;
+    stubFetch({ [URLS.androidOs]: text(page) });
+    const android = await collect("android-os");
+    expect(android.failure).toBeUndefined();
+    expect(android.summary).toBe("Latest: Android 16");
+    expect(android.components.map((component) => component.name)).toEqual(["Android 16"]);
+    expect(String(android.meta?.versions).length).toBeLessThanOrEqual(500);
   });
 
   it("Apple: an event id built from a long message stays short, and the same on every sweep", async () => {

@@ -43,6 +43,24 @@ export class SourceError extends Error {
   }
 }
 
+// The vendor answered, but turned the request away rather than serving it:
+// 401/403/407 (not allowed), 429 (rate limited), or a Cloudflare bot challenge.
+// That says nothing about whether the service is up, so a collector that probes
+// an endpoint directly shows it as "couldn't check" instead of an outage.
+export class RefusedError extends SourceError {
+  constructor(message: string, status: number) {
+    super(message, status);
+    this.name = "RefusedError";
+  }
+}
+
+const REFUSAL_STATUSES: ReadonlySet<number> = new Set([401, 403, 407, 429]);
+
+/** Whether `error` is a vendor refusing the request, as opposed to the service failing. */
+export function isRefusal(error: unknown): error is RefusedError {
+  return error instanceof RefusedError;
+}
+
 // The vendor answered, but not with data the collector can use: an empty
 // feed, missing items, or no channel that parses. Unlike a transport failure,
 // this usually means the payload changed and the collector needs a fix.
@@ -237,7 +255,12 @@ export async function fetchText(
     if (!response.ok) {
       // Nothing in an error page is used, so it is never downloaded.
       await response.body?.cancel().catch(() => {});
-      throw new SourceError(`${describeStatus(response.status)} from ${sourceHost(url)}`, response.status);
+      const message = `${describeStatus(response.status)} from ${sourceHost(url)}`;
+      // `cf-mitigated: challenge` is Cloudflare's own marker for a bot challenge, whatever status it carries.
+      if (REFUSAL_STATUSES.has(response.status) || response.headers.get("cf-mitigated") === "challenge") {
+        throw new RefusedError(message, response.status);
+      }
+      throw new SourceError(message, response.status);
     }
     // Still under the timeout above: a vendor trickling a body in slowly
     // is aborted like one that never answers.

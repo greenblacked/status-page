@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchJson,
   fetchText,
+  isRefusal,
   MAX_BODY_BYTES,
   meterBytes,
   PayloadError,
+  RefusedError,
   readBodyCapped,
   SourceError,
   unwrapJsonp,
@@ -141,6 +143,30 @@ describe("fetchText on an HTTP error", () => {
   it("names a code with no standard phrase listed by its number alone", async () => {
     expect(await messageFor(599, "SECRET-REASON")).toBe("599 from status.example.com");
     expect(await messageFor(418, "I'm a teapot")).toBe("418 from status.example.com");
+  });
+
+  it.each([401, 403, 407, 429])("a %i is a refusal that keeps its status", async (status) => {
+    stubFetch(() => new Response("body", { status }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedError);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as RefusedError).status).toBe(status);
+    expect(isRefusal(error)).toBe(true);
+  });
+
+  it.each([404, 500, 503])("a %i is a plain failure, not a refusal", async (status) => {
+    stubFetch(() => new Response("body", { status }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    expect(error).not.toBeInstanceOf(RefusedError);
+    expect(isRefusal(error)).toBe(false);
+  });
+
+  it("a 503 marked cf-mitigated: challenge is a refusal", async () => {
+    stubFetch(() => new Response("body", { status: 503, headers: { "cf-mitigated": "challenge" } }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(isRefusal(error)).toBe(true);
+    expect((error as RefusedError).status).toBe(503);
   });
 });
 
