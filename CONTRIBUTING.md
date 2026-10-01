@@ -56,16 +56,20 @@ Name the branch `<prefix>/<short-kebab-description>`:
 
 | Prefix | Use for | Example |
 | --- | --- | --- |
-| `fb/` | Feature: new capability | `fb/board-metrics-stars-shortcuts` |
-| `fix/` | Bug | `fix/42-aws-stale-events` |
-| `chore/` | Pins, tooling, housekeeping | `chore/bump-tanstack-start` |
+| `feature/` | New capability | `feature/board-metrics-stars-shortcuts` |
+| `fix/` | Bug fix | `fix/42-aws-stale-events` |
 | `docs/` | Documentation only | `docs/readme-integrations` |
-| `ci/` | Workflow changes | `ci/cache-actionlint-image` |
+| `ci/` | Workflow and CI script changes | `ci/cache-actionlint-image` |
+| `chore/` | Pins, tooling, housekeeping | `chore/bump-tanstack-start` |
+| `refactor/` | Restructuring with no change in behavior | `refactor/split-collectors` |
+| `test/` | Adding or fixing tests only | `test/parser-edge-cases` |
+| `perf/` | Performance work | `perf/cache-catalog-lookup` |
+| `build/` | Build system and its dependencies | `build/vite-chunk-split` |
 
 - **The description** is two to five lowercase words joined by single hyphens, saying what changes. Use only `a-z`, `0-9` and `-`, and keep the whole name to 50 characters.
 - **An issue number** goes first in the description when there is one: `fix/42-aws-stale-events`.
-- **Refactors, tests, builds and performance work** use `chore/`, unless they fix a bug (`fix/`).
-- **The prefix is not the commit type.** The pull request title is still a [Conventional Commit](#commits), and it picks the [release](#releases): an `fb/` branch has a `feat:` title.
+- **Pick the prefix that fits most of the change.** Work that fixes a bug is `fix/`, whatever it touches. The prefixes follow the Conventional Commit types, except that `feature/` is the branch for `feat:`; `feat/`, `style/`, `revert/` and the former `fb/` are not accepted.
+- **The prefix is not the commit type.** The pull request title is still a [Conventional Commit](#commits), and it picks the [release](#releases): a `feature/` branch has a `feat:` title.
 - **Tooling names its own branches.** Dependabot opens `dependabot/…`, and [`scripts/release/bump.sh`](scripts/release/bump.sh) opens `release/vX.Y.Z`. Don't create either by hand.
 
 The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request whose branch breaks these rules. It also checks where the pull request goes: `main` takes only `stage` (and the `release/vX.Y.Z` branch that [`scripts/release/bump.sh`](scripts/release/bump.sh) opens), `stage` takes only `dev` (and `chore/sync-main`, see [Releases](#releases)), and `dev` takes everything else. While `dev` is paused, `stage` also takes everything else, a fork's feature branch included, and `main` still takes only `stage` and `release/vX.Y.Z`. `dev` and `stage` are accepted as head branches for those two promotions only, and never from a fork; `main` is never a head branch. A Dependabot security update opens against `main`, the default branch: change its base to `dev` (to `stage` while `dev` is paused). Check a name before pushing, with the base branch as a second argument for the full check:
@@ -76,7 +80,9 @@ The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request w
 
 | Not | Instead | Why |
 | --- | --- | --- |
-| `feature/Board_Metrics` | `fb/board-metrics` | One prefix per kind of change, lowercase, hyphens only |
+| `feature/Board_Metrics` | `feature/board-metrics` | Lowercase, hyphens only |
+| `fb/board-metrics` | `feature/board-metrics` | The prefix is spelled out; `fb/` is no longer accepted |
+| `feat/board-metrics` | `feature/board-metrics` | `feat` is the commit type; the branch prefix is `feature/` |
 | `fix-aws` | `fix/aws-stale-events` | The slash lets Git clients group branches, and the description says what is fixed |
 | `username/readme` | `docs/readme-integrations` | Say what changes, not who changes it; the commit author already records who |
 | `wip-2026-09-25` | `chore/pin-node-22` | A date says nothing about the change |
@@ -337,7 +343,7 @@ Dependabot proposes npm (the project, and the pinned npm CLI in `tools/npm`) and
 1. Add a catalog entry in `src/lib/status/catalog.ts`
 2. Add a collector in `src/lib/status/sources.server.ts`, and call it from `collectAllServices` at the same position as its catalog entry. A test in `src/lib/status/collectors.test.ts` fails until the two lists match
 3. Use an **official** machine-readable source (Statuspage JSON, vendor incident JSON, RSS, or a documented public API)
-   - **One exception, for a vendor page with no feed.** Microsoft publishes the Windows 11 versions and their build numbers only as a table on its own release health page (`learn.microsoft.com`), with no feed or API that lists new versions and needs no sign-in (the per-version update-history feeds do not announce a new version) (the Microsoft Graph catalogue wants OAuth and an admin role). That table is read as HTML, by a bounded linear scanner in `src/lib/status/windows-release.ts`, and a table that does not have the expected columns reads as unknown. Any further HTML source needs the same written reason here
+   - **Two exceptions, for vendor pages with no feed.** Microsoft publishes the Windows 11 versions and their build numbers only as a table on its own release health page (`learn.microsoft.com`), with no feed or API that lists new versions and needs no sign-in (the per-version update-history feeds do not announce a new version) (the Microsoft Graph catalogue wants OAuth and an admin role). That table is read as HTML, by a bounded linear scanner in `src/lib/status/windows-release.ts`, and a table that does not have the expected columns reads as unknown. The same goes for the Android versions: Google publishes them only on its releases page (`developer.android.com/about/versions`), which has no feed or API, and the Android Developers Blog's Atom feed that does announce releases keeps only its latest twenty posts (about seven weeks), so it is empty most of the year. The page is read as HTML, by a bounded linear scanner in `src/lib/status/android-release.ts` that collects the `/about/versions/<number>` links whose text is "Android <number>", and a page with none reads as unknown. Any further HTML source needs the same written reason here
 4. Document the source in the README table
 5. Map vendor states onto `operational | degraded | outage | maintenance | unknown`
 6. Test the collector against a trimmed payload in `src/lib/status/__fixtures__` ([how](src/lib/status/__fixtures__/README.md)), with one malformed payload that must read as `unknown`

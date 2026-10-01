@@ -106,6 +106,17 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
   // A notice or planned maintenance is worth a flag even while everything is up; the detail is one tap away.
   const upcoming = (service.upcomingMaintenance ?? []).length > 0;
   const extras = !unread && (upcoming || service.incidents.length > 0);
+  // "Notice" is only for vendor notices with no impact. An incident that is a problem is never called one,
+  // whatever the card's health (a collector keeps an operational card free of them, but the label does not rely on it).
+  const problems = service.incidents.filter((incident) => !incident.informational).length;
+  const extra =
+    problems > 0
+      ? problems === 1
+        ? "Incident"
+        : `${problems} incidents`
+      : upcoming
+        ? "Maintenance planned"
+        : "Notice";
   const header = (
     <RowHeader name={service.name}>
       <StateWord health={service.health} />
@@ -126,7 +137,7 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
           >{`${service.latencyMs}\u202fms`}</span>
         </>
       )}
-      {extras ? ` · ${upcoming ? "Maintenance planned" : "Notice"}` : null}
+      {extras ? ` · ${extra}` : null}
       {emphasized ? (
         <>
           {" "}

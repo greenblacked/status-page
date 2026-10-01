@@ -62,7 +62,7 @@ describe("BoardSections", () => {
       "Gaming 3",
       "Platforms 2",
       "AI 3",
-      "Releases 3",
+      "Releases 4",
     ]);
   });
 

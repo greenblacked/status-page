@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { parseAppleOsTitle } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
@@ -111,6 +112,30 @@ describe("parsers stay linear on crafted vendor input", () => {
     let parsed: ReturnType<typeof parseAppleOsTitle> = null;
     expect(elapsed(() => (parsed = parseAppleOsTitle(title)))).toBeLessThan(BUDGET_MS);
     expect(parsed).toBeNull();
+  });
+
+  it.each([
+    ["unclosed tag openers", "<a".repeat(SIZE / 2)],
+    ["tag openers with a space", "<a ".repeat(SIZE / 3)],
+    ["bare angle brackets", "<".repeat(SIZE)],
+    ["a tag that never ends", `<a href="/about/versions/17"${"x".repeat(SIZE)}`],
+    ["a link that never closes", `<a href="/about/versions/17">${"Android 17".repeat(SIZE / 10)}`],
+    ["many version links that never close", '<a href="/about/versions/17">Android 17'.repeat(SIZE / 38)],
+    ["many version links closed far away", `${'<a href="/about/versions/17">x'.repeat(SIZE / 27)}</a>`],
+    ["tags with long runs of attributes", `<a ${'href="/about/versions/17" '.repeat(SIZE / 26)}>Android 17</a>`],
+    ["an unclosed quote in the href", `<a href="${"/about/versions/17".repeat(SIZE / 17)}`],
+    ["long link text of tag openers", `<a href="/about/versions/17">${"<".repeat(SIZE)}</a>`],
+    ["a long link text of spaces", `<a href="/about/versions/17">${" ".repeat(SIZE)}Android 17</a>`],
+    ["a long run of digits", `<a href="/about/versions/${"1".repeat(SIZE)}">Android 17</a>`],
+    ["many valid links", '<a href="/about/versions/17">Android 17</a>'.repeat(SIZE / 41)],
+    ["many empty links", "<a ></a>".repeat(SIZE / 8)],
+  ])("readAndroidVersionLinks: %s", (_label, html) => {
+    expect(elapsed(() => readAndroidVersionLinks(html))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("androidReleases: a long list of versions", () => {
+    const versions = Array.from({ length: SIZE }, (_, i) => String(i % 100));
+    expect(elapsed(() => androidReleases(versions))).toBeLessThan(BUDGET_MS);
   });
 
   it.each([

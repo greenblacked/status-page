@@ -27,6 +27,7 @@ body:
         - MikroTik RouterOS (mikrotik)
         - Apple OS (apple-os)
         - Windows 11 (windows)
+        - Android releases (android-os)
     validations:
       required: true
   - type: input
