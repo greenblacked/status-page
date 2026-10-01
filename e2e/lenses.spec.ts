@@ -1,15 +1,15 @@
 import { expect, type Page, test } from "@playwright/test";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 
-// The liquid-glass lens layer (src/components/status/lens-field.tsx and the
-// .lens rules in src/background.css): its markup and asset, the rules that hide,
-// still or place it, and a per-pixel contrast check. The layer is Full's: the
+// The bubble layer (src/components/status/lens-field.tsx and the .lens rules in
+// src/background.css; the class is still "lens"): its markup and asset, the rules
+// that hide, still, thin or place it, and a per-pixel contrast check. The layer is Full's: the
 // default Quiet background and Glass hide it, and the markup is there either way.
 //
 // Contrast: board.spec.ts's contrastFailures strips pseudo-elements and every
 // background-image before it runs axe, so it cannot see the lens layer. The
 // last test here measures it instead: with the content hidden and motion off,
-// it screenshots each lens disc and checks --color-subtle and --color-muted
+// it screenshots each bubble and checks --color-subtle and --color-muted
 // against every pixel more than 3px inside the rim, in light and dark. The
 // budget is 4.5:1 there; only the rim hairline (the outer
 // 3px) is exempt. The lens colours are alpha tokens in src/background.css, so
@@ -60,13 +60,13 @@ async function cssLoaded(page: Page): Promise<boolean> {
 }
 
 test.describe("markup", () => {
-  test("has a hidden layer of four lenses", async ({ page }) => {
+  test("has a hidden layer of eleven bubbles", async ({ page }) => {
     await page.goto("/");
     await hydrated(page);
     await expect(lenses(page)).toHaveCount(1);
     await expect(lenses(page)).toHaveAttribute("aria-hidden", "true");
-    await expect(page.locator(".lenses > .lens")).toHaveCount(4);
-    await expect(page.locator(".lenses > .lens > .lens-fx")).toHaveCount(4);
+    await expect(page.locator(".lenses > .lens")).toHaveCount(11);
+    await expect(page.locator(".lenses > .lens > .lens-fx")).toHaveCount(11);
     // The filter definitions are hidden from a screen reader too.
     await expect(page.locator('svg[aria-hidden="true"]:has(#lens-refract)')).toHaveCount(1);
   });
@@ -127,7 +127,7 @@ test.describe("background", () => {
     await expect(page.locator("html")).not.toHaveAttribute("data-background");
     for (const layer of layers) expect(await shown(page, layer), layer).toBe(false);
     // The markup is there all the same: the server and the browser render one page.
-    await expect(page.locator(".lenses > .lens")).toHaveCount(4);
+    await expect(page.locator(".lenses > .lens")).toHaveCount(11);
   });
 
   test("Glass shows the still glow, and no lenses", async ({ page }) => {
@@ -293,7 +293,7 @@ test.describe("styling", () => {
     const filters = await page
       .locator(".lens-fx")
       .evaluateAll((all) => all.map((node) => getComputedStyle(node).filter));
-    expect(filters).toHaveLength(4);
+    expect(filters).toHaveLength(11);
     // Browsers serialise the reference with or without quotes.
     for (const filter of filters) expect(filter).toMatch(/^url\(("|')?#lens-refract("|')?\)$/);
   });
@@ -310,30 +310,96 @@ test.describe("styling", () => {
     await expect(lenses(page)).toBeHidden();
   });
 
-  test("reduced motion stills the rim light", async ({ page }) => {
+  /** Each bubble's running animations, by property: what moves it. */
+  const motion = (page: Page) =>
+    page
+      .locator(".lens")
+      .evaluateAll((all) =>
+        all.map((lens) => lens.getAnimations().map((animation) => (animation as CSSAnimation).animationName)),
+      );
+
+  test("reduced motion stills the bubbles", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     const names = await page
       .locator(".lens")
-      .evaluateAll((all) => all.map((lens) => getComputedStyle(lens, "::after").animationName));
-    expect(names).toEqual(["none", "none", "none", "none"]);
+      .evaluateAll((all) => all.map((lens) => getComputedStyle(lens).animationName));
+    expect(names).toEqual(Array(11).fill("none"));
+    expect((await motion(page)).flat()).toEqual([]);
   });
 
-  test("the rim light orbits under a fine pointer and stands still under touch", async ({ page }) => {
+  test("the bubbles drift and breathe under a fine pointer, each on its own pace, and stand still under touch", async ({
+    page,
+  }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     const fine = await page.evaluate(() => matchMedia("(hover: hover) and (pointer: fine)").matches);
-    const names = await page
+    const running = await motion(page);
+    expect(running).toHaveLength(11);
+    if (!fine) {
+      expect(running.flat()).toEqual([]);
+      return;
+    }
+    // Sideways, up and down, and a breath: compositor properties only, never a layout or paint property.
+    for (const names of running) expect(names).toEqual(["bubble-sway", "bubble-bob", "bubble-breathe"]);
+    const timing = await page.locator(".lens").evaluateAll((all) =>
+      all.map((lens) =>
+        lens.getAnimations().map((animation) => {
+          const effect = animation.effect as KeyframeEffect;
+          const properties = new Set(effect.getKeyframes().flatMap((frame) => Object.keys(frame)));
+          return { duration: effect.getTiming().duration, properties: [...properties].sort().join(",") };
+        }),
+      ),
+    );
+    for (const bubble of timing) {
+      expect(bubble.map((a) => a.properties)).toEqual([
+        "composite,computedOffset,easing,offset,translate",
+        "composite,computedOffset,easing,offset,transform",
+        "composite,computedOffset,easing,offset,scale",
+      ]);
+      // Every loop is slow: the breath takes seconds, the drift tens of them.
+      for (const animation of bubble) expect(Number(animation.duration)).toBeGreaterThanOrEqual(4000);
+    }
+    // Their own timing: no two bubbles share a drift duration.
+    const drifts = timing.map((bubble) => bubble[0].duration);
+    expect(new Set(drifts).size).toBe(drifts.length);
+  });
+
+  test("a narrow screen draws fewer, smaller bubbles in its own places", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await hydrated(page);
+    expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+    const boxes = await page.locator(".lens").evaluateAll((all) =>
+      all.map((lens) => {
+        const box = lens.getBoundingClientRect();
+        return { shown: getComputedStyle(lens).display !== "none", d: box.width, cx: box.x + box.width / 2 };
+      }),
+    );
+    const drawn = boxes.filter((box) => box.shown);
+    expect(drawn).toHaveLength(6);
+    for (const box of drawn) expect(box.d).toBeLessThanOrEqual(48);
+    // Along the edges, clear of the middle of the column the text runs down.
+    for (const box of drawn) expect(Math.abs(box.cx - 195)).toBeGreaterThan(120);
+  });
+
+  test("bubbles are small", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "needs a desktop-width page");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await hydrated(page);
+    expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+    const sizes = await page
       .locator(".lens")
-      .evaluateAll((all) => all.map((lens) => getComputedStyle(lens, "::after").animationName));
-    expect(names).toHaveLength(4);
-    for (const name of names) {
-      if (fine) expect(name).not.toBe("none");
-      else expect(name).toBe("none");
+      .evaluateAll((all) => all.map((lens) => lens.getBoundingClientRect().width));
+    expect(sizes).toHaveLength(11);
+    for (const size of sizes) {
+      expect(size).toBeGreaterThanOrEqual(12);
+      expect(size).toBeLessThanOrEqual(80);
     }
   });
 
@@ -558,11 +624,12 @@ test.describe("contrast", () => {
   });
 
   /**
-   * The lens discs are painted layers behind the content, so axe cannot see
-   * them. With the content hidden and motion off (the aurora and the rim
-   * light stand still), this screenshots the page, then checks the WCAG
-   * contrast of the two weakest text colours against every pixel that is more
-   * than 3px inside a lens's rim. The rim hairline itself is exempt.
+   * The bubbles are painted layers behind the content, so axe cannot see
+   * them. With the content hidden and motion off (the aurora and the bubbles
+   * stand still, at the places the colour copy is aligned for), this
+   * screenshots the page, then checks the WCAG contrast of the two weakest
+   * text colours against every pixel that is more than 3px inside a bubble's
+   * rim, its highlights included. The rim hairline itself is exempt.
    */
   for (const colorScheme of ["light", "dark"] as const) {
     test(`keeps subtle and muted text at 4.5:1 inside the lenses (${colorScheme})`, async ({
@@ -593,7 +660,7 @@ test.describe("contrast", () => {
           }),
         };
       });
-      expect(setup.discs).toHaveLength(4);
+      expect(setup.discs).toHaveLength(11);
       const shot = await page.screenshot({ animations: "disabled" });
 
       // Decode and measure on a blank page: the board's CSP would refuse a data: fetch.
@@ -646,8 +713,8 @@ test.describe("contrast", () => {
           },
           { b64: Buffer.from(shot).toString("base64"), discs: setup.discs, colours: setup.colours },
         );
-        // Not vacuous: most of four large discs is on screen.
-        expect(result.checked).toBeGreaterThan(50_000);
+        // Not vacuous: eleven small bubbles are on screen, a few thousand pixels between them.
+        expect(result.checked).toBeGreaterThan(3_000);
         expect(result.failures, `worst ratios ${JSON.stringify(result.worst)}`).toEqual({ subtle: 0, muted: 0 });
       } finally {
         await helper.close();

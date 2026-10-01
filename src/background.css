@@ -4,13 +4,13 @@
     Quiet  flat paper. The default, and the only thing the base file
            (styles.css) knows about. Nothing here applies.
     Glass  frosted panels over a still glow.
-    Full   adds the slow drift, the glass lenses that bend the aurora's
-           colour, the light that wanders across the cards and the period
-           dial's sweep.
+    Full   adds the slow drift, small glass bubbles that bend the aurora's
+           colour and float about, the light that wanders across the cards
+           and the period dial's sweep.
 
   The choice is `data-background` on <html> (glass or full; Quiet is no
   attribute), set before paint by APPEARANCE_BOOT_SCRIPT and kept in step by
-  useBackground. The markup for every layer (the aurora, the lens
+  useBackground. The markup for every layer (the aurora, the bubble
   field and its filter) is always rendered, so the server's HTML and the
   hydrated page never differ; Quiet only hides it.
 
@@ -111,45 +111,35 @@
   --grain-opacity: 0.025;
 
   /*
-    The glass lenses over the aurora. Contrast budget: --color-subtle and
+    The bubbles over the aurora. Contrast budget: --color-subtle and
     --color-muted (the two weakest text colours) stay at 4.5:1 or better on
-    every pixel of a lens more than 3px inside its rim, in light and dark,
-    the caustic included. Only the rim hairline itself (the outer 3px, where
-    the bevel, fringe and rim light sit) is exempt: a glyph crosses that edge
-    for a pixel or two. The lenses spec measures this pixel by pixel, on the
-    Full background; when a token below changes, that test is the check. Dark
-    is the tight side, so its alphas stay low.
+    every pixel of a bubble more than 3px inside its rim, in light and dark,
+    the caustic and the highlights included. Only the rim hairline itself (the
+    outer 3px, where the rim, fringe and specular sit on a bubble this small)
+    is exempt: a glyph crosses that edge for a pixel or two. The lenses spec
+    measures this pixel by pixel, on the Full background; when a token below
+    changes, that test is the check. Dark is the tight side, so its alphas
+    stay low.
   */
   --lens-caustic: light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.02));
   /*
-    The aurora's currents as the lens draws them: Full's colours, at about
+    The aurora's currents as a bubble draws them: Full's colours, at about
     half the alpha in dark, where the copy lands on the original.
   */
   --lens-tint-1: light-dark(oklch(0.96 0.05 165 / 0.55), oklch(0.55 0.14 175 / 0.06));
   --lens-tint-2: light-dark(oklch(0.95 0.05 255 / 0.55), oklch(0.5 0.16 265 / 0.06));
   --lens-tint-3: light-dark(oklch(0.955 0.04 300 / 0.45), oklch(0.42 0.15 305 / 0.05));
   --lens-tint-4: light-dark(oklch(0.96 0.04 40 / 0.35), oklch(0.5 0.07 240 / 0.04));
-  --lens-body-hi: light-dark(rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.02));
-  --lens-body-lo: light-dark(rgb(70 90 150 / 0.01), rgb(0 0 0 / 0.22));
-  --lens-rim-hi: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.2));
-  --lens-rim-mid: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.1));
-  --lens-rim-lo: light-dark(rgb(16 24 40 / 0.07), rgb(255 255 255 / 0.06));
-  --lens-shade: light-dark(rgb(38 52 84 / 0.015), rgb(0 0 0 / 0.5));
+  --lens-body-hi: light-dark(rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.015));
+  --lens-body-lo: light-dark(rgb(70 90 150 / 0.04), rgb(0 0 0 / 0.16));
+  --lens-rim-hi: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.55));
+  --lens-rim-mid: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.25));
+  --lens-rim-lo: light-dark(rgb(16 24 40 / 0.1), rgb(255 255 255 / 0.07));
+  /* The crisp highlight, and the softer reflection on the far side of the bubble from it. */
+  --lens-spec: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.07));
+  --lens-glint: light-dark(rgb(255 255 255 / 0.75), rgb(255 255 255 / 0.04));
   --lens-fringe-a: light-dark(oklch(0.85 0.09 200 / 0.16), oklch(0.8 0.13 200 / 0.2));
   --lens-fringe-b: light-dark(oklch(0.82 0.1 340 / 0.16), oklch(0.72 0.17 340 / 0.18));
-  /* Centre (percent of the viewport) and diameter of each lens. */
-  --lens-1-x: 19;
-  --lens-1-y: 30;
-  --lens-1-d: clamp(190px, 46vmin, 520px);
-  --lens-2-x: 86;
-  --lens-2-y: 20;
-  --lens-2-d: clamp(120px, 30vmin, 340px);
-  --lens-3-x: 68;
-  --lens-3-y: 80;
-  --lens-3-d: clamp(170px, 40vmin, 460px);
-  --lens-4-x: 9;
-  --lens-4-y: 88;
-  --lens-4-d: clamp(100px, 24vmin, 270px);
 
   /* The period dial's own fine strokes and its warm point (Full only). */
   --dial-tick: light-dark(rgb(10 15 25 / 0.22), rgb(255 255 255 / 0.28));
@@ -220,20 +210,28 @@
   }
 
   /*
-    Four glass lenses that bend the aurora's colour like drops of water.
-    Painted only: no backdrop-filter, nothing above the content. Each lens
-    draws its own copy of the aurora's colour and a soft caustic (.lens-fx)
-    through the lens-refract SVG filter, over the aurora it copies. The
-    geometry is static; the only motion is the rim light turning (transform only),
-    and only where a pointer can hover. Same z-index as the aurora, so the
-    later DOM order puts it on top.
+    Eleven small glass bubbles that bend the aurora's colour. Painted only: no
+    backdrop-filter, nothing above the content. Each bubble draws its own copy
+    of the aurora's colour and a soft caustic (.lens-fx) through the
+    lens-refract SVG filter, over the aurora it copies, and wears a thin
+    iridescent rim (::before), a crisp specular highlight (::after) and, in its
+    box-shadow, a softer reflection on the far side. The body is nearly clear.
+    Same z-index as the aurora, so the later DOM order puts it on top.
+
+    Where they sit: a bubble's place (--x, --y, percent of the layer), size
+    (--d, from cqmin so it follows the screen, clamped so it stays a bubble)
+    and float (below) are fixed numbers per position in the list, never random,
+    so the server and the browser draw one page. On a desktop most sit in the
+    gutters either side of the column of cards; behind a card, the panel's blur
+    softens one. On a narrow screen the first six take new places along the
+    edges and the rest are not drawn.
   */
   .lenses {
     display: none;
     pointer-events: none;
     position: fixed;
     /* The large viewport, not the visible one: on iOS a fixed inset:0 box
-       follows the toolbar, and every collapse would move the lenses and
+       follows the toolbar, and every collapse would move the bubbles and
        repaint their filters. Percent tops and cqh below read this height. */
     inset: 0 auto auto 0;
     width: 100%;
@@ -244,6 +242,8 @@
   }
 
   .lens {
+    /* Its own size is the em, so the bevels below scale with the bubble. */
+    font-size: var(--d);
     position: absolute;
     left: calc(var(--x) * 1%);
     top: calc(var(--y) * 1%);
@@ -253,68 +253,65 @@
     border-radius: 50%;
     overflow: hidden;
     isolation: isolate;
-    /* Clear glass: a soft cap of light top left, a little weight at the edge. */
+    /* Clear glass: a faint cap of light top left, a little weight at the edge. */
     background:
-      radial-gradient(70% 60% at 30% 18%, var(--lens-body-hi), transparent 70%),
-      radial-gradient(100% 100% at 50% 50%, transparent 62%, var(--lens-body-lo) 100%);
+      radial-gradient(60% 50% at 34% 22%, var(--lens-body-hi), transparent 70%),
+      radial-gradient(100% 100% at 50% 50%, transparent 60%, var(--lens-body-lo) 100%);
     box-shadow:
       inset 0 0 0 1px var(--lens-rim-lo),
-      inset 2px 3px 5px -1px var(--lens-rim-hi),
-      inset -2px -3px 6px -2px var(--lens-rim-mid),
-      inset 0 0 28px 2px var(--lens-shade);
+      inset -0.06em -0.08em 0.09em -0.05em var(--lens-glint);
   }
 
-  .lens:nth-child(1) {
-    --x: var(--lens-1-x);
-    --y: var(--lens-1-y);
-    --d: var(--lens-1-d);
+  /* Position, size and float of each bubble (see above). --dx and --dy are cqmin; --t is seconds, --ph the phase. */
+  .lens:nth-child(1) { --x: 7; --y: 16; --d: clamp(22px, 4.2cqmin, 48px); --dx: 2.2; --dy: 3.2; --t: 31; --ph: 11; }
+  .lens:nth-child(2) { --x: 15; --y: 46; --d: clamp(34px, 7cqmin, 78px); --dx: 3; --dy: 4; --t: 38; --ph: 23; }
+  .lens:nth-child(3) { --x: 5; --y: 74; --d: clamp(14px, 2.2cqmin, 26px); --dx: 1.6; --dy: 2.6; --t: 19; --ph: 7; }
+  .lens:nth-child(4) { --x: 23; --y: 91; --d: clamp(20px, 3.6cqmin, 42px); --dx: 2.4; --dy: 3; --t: 27; --ph: 17; }
+  .lens:nth-child(5) { --x: 27; --y: 66; --d: clamp(12px, 1.7cqmin, 20px); --dx: 1.4; --dy: 2.2; --t: 16; --ph: 3; }
+  .lens:nth-child(6) { --x: 94; --y: 11; --d: clamp(14px, 2.2cqmin, 26px); --dx: 1.8; --dy: 2.8; --t: 22; --ph: 13; }
+  .lens:nth-child(7) { --x: 89; --y: 38; --d: clamp(30px, 6cqmin, 66px); --dx: 2.8; --dy: 3.6; --t: 35; --ph: 29; }
+  .lens:nth-child(8) { --x: 97; --y: 66; --d: clamp(18px, 3cqmin, 34px); --dx: 1.6; --dy: 3; --t: 25; --ph: 5; }
+  .lens:nth-child(9) { --x: 83; --y: 85; --d: clamp(26px, 5cqmin, 56px); --dx: 2.6; --dy: 3.4; --t: 33; --ph: 19; }
+  .lens:nth-child(10) { --x: 71; --y: 95; --d: clamp(12px, 1.8cqmin, 22px); --dx: 1.4; --dy: 2.4; --t: 17; --ph: 9; }
+  .lens:nth-child(11) { --x: 33; --y: 33; --d: clamp(12px, 1.6cqmin, 18px); --dx: 1.2; --dy: 2; --t: 14; --ph: 2; }
+
+  @container (max-width: 44rem) {
+    .lens:nth-child(n + 7) {
+      display: none;
+    }
+
+    .lens:nth-child(1) { --x: 91; --y: 9; }
+    .lens:nth-child(2) { --x: 8; --y: 38; }
+    .lens:nth-child(3) { --x: 91; --y: 34; }
+    .lens:nth-child(4) { --x: 6; --y: 63; }
+    .lens:nth-child(5) { --x: 90; --y: 79; }
+    .lens:nth-child(6) { --x: 18; --y: 94; }
   }
 
-  .lens:nth-child(2) {
-    --x: var(--lens-2-x);
-    --y: var(--lens-2-y);
-    --d: var(--lens-2-d);
-  }
-
-  .lens:nth-child(3) {
-    --x: var(--lens-3-x);
-    --y: var(--lens-3-y);
-    --d: var(--lens-3-d);
-  }
-
-  .lens:nth-child(4) {
-    --x: var(--lens-4-x);
-    --y: var(--lens-4-y);
-    --d: var(--lens-4-d);
-  }
-
-  /* The colour fringe: two hairlines nudged apart, never filtered. */
+  /*
+    The iridescent rim: a hairline ring, brightest top left where the light
+    is, with the cyan and magenta fringes of thin film on either side of the
+    far half. Never filtered; the fringe tokens are the filter's own.
+  */
   .lens::before {
     content: "";
     position: absolute;
     inset: 0;
     border-radius: 50%;
     pointer-events: none;
-    box-shadow:
-      inset 1.5px 1.5px 0 0 var(--lens-fringe-a),
-      inset -1.5px -1.5px 0 0 var(--lens-fringe-b);
-  }
-
-  /* The rim light: a conic ring, masked to 2px. Turns slowly where a pointer can hover, in Full. */
-  .lens::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    pointer-events: none;
-    padding: 2px;
+    padding: clamp(1px, 0.04em, 2px);
     background: conic-gradient(
-      from 210deg,
-      var(--lens-rim-hi),
-      transparent 16%,
-      transparent 48%,
-      var(--lens-rim-mid) 62%,
-      transparent 78%
+      from 0deg,
+      oklch(from var(--lens-fringe-a) l c h / 0.6),
+      transparent 38deg,
+      transparent 96deg,
+      oklch(from var(--lens-fringe-b) l c h / 0.6) 126deg,
+      var(--lens-rim-mid) 152deg,
+      transparent 196deg,
+      transparent 256deg,
+      var(--lens-rim-hi) 304deg,
+      oklch(from var(--lens-fringe-a) l c h / 0.6) 340deg,
+      oklch(from var(--lens-fringe-a) l c h / 0.6)
     );
     -webkit-mask:
       linear-gradient(#000 0 0) content-box exclude,
@@ -326,6 +323,20 @@
     mask-composite: exclude;
   }
 
+  /* The crisp highlight: a small tilted oval top left. It never turns, so it stays there as the bubble floats. */
+  .lens::after {
+    content: "";
+    position: absolute;
+    left: 20%;
+    top: 14%;
+    width: 27%;
+    height: 14%;
+    border-radius: 50%;
+    pointer-events: none;
+    rotate: -38deg;
+    background: radial-gradient(closest-side, var(--lens-spec) 55%, transparent);
+  }
+
   /*
     The bent colour: the aurora's four currents drawn again, aligned to it
     (a 160% field starting 30% up and left of the viewport, as .aurora::before
@@ -333,11 +344,15 @@
     opposite it, pushed through the refraction filter. Oversized so the
     filter never shows an edge.
 
-    The alignment: a lens's centre is at (x, y) in the viewport, its box
+    The alignment: a bubble's centre is at (x, y) in the viewport, its box
     starts half a diameter before that, and .lens-fx starts another 15% of a
     diameter before its box. So the field's origin, -30cqw - x, is
     d * 0.65 further along in .lens-fx's own coordinates. The caustic is the
-    lens's own and stays at 0 0.
+    bubble's own and stays at 0 0.
+
+    That alignment holds at rest. A floating bubble is up to a few percent of
+    the screen off it, which the soft gradients (each hundreds of pixels
+    across) hide, as they already hide the aurora's own drift.
   */
   .lens-fx {
     position: absolute;
@@ -381,9 +396,39 @@
     }
   }
 
-  @keyframes lens-orbit {
+  /*
+    A bubble floats on three independent loops, each back and forth and eased
+    (so it slows at the turn), with durations that do not divide one another,
+    so the path never visibly repeats: sideways (translate), up and down
+    (transform) and a slow breath, a little wider then a little taller (scale).
+    Three properties, so they compose without a keyframe for each pairing. All
+    three are compositor-only: nothing repaints and no script runs. The sizes
+    come from the bubble's --dx and --dy (cqmin) and --t, --ph (seconds).
+  */
+  @keyframes bubble-sway {
+    from {
+      translate: calc(var(--dx) * -1cqmin) 0;
+    }
     to {
-      transform: rotate(360deg);
+      translate: calc(var(--dx) * 1cqmin) 0;
+    }
+  }
+
+  @keyframes bubble-bob {
+    from {
+      transform: translateY(calc(var(--dy) * -1cqmin));
+    }
+    to {
+      transform: translateY(calc(var(--dy) * 1cqmin));
+    }
+  }
+
+  @keyframes bubble-breathe {
+    from {
+      scale: 1.045 0.955;
+    }
+    to {
+      scale: 0.96 1.04;
     }
   }
 
@@ -537,7 +582,7 @@
   }
 
   /*
-    FULL: the drift, the lenses and the wandering card light.
+    FULL: the drift, the bubbles and the wandering card light.
   */
   :root[data-background="full"] .lenses {
     display: block;
@@ -548,8 +593,21 @@
       animation: aurora-drift 84s linear infinite;
     }
 
-    :root[data-background="full"] .lens::after {
-      animation: lens-orbit 120s linear infinite;
+    /*
+      The bubbles float only here, where the aurora already drifts: a moving
+      layer behind a blurred panel makes the panel blur again each frame, and
+      with the aurora moving that is already so, so these small transform-only
+      loops add no repaint (measured: paint events match a still page). On a
+      touch screen the aurora holds still to spare the battery, so the
+      bubbles do too. Reduce Motion stops them through the global rule in
+      styles.css. No will-change: a running transform animation gets its own
+      layer without it.
+    */
+    :root[data-background="full"] .lens {
+      animation:
+        bubble-sway calc(var(--t) * 1s) ease-in-out calc(var(--ph) * -1s) infinite alternate,
+        bubble-bob calc(var(--t) * 0.73s) ease-in-out calc(var(--ph) * -0.61s) infinite alternate,
+        bubble-breathe calc(4s + var(--t) * 0.12s) ease-in-out calc(var(--ph) * -0.27s) infinite alternate;
     }
 
     /*
@@ -853,7 +911,7 @@
 
 /*
   Reduced motion: the global rule in styles.css stops every animation (the
-  drift, the lens orbit, the dial's sweep and the card light's wander); the
+  drift, the bubbles' float, the dial's sweep and the card light's wander); the
   card light would be left standing still, so it is hidden here.
 */
 @media (prefers-reduced-motion: reduce) {
