@@ -61,11 +61,33 @@ test.describe("in Berlin", () => {
   });
 });
 
+/** The clock a stamp prints in UTC, from the moment its `datetime` names: "08:04 UTC". */
+const utcClock = (iso: string) => {
+  const at = new Date(iso);
+  return `${String(at.getUTCHours()).padStart(2, "0")}:${String(at.getUTCMinutes()).padStart(2, "0")} UTC`;
+};
+
+/** The printed text with its thin no-break space as a plain one, so it can be set beside `utcClock`. */
+const plain = (text: string | undefined) => (text ?? "").replace(/\s/g, " ");
+
 test("in UTC the hydrated text is the server's text, so nothing moves", async ({ page }) => {
-  await page.goto("/");
-  const stamp = asOf(page);
-  const before = await stamp.textContent();
+  // The stamp is when the snapshot was collected, not the clock. A page load may be served a
+  // snapshot past the server's TTL, and the board then refetches at once: a later snapshot, so a
+  // later stamp, which is not hydration moving anything (and while it is in flight the bar says
+  // "Checking" and prints no time). So the text is not compared with the text of one moment, but
+  // with the moment its own `datetime` names: the server's HTML against the server's, the hydrated
+  // stamp against the one it holds once the board has settled. The same snapshot has the same text.
+  const response = await page.goto("/");
+  const html = (await response?.text()) ?? "";
+  const server = /data-testid="live-bar".*?<time[^>]*?datetime="([^"]+)"[^>]*>([^<]*)<\/time>/is.exec(html);
+  expect(server, "the server's HTML carries the stamp").not.toBeNull();
+  expect(plain(server?.[2])).toBe(utcClock(server?.[1] ?? ""));
+
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  const bar = page.getByTestId("live-bar");
+  await expect(bar).toContainText("Live");
+  const stamp = asOf(page);
   await expect(stamp).toHaveText(/^\d\d:\d\d\sUTC$/);
-  expect(await stamp.textContent()).toBe(before);
+  const [iso, text] = await stamp.evaluate((el) => [el.getAttribute("datetime") ?? "", el.textContent ?? ""]);
+  expect(plain(text)).toBe(utcClock(iso));
 });
