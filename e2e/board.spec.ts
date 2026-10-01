@@ -232,7 +232,7 @@ test("starts the tab order with a skip link that moves focus to the services", a
   await expect(cards(page)).toHaveCount(SERVICES);
   // Unhydrated, Enter follows the link's href and puts #services in the address.
   await hydrated(page);
-  const skip = page.getByRole("link", { name: "Skip to services" });
+  const skip = page.getByRole("link", { name: "Skip to the board" });
   // First in the tab order by the markup itself: nothing before it can take
   // focus, and the compact header, hidden at the top, is inert.
   const first = await page.evaluate(() => {
@@ -241,7 +241,7 @@ test("starts the tab order with a skip link that moves focus to the services", a
     );
     return focusable?.textContent?.trim();
   });
-  expect(first).toBe("Skip to services");
+  expect(first).toBe("Skip to the board");
   if (browserName === "webkit") {
     // Safari only tabs to links with a setting switched on, and WebKit's
     // Tab handling differs by platform, so focus it directly there.

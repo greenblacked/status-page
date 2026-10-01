@@ -334,7 +334,7 @@ export function BoardView({
           }}
           className="focus-ring sr-only rounded-md bg-accent px-4 py-2 text-body font-medium text-bg focus:not-sr-only focus:fixed focus:top-[calc(env(safe-area-inset-top)+0.75rem)] focus:left-[calc(env(safe-area-inset-left)+0.75rem)] focus:z-50"
         >
-          Skip to services
+          Skip to the board
         </a>
         <Hero
           generatedAt={board.generatedAt}
