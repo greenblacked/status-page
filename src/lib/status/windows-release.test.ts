@@ -60,6 +60,17 @@ describe("readHtmlTables", () => {
     expect(table).toEqual([["outer"]]);
   });
 
+  it("skips script and style in any case", () => {
+    const table = "<table><tr><td>a</td></tr></table>";
+    expect(readHtmlTables(`<SCRIPT>x<table><tr><td>no</td></tr></table></SCRIPT>${table}`)).toEqual([[["a"]]]);
+    expect(readHtmlTables(`<Style>x<table><tr><td>no</td></tr></table></STYLE>${table}`)).toEqual([[["a"]]]);
+  });
+
+  it("caps a cell that a flood of line breaks would grow", () => {
+    const [[[cell]]] = readHtmlTables(`<table><tr><td>${"<br>".repeat(1_000_000)}z</td></tr></table>`);
+    expect(cell).toBe("");
+  });
+
   it("keeps what it read of a table that never closes, and nothing of a tag that never ends", () => {
     expect(readHtmlTables("<table><tr><td>a</td><td>b")).toEqual([[["a", "b"]]]);
     expect(readHtmlTables("<table><tr><td>a</td></tr></table><table <tr")).toEqual([[["a"]]]);
@@ -169,6 +180,25 @@ describe("windowsReleases", () => {
     expect(windowsReleases(readHtmlTables(table)).map((release) => release.availableAt)).toEqual([
       "2026-09-29T00:00:00.000Z",
     ]);
+  });
+
+  it("keeps the row with the later update when a version is listed twice", () => {
+    const header = "Version|Availability date|Latest revision date|Latest build";
+    const stale = "24H2|2024-10-01|2025-01-01|26100.1";
+    const current = "24H2|2024-10-01|2025-09-29|26100.6725";
+    for (const rows of [
+      [stale, current],
+      [current, stale],
+    ]) {
+      expect(windowsReleases(readHtmlTables(versionsTable(rows, header)))).toEqual([
+        {
+          version: "24H2",
+          availableAt: "2024-10-01T00:00:00.000Z",
+          updatedAt: "2025-09-29T00:00:00.000Z",
+          build: "26100.6725",
+        },
+      ]);
+    }
   });
 
   it("is empty when no table has a Version and an Availability date column, or no row reads", () => {

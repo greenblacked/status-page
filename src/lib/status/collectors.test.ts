@@ -1267,10 +1267,10 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(appleOs.components).toEqual([]);
     });
 
-    it("Windows release health: the newest versions, headed by the one that shipped last", async () => {
-      // Hand-built in the documented layout of the page (see the fixtures
-      // README). The clock puts 26H2 (Sep 29) and 26H1's Sep 22 update inside
-      // the 14-day window and the Sep 8 updates just outside it; 23H2 is the
+    it("Windows release health: the newest versions, headed by the newest one", async () => {
+      // Hand-built from the page's known layout (see the fixtures README). The
+      // clock puts only 26H2's availability (Sep 29) inside the 14-day window:
+      // 26H1's Sep 22 update is a revision, not a new release. 23H2 is the
       // fifth row and is not kept.
       vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
       stubFetch({ [URLS.windows]: text(fixture("windows/windows11-release-information.html")) });
@@ -1279,10 +1279,10 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(windows.health).toBe("operational");
       expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1000) · Sep 29");
       expect(windows.components).toEqual([
-        { name: "Windows 11 26H2", health: "maintenance", detail: "26300.1000 · Sep 29" },
-        { name: "Windows 11 26H1", health: "maintenance", detail: "28000.1575 · Sep 22" },
-        { name: "Windows 11 25H2", health: "operational", detail: "26200.8100 · Sep 8" },
-        { name: "Windows 11 24H2", health: "operational", detail: "26100.8100 · Sep 8" },
+        { name: "26H2", health: "maintenance", detail: "26300.1000 · Sep 29" },
+        { name: "26H1", health: "operational", detail: "28000.1575 · Sep 22" },
+        { name: "25H2", health: "operational", detail: "26200.8100 · Sep 8" },
+        { name: "24H2", health: "operational", detail: "26100.8100 · Sep 8" },
       ]);
       expect(windows.incidents).toEqual([]);
       expect(windows.meta).toEqual({
@@ -1304,10 +1304,10 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(windows.failure).toBeUndefined();
       expect(windows.summary).toBe("Latest: Windows 11 27H2 (build 27500.1) · Sep 28");
       expect(windows.components.map((component) => [component.name, component.health])).toEqual([
-        ["Windows 11 27H2", "maintenance"],
-        ["Windows 11 26H2", "operational"],
-        ["Windows 11 26H1", "operational"],
-        ["Windows 11 25H2", "operational"],
+        ["27H2", "maintenance"],
+        ["26H2", "operational"],
+        ["26H1", "operational"],
+        ["25H2", "operational"],
       ]);
       expect(String(windows.meta?.versions).startsWith("Windows 11 27H2=27500.1|Windows 11 26H2=")).toBe(true);
     });

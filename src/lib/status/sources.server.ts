@@ -1634,20 +1634,22 @@ async function collectWindows(): Promise<ServiceSnapshot> {
     const releases = windowsReleases(readHtmlTables(value.body));
     if (!releases.length) throw new PayloadError("Windows release page had no readable version table.");
 
-    const shipped = windowsShippedAt;
+    // Only a new feature update counts as a new release: every serviced
+    // version gets a monthly update, so its revision date would flag the card
+    // nearly all the time. The latest revision stays in the detail line.
     const components: ComponentHealth[] = releases.map((release) => ({
-      name: `${WINDOWS_NAME} ${release.version}`,
-      health: isFreshRelease(shipped(release)) ? "maintenance" : "operational",
-      detail: [release.build, formatReleaseAge(shipped(release))].filter(Boolean).join(" · "),
+      name: release.version,
+      health: isFreshRelease(release.availableAt) ? "maintenance" : "operational",
+      detail: [release.build, formatReleaseAge(windowsShippedAt(release))].filter(Boolean).join(" · "),
     }));
 
-    const headline = [...releases].sort((a, b) => Date.parse(shipped(b)) - Date.parse(shipped(a)))[0];
+    const headline = releases[0];
     const title = `${WINDOWS_NAME} ${headline.version}${headline.build ? ` (build ${headline.build})` : ""}`;
 
     return {
       ...base("windows", new Date().toISOString(), ms),
       health: "operational",
-      summary: `Latest: ${title} · ${formatReleaseAge(shipped(headline))}`,
+      summary: `Latest: ${title} · ${formatReleaseAge(windowsShippedAt(headline))}`,
       components,
       incidents: [],
       meta: {

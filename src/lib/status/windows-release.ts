@@ -29,6 +29,8 @@ const MAX_TABLES = 40;
 const MAX_ROWS = 120;
 const MAX_CELLS = 16;
 const MAX_CELL_CHARS = 200;
+const SCRIPT_END = /<\/script/gi;
+const STYLE_END = /<\/style/gi;
 /** Newest versions kept: the ones still in service, not the page's whole history. */
 const MAX_VERSIONS = 4;
 
@@ -99,9 +101,12 @@ export function readHtmlTables(html: string): string[][][] {
     const name = html.slice(lt + (closing ? 2 : 1), nameEnd).toLowerCase();
 
     if (!closing && (name === "script" || name === "style")) {
-      const end = html.indexOf(`</${name}`, pos);
-      if (end === -1) break;
-      pos = end;
+      // Case-insensitive, and one forward scan from pos.
+      const closer = name === "script" ? SCRIPT_END : STYLE_END;
+      closer.lastIndex = pos;
+      const found = closer.exec(html);
+      if (!found) break;
+      pos = found.index;
       continue;
     }
     if (name === "table") {
@@ -129,7 +134,7 @@ export function readHtmlTables(html: string): string[][][] {
           row ??= [];
           cell = "";
         }
-      } else if (cell !== null && SPACING_TAGS.has(name)) {
+      } else if (cell !== null && SPACING_TAGS.has(name) && cell.length < MAX_CELL_CHARS * 4) {
         cell += " ";
       }
     }
@@ -202,20 +207,23 @@ export function windowsReleases(tables: string[][][]): WindowsRelease[] {
     if (headerAt === -1) continue;
     const columns = findColumns(table[headerAt]);
     if (!columns) continue;
-    const seen = new Set<string>();
-    const releases: WindowsRelease[] = [];
+    const byVersion = new Map<string, WindowsRelease>();
     for (const row of table.slice(headerAt + 1)) {
       const version = parseWindowsVersion(row[columns.version] ?? "");
       const availableAt = parseWindowsDate(row[columns.available] ?? "");
-      if (!version || !availableAt || seen.has(version)) continue;
-      seen.add(version);
-      releases.push({
+      if (!version || !availableAt) continue;
+      const release: WindowsRelease = {
         version,
         availableAt,
         updatedAt: columns.updated >= 0 ? parseWindowsDate(row[columns.updated] ?? "") : undefined,
         build: columns.build >= 0 ? parseWindowsBuild(row[columns.build] ?? "") : undefined,
-      });
+      };
+      // A version listed twice (a servicing option of its own, say) keeps the
+      // row with the later update, not whichever came first.
+      const earlier = byVersion.get(version);
+      if (!earlier || (release.updatedAt ?? "") > (earlier.updatedAt ?? "")) byVersion.set(version, release);
     }
+    const releases = [...byVersion.values()];
     if (releases.length > 0) {
       return releases
         .sort((a, b) =>

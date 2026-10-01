@@ -40,7 +40,7 @@ export function describeChange(change: PulseChange): string {
   }
 }
 
-/** "12 of 14 up": the services in operation out of all the check counted. */
+/** "12 of 15 up": the services in operation out of all the check counted. */
 export function upCaption(counts: Pulse["counts"]): string {
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   return `${counts.operational} of ${total} up`;
