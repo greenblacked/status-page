@@ -16,12 +16,16 @@ const check = checkWith;
 
 describe("branch.sh", () => {
   it.each([
-    "fb/board-metrics-stars-shortcuts",
+    "feature/board-metrics-stars-shortcuts",
     "fix/42-aws-stale-events",
-    "chore/bump-tanstack-start",
     "docs/readme-integrations",
     "ci/cache-actionlint-image",
-    "fb/a",
+    "chore/bump-tanstack-start",
+    "refactor/split-collectors",
+    "test/parser-edge-cases",
+    "perf/cache-catalog-lookup",
+    "build/pin-node-22",
+    "feature/a",
   ])("accepts %s", (name) => {
     expect(check(name).ok).toBe(true);
   });
@@ -34,15 +38,19 @@ describe("branch.sh", () => {
   );
 
   it.each([
-    ["feat/board-metrics", "an unknown prefix"],
-    ["feature/board-metrics", "an unknown prefix"],
+    ["feat/board-metrics", "a commit type that is not a branch prefix"],
+    ["fb/board-metrics", "fb/, which feature/ replaced"],
+    ["style/tidy-board", "a commit type that is not a branch prefix"],
+    ["revert/board-metrics", "a commit type that is not a branch prefix"],
+    ["Feature/board-metrics", "an uppercase prefix"],
+    ["features/board-metrics", "a prefix that only starts with an accepted one"],
     ["fix-aws", "no slash"],
-    ["fb/Add-Gemini", "uppercase"],
-    ["fb/add_gemini", "an underscore"],
-    ["fb/add--gemini", "a double hyphen"],
+    ["feature/Add-Gemini", "uppercase"],
+    ["feature/add_gemini", "an underscore"],
+    ["feature/add--gemini", "a double hyphen"],
     ["docs/readme-", "a trailing hyphen"],
-    ["fb/", "an empty description"],
-    ["fb/nested/path", "a second slash"],
+    ["feature/", "an empty description"],
+    ["feature/nested/path", "a second slash"],
     ["release/next", "a release branch without a version"],
     ["develop", "a long-lived name the repository does not use"],
     ["main", "main as a head branch, which would commit dev's work to main"],
@@ -54,14 +62,17 @@ describe("branch.sh", () => {
   });
 
   it("rejects a name over 50 characters and says how long it is", () => {
-    const name = `fb/${"a".repeat(48)}`;
+    const name = `feature/${"a".repeat(43)}`;
+    expect(name).toHaveLength(51);
     const result = check(name);
     expect(result.ok).toBe(false);
     expect(result.output).toContain(`${name.length} characters`);
   });
 
   it("accepts a name of exactly 50 characters", () => {
-    expect(check(`fb/${"a".repeat(47)}`).ok).toBe(true);
+    const name = `feature/${"a".repeat(42)}`;
+    expect(name).toHaveLength(50);
+    expect(check(name).ok).toBe(true);
   });
 
   describe("with the pull request's base branch, dev active (DEV_PAUSED=false)", () => {
@@ -69,7 +80,7 @@ describe("branch.sh", () => {
       checkWith(name, base, { DEV_PAUSED: "false", ...env });
 
     it.each([
-      ["fb/board-metrics", "dev"],
+      ["feature/board-metrics", "dev"],
       ["fix/42-aws-stale-events", "dev"],
       ["dependabot/npm_and_yarn/vite-8.4.0", "dev"],
       ["release/v0.4.0", "dev"],
@@ -83,7 +94,7 @@ describe("branch.sh", () => {
     });
 
     it.each([
-      ["fb/board-metrics", "stage", "an ordinary branch into stage"],
+      ["feature/board-metrics", "stage", "an ordinary branch into stage"],
       ["fix/urgent-hotfix", "main", "a fix into main"],
       ["dependabot/npm_and_yarn/vite-8.4.0", "main", "Dependabot into main"],
       ["dev", "main", "dev skipping stage"],
@@ -133,7 +144,7 @@ describe("branch.sh", () => {
       checkWith(name, base, { DEV_PAUSED: "true", ...env });
 
     it.each([
-      ["fb/board-metrics", "stage"],
+      ["feature/board-metrics", "stage"],
       ["fix/42-aws-stale-events", "stage"],
       ["chore/bump-tanstack-start", "stage"],
       ["docs/readme-integrations", "stage"],
@@ -149,13 +160,13 @@ describe("branch.sh", () => {
 
     it("is the default when DEV_PAUSED is not set", () => {
       const { DEV_PAUSED: _unset, ...env } = process.env;
-      const result = spawnSync(SCRIPT, ["fb/board-metrics", "stage"], { encoding: "utf8", env });
+      const result = spawnSync(SCRIPT, ["feature/board-metrics", "stage"], { encoding: "utf8", env });
       expect(result.status).toBe(0);
     });
 
     it.each([
       ["fix/urgent-hotfix", "main", "a fix into main"],
-      ["fb/board-metrics", "main", "a feature into main"],
+      ["feature/board-metrics", "main", "a feature into main"],
       ["dependabot/npm_and_yarn/vite-8.4.0", "main", "Dependabot into main"],
       ["dev", "main", "dev skipping stage"],
       ["stage", "dev", "stage into dev"],
@@ -168,12 +179,12 @@ describe("branch.sh", () => {
     });
 
     it("sends a branch aimed at main to stage, not dev", () => {
-      const result = check("fb/board-metrics", "main");
+      const result = check("feature/board-metrics", "main");
       expect(result.output).toContain("open it into stage");
       expect(result.output).not.toContain("into dev");
     });
 
-    it.each(["feat/board-metrics", "fb/Add-Gemini", "fb/nested/path"])(
+    it.each(["feat/board-metrics", "feature/Add-Gemini", "feature/nested/path"])(
       "still checks the name of %s into stage",
       (name) => {
         expect(check(name, "stage").ok).toBe(false);
@@ -181,8 +192,8 @@ describe("branch.sh", () => {
     );
 
     it("still enforces the 50 character limit into stage", () => {
-      expect(check(`fb/${"a".repeat(48)}`, "stage").ok).toBe(false);
-      expect(check(`fb/${"a".repeat(47)}`, "stage").ok).toBe(true);
+      expect(check(`feature/${"a".repeat(43)}`, "stage").ok).toBe(false);
+      expect(check(`feature/${"a".repeat(42)}`, "stage").ok).toBe(true);
     });
 
     it("lets a fork's feature branch into stage", () => {

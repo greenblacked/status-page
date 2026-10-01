@@ -489,25 +489,38 @@ function fromStatuspage(
     },
   );
 
-  const { incidents, problems, incidentCount } = listIncidents(
-    activeIncidents
-      .filter((incident) => belongs(incident))
-      .map((incident) => {
-        const name = incident.name || "Incident";
-        const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
-        return {
-          id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
-          title: name,
-          health: itemHealth,
-          ...(informational ? { informational: true } : {}),
-          startedAt: isoTimestamp(incident.started_at),
-          updatedAt: isoTimestamp(incident.updated_at),
-          // Statuspage writes incident shortlinks on stspg.io; the vendor's own
-          // status host is allowed too. No shortlink stays no link, as before.
-          url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
-        };
-      }),
-  );
+  const mapped: Incident[] = activeIncidents
+    .filter((incident) => belongs(incident))
+    .map((incident) => {
+      const name = incident.name || "Incident";
+      const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
+      return {
+        id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
+        title: name,
+        health: itemHealth,
+        ...(informational ? { informational: true } : {}),
+        startedAt: isoTimestamp(incident.started_at),
+        updatedAt: isoTimestamp(incident.updated_at),
+        // Statuspage writes incident shortlinks on stspg.io; the vendor's own
+        // status host is allowed too. No shortlink stays no link, as before.
+        url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
+      };
+    });
+
+  // An active incident is a statement about the service in its own right:
+  // vendors often leave every component Operational while an incident is
+  // open (Claude's "Delayed credits"), so the components and the page
+  // indicator are only a floor. A card is never better than its worst active
+  // problem, taken over the whole list (not just the part kept below). A
+  // notice with no impact (informational) never raises it. An incident whose
+  // impact the vendor left out still is a problem: it counts as Degraded, not
+  // as "No data" (the incident's own row keeps its unknown state).
+  for (const incident of mapped) {
+    if (!incident.informational)
+      health = worseHealth(health, incident.health === "unknown" ? "degraded" : incident.health);
+  }
+
+  const { incidents, problems, incidentCount } = listIncidents(mapped);
 
   const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
     data.scheduled_maintenances,
