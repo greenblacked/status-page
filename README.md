@@ -131,7 +131,7 @@ Collection runs on the server, so the browser never deals with vendor CORS. Each
 
 ## Quick start
 
-You need Node 22.13.0 (pinned in `.nvmrc`), npm 11.19.1, and outbound HTTPS to the vendors above.
+You need Node 22.22.2 (pinned in `.nvmrc`), npm 12.1.0, and outbound HTTPS to the vendors above.
 
 ```bash
 git clone https://github.com/greenblacked/status-page.git
@@ -453,7 +453,7 @@ docker compose up preview              # ci-node22: serve the built board on htt
 docker compose run --rm security       # ci-security: trivy (HIGH/CRITICAL) and gitleaks
 ```
 
-`node_modules` and `dist` stay inside Docker volumes, so the Linux install never overwrites a macOS or Windows one. The images follow the latest release of each Node line, while `.nvmrc` pins 22.13.0 for CI, so this is a check on the line rather than an exact replay of CI. The tags are rolling; set `CI_NODE22_IMAGE`, `CI_NODE24_IMAGE` or `CI_SECURITY_IMAGE` to an `@sha256:` digest to pin one. `docker compose down --volumes` removes the cached installs.
+`node_modules` and `dist` stay inside Docker volumes, so the Linux install never overwrites a macOS or Windows one. The images follow the latest release of each Node line, while `.nvmrc` pins 22.22.2 for CI, so this is a check on the line rather than an exact replay of CI. The tags are rolling; set `CI_NODE22_IMAGE`, `CI_NODE24_IMAGE` or `CI_SECURITY_IMAGE` to an `@sha256:` digest to pin one. `docker compose down --volumes` removes the cached installs.
 
 </details>
 
