@@ -26,6 +26,7 @@ body:
         - Claude (claude)
         - MikroTik RouterOS (mikrotik)
         - Apple OS (apple-os)
+        - Windows 11 (windows)
     validations:
       required: true
   - type: input
