@@ -63,7 +63,7 @@ For local browser tests install the browsers once (`npx playwright install chrom
 | `npm run test:coverage` | Same with coverage thresholds from `vitest.config.ts` |
 | `npm run test:e2e` | Playwright against the built preview; run `npm run build` first |
 | `npm run check` | `lint`, `typecheck`, `test`, `hygiene.sh` and `links.sh` in one go |
-| `npm run source-health` | The only command that calls the real vendors; do not run it from tests or as part of a review |
+| `npm run source-health` | The only command that probes the real vendors on purpose, to check the sources; do not run it from tests or as part of a review |
 
 **Browser tests** (`playwright.config.ts`):
 
@@ -132,7 +132,7 @@ The full list is [CONTRIBUTING.md#code-style](CONTRIBUTING.md#code-style) and [#
 **Tests**
 - Unit tests are offline: route `fetch` through `src/test/stub-fetch.ts` and read payloads from `__fixtures__`; unrouted URLs answer 404, never the network. Pin the clock (`vi.useFakeTimers` / `vi.setSystemTime`) for anything with a window such as the 14-day rules; `TZ` is UTC.
 - E2E tests run against the built preview, which reads live vendors on the server, so they assert only what holds whatever the vendors say (page, accessibility, keyboard, URL state). For a specific state, serve a fixture board with `e2e/fixture-board.ts` instead of depending on a vendor. `playwright.config.ts` pins `UTC` and `en-GB`, forbids `test.only` in CI and allows no retries: a test that needs a retry is hiding a bug.
-- Only `npm run source-health` and `source-health.yml` call the real vendors.
+- Unit tests never reach the network. E2E reaches the vendors only indirectly, through the preview server, which is why it asserts only vendor-independent things or uses `e2e/fixture-board.ts`. Only `npm run source-health` and `source-health.yml` probe the vendors on purpose, to check the sources themselves.
 
 **Security and supply chain**
 - No secrets, `.env` files or credentials in the repo (the board needs none). The Cloudflare token is an environment secret reachable only by the `deploy.yml` job for `stage` and `main`; pull request code never runs with it ([how it is kept safe](CONTRIBUTING.md#deploying)).
@@ -155,7 +155,7 @@ Applies to any agent asked to review a change here. Read [CONTRIBUTING.md](CONTR
 
 | Level | Meaning | Examples here |
 | --- | --- | --- |
-| Blocking | Wrong behaviour, a security or supply-chain regression, or a break in a stated repo rule. Must be fixed before merge | A collector turns an unreadable source into `operational`; an informational notice raises health; a second severity order; a vendor link reaches the page without `vendor-url.ts`; an unbounded loop or a quadratic regex on vendor text; an action pinned to a tag, or a workflow gaining `contents: write` or `pull_request_target`; a test that calls the real network; a missing test for a new collector |
+| Blocking | Wrong behaviour, a security or supply-chain regression, or a break in a stated repo rule. Must be fixed before merge | A collector turns an unreadable source into `operational`; an informational notice raises health; a second severity order; a vendor link reaches the page without `vendor-url.ts`; an unbounded loop or a quadratic regex on vendor text; an action pinned to a tag, or a workflow gaining `contents: write` or `pull_request_target`; a new unit test that reaches the network; a new e2e assertion that depends on a live vendor's state; a missing test for a new collector |
 | Non-blocking | Real but contained: worth fixing, safe to merge without | A missing edge-case test, a clearer name for a health mapping, a CHANGELOG line that reads like the diff |
 | Nit | Taste. Optional, and never a reason to hold the PR | Wording, ordering, a comment |
 
@@ -171,7 +171,7 @@ Applies to any agent asked to review a change here. Read [CONTRIBUTING.md](CONTR
    - Headers and CSP loosened in `security-headers.ts` or `src/start.ts` (the deliberate `'unsafe-inline'` and the dev-only CSP omission are not findings).
 4. **Supply chain and workflows.** Unpinned or caret-ranged dependencies, a new runtime dependency without a reason, a changed `allowScripts`, a lockfile that does not match `package.json`, a changed npm pin that `npm-pin.sh check` would reject, an Action not pinned to a full SHA, broader workflow `permissions`, a new `pull_request_target` or `workflow_run`, or one that checks out or runs PR code, secrets exposed to pull request code, a deploy path that runs project code beside the token. Changes under `.github/`, `scripts/` and `wrangler.jsonc` are code-owner paths: read them line by line.
 5. **Data-source policy.** An unofficial or non-machine-readable source, a service missing from the README table, or an HTML source beyond the documented Windows exception.
-6. **Tests.** New behaviour without a test; a collector test without a malformed-payload case; tests that reach the network; time-dependent tests without a pinned clock or with a zone-dependent expectation; a skipped, `only`, loosened or deleted test; a lowered coverage threshold in `vitest.config.ts`.
+6. **Tests.** New behaviour without a test; a collector test without a malformed-payload case; a unit test that reaches the network or an e2e assertion that depends on a live vendor's state; time-dependent tests without a pinned clock or with a zone-dependent expectation; a skipped, `only`, loosened or deleted test; a lowered coverage threshold in `vitest.config.ts`.
 7. **Accessibility.** Lost labels or `sr-only` text, contrast below 4.5:1 on a material, focus or keyboard regressions, motion without a reduced-motion path, anything that conveys state by colour alone.
 8. **Docs, links and changelog.** Broken links or anchors in Markdown, README or CONTRIBUTING left stale by a behaviour change, a user-visible change with no `[Unreleased]` line.
 
