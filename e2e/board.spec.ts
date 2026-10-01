@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
+import { DOCK_HYSTERESIS, DOCK_MS, transitionMs } from "../src/lib/status/dock.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, serveBoard } from "./fixture-board";
@@ -403,7 +404,12 @@ test("floats a compact header with the controls once the hero scrolls away", asy
 /** The floating bar, found by its markup: Playwright's role queries skip it while it is `inert`. */
 const controlBar = (page: Page) => page.locator('section[aria-label="Board controls"]');
 
-/** The search dock, which carries --dock (0 to 1), the search field's progress into the bar. */
+/**
+ * The search dock. From 64rem it carries --dock (0 to 1), the search field's progress into the bar, which follows
+ * the scroll. Below that the field does not follow the scroll: the dock carries data-docked once the page has
+ * reached it, and a transition in time moves the field. Every reading of "the dock" below is --dock on a wide
+ * screen and 0 or 1 (data-docked) on a phone, so one assertion serves both.
+ */
 const searchDock = (page: Page) => page.locator(".search-dock");
 
 /** Scrolls to `y` and waits three frames, so the dock's own callback and React's update have run. */
@@ -422,9 +428,22 @@ async function scrollAndSettle(page: Page, y: number): Promise<void> {
 const maxScroll = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollHeight - document.documentElement.clientHeight);
 
-/** The dock's --dock as a number. */
+/** The dock's reading as a number: --dock on a wide screen, 0 or 1 (data-docked) on a phone. */
 const dockValue = (page: Page) =>
-  searchDock(page).evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--dock") || "0"));
+  searchDock(page).evaluate((element) =>
+    element.hasAttribute("data-docked") ? 1 : Number.parseFloat(element.style.getPropertyValue("--dock") || "0"),
+  );
+
+/**
+ * Waits until the search field and its fill have stopped moving: below 64rem a transition of --t-dock follows the
+ * moment the field docks or leaves. Reading the animations also lets the browser start any that is due, so call
+ * it after the scroll has been seen by the page (scrollAndSettle).
+ */
+async function dockMoved(page: Page): Promise<void> {
+  await searchDock(page).evaluate(async (dock) => {
+    await Promise.allSettled(dock.getAnimations({ subtree: true }).map((animation) => animation.finished));
+  });
+}
 
 /** Waits out the bar's own fade and slide, but not the live ring inside it, which never finishes. */
 async function barSettled(page: Page): Promise<void> {
@@ -446,9 +465,13 @@ type DockStop = {
   frameMs: number[];
   /** How many of those frames were the fallback timer rather than a real one. */
   fellBack: number;
+  /** The dock's reading: --dock on a wide screen, 0 or 1 on a phone (see dockValue). */
   dock: number;
   shown: string | null;
+  /** Wide: the move is under way (--dock above 0). */
   docking: boolean;
+  /** Phone: the field is docked (data-docked), which its transition then plays out. */
+  docked: boolean;
   liveBottom: number;
   /** Where the hero's last line ends: the live line on a phone, the headline's sentence beside it from 48rem. */
   contentBottom: number;
@@ -583,9 +606,12 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           scrollY: window.scrollY,
           frameMs,
           fellBack,
-          dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          dock: dock?.hasAttribute("data-docked")
+            ? 1
+            : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
           shown: bar?.getAttribute("data-shown") ?? null,
           docking: dock?.hasAttribute("data-docking") ?? false,
+          docked: dock?.hasAttribute("data-docked") ?? false,
           liveBottom: live?.getBoundingClientRect().bottom ?? 0,
           contentBottom: (hero?.getBoundingClientRect().bottom ?? 0) - heroPad,
           barTop: bar?.getBoundingClientRect().top ?? 0,
@@ -662,8 +688,12 @@ type DockOffsets = {
   natural: number;
   /** The bar comes up: on a phone by itself, with the field still on its way, a good way below it. */
   barStart: number;
-  /** --dock leaves 0, and returns to 1 at moveEnd. */
+  /**
+   * Wide: --dock leaves 0 here, and returns to 1 at moveEnd. Phone: the field reaches the bar's bottom edge and
+   * docks (data-docked), the one moment the page's scrolling matters to it.
+   */
   moveStart: number;
+  /** The field reaches its pin (wide: --dock is 1 from here). */
   moveEnd: number;
 };
 
@@ -688,8 +718,8 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
   }
   // The bar is fixed and comes up on its own while the field is still PHONE_GAP px below its bottom edge (the
   // page's spacing puts the live line just out from under the sliding bar at the same moment: a test of its own
-  // checks that). The field then rises 1:1 with the page and merges into the bar once it has risen to the bar's
-  // bottom edge, over what is left of the way to its pin.
+  // checks that). The field then rises 1:1 with the page and docks once it has risen to the bar's bottom edge; the
+  // rest of the way to its pin it has only the page's own scrolling to do.
   const barStart = moveEnd - (barHeight + PHONE_GAP - (dockStick - barStick));
   return { wide, natural, barStart, moveStart: moveEnd - (barHeight - (dockStick - barStick)), moveEnd };
 }
@@ -732,7 +762,7 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   }
 });
 
-test("brings the bar up on its own first, then merges the field into it", async ({ page }) => {
+test("brings the bar up on its own first, then docks the field into it when it reaches the bar", async ({ page }) => {
   test.slow();
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -740,15 +770,15 @@ test("brings the bar up on its own first, then merges the field into it", async 
   const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field shares a row with the chips and moves in one go");
 
-  // The bar has scrolling to itself, long enough for its fade (250ms) to be well under way before the merge.
+  // The bar has scrolling to itself, long enough for its fade (250ms) to be well under way before the field docks.
   expect(moveStart - barStart, "the stretch the bar is alone").toBeGreaterThanOrEqual(PHONE_GAP - 0.5);
 
   const { up } = await dockPath(page, 2);
   const stops = await sweepDock(page, up);
   const firstShown = stops.findIndex((stop) => stop.shown === "true");
-  const firstMoving = stops.findIndex((stop) => stop.dock > 0);
+  const firstDocked = stops.findIndex((stop) => stop.docked);
   expect(firstShown, "the bar never showed").toBeGreaterThanOrEqual(0);
-  expect(firstMoving, "the field never moved").toBeGreaterThanOrEqual(0);
+  expect(firstDocked, "the field never docked").toBeGreaterThanOrEqual(0);
   // Before the bar, the field is in the flow: it rises 1:1 with the page and is never pinned on its own.
   const pin = await page.evaluate(() =>
     Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
@@ -765,41 +795,41 @@ test("brings the bar up on its own first, then merges the field into it", async 
   for (const stop of stops.filter((stop) => stop.shown === "false")) {
     expect(stop.chipHitByInput, `at ${stop.y}`).toBe(false);
   }
-  // Where the bar comes up, the field is still well below it and not yet moving.
+  // Where the bar comes up, the field is still well below it and not docked.
   const first = stops[firstShown];
-  expect(first?.dock).toBe(0);
+  expect(first?.docked).toBe(false);
   expect(first?.fieldTop ?? 0).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 12);
-  // Phase one: the bar is up while the field has not started to merge.
-  const alone = stops.filter((stop) => stop.shown === "true" && stop.dock === 0);
+  // Phase one: the bar is up while the field has not docked.
+  const alone = stops.filter((stop) => stop.shown === "true" && !stop.docked);
   expect(alone.length, "the bar never showed by itself").toBeGreaterThan(1);
   for (const stop of alone) {
-    expect(stop.docking, `at ${stop.y}`).toBe(false);
-    // The field waits below the bar, not under it.
+    // The field waits below the bar, not under it, until it docks.
     expect(stop.fieldTop, `at ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
   }
-  // --dock rises only once the bar is up, and each phase sits at its own offsets.
-  expect(firstMoving).toBeGreaterThan(firstShown);
+  // The field docks once the bar is up, at the scroll position where it reaches the bar, and stays docked on the way down.
+  expect(firstDocked).toBeGreaterThan(firstShown);
   for (const stop of stops) {
-    if (stop.dock > 0) expect(stop.shown, `at ${stop.y}`).toBe("true");
+    if (stop.docked) expect(stop.shown, `at ${stop.y}`).toBe("true");
     if (stop.scrollY < barStart) expect(stop.shown, `at ${stop.y}`).toBe("false");
     if (stop.scrollY >= barStart + 1) expect(stop.shown, `at ${stop.y}`).toBe("true");
-    if (stop.scrollY <= moveStart) expect(stop.dock, `at ${stop.y}`).toBe(0);
-    if (stop.scrollY >= moveEnd + 1) expect(stop.dock, `at ${stop.y}`).toBe(1);
+    if (stop.scrollY < moveStart - 0.5) expect(stop.docked, `at ${stop.y}`).toBe(false);
+    if (stop.scrollY >= moveStart + 1) expect(stop.docked, `at ${stop.y}`).toBe(true);
   }
-  // The merge itself is monotonic, and the field ends up inside the bar.
-  const merging = stops.filter((stop) => stop.dock > 0 && stop.dock < 1);
-  expect(merging.length).toBeGreaterThan(2);
-  for (const [index, stop] of merging.entries()) {
-    expect(stop.docking, `at ${stop.y}`).toBe(true);
-    const previous = merging[index - 1];
-    if (previous) {
-      expect(stop.dock).toBeGreaterThanOrEqual(previous.dock);
-      expect(stop.fieldTop).toBeLessThanOrEqual(previous.fieldTop + 0.5);
-    }
-  }
-  const docked = stops.find((stop) => stop.dock === 1);
-  expect(docked?.fieldTop).toBeGreaterThanOrEqual((docked?.barTop ?? 0) - 0.5);
-  expect(docked?.fieldTop).toBeLessThanOrEqual((docked?.barBottom ?? 0) + 0.5);
+  expect(stops[firstDocked]?.fieldTop, "docks at the bar's bottom edge").toBeGreaterThanOrEqual(
+    (stops[firstDocked]?.barBottom ?? 0) - 0.5,
+  );
+  // It is one step: --dock is not written at all below 64rem, and the field has no part-way pose to hold.
+  expect(new Set(stops.map((stop) => stop.dock))).toEqual(new Set([0, 1]));
+  // Docked, it ends up inside the bar.
+  await scrollAndSettle(page, Math.ceil(moveEnd) + 20);
+  await dockMoved(page);
+  const docked = await page.evaluate(() => {
+    const field = (document.querySelector(".search-field") as Element).getBoundingClientRect();
+    const bar = (document.querySelector('section[aria-label="Board controls"]') as Element).getBoundingClientRect();
+    return { fieldTop: field.top, barTop: bar.top, barBottom: bar.bottom };
+  });
+  expect(docked.fieldTop).toBeGreaterThanOrEqual(docked.barTop - 0.5);
+  expect(docked.fieldTop).toBeLessThanOrEqual(docked.barBottom + 0.5);
 });
 
 test("leaves the bar room to come up on its own under the hero's last line, at every width below 64rem", async ({
@@ -844,7 +874,7 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
     expect(gap, at).toBeGreaterThanOrEqual(barHeight + 8 + PHONE_GAP - 1);
     expect(gap, at).toBeLessThanOrEqual(barHeight + 8 + PHONE_GAP + 2);
     if (rootPx === 16) expect(gap, at).toBeLessThanOrEqual(88);
-    // The bar is alone for at least 24px of scrolling, and the merge has at least 46px.
+    // The bar is alone for at least 24px of scrolling, and the field has at least 46px left to rise to its pin.
     expect(moveStart - barStart, at).toBeGreaterThanOrEqual(24 - 0.5);
     expect(moveEnd - moveStart, at).toBeGreaterThanOrEqual(46 - 0.5);
 
@@ -854,33 +884,30 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
     const first = shown[0];
     expect(first, `${at}: the bar never showed`).toBeDefined();
     // (a) It comes up with only itself on screen: the field entirely below its bottom edge, with a visible gap,
-    // the hero's last line already out from under it, and the field not yet moving.
-    expect(first?.dock, at).toBe(0);
+    // the hero's last line already out from under it, and the field not docked.
+    expect(first?.docked, at).toBe(false);
     expect(first?.fieldTop ?? 0, at).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 16);
     for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
-    for (const stop of shown.filter((stop) => stop.dock === 0)) {
+    for (const stop of shown.filter((stop) => !stop.docked)) {
       expect(stop.fieldTop, `${at}, ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
     }
-    // Measured off the sweep, not worked out: the bar is up and the field still at 0 for a real stretch.
-    const firstMoving = stops.find((stop) => stop.dock > 0);
-    const docked = stops.find((stop) => stop.dock === 1);
+    // Measured off the sweep, not worked out: the bar is up and the field not docked for a real stretch.
+    const firstDocked = stops.find((stop) => stop.docked);
     expect(
-      firstMoving && first ? firstMoving.scrollY - first.scrollY : 0,
+      firstDocked && first ? firstDocked.scrollY - first.scrollY : 0,
       `${at}: the bar alone`,
     ).toBeGreaterThanOrEqual(22);
-    // (b) The field rises 1:1 with the page the whole way, merging or not, until it reaches its pin.
+    // (b) The field rises 1:1 with the page the whole way, docked or not, until it reaches its pin: it is the
+    // page's own (sticky) position, not something the dock moves.
     for (const stop of stops.filter((stop) => stop.scrollY <= moveEnd)) {
       expect(stop.fieldTop, `${at}, ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
     }
-    // (c) The merge is a real stretch of scrolling: --dock leaves 0 within a few px of moveStart, and reaches 1
-    // within a few px of moveEnd, never after it.
-    const merging = stops.filter((stop) => stop.dock > 0 && stop.dock < 1);
-    expect(merging.length, at).toBeGreaterThan(10);
-    expect(firstMoving?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
-    expect(firstMoving?.scrollY ?? 0, at).toBeLessThanOrEqual(moveStart + 6);
-    expect(docked?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveEnd - 6);
-    expect(docked?.scrollY ?? Number.POSITIVE_INFINITY, at).toBeLessThanOrEqual(moveEnd + 2);
-    expect((docked?.scrollY ?? 0) - (firstMoving?.scrollY ?? 0), `${at}: the merge`).toBeGreaterThanOrEqual(46 - 6);
+    // (c) The field docks within a few px of moveStart, where it meets the bar, and from there on stays docked.
+    expect(firstDocked?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
+    expect(firstDocked?.scrollY ?? Number.POSITIVE_INFINITY, at).toBeLessThanOrEqual(moveStart + 6);
+    for (const stop of stops.filter((stop) => stop.scrollY >= moveStart + 6)) {
+      expect(stop.docked, `${at}, ${stop.y}`).toBe(true);
+    }
   }
 });
 
@@ -892,7 +919,7 @@ test("keeps the bar's buttons clear of the field under Reduce Motion on a phone"
   await hydrated(page);
   const { wide, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field shares a row with the chips");
-  // Under Reduce Motion the field snaps into the bar at moveEnd, so until then it is full width and rises
+  // Under Reduce Motion the field docks, in one step, at moveEnd, so until then it is full width and rises
   // through the bar's own place: it must be under the bar, not over its buttons.
   const stops = await page.evaluate(
     async ({ from, to }) => {
@@ -916,7 +943,7 @@ test("keeps the bar's buttons clear of the field under Reduce Motion on a phone"
           shown: bar.getAttribute("data-shown"),
           hits: Boolean(hit && refresh.contains(hit)),
           overlaps: fieldBox.top < bar.getBoundingClientRect().bottom && fieldBox.right > box.left,
-          docked: document.querySelector(".search-dock")?.hasAttribute("data-docking") ?? false,
+          docked: document.querySelector(".search-dock")?.hasAttribute("data-docked") ?? false,
         });
       }
       return seen;
@@ -951,26 +978,754 @@ test("keeps the bar up while the page hovers just above where it appears", async
   await expect(bar).toHaveAttribute("data-shown", "true");
 });
 
+/**
+ * What the dock shows at each of `positions`, with window.scrollY reporting that position whether or not the page
+ * can rest there: a stand-in for iOS's rubber band, which reports a negative scrollY above the top and more than
+ * the page's end below it, and which no desktop browser produces. Each position is a scroll event and two frames
+ * (the dock's own write is coalesced into a frame of its own). The real property is put back afterwards.
+ */
+async function overscroll(
+  page: Page,
+  positions: number[],
+): Promise<{ y: number; dock: number; shown: string | null; fieldTop: number }[]> {
+  return page.evaluate(async (ys) => {
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const original = Object.getOwnPropertyDescriptor(window, "scrollY");
+    const dock = document.querySelector<HTMLElement>(".search-dock");
+    const field = document.querySelector<HTMLElement>(".search-field");
+    const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+    const seen: { y: number; dock: number; shown: string | null; fieldTop: number }[] = [];
+    try {
+      for (const y of ys) {
+        Object.defineProperty(window, "scrollY", { configurable: true, get: () => y });
+        window.dispatchEvent(new Event("scroll"));
+        await frame();
+        await frame();
+        seen.push({
+          y,
+          dock: dock?.hasAttribute("data-docked")
+            ? 1
+            : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          shown: bar?.getAttribute("data-shown") ?? null,
+          fieldTop: field?.getBoundingClientRect().top ?? 0,
+        });
+      }
+    } finally {
+      if (original) Object.defineProperty(window, "scrollY", original);
+      else Reflect.deleteProperty(window, "scrollY");
+    }
+    return seen;
+  }, positions);
+}
+
+// The two rubber-band tests below are regression guards, not proofs of a fix: the dock only compares the scroll
+// position with thresholds, and a position past either end of the page reads as that end, so they pass without any
+// special handling of the overshoot. They fail if a change makes the dock follow the overshoot (a progress that
+// extrapolates, a threshold that flips on a negative position).
+test("regression guard: keeps the dock still through a rubber band above the top of the page", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+  const [at] = await overscroll(page, [0]);
+  const seen = await overscroll(page, [-4, -90, -1, -320, 0, -40, -2000, 0]);
+  // The field does not move on its own account, and the bar never comes up for a position above the page.
+  for (const stop of seen) {
+    expect(stop.dock, `at ${stop.y}`).toBe(0);
+    expect(stop.shown, `at ${stop.y}`).toBe("false");
+    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(at.fieldTop, 0);
+  }
+});
+
+test("regression guard: keeps the dock docked through a rubber band below the end of the page", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const limit = await maxScroll(page);
+  await scrollAndSettle(page, limit);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect(await dockValue(page)).toBe(1);
+  const [at] = await overscroll(page, [limit]);
+  const seen = await overscroll(page, [limit + 6, limit + 120, limit + 2, limit + 600, limit, limit + 60]);
+  for (const stop of seen) {
+    expect(stop.dock, `at ${stop.y}`).toBe(1);
+    expect(stop.shown, `at ${stop.y}`).toBe("true");
+    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(at.fieldTop, 0);
+  }
+});
+
+test("does not move the dock when only the viewport's height changes, as iOS's toolbar does", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveStart, moveEnd } = await dockOffsets(page);
+  const frames = (count: number) =>
+    page.evaluate(
+      (n) =>
+        new Promise<void>((resolve) => {
+          const next = (left: number) => (left === 0 ? resolve() : requestAnimationFrame(() => next(left - 1)));
+          next(n);
+        }),
+      count,
+    );
+  const look = () =>
+    page.evaluate(() => {
+      const dock = document.querySelector<HTMLElement>(".search-dock");
+      const field = document.querySelector<HTMLElement>(".search-field");
+      const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+      const box = field?.getBoundingClientRect();
+      return {
+        scrollY: window.scrollY,
+        dock: dock?.hasAttribute("data-docked") ? 1 : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+        shown: bar?.getAttribute("data-shown") ?? null,
+        box: box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null,
+      };
+    });
+  // Count how often the dock measures the page: it reads the body's rect each time it does.
+  await page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>(".board-body") as HTMLElement & { measured?: number };
+    host.measured = 0;
+    const read = host.getBoundingClientRect.bind(host);
+    host.getBoundingClientRect = () => {
+      host.measured = (host.measured ?? 0) + 1;
+      return read();
+    };
+  });
+  const measured = () => page.evaluate(() => (document.querySelector(".board-body") as { measured?: number }).measured);
+  const size = page.viewportSize();
+  if (!size) throw new Error("no viewport");
+
+  // Part way through the move (wide) or just after the field docked (phone), where the dock is most sensitive to
+  // being measured again. A phone's field is read once its transition has played out.
+  const mid = Math.round((moveStart + moveEnd) / 2);
+  await scrollAndSettle(page, mid);
+  await dockMoved(page);
+  const before = await look();
+  expect(before.dock).toBeGreaterThan(0);
+  if (wide) expect(before.dock).toBeLessThan(1);
+  const measuredBefore = await measured();
+
+  // The toolbar collapses (the page gets taller by about 80px), comes back, and does it again.
+  for (const height of [size.height + 80, size.height, size.height + 80, size.height]) {
+    await page.setViewportSize({ width: size.width, height });
+    await frames(3);
+    const after = await look();
+    expect(after.scrollY, `height ${height}`).toBeCloseTo(before.scrollY, 0);
+    expect(after.dock, `height ${height}`).toBe(before.dock);
+    expect(after.shown, `height ${height}`).toBe(before.shown);
+    expect(after.box?.y, `height ${height}`).toBeCloseTo(before.box?.y ?? 0, 0);
+    expect(after.box?.x, `height ${height}`).toBeCloseTo(before.box?.x ?? 0, 0);
+    expect(after.box?.width, `height ${height}`).toBeCloseTo(before.box?.width ?? 0, 0);
+    expect(after.box?.height, `height ${height}`).toBeCloseTo(before.box?.height ?? 0, 0);
+  }
+  expect(await measured(), "a change of height alone measures the page again").toBe(measuredBefore);
+
+  // A change of width does (a rotation), so the guard is not just deaf to resizes.
+  await page.setViewportSize({ width: size.width - 20, height: size.height });
+  await frames(3);
+  expect(await measured(), "a change of width does not measure the page again").toBeGreaterThan(measuredBefore ?? 0);
+});
+
+test("keeps the dock steady through a fast scroll, down and back up", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await lightenPaint(page);
+  const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
+  const limit = await maxScroll(page);
+  const from = Math.max(0, Math.round(Math.min(barStart, moveStart) - 80));
+  const to = Math.min(limit, Math.round(moveEnd + 80));
+  // A long stride a stop: a flick, not the sweeps' careful steps. Two frames a stop: the dock writes what a scroll
+  // means in a requestAnimationFrame of its own, queued after this one's, so it is read in the frame after.
+  const run = (ys: number[]) =>
+    page.evaluate(async (stops) => {
+      const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const dock = document.querySelector<HTMLElement>(".search-dock");
+      const field = document.querySelector<HTMLElement>(".search-field");
+      const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+      const seen: { scrollY: number; fieldTop: number; dock: number; shown: string | null }[] = [];
+      for (const y of stops) {
+        window.scrollTo(0, y);
+        await frame();
+        await frame();
+        seen.push({
+          scrollY: window.scrollY,
+          fieldTop: field?.getBoundingClientRect().top ?? 0,
+          dock: dock?.hasAttribute("data-docked")
+            ? 1
+            : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          shown: bar?.getAttribute("data-shown") ?? null,
+        });
+      }
+      return seen;
+    }, ys);
+  const down: number[] = [];
+  for (let y = from; y <= to; y += 22) down.push(y);
+  const downward = await run(down);
+  const upward = await run([...down].reverse());
+  // Let the last frame's write land before the next scroll.
+  await scrollAndSettle(page, 0);
+
+  const flips = (stops: { shown: string | null }[]) => stops.filter((s, i) => i > 0 && s.shown !== stops[i - 1].shown);
+  // Down: the page goes only one way, so the field only rises (it stops at its pin), the dock only grows (docks
+  // once, on a phone) and the bar comes up once. Up is the same run backwards. Not one stop goes back and forth.
+  for (const [index, stop] of downward.entries()) {
+    expect(stop.scrollY, `down, stop ${index}`).toBeGreaterThanOrEqual(downward[Math.max(0, index - 1)].scrollY);
+    if (index === 0) continue;
+    const previous = downward[index - 1];
+    expect(stop.fieldTop, `down, at ${stop.scrollY}`).toBeLessThanOrEqual(previous.fieldTop + 0.5);
+    expect(stop.dock, `down, at ${stop.scrollY}`).toBeGreaterThanOrEqual(previous.dock);
+  }
+  for (const [index, stop] of upward.entries()) {
+    if (index === 0) continue;
+    const previous = upward[index - 1];
+    expect(stop.scrollY, `up, stop ${index}`).toBeLessThanOrEqual(previous.scrollY);
+    expect(stop.fieldTop, `up, at ${stop.scrollY}`).toBeGreaterThanOrEqual(previous.fieldTop - 0.5);
+    expect(stop.dock, `up, at ${stop.scrollY}`).toBeLessThanOrEqual(previous.dock);
+  }
+  expect(flips(downward).length, "the bar came up more than once on the way down").toBeLessThanOrEqual(1);
+  expect(flips(upward).length, "the bar went more than once on the way up").toBeLessThanOrEqual(1);
+  // Above its pin the field is the page's own: it is where the page puts it, at every stop, not a frame behind.
+  const pin = await page.evaluate(() =>
+    Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
+  );
+  for (const stop of [...downward, ...upward].filter((stop) => natural - stop.scrollY > pin + 1)) {
+    expect(stop.fieldTop, `at ${stop.scrollY}`).toBeCloseTo(natural - stop.scrollY, 0);
+  }
+  expect(downward.at(-1)?.dock).toBe(1);
+  expect(upward.at(-1)?.dock).toBe(0);
+});
+
+/**
+ * Scrolls to `y` and, the moment the page has docked or released the field (data-docked changes), stops the
+ * transitions that start with it, before a frame is drawn, so a test can look at the field at the start of its
+ * move whatever the speed of the browser. `release` lets them finish. Phone only.
+ */
+async function dockHeld(page: Page, y: number): Promise<{ clearOpacity: number | null }> {
+  // Moves are armed two frames after the load; a scroll before that is a snap, not a move.
+  await expect(page.locator(".search-dock")).toHaveAttribute("data-armed", "");
+  return page.evaluate(
+    (top) =>
+      new Promise<{ clearOpacity: number | null }>((resolve, reject) => {
+        const dock = document.querySelector(".search-dock") as HTMLElement;
+        const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
+        const was = dock.hasAttribute("data-docked");
+        const timer = window.setTimeout(() => {
+          observer.disconnect();
+          reject(new Error(`the dock did not react to ${top}`));
+        }, 10_000);
+        const observer = new MutationObserver(() => {
+          if (dock.hasAttribute("data-docked") === was) return;
+          observer.disconnect();
+          window.clearTimeout(timer);
+          // Reading the animations lets the browser start the ones this change calls for, in this very frame.
+          for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
+            animation.pause();
+          }
+          // Read in this task: the dock's own timer ends the wait for the move whether or not it is held.
+          const clear = dock.querySelector('button[aria-label="Clear search"]');
+          resolve({ clearOpacity: clear ? Number.parseFloat(getComputedStyle(clear).opacity) : null });
+        });
+        observer.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
+        window.scrollTo(0, top);
+      }),
+    y,
+  );
+}
+
+/** Lets the transitions `dockHeld` stopped run to their end. */
+const dockRelease = (page: Page) =>
+  page.evaluate(async () => {
+    const dock = document.querySelector(".search-dock") as HTMLElement;
+    const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
+    const running = [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()];
+    for (const animation of running) animation.finish();
+    await Promise.allSettled(running.map((animation) => animation.finished));
+  });
+
+/** Where things are, for a test of where the field is. */
+const dockBoxes = (page: Page) =>
+  page.evaluate(() => {
+    const rect = (element: Element | null) => {
+      const { left, top, width, height, right, bottom } = (element as Element).getBoundingClientRect();
+      return { left, top, width, height, right, bottom };
+    };
+    const dock = document.querySelector(".search-dock") as HTMLElement;
+    const chrome = dock.querySelector(".search-chrome");
+    return {
+      dock: rect(dock),
+      field: rect(dock.querySelector(".search-field")),
+      chrome: rect(chrome),
+      input: rect(dock.querySelector("input")),
+      slot: rect(document.querySelector('section[aria-label="Board controls"] div[class*="max-w-[26rem]"]')),
+      bar: rect(document.querySelector('section[aria-label="Board controls"]')),
+      chromeTransform: getComputedStyle(chrome as Element).transform,
+      zIndex: getComputedStyle(dock).zIndex,
+    };
+  });
+
+test("draws the search field's fill behind a see-through input, the size of the field, at every width", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { chrome, field, input, style } = await page.evaluate(() => {
+    const rect = (element: Element | null) => {
+      const { left, top, width, height } = (element as Element).getBoundingClientRect();
+      return { left, top, width, height };
+    };
+    const fieldElement = document.querySelector(".search-field") as Element;
+    const chromeElement = fieldElement.querySelector(".search-chrome") as Element;
+    const inputElement = fieldElement.querySelector("input") as Element;
+    return {
+      chrome: rect(chromeElement),
+      field: rect(fieldElement),
+      input: rect(inputElement),
+      style: {
+        chromeFill: getComputedStyle(chromeElement).backgroundColor,
+        inputFill: getComputedStyle(inputElement).backgroundColor,
+        hidden: chromeElement.getAttribute("aria-hidden"),
+        transform: getComputedStyle(chromeElement).transform,
+      },
+    };
+  });
+  // The fill is the field, edge to edge, and at rest unscaled, so its corners are the .control radius.
+  for (const key of ["left", "top", "width", "height"] as const) {
+    expect(chrome[key], `fill ${key}`).toBeCloseTo(field[key], 0);
+    expect(input[key], `input ${key}`).toBeCloseTo(field[key], 0);
+  }
+  expect(style.transform).toBe("none");
+  expect(style.hidden).toBe("true");
+  expect(style.inputFill, "the input shows the fill, not a fill of its own").toBe("rgba(0, 0, 0, 0)");
+  expect(style.chromeFill, "the fill is drawn").not.toBe("rgba(0, 0, 0, 0)");
+});
+
+test("docks the field in one step where it meets the bar, and holds it a few px short of that", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveStart } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the move follows the scroll, with no threshold");
+  const dockAt = Math.ceil(moveStart);
+  const at = async (y: number) => {
+    await scrollAndSettle(page, y);
+    return dockValue(page);
+  };
+  // Short of the point where the field meets the bar's bottom edge it is not docked, however near.
+  expect(await at(dockAt - 3)).toBe(0);
+  expect(await at(dockAt + 1)).toBe(1);
+  // Docked, it stays docked through the hold below that point, so a finger resting there cannot restart the move...
+  expect(await at(dockAt - (DOCK_HYSTERESIS - 3))).toBe(1);
+  expect(await at(dockAt + 1)).toBe(1);
+  // ...and is released beyond it.
+  expect(await at(dockAt - DOCK_HYSTERESIS - 3)).toBe(0);
+  // Released, it does not dock again until the point itself.
+  expect(await at(dockAt - 3)).toBe(0);
+  expect(await at(dockAt + 1)).toBe(1);
+});
+
+test("moves the docking field with transform and opacity only, over the dock's own time", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveStart } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll instead of playing a transition");
+
+  // What the stylesheet says: of everything in the dock, only transform is timed, over the same time as the
+  // stylesheet's token, which dock.ts names too; and on a narrow phone the bar's verdict fades by opacity alone.
+  const css = await page.evaluate(() => {
+    const dock = document.querySelector(".search-dock") as HTMLElement;
+    const timed = (element: Element) => {
+      const style = getComputedStyle(element);
+      const properties = style.transitionProperty.split(",").map((value) => value.trim());
+      const durations = style.transitionDuration.split(",").map((value) => value.trim());
+      return properties.filter((_, index) => Number.parseFloat(durations[index % durations.length]) > 0);
+    };
+    const verdict = document.querySelector("[data-bar-verdict]") as Element;
+    return {
+      token: getComputedStyle(document.documentElement).getPropertyValue("--t-dock").trim(),
+      field: timed(dock.querySelector(".search-field") as Element),
+      chrome: timed(dock.querySelector(".search-chrome") as Element),
+      fieldDuration: getComputedStyle(dock.querySelector(".search-field") as Element).transitionDuration,
+      everything: [dock, ...dock.querySelectorAll("*")].flatMap(timed),
+      verdict: timed(verdict),
+      verdictDuration: getComputedStyle(verdict).transitionDuration,
+      narrow: matchMedia("(width < 40rem)").matches,
+    };
+  });
+  // The stylesheet may spell it 180ms or .18s.
+  expect(transitionMs(css.token)).toBeCloseTo(DOCK_MS, 5);
+  expect(css.field).toEqual(["transform"]);
+  expect(css.chrome).toEqual(["transform"]);
+  expect(Number.parseFloat(css.fieldDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
+  for (const property of css.everything) expect(["transform", "opacity"], "in the dock").toContain(property);
+  if (css.narrow) {
+    expect(css.verdict).toEqual(["opacity"]);
+    expect(Number.parseFloat(css.verdictDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
+  }
+
+  // What the browser then runs when the field docks: transitions of those properties and no other.
+  await dockHeld(page, Math.ceil(moveStart) + 2);
+  const running = await page.evaluate(() => {
+    const dock = document.querySelector(".search-dock") as HTMLElement;
+    const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
+    return [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()].map((animation) => ({
+      kind: typeof CSSTransition !== "undefined" && animation instanceof CSSTransition ? "transition" : "other",
+      property: (animation as CSSTransition).transitionProperty,
+      ms: Number(animation.effect?.getComputedTiming().duration),
+    }));
+  });
+  expect(running.length, "the field moves").toBeGreaterThan(0);
+  for (const animation of running) {
+    expect(animation.kind).toBe("transition");
+    expect(["transform", "opacity"]).toContain(animation.property);
+    expect(animation.ms).toBeCloseTo(DOCK_MS, 0);
+  }
+  expect(running.some((animation) => animation.property === "transform")).toBe(true);
+  await dockRelease(page);
+});
+
+test("starts the field's fill where it was and ends it in the slot, never at the wrong width in between", async ({
+  page,
+}) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveStart } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll, with no fill to play");
+  const rest = await dockBoxes(page);
+  expect(rest.chromeTransform, "undocked, the fill is unscaled").toBe("none");
+
+  // Docking, held at the first frame of its move: the input has its docked width already (one step, under the
+  // transition), while the fill still covers what the field covered, edge to edge.
+  await dockHeld(page, Math.ceil(moveStart) + 2);
+  const start = await dockBoxes(page);
+  expect(
+    Math.abs(start.input.width - start.slot.width),
+    "the input is at its docked width at once",
+  ).toBeLessThanOrEqual(1);
+  expect(start.chrome.width, "the fill still has the old width").toBeGreaterThan(start.slot.width + 20);
+  expect(start.chrome.width).toBeCloseTo(rest.chrome.width, 0);
+  expect(start.chrome.left).toBeCloseTo(rest.chrome.left, 0);
+  await dockRelease(page);
+  const end = await dockBoxes(page);
+  // The slot's offsets are whole pixels (the dock measures them from layout), so it is within one.
+  for (const key of ["left", "width", "height"] as const) {
+    expect(Math.abs(end.chrome[key] - end.slot[key]), `docked fill ${key}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(end.field[key] - end.slot[key]), `docked field ${key}`).toBeLessThanOrEqual(1);
+  }
+  expect(end.chromeTransform, "docked, the fill is unscaled too, so its corners are not squashed").toBe("none");
+
+  // Leaving, the same the other way: the fill starts as narrow as it was, and ends as wide as the field.
+  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
+  const leaving = await dockBoxes(page);
+  expect(leaving.chrome.width, "the fill starts at the docked width").toBeCloseTo(end.chrome.width, 0);
+  expect(leaving.chrome.left).toBeCloseTo(end.chrome.left, 0);
+  expect(leaving.input.width, "the input is at its full width at once").toBeGreaterThan(end.slot.width + 20);
+  await dockRelease(page);
+  const back = await dockBoxes(page);
+  expect(back.chrome.width).toBeCloseTo(back.dock.width, 0);
+  expect(back.chrome.left).toBeCloseTo(back.dock.left, 0);
+  expect(back.chromeTransform).toBe("none");
+});
+
+test("never puts the field under the bar, so a flick's late frame cannot hide it", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveStart } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the bar is not fixed, and the field is always over it");
+  const zIndex = () => searchDock(page).evaluate((dock) => Number(getComputedStyle(dock).zIndex));
+  const barZ = await controlBar(page).evaluate((bar) => Number(getComputedStyle(bar).zIndex));
+  // An undocked field is always below the bar's bottom edge (the sweeps above check that), so it can be over the
+  // bar all the time: a field that a flick carried into the bar before the page could dock it is then drawn over
+  // it, full width, while it shrinks, not hidden under it for a frame and popped on top.
+  expect(await zIndex(), "at the top").toBeGreaterThan(barZ);
+  await scrollAndSettle(page, Math.floor(moveStart) - 4);
+  expect(await zIndex(), "with the bar up alone").toBeGreaterThan(barZ);
+  await dockHeld(page, Math.ceil(moveStart) + 2);
+  expect(await zIndex(), "as it docks").toBeGreaterThan(barZ);
+  await dockRelease(page);
+  await scrollAndSettle(page, await maxScroll(page));
+  expect(await zIndex(), "docked, after a flick").toBeGreaterThan(barZ);
+  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
+  expect(await zIndex(), "as it leaves").toBeGreaterThan(barZ);
+  await dockRelease(page);
+});
+
+test("opens a page that is already scrolled past the dock with the field docked, and plays no move", async ({
+  page,
+}) => {
+  test.slow();
+  // Every transition that starts, from before the page's own script runs.
+  await page.addInitScript(() => {
+    const runs: string[] = [];
+    (window as Window & { __runs?: string[] }).__runs = runs;
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        const element = event.target as Element;
+        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
+      },
+      true,
+    );
+  });
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
+  await scrollAndSettle(page, Math.ceil(moveEnd) + 80);
+  await dockMoved(page);
+  expect(await dockValue(page)).toBe(1);
+  // Back to the same place the way a reload or a return to the tab does: the browser restores the scroll.
+  await page.reload();
+  await hydrated(page);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(moveEnd);
+  await expect.poll(() => dockValue(page)).toBe(1);
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  const runs = await page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
+  expect(
+    runs.filter((run) => run.includes("transform")),
+    "the field's move played on load",
+  ).toEqual([]);
+  // And it is where a docked field belongs: in its slot, not on its way there.
+  const boxes = await dockBoxes(page);
+  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
+  expect(boxes.chromeTransform).toBe("none");
+});
+
+test("keeps a docked field in its slot when the bar's text moves the slot, without sliding it", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
+  await scrollAndSettle(page, Math.ceil(moveEnd) + 80);
+  await dockMoved(page);
+  expect(await dockValue(page)).toBe(1);
+  // From here on, every transition the dock starts. Refreshing changes the bar's lead text ("Checking..."),
+  // which from 40rem sits in the flow before the slot: the slot moves and resizes under a docked field.
+  await page.evaluate(() => {
+    const runs: string[] = [];
+    (window as Window & { __runs?: string[] }).__runs = runs;
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        const element = event.target as Element;
+        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
+      },
+      true,
+    );
+  });
+  const refresh = controlBar(page).getByRole("button", { name: "Refresh status now" });
+  await pressRefresh(page, refresh);
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  const runs = await page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
+  expect(
+    runs.filter((run) => run.includes("transform")),
+    "the docked field slid when its slot changed",
+  ).toEqual([]);
+  const boxes = await dockBoxes(page);
+  expect(Math.abs(boxes.field.left - boxes.slot.left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
+});
+
+test("takes the pose a scroll gives it before the page has loaded without playing a move", async ({ page }) => {
+  test.slow();
+  // WebKit restores a reloaded page's scroll position as late as the end of the load, after the dock's hook has
+  // run. Held here by an image that does not answer until the test says so, so the load stays open.
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/__held.png", async (route) => {
+    await held;
+    await route.abort();
+  });
+  await page.addInitScript(() => {
+    const runs: string[] = [];
+    (window as Window & { __runs?: string[] }).__runs = runs;
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        const element = event.target as Element;
+        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
+      },
+      true,
+    );
+    new Image().src = "/__held.png";
+  });
+  await page.goto("/", { waitUntil: "commit" });
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  expect(await page.evaluate(() => document.readyState), "the load is still open").not.toBe("complete");
+  const { wide, moveStart, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
+  await page.evaluate((to) => window.scrollTo(0, to), Math.ceil(moveEnd) + 80);
+  await expect.poll(() => dockValue(page)).toBe(1);
+  const played = () =>
+    page.evaluate(() =>
+      ((window as Window & { __runs?: string[] }).__runs ?? []).filter((run) => run.includes("transform")),
+    );
+  expect(await played(), "the field's move played before the load").toEqual([]);
+  release();
+  await page.waitForLoadState("load");
+  expect(await dockValue(page)).toBe(1);
+  const boxes = await dockBoxes(page);
+  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
+  // The transitions are back for the next pose: the hold is two frames long, not for good, and the moves are
+  // armed. A pose change after the load is a move again.
+  await expect(page.locator(".search-dock")).not.toHaveAttribute("data-instant", "");
+  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
+  // transitionrun is dispatched with the next frame, so it is waited for rather than read at once.
+  await expect
+    .poll(async () => (await played()).length, { message: "the field's move comes back after the load" })
+    .toBeGreaterThan(0);
+  await dockRelease(page);
+});
+
+test("hides the Clear button for the field's move and brings it back once the field has stopped", async ({ page }) => {
+  test.slow();
+  await page.goto("/?q=aws");
+  await expect(page.getByRole("button", { name: "Clear search" })).toBeVisible();
+  await hydrated(page);
+  const { wide, moveStart } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll, and the button with it");
+  const opacity = () =>
+    page.evaluate(() =>
+      Number.parseFloat(
+        getComputedStyle(document.querySelector('.search-field button[aria-label="Clear search"]') as Element).opacity,
+      ),
+    );
+  expect(await opacity()).toBe(1);
+  // It would be at the docked input's edge while the fill is still wide: it waits out the move.
+  expect((await dockHeld(page, Math.ceil(moveStart) + 2)).clearOpacity, "while the field docks").toBe(0);
+  await dockRelease(page);
+  await expect.poll(opacity).toBe(1);
+  expect(
+    (await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4)).clearOpacity,
+    "while the field leaves",
+  ).toBe(0);
+  await dockRelease(page);
+  await expect.poll(opacity).toBe(1);
+});
+
+test("fades the bar's verdict with the field's move, and brings it back when the field leaves", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveStart } = await dockOffsets(page);
+  test.skip(wide || (page.viewportSize()?.width ?? 0) >= 640, "the verdict only gives way to the field under 640px");
+  const opacity = () =>
+    page.evaluate(() =>
+      Number.parseFloat(getComputedStyle(document.querySelector("[data-bar-verdict]") as Element).opacity),
+    );
+  await scrollAndSettle(page, Math.ceil(moveStart) - 6);
+  await barSettled(page);
+  expect(await opacity(), "the verdict shows while the bar has the scrolling to itself").toBe(1);
+  await dockHeld(page, Math.ceil(moveStart) + 2);
+  expect(await opacity(), "it starts to fade as the field docks").toBeGreaterThan(0.9);
+  await dockRelease(page);
+  expect(await opacity(), "and is gone once the field is in").toBe(0);
+  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
+  await dockRelease(page);
+  await barSettled(page);
+  expect(await opacity(), "it returns when the field leaves").toBe(1);
+});
+
+test("shortens the search placeholder as the field docks, and restores it after the field has left", async ({
+  page,
+}) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveStart } = await dockOffsets(page);
+  test.skip(wide, "from 64rem there is no move in time, and the placeholder follows the field at once");
+  const input = page.getByLabel("Search services");
+  const rest = await input.getAttribute("placeholder");
+  test.skip(rest === "Search…", "where the long placeholder does not fit, the short one is used throughout");
+
+  // Docking: when the dock changes, when the move's transition ends, and when the placeholder changes.
+  const timeline = (y: number) =>
+    page.evaluate(
+      (top) =>
+        new Promise<{ docked: number; ended: number | null; swapped: number }>((resolve, reject) => {
+          const dock = document.querySelector(".search-dock") as HTMLElement;
+          const field = dock.querySelector(".search-field") as HTMLElement;
+          const search = document.querySelector('input[type="search"]') as HTMLInputElement;
+          const was = dock.hasAttribute("data-docked");
+          const before = search.placeholder;
+          const seen: { docked?: number; ended?: number } = {};
+          const stop = window.setTimeout(() => reject(new Error("the placeholder never changed")), 10_000);
+          const mark = new MutationObserver(() => {
+            if (dock.hasAttribute("data-docked") !== was) seen.docked ??= performance.now();
+          });
+          mark.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
+          field.addEventListener("transitionend", (event) => {
+            if (event.target === field && event.propertyName === "transform") seen.ended ??= performance.now();
+          });
+          const swap = new MutationObserver(() => {
+            if (search.placeholder === before) return;
+            swap.disconnect();
+            mark.disconnect();
+            window.clearTimeout(stop);
+            resolve({ docked: seen.docked ?? Number.NaN, ended: seen.ended ?? null, swapped: performance.now() });
+          });
+          swap.observe(search, { attributes: true, attributeFilter: ["placeholder"] });
+          window.scrollTo(0, top);
+        }),
+      y,
+    );
+  // Going in the input is at its docked width at once, so the long text would be clipped: the short one comes with
+  // the dock, in the same task, well before the move ends.
+  const down = await timeline(Math.ceil(moveStart) + 2);
+  expect(down.swapped - down.docked, "going in, as it docks").toBeLessThan(DOCK_MS / 2);
+  if (down.ended !== null) expect(down.swapped, "going in, before the move ends").toBeLessThanOrEqual(down.ended);
+  await expect(input).toHaveAttribute("placeholder", "Search…");
+  await dockMoved(page);
+  const up = await timeline(Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
+  expect(up.swapped - up.docked, "coming out, after the move").toBeGreaterThanOrEqual(DOCK_MS - 20);
+  if (up.ended !== null) expect(up.swapped, "coming out, after transitionend").toBeGreaterThanOrEqual(up.ended);
+  await expect(input).toHaveAttribute("placeholder", rest ?? "");
+});
+
 test("changes the search placeholder only where the field is at rest", async ({ page }) => {
   test.slow();
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
   const { path } = await dockPath(page);
+  const { wide } = await dockOffsets(page);
   const stops = await sweepDock(page, path);
   const half = stops.length / 2;
   const long = "Search GCP, CS2 Europe, RouterOS…";
   // At rest it is the long one where the field has room for it, and the short one in the 200px margin column of
   // a wide screen. Either way it never changes part way: down, it changes only once the field is in the bar,
-  // and back up only once the field is out of it.
+  // and back up only once the field is out of it. On a wide screen that is the stop at which --dock reaches 1 (or
+  // leaves it). On a phone the field is still moving for DOCK_MS after it docks, and the placeholder waits for it
+  // (a test of its own holds the move still and watches), so a stop right after the dock may still show the old one.
   const rest = stops[0].placeholder;
   expect(stops[0].dock).toBe(0);
   expect([long, "Search…"]).toContain(rest);
   for (const stop of stops.slice(0, half)) {
-    expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : rest);
+    if (wide) expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : rest);
+    else if (stop.dock === 0) expect(stop.placeholder, `going down, at ${stop.y}`).toBe(rest);
   }
   for (const stop of stops.slice(half)) {
-    expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? rest : "Search…");
+    if (wide) expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? rest : "Search…");
+    else if (stop.dock === 1) expect(stop.placeholder, `coming up, at ${stop.y}`).toBe("Search…");
   }
 });
 
@@ -1184,6 +1939,96 @@ test("shows a clear button once there is a search, and it keeps the field focuse
 
 test.describe("with reduced motion", () => {
   test.use({ reducedMotion: "reduce" });
+
+  test("steps the search field into the bar and out again, with no transition", async ({ page }) => {
+    test.slow();
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    const { wide, moveEnd } = await dockOffsets(page);
+    test.skip(wide, "from 64rem the field snaps through --dock, which the test below reads");
+    // Nothing in the dock is timed, and nothing is left running.
+    const timed = await page.evaluate(() =>
+      [
+        document.querySelector(".search-field"),
+        document.querySelector(".search-chrome"),
+        document.querySelector("[data-bar-verdict]"),
+      ].map((element) => getComputedStyle(element as Element).transitionDuration),
+    );
+    for (const duration of timed) expect(Number.parseFloat(duration)).toBe(0);
+    // Docks where the field reaches its pin: at that frame it is already in its slot, with no animation to get there.
+    await dockHeld(page, Math.ceil(moveEnd) + 1);
+    const boxes = await dockBoxes(page);
+    const running = await page.evaluate(
+      () => (document.querySelector(".search-dock") as HTMLElement).getAnimations({ subtree: true }).length,
+    );
+    expect(running, "no transition plays under Reduce Motion").toBe(0);
+    for (const key of ["left", "width"] as const) {
+      expect(
+        Math.abs(boxes.field[key] - boxes.slot[key]),
+        `the field's ${key}, in its slot at once`,
+      ).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs(boxes.chrome[key] - boxes.slot[key]),
+        `the fill's ${key}, in its slot at once`,
+      ).toBeLessThanOrEqual(1);
+    }
+    // Back out: it is full width again in the same frame.
+    await dockHeld(page, Math.floor(moveEnd) - 12);
+    const out = await dockBoxes(page);
+    expect(out.field.width).toBeCloseTo(out.dock.width, 0);
+    expect(out.chrome.width).toBeCloseTo(out.dock.width, 0);
+  });
+
+  test("keeps the field under the bar until it docks, and over it from then on", async ({ page }) => {
+    test.slow();
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    const { wide, moveEnd } = await dockOffsets(page);
+    test.skip(wide, "from 64rem the bar is not fixed, and the field is always over it");
+    const zIndex = () => searchDock(page).evaluate((dock) => Number(getComputedStyle(dock).zIndex));
+    const barZ = await controlBar(page).evaluate((bar) => Number(getComputedStyle(bar).zIndex));
+    // The field rises through the bar's own place at full width before it steps in: it must not cover the buttons.
+    expect(await zIndex(), "at the top").toBeLessThan(barZ);
+    await scrollAndSettle(page, Math.floor(moveEnd) - 12);
+    expect(await zIndex(), "rising towards its pin").toBeLessThan(barZ);
+    await dockHeld(page, Math.ceil(moveEnd) + 1);
+    expect(await zIndex(), "as it docks").toBeGreaterThan(barZ);
+    await dockHeld(page, Math.floor(moveEnd) - 12);
+    expect(await zIndex(), "as it leaves").toBeLessThan(barZ);
+  });
+
+  test("holds a docked field in the bar only as far as the bar has room around it", async ({ page }) => {
+    test.slow();
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    const { wide, moveEnd } = await dockOffsets(page);
+    test.skip(wide, "from 64rem the snap has no hold");
+    // The bar's height less the field's and the field's inset from the bar's top: how far the narrow field can
+    // descend before it pokes out of the bar's bottom edge.
+    const hold = await page.evaluate(() => {
+      const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+      const dock = document.querySelector(".search-dock") as HTMLElement;
+      const pin = Number.parseFloat(getComputedStyle(dock).top);
+      const barTop = Number.parseFloat(getComputedStyle(bar).top);
+      return Math.max(0, bar.offsetHeight - dock.offsetHeight - (pin - barTop));
+    });
+    expect(hold, "not the 8px of a bar that moves in time").toBeLessThan(DOCK_HYSTERESIS);
+    const at = async (y: number) => {
+      await scrollAndSettle(page, y);
+      return dockValue(page);
+    };
+    expect(await at(Math.ceil(moveEnd) + 1)).toBe(1);
+    // Held at the far end of the hold, the narrow field is still inside the bar.
+    const held = Math.ceil(moveEnd - hold) + 1;
+    expect(await at(held)).toBe(1);
+    const { field, bar } = await dockBoxes(page);
+    expect(field.bottom, "the held field is inside the bar").toBeLessThanOrEqual(bar.bottom + 0.5);
+    // Beyond the hold it is released, before it can poke out.
+    expect(await at(Math.floor(moveEnd - hold) - 3)).toBe(0);
+  });
 
   test("snaps the search field into the bar and out again, never part way", async ({ page }) => {
     test.slow();

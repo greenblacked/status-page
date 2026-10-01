@@ -83,7 +83,7 @@ describe("CompactHeader", () => {
 
   it("reads the server snapshot on the server: a store that says the bar is up still renders it hidden", () => {
     const store = createDockStore();
-    store.set({ barShown: true, docked: true });
+    store.set({ barShown: true, docked: true, settled: true });
     expect(render({ store })).toContain('data-shown="false"');
   });
 });

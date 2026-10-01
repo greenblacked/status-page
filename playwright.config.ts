@@ -38,10 +38,19 @@ export default defineConfig({
   },
   // The board is built for Apple devices first, so Safari's engine runs
   // every test too: a Mac, an iPhone and an iPad, alongside Chromium on a
-  // desktop and an Android phone. `npx playwright install chromium webkit`.
+  // desktop, an Android phone and an iPad-sized tablet. `npx playwright install chromium webkit`.
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], launchOptions: { executablePath } } },
     { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: { executablePath } } },
+    // An iPad's size in Chromium: 834px is still the phone layout (below 64rem) but wide enough (from 40rem)
+    // for the bar's lead text to sit in the flow before the field's slot, which only WebKit's iPad would
+    // otherwise cover. It runs the tests of the search dock and the bar it docks in, not the whole suite: the
+    // rest has its Chromium coverage at the other two sizes.
+    {
+      name: "tablet",
+      grep: /dock|floating bar/i,
+      use: { ...devices["iPad Pro 11"], defaultBrowserType: "chromium", launchOptions: { executablePath } },
+    },
     { name: "Desktop Safari", use: { ...devices["Desktop Safari"] } },
     { name: "iPhone 17 Pro", use: { ...devices["iPhone 17 Pro"] } },
     { name: "iPad Pro 11", use: { ...devices["iPad Pro 11"] } },
