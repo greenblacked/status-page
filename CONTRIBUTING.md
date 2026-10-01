@@ -48,6 +48,8 @@ Three branches live on, and only the owner moves work between them:
 | `stage` | What is being tried before it is released | `dev`, in a merge commit, by the owner | A Worker Preview named `stage`, at [stage.status.szolotov.com](https://stage.status.szolotov.com) | Never |
 | `main` | What is released | `stage`, in a merge commit, by the owner | Production, at [status.szolotov.com](https://status.szolotov.com) | Every merge with a `feat`, `fix` or breaking change |
 
+> **`dev` is paused.** For now, branch from `stage` and open the pull request into `stage`, squash-merged; `stage` still goes to `main` with a merge commit. Nothing else changes. The `stage` ruleset must allow squash merges meanwhile (see [Branch protection](#branch-protection)). To bring `dev` back, recreate it from `stage`, set `DEV_PAUSED=false` at the top of [`scripts/ci/branch.sh`](scripts/ci/branch.sh) (the one switch the branch name check reads), and set `stage`'s allowed merge method back to a merge commit only. The rest of this page describes the flow with `dev` active.
+
 Branch from `dev`, and open the pull request into `dev`: every pull request targets `dev`, and `dev` never deploys, so a merge there reaches no address and no Cloudflare credential. The owner promotes the work: a pull request from `dev` into `stage` puts it on the preview, and once the preview is right, a pull request from `stage` into `main` releases it (see [Releases](#releases)). An urgent fix takes the same road and is promoted at once; there is no separate lane into `main`.
 
 Name the branch `<prefix>/<short-kebab-description>`:
@@ -66,10 +68,10 @@ Name the branch `<prefix>/<short-kebab-description>`:
 - **The prefix is not the commit type.** The pull request title is still a [Conventional Commit](#commits), and it picks the [release](#releases): an `fb/` branch has a `feat:` title.
 - **Tooling names its own branches.** Dependabot opens `dependabot/…`, and [`scripts/release/bump.sh`](scripts/release/bump.sh) opens `release/vX.Y.Z`. Don't create either by hand.
 
-The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request whose branch breaks these rules. It also checks where the pull request goes: `main` takes only `stage` (and the `release/vX.Y.Z` branch that [`scripts/release/bump.sh`](scripts/release/bump.sh) opens), `stage` takes only `dev` (and `chore/sync-main`, see [Releases](#releases)), and `dev` takes everything else. `dev` and `stage` are accepted as head branches for those two promotions only, and never from a fork; `main` is never a head branch. A Dependabot security update opens against `main`, the default branch: change its base to `dev`. Check a name before pushing, with the base branch as a second argument for the full check:
+The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request whose branch breaks these rules. It also checks where the pull request goes: `main` takes only `stage` (and the `release/vX.Y.Z` branch that [`scripts/release/bump.sh`](scripts/release/bump.sh) opens), `stage` takes only `dev` (and `chore/sync-main`, see [Releases](#releases)), and `dev` takes everything else. While `dev` is paused, `stage` also takes everything else, a fork's feature branch included, and `main` still takes only `stage` and `release/vX.Y.Z`. `dev` and `stage` are accepted as head branches for those two promotions only, and never from a fork; `main` is never a head branch. A Dependabot security update opens against `main`, the default branch: change its base to `dev` (to `stage` while `dev` is paused). Check a name before pushing, with the base branch as a second argument for the full check:
 
 ```bash
-./scripts/ci/branch.sh "$(git branch --show-current)" dev
+./scripts/ci/branch.sh "$(git branch --show-current)" dev   # stage while dev is paused
 ```
 
 | Not | Instead | Why |
