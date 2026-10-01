@@ -208,3 +208,30 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
     });
   });
 }
+
+/**
+ * The longest hero the page can have: eleven services need a look, so the headline is "Eleven things need a look."
+ * and the line under it names three of them, "and 8 more", says the other one is running normally, and that two
+ * could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
+ * sits under them.
+ */
+export function longHeroBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const unread = new Set<ServiceId>(["android", "grok"]);
+  const calm = new Set<ServiceId>(["apple-os"]);
+  const services = board.services.map((service, index): ServiceSnapshot => {
+    if (unread.has(service.id)) {
+      return { ...service, health: "unknown", summary: "The official source did not answer in time" };
+    }
+    if (calm.has(service.id)) return service;
+    const health: Health = index % 2 ? "outage" : "degraded";
+    return {
+      ...service,
+      health,
+      summary: service.summary === "All systems operational" ? "Elevated error rates" : service.summary,
+    };
+  });
+  const counts: Record<Health, number> = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const service of services) counts[service.health] += 1;
+  return { ...board, services, counts };
+}
