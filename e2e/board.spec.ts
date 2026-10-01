@@ -3242,7 +3242,9 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
   await expect(footer).not.toContainText("every two minutes");
   await expect(footer.getByRole("link", { name: "JSON" })).toHaveAttribute("href", "/api/status.json");
   await expect(footer.getByRole("link", { name: "Atom feed" })).toHaveAttribute("href", "/feed.xml");
-  await expect(footer.getByRole("link", { name: "Badges" })).toHaveAttribute("href", "/api/badge/board");
+  await expect(footer.getByRole("link", { name: "Badges" })).toHaveCount(0);
+  await expect(footer).not.toContainText("TanStack");
+  await expect(footer).not.toContainText("Cloudflare Workers");
 });
 
 test("puts the footer in a contentinfo landmark outside main, and names the recent changes", async ({ page }) => {

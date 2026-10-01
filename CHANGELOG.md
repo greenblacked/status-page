@@ -15,7 +15,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Times show in your own time zone once the page has loaded (UTC before that, and in the tooltip).
 - The live line under the headline reads "Checked 12:04 CET · next in 1:52", and says "Stale" when a check has been missed for too long.
 - Four glass lenses on the **Full** background that bend the glow and, with a mouse or trackpad, catch a slow highlight. They are not drawn on Quiet or Glass, they stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
-- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON, the Atom feed and the badges, and is signed "Made by [greenblacked](https://github.com/greenblacked)". It no longer explains how often the board is checked.
+- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON and the Atom feed, and is signed "Made by [greenblacked](https://github.com/greenblacked)". It no longer explains how often the board is checked.
 - A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
 - A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
@@ -26,6 +26,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Changed
 
 - The headline says what is wrong instead of counting things that need a look: "Two services are down.", "One service is degraded.", or, when the states differ, "One is down, one is degraded." The line under it names the services state by state ("ChatGPT is down. Apple is degraded."), the floating bar reads "1 down · 1 degraded", and the JSON API, the feed and the board badge use the same words.
+- The page footer no longer says what the site is built with, and no longer links the badges.
 - The name at the top of the page reads Status Page and sits in the middle.
 - Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until the search field takes its place). The settings button is called **Settings**.
 - The site is called **Status**, and the words are plainer and in the first person. The headline says "Everything is up." when all is well; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The line under the headline names one or two of them, linked ("I couldn't read Android."), and counts more than that ("I couldn't read three of them."). The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.
@@ -43,6 +44,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
 - A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.
 - Dates and times stay in English when the browser is set to another language; they still follow your time zone.
 - Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.
