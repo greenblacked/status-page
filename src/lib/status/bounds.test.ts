@@ -86,6 +86,18 @@ describe("boundSnapshot", () => {
     expect(bounded.failure?.message).toHaveLength(MAX_TEXT_CHARS);
   });
 
+  it("clips the name and detail of every component, up to the 300 a card keeps", () => {
+    const components = Array.from({ length: 300 }, () => ({
+      name: long,
+      health: "operational" as const,
+      detail: long,
+    }));
+    const bounded = boundSnapshot({ ...base, components });
+    expect(bounded.components).toHaveLength(300);
+    expect(bounded.components.every((c) => c.name.length === MAX_NAME_CHARS)).toBe(true);
+    expect(bounded.components.every((c) => c.detail?.length === MAX_TEXT_CHARS)).toBe(true);
+  });
+
   it("clips a summary that is an incident's title the same way as the title", () => {
     // Between the title and summary limits: clipped as a summary alone it would
     // stay whole while the title is cut, and the board would list the incident

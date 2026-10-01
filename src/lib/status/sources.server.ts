@@ -36,9 +36,10 @@ import type {
 import { hostOf, vendorUrl } from "./vendor-url.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
-// Upper bound on components kept per card. A vendor page can list hundreds;
-// the snapshot is cached and served as JSON, so it must not grow with them.
-const MAX_COMPONENTS = 24;
+// Upper bound on components kept per card. The largest real vendor list is
+// Google Cloud (~215 products); the snapshot is cached and served as JSON, so a
+// runaway page must still not grow it without limit.
+const MAX_COMPONENTS = 300;
 // Upper bound on incidents kept per card. Each is a row in the board, the
 // JSON API and the Atom feed; a feed that lists thousands must not grow them.
 // Applied by sortIncidents after the board's ordering, so the cut drops the
