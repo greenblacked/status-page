@@ -4,6 +4,6 @@
   "private": true,
   "description": "The npm CLI that CI runs, pinned by hash. Keep in step with packageManager in the root package.json (scripts/ci/npm-pin.sh check).",
   "dependencies": {
-    "npm": "11.19.1"
+    "npm": "12.1.0"
   }
 }

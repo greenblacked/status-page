@@ -84,8 +84,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # package.json declares ">=22.13.0 <25". The pinned leg is the exact
-        # toolchain in .nvmrc; the 24 leg covers the top of that range.
+        # package.json declares "^22.22.2 || ^24.15.0", the Node versions npm
+        # 12 runs on. The pinned leg is the exact toolchain in .nvmrc; the 24
+        # leg covers the top of that range.
         node: ['', '24']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

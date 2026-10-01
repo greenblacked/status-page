@@ -83,7 +83,7 @@ jobs:
           # dependencies that the npm CLI bundles inside itself (brace-expansion
           # 5.0.9: GHSA-qhr7-859c-m2p7 and GHSA-6j4f-fj2g-mc7p; undici 6.28.0:
           # GHSA-rfgv-xxqx-mfg5). They appear only because tools/npm/package-lock.json
-          # pins npm 11.19.1 by hash, and that lockfile lists the bundled copies.
+          # pins npm 12.1.0 by hash, and that lockfile lists the bundled copies.
           # That npm runs in CI only and never ships to users; the same code ran
           # before through `npm install -g`, where nothing scanned it. Every
           # published npm (11.19.1, 11.20.0, 12.1.0) bundles these same versions,

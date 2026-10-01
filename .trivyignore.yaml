@@ -2,7 +2,7 @@
 #
 # Three advisories in dependencies that the npm CLI bundles inside itself:
 # brace-expansion 5.0.9 and undici 6.28.0, listed in tools/npm/package-lock.json
-# because that lockfile pins npm 11.19.1 by hash. That npm runs in CI only and
+# because that lockfile pins npm 12.1.0 by hash. That npm runs in CI only and
 # never ships to users. Every published npm (11.19.1, 11.20.0, 12.1.0) bundles
 # these same versions, so moving the pin does not clear them. Owner decision.
 #
