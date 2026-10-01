@@ -191,7 +191,7 @@ test("Windows 11 shows each version's build and UTC days, and links Microsoft's 
   await expect(entries.nth(1)).toContainText("build 28000.1575");
   await expect(entries.nth(1)).toContainText(/Feb 10/);
   await expect(entries.nth(1)).toContainText(/updated \w{3} \d+/);
-  await expect(entries.nth(1).getByRole("link")).toHaveAttribute("href", /learn\.microsoft\.com/);
+  await expect(entries.nth(1).getByRole("link")).toHaveAttribute("href", /^https:\/\/learn\.microsoft\.com\//);
 });
 
 test("Android shows each version with its own page and says the page gives no notes or date", async ({ page }) => {
