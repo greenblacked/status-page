@@ -58,7 +58,7 @@ export function oldestRetainedDate(today: string, retentionDays: number): string
   return start.toISOString().slice(0, 10);
 }
 
-function isHealth(value: unknown): value is Health {
+export function isHealth(value: unknown): value is Health {
   return typeof value === "string" && HEALTHS.has(value);
 }
 
