@@ -3745,12 +3745,15 @@ test("centres the wordmark in the header at md and up, clear of the dateline and
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
   const board = fixtureBoard(Date.now());
-  // 200% root text moves md to 1536px, so 1600 is the first width past it there.
+  // A root font-size from a style tag does not move rem media queries, so md is still 768px; 200% text is the
+  // hardest case for overlap at the narrow end.
   for (const [width, rootPx] of [
     [768, 16],
     [1024, 16],
     [1280, 16],
     [1440, 16],
+    [768, 32],
+    [1024, 32],
     [1600, 32],
   ] as const) {
     await page.setViewportSize({ width, height: 900 });
