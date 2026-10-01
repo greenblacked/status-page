@@ -3,6 +3,7 @@ import { overallHealth } from "./diff.ts";
 import { healthLabel } from "./health.ts";
 import { boardHeadline, incidentLink, sortIncidents } from "./layout.ts";
 import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot, UpcomingMaintenance } from "./types.ts";
+import { verdict } from "./verdict.ts";
 
 // Everything here is a pure function of one board snapshot, so the JSON API,
 // the Atom feed and the badges always agree with the page they sit beside.
@@ -70,6 +71,12 @@ const SHIELDS_COLOR: Record<Health, string> = {
   unknown: "lightgrey",
 };
 
+/** The board badge's message while something needs a look: the headline as a phrase, or the bar's form for a mix. */
+function badgeMessage(board: BoardSnapshot): string {
+  const { title, short } = verdict(board);
+  return short.includes(" \u00b7 ") ? short : title.toLowerCase().replace(/\.$/, "");
+}
+
 export type ShieldsBadge = {
   schemaVersion: 1;
   label: string;
@@ -90,9 +97,9 @@ export function shieldsBadge(board: BoardSnapshot, id: string): ShieldsBadge {
     return {
       schemaVersion: 1,
       label: "status",
-      // "two services are down": the headline as a phrase, without its full stop.
-      message:
-        overall === "operational" ? "all operational" : boardHeadline(board).title.toLowerCase().replace(/\.$/, ""),
+      // "two services are down": the headline as a phrase, without its full stop. Several states read as the
+      // bar's short form ("1 down · 1 degraded"), because "one is down" alone does not say one what.
+      message: overall === "operational" ? "all operational" : badgeMessage(board),
       color: SHIELDS_COLOR[overall],
     };
   }

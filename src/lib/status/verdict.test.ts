@@ -256,3 +256,26 @@ describe("verdict when sources could not be read", () => {
     ).toEqual(["android", "grok"]);
   });
 });
+
+describe("verdict compact form, for a narrow floating bar", () => {
+  it("is the short form for one state", () => {
+    expect(verdict(board({ steam: "outage", fortnite: "outage" })).compact).toBe("2 down");
+    expect(verdict(board({ steam: "degraded" })).compact).toBe("1 degraded");
+    expect(verdict(board({ claude: "maintenance" })).compact).toBe("1 in maintenance");
+  });
+
+  it("is the most urgent state and the rest counted for several", () => {
+    expect(verdict(board({ steam: "degraded", fortnite: "outage" })).compact).toBe("1 down \u00b7 1 more");
+    expect(verdict(board({ claude: "maintenance", steam: "degraded", fortnite: "outage" })).compact).toBe(
+      "1 down \u00b7 2 more",
+    );
+    expect(
+      verdict(board({ claude: "maintenance", steam: "degraded", fortnite: "outage", aws: "outage" })).compact,
+    ).toBe("2 down \u00b7 2 more");
+  });
+
+  it("stays as short as the calm and unread-only forms", () => {
+    expect(verdict(board({})).compact).toBe("Everything is up");
+    expect(verdict(board({ android: "unknown" })).compact).toBe("Nothing needs a look");
+  });
+});

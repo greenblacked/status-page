@@ -4017,6 +4017,28 @@ test("puts the floating bar's verdict, check time and countdown beside the docke
   await expect(bar).toHaveClass(/\bfloat\b/);
 });
 
+for (const [name, makeBoard] of [
+  ["the plain fixture", fixtureBoard],
+  ["the longest hero", longHeroBoard],
+] as const) {
+  test(`never cuts the floating bar's verdict short on ${name}`, async ({ page }) => {
+    await openFixture(page, () => makeBoard(Date.now()));
+    const bar = controlBar(page);
+    await page.locator("footer").scrollIntoViewIfNeeded();
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    // The drawn form: the compact one below 1024px, the short one from there up. Its text must fit its box.
+    const drawn = await bar
+      .locator("[data-bar-verdict] > span:not(:last-child)")
+      .evaluateAll((spans) =>
+        spans
+          .filter((span) => span.getBoundingClientRect().width > 1)
+          .map((span) => ({ text: span.textContent, clipped: span.scrollWidth > span.clientWidth })),
+      );
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].clipped, `"${drawn[0].text}" fits its slot`).toBe(false);
+  });
+}
+
 test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
   // Hold the font back so the page is drawn in its fallback first, and count every layout shift that follows.

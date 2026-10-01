@@ -71,7 +71,7 @@ describe("shieldsBadge", () => {
     });
     expect(
       shieldsBadge(board([gcp({ health: "outage" }), service("aws", { health: "degraded" })]), "board"),
-    ).toMatchObject({ message: "one is down, one is degraded", color: "red" });
+    ).toMatchObject({ message: "1 down \u00b7 1 degraded", color: "red" });
     expect(shieldsBadge(board([service("aws", { health: "operational" })]), "board")).toMatchObject({
       message: "all operational",
       color: "brightgreen",

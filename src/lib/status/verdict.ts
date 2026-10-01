@@ -28,6 +28,11 @@ export type Verdict = {
   title: string;
   /** The floating bar's short form, "2 down" or "1 down · 1 degraded". */
   short: string;
+  /**
+   * The bar's form for a narrow space: the same as `short` for one state ("2 down"), otherwise the most urgent
+   * state and the rest counted, "1 down · 2 more".
+   */
+  compact: string;
   /** Services that need a look (outage, degraded, maintenance). Zero draws no pen underline. */
   count: number;
   /** The line under the headline, "Steam and Fortnite are down. The other thirteen are running normally." Empty when calm. */
@@ -156,6 +161,10 @@ export function verdict(board: BoardSnapshot): Verdict {
       tone: attention[0].health,
       title: titleOf(groups),
       short: groups.map((group) => `${group.n} ${group.phrase}`).join(" · "),
+      compact:
+        groups.length === 1
+          ? `${groups[0].n} ${groups[0].phrase}`
+          : `${groups[0].n} ${groups[0].phrase} · ${n - groups[0].n} more`,
       count: n,
       sub,
       subParts: parts,
@@ -171,6 +180,7 @@ export function verdict(board: BoardSnapshot): Verdict {
       tone: "unknown",
       title: "Nothing needs a look.",
       short: "Nothing needs a look",
+      compact: "Nothing needs a look",
       count: 0,
       sub,
       subParts: parts,
@@ -183,6 +193,7 @@ export function verdict(board: BoardSnapshot): Verdict {
     tone: "operational",
     title: "Everything is up.",
     short: "Everything is up",
+    compact: "Everything is up",
     count: 0,
     sub: "",
     subParts: [],
