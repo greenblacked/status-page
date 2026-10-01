@@ -1602,7 +1602,7 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
       // The changelog of every version the channels list (often fewer than five: stable and testing can share
       // one): the newest one's first note is the summary, and each version's first few notes are on its Details.
       // A released version's changelog does not change, so each is read once per isolate and remembered
-      // (failures are not): a sweep asks only for versions it has not read, which is none on most sweeps.
+      // (failures and bodies that do not parse are not): a sweep asks only for versions it has not read, which is none on most sweeps.
       // The newest section is at the top of the file, so a short ranged read is enough; a server that ignores
       // the range sends the whole file, which fetchText caps. A changelog that fails costs that version its
       // notes, and nothing else.
@@ -1625,7 +1625,12 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
               headers: { Range: `bytes=0-${CHANGELOG_RANGE_BYTES - 1}` },
               ...(version === notesVersion ? {} : { timeoutMs: EXTRA_TIMEOUT_MS }),
             });
-            const read = { summary: summarizeMikrotikChangelog(body), notes: mikrotikChangelogNotes(body) };
+            // A body with no "What's new in" section and a bullet under it (empty, truncated, an HTML
+            // error page served with a 200) is a failed read, not a changelog: it neither gives the summary
+            // nor is remembered, so the next sweep asks again instead of keeping a generic card.
+            const notes = mikrotikChangelogNotes(body);
+            if (notes.length === 0) return;
+            const read = { summary: summarizeMikrotikChangelog(body), notes };
             rememberMikrotikNotes(version, read);
             changelogs.set(version, read);
           } catch {

@@ -1545,6 +1545,76 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       );
     });
 
+    describe("MikroTik: a changelog body that does not parse is not remembered", () => {
+      const badBodies: Array<[string, string]> = [
+        ["empty", ""],
+        [
+          "an HTML error page",
+          "<!doctype html><html><head><title>Error</title></head><body><h1>502 Bad Gateway</h1></body></html>",
+        ],
+        ["truncated before the version's section", "Changelog for RouterOS\n\n"],
+        ["a heading with no bullet", "What's new in 7.20.2 (2025-Sep-19 10:00):\n\n"],
+      ];
+      for (const [label, bad] of badBodies) {
+        it(`${label}: the card still renders, and the next sweep asks again`, async () => {
+          const asked: string[] = [];
+          let broken = true;
+          const routes: Record<string, Handler> = {
+            ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
+            [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+            [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: () =>
+              text(broken ? bad : fixture("mikrotik/7.20.2/CHANGELOG"))(),
+          };
+          vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+            const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+            if (url === `${URLS.mikrotikDownload}7.20.2/CHANGELOG`) asked.push(url);
+            return routes[url]?.() ?? new Response("not found", { status: 404 });
+          });
+          const first = await collect("mikrotik");
+          expect(first.failure).toBeUndefined();
+          expect(first.summary).toContain("What's new in 7.21beta4");
+          const stableFirst = first.components.find((component) => component.name === "RouterOS 7 stable")?.release;
+          expect(stableFirst?.notes).toBeUndefined();
+          expect(stableFirst?.url).toBe("https://download.mikrotik.com/routeros/7.20.2/CHANGELOG");
+          expect(asked).toHaveLength(1);
+          broken = false;
+          const second = await collect("mikrotik");
+          expect(asked).toHaveLength(2);
+          expect(
+            second.components.find((component) => component.name === "RouterOS 7 stable")?.release?.notes,
+          ).toBeTruthy();
+          // Parsed now: remembered, so a third sweep does not ask.
+          await collect("mikrotik");
+          expect(asked).toHaveLength(2);
+        });
+      }
+
+      it("the newest version's summary is not remembered from a bad parse either", async () => {
+        const asked: string[] = [];
+        let broken = true;
+        const routes: Record<string, Handler> = {
+          ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
+          [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text(fixture("mikrotik/7.20.2/CHANGELOG")),
+          [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: () =>
+            text(broken ? "<html>oops</html>" : fixture("mikrotik/7.21beta4/CHANGELOG"))(),
+        };
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+          if (url === `${URLS.mikrotikDownload}7.21beta4/CHANGELOG`) asked.push(url);
+          return routes[url]?.() ?? new Response("not found", { status: 404 });
+        });
+        const first = await collect("mikrotik");
+        expect(first.summary).not.toContain("changelog loaded");
+        expect(first.summary).toMatch(/^Latest RouterOS /);
+        broken = false;
+        const second = await collect("mikrotik");
+        expect(second.summary).toContain("What's new in 7.21beta4");
+        expect(asked).toHaveLength(2);
+        await collect("mikrotik");
+        expect(asked).toHaveLength(2);
+      });
+    });
+
     it("MikroTik: a changelog that fails costs only that version's notes", async () => {
       stubFetch({
         ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
