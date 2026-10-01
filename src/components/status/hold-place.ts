@@ -8,12 +8,19 @@ function anchorsScroll(): boolean {
   );
 }
 
+/** How long after the last scroll the page counts as still moving, and the wait before the anchor is picked again. */
+const SETTLE_MS = 150;
+const STALE_MS = 200;
+
 /** The first thing in view under the root, as scroll anchoring picks it: the first child wholly in view, else the deepest one cut by the top edge. */
 function firstInView(root: Element): Element | null {
   for (const child of root.children) {
     const { top, bottom, width, height } = child.getBoundingClientRect();
     if ((width === 0 && height === 0) || bottom <= 0 || top >= window.innerHeight) continue;
-    if (getComputedStyle(child).overflowAnchor === "none") continue;
+    // Safari has no overflow-anchor to read, so the feed's mark stands in for it.
+    if (child.matches("[data-no-anchor]")) continue;
+    const style = getComputedStyle(child);
+    if (style.overflowAnchor === "none" || style.position === "fixed" || style.position === "sticky") continue;
     if (top >= 0 && bottom <= window.innerHeight) return child;
     return firstInView(child) ?? child;
   }
@@ -33,6 +40,9 @@ function pickAnchor(root: HTMLElement, pointer: { x: number; y: number } | null)
   if (holds(root, under)) return under;
   const focused = document.activeElement;
   if (holds(root, focused)) return focused;
+  // Something above the board (the hero, the search field) is in view: that is what a browser would hold, and
+  // it does not move with the feed, so there is nothing to make up for.
+  if (root.getBoundingClientRect().top > 0) return null;
   return firstInView(root);
 }
 
@@ -45,27 +55,38 @@ function pickAnchor(root: HTMLElement, pointer: { x: number; y: number } | null)
  * rotation or a late font never leaves a stale number behind.
  */
 export function useHoldPlace(root: RefObject<HTMLElement | null>, pulses: Pulse[] | undefined) {
-  const anchor = useRef<{ element: Element; top: number } | null>(null);
+  // The anchor's place is kept as an offset in the document, so the reader's own scrolling cancels out of it.
+  const anchor = useRef<{ element: Element; offset: number } | null>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
+  const motion = useRef({ lastScroll: Number.NEGATIVE_INFINITY, touching: false });
 
   useEffect(() => {
     const element = root.current;
     if (!element) return;
     let frame = 0;
+    let idle = 0;
     const remember = () => {
       frame = 0;
       const picked = pickAnchor(element, pointer.current);
-      anchor.current = picked ? { element: picked, top: picked.getBoundingClientRect().top } : null;
+      anchor.current = picked ? { element: picked, offset: picked.getBoundingClientRect().top + window.scrollY } : null;
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(remember);
     };
+    // Scrolling only stamps the time; the anchor is picked again once the page has been still for a moment.
+    const scrolled = () => {
+      motion.current.lastScroll = performance.now();
+      clearTimeout(idle);
+      idle = window.setTimeout(schedule, SETTLE_MS);
+    };
     // A finger counts while it is down, a mouse while it is in the page.
     const track = (event: PointerEvent) => {
+      if (event.type === "pointerdown" && event.pointerType === "touch") motion.current.touching = true;
       pointer.current = { x: event.clientX, y: event.clientY };
       schedule();
     };
     const release = (event: Event) => {
+      if (event instanceof PointerEvent && event.pointerType === "touch") motion.current.touching = false;
       if (event instanceof PointerEvent && event.pointerType === "mouse" && event.type === "pointerup") return;
       pointer.current = null;
       schedule();
@@ -75,7 +96,7 @@ export function useHoldPlace(root: RefObject<HTMLElement | null>, pulses: Pulse[
     const observer = new ResizeObserver(schedule);
     observer.observe(document.documentElement);
     observer.observe(element);
-    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("scroll", scrolled, { passive: true });
     window.addEventListener("resize", schedule);
     document.addEventListener("focusin", schedule);
     document.addEventListener("pointerdown", track, { passive: true });
@@ -85,8 +106,9 @@ export function useHoldPlace(root: RefObject<HTMLElement | null>, pulses: Pulse[
     document.documentElement.addEventListener("pointerleave", release, { passive: true });
     return () => {
       if (frame) cancelAnimationFrame(frame);
+      clearTimeout(idle);
       observer.disconnect();
-      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("scroll", scrolled);
       window.removeEventListener("resize", schedule);
       document.removeEventListener("focusin", schedule);
       document.removeEventListener("keydown", release);
@@ -102,7 +124,12 @@ export function useHoldPlace(root: RefObject<HTMLElement | null>, pulses: Pulse[
   useLayoutEffect(() => {
     const last = anchor.current;
     if (!last?.element.isConnected || window.scrollY <= 0 || anchorsScroll()) return;
-    const moved = last.element.getBoundingClientRect().top - last.top;
-    if (moved !== 0) window.scrollBy({ top: moved, behavior: "instant" });
+    // A programmatic scroll would stop a flick on iOS, and a shift of the feed's size mid-flick goes unseen.
+    const { lastScroll, touching } = motion.current;
+    if (touching || performance.now() - lastScroll < STALE_MS) return;
+    const moved = last.element.getBoundingClientRect().top + window.scrollY - last.offset;
+    // Not a row or two of the feed: a reorder of the board, which the reader is not owed a ride along with.
+    if (Math.abs(moved) < 0.5 || Math.abs(moved) > window.innerHeight) return;
+    window.scrollBy({ top: moved, behavior: "instant" });
   }, [pulses]);
 }
