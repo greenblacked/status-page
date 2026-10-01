@@ -503,9 +503,12 @@ function fromStatuspage(
   // open (Claude's "Delayed credits"), so the components and the page
   // indicator are only a floor. A card is never better than its worst active
   // problem, taken over the whole list (not just the part kept below). A
-  // notice with no impact (informational) never raises it.
+  // notice with no impact (informational) never raises it. An incident whose
+  // impact the vendor left out still is a problem: it counts as Degraded, not
+  // as "No data" (the incident's own row keeps its unknown state).
   for (const incident of mapped) {
-    if (!incident.informational) health = worseHealth(health, incident.health);
+    if (!incident.informational)
+      health = worseHealth(health, incident.health === "unknown" ? "degraded" : incident.health);
   }
 
   const { incidents, problems, incidentCount } = listIncidents(mapped);

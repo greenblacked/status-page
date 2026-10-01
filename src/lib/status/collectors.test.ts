@@ -845,6 +845,18 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(claude.incidents[0]).toMatchObject({ health: "operational", informational: true });
     });
 
+    it.each([[{ impact: undefined }], [{ impact: "" }]])(
+      "an active incident with no impact is a problem: Degraded, not No data",
+      async (incident) => {
+        stubFetch({ [URLS.claude]: json(claudeWithIncident(incident)) });
+        const claude = await claudeOf();
+        expect(claude.health).toBe("degraded");
+        expect(claude.summary).toBe("Delayed credits on the Claude Platform");
+        expect(claude.failure).toBeUndefined();
+        expect(claude.incidents[0].informational).toBeUndefined();
+      },
+    );
+
     it("a resolved incident does not raise the card", async () => {
       stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact: "major", status: "resolved" })) });
       const claude = await claudeOf();
@@ -878,7 +890,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect((await claudeOf()).health).toBe("maintenance");
     });
 
-    it("counts every active incident, including one the list is cut before", async () => {
+    it("a problem incident among many notices sets the card and is listed first", async () => {
       const incidents = Array.from({ length: 12 }, (_, i) => ({
         id: `n${i}`,
         name: `Notice ${i}`,

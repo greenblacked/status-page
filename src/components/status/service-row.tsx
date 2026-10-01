@@ -102,13 +102,14 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
   // "Notice" is only for vendor notices with no impact. An incident that is a problem is never called one,
   // whatever the card's health (a collector keeps an operational card free of them, but the label does not rely on it).
   const problems = service.incidents.filter((incident) => !incident.informational).length;
-  const extra = upcoming
-    ? "Maintenance planned"
-    : problems > 0
+  const extra =
+    problems > 0
       ? problems === 1
         ? "Incident"
         : `${problems} incidents`
-      : "Notice";
+      : upcoming
+        ? "Maintenance planned"
+        : "Notice";
   const header = (
     <RowHeader name={service.name}>
       <StateWord health={service.health} />

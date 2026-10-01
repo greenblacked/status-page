@@ -41,7 +41,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
-- A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page. A row's note says "Incident" for a real problem and keeps "Notice" for a notice with no impact.
+- A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.
 - Dates and times stay in English when the browser is set to another language; they still follow your time zone.
 - Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.
 - Apple's upcoming events no longer change a service's health.
