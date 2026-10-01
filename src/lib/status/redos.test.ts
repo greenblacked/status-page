@@ -11,6 +11,7 @@ import {
   parseRssItems,
 } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
+import { readHtmlTables, windowsReleases } from "./windows-release.ts";
 
 // Vendor bodies are untrusted input that is parsed on the Worker, so no
 // parser may take more than linear time on one. Each case below is a crafted
@@ -110,6 +111,24 @@ describe("parsers stay linear on crafted vendor input", () => {
     let parsed: ReturnType<typeof parseAppleOsTitle> = null;
     expect(elapsed(() => (parsed = parseAppleOsTitle(title)))).toBeLessThan(BUDGET_MS);
     expect(parsed).toBeNull();
+  });
+
+  it.each([
+    ["unclosed tag openers", "<td".repeat(SIZE / 3)],
+    ["unclosed comment openers", "<!--".repeat(SIZE / 4)],
+    ["bare angle brackets", "<".repeat(SIZE)],
+    ["a tag that never ends", `<table><tr><td${"x".repeat(SIZE)}`],
+    ["a script that never ends", `<script>${"<table>".repeat(SIZE / 7)}`],
+    ["empty tables", "<table></table>".repeat(SIZE / 15)],
+    ["rows and cells without end", `<table>${"<tr><td>x".repeat(SIZE / 9)}`],
+    ["nested tables", `${"<table><tr><td>".repeat(SIZE / 16)}x`],
+    ["a long cell of entity-like text", `<table><tr><td>${"&#".repeat(SIZE / 2)}`],
+    ["a long cell of spaces and tags", `<table><tr><td>${" <b>".repeat(SIZE / 4)}`],
+  ])("readHtmlTables: %s", (_label, html) => {
+    let tables: ReturnType<typeof readHtmlTables> = [];
+    expect(elapsed(() => (tables = readHtmlTables(html)))).toBeLessThan(BUDGET_MS);
+    expect(tables.length).toBeLessThanOrEqual(40);
+    expect(elapsed(() => windowsReleases(tables))).toBeLessThan(BUDGET_MS);
   });
 
   it("incidentLink: an incident URL whose path is a long run of slashes", () => {

@@ -28,6 +28,7 @@ const URLS = {
   mikrotikUpgrade: "https://upgrade.mikrotik.com/routeros/",
   mikrotikDownload: "https://download.mikrotik.com/routeros/",
   appleOs: "https://developer.apple.com/news/releases/rss/releases.rss",
+  windows: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
 };
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url);
@@ -1264,6 +1265,84 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(appleOs.health).toBe("unknown");
       expect(appleOs.failure).toEqual({ kind: "parser", message: "Apple OS release feed had no OS items." });
       expect(appleOs.components).toEqual([]);
+    });
+
+    it("Windows release health: the newest versions, headed by the newest one", async () => {
+      // Hand-built from the page's known layout (see the fixtures README). The
+      // clock puts only 26H2's availability (Sep 29) inside the 14-day window:
+      // 26H1's Sep 22 update is a revision, not a new release. 23H2 is the
+      // fifth row and is not kept.
+      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+      stubFetch({ [URLS.windows]: text(fixture("windows/windows11-release-information.html")) });
+      const windows = await collect("windows");
+      expect(windows.failure).toBeUndefined();
+      expect(windows.health).toBe("operational");
+      expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1000) · Sep 29");
+      expect(windows.components).toEqual([
+        { name: "26H2", health: "maintenance", detail: "26300.1000 · Sep 29" },
+        { name: "26H1", health: "operational", detail: "28000.1575 · Sep 22" },
+        { name: "25H2", health: "operational", detail: "26200.8100 · Sep 8" },
+        { name: "24H2", health: "operational", detail: "26100.8100 · Sep 8" },
+      ]);
+      expect(windows.incidents).toEqual([]);
+      expect(windows.meta).toEqual({
+        latest: "Windows 11 26H2 (build 26300.1000)",
+        versions:
+          "Windows 11 26H2=26300.1000|Windows 11 26H1=28000.1575|Windows 11 25H2=26200.8100|Windows 11 24H2=26100.8100",
+      });
+    });
+
+    it("Windows release health: a version the page adds later becomes the headline and a fresh release", async () => {
+      vi.setSystemTime(new Date("2027-09-30T12:00:00.000Z"));
+      const page = fixture("windows/windows11-release-information.html").replace(
+        '<tbody>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+        '<tbody>\n<tr><td>27H2</td><td>General Availability Channel</td><td>2027-09-28</td><td>2027-09-28</td><td>27500.1</td></tr>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+      );
+      expect(page).toContain("27H2");
+      stubFetch({ [URLS.windows]: text(page) });
+      const windows = await collect("windows");
+      expect(windows.failure).toBeUndefined();
+      expect(windows.summary).toBe("Latest: Windows 11 27H2 (build 27500.1) · Sep 28");
+      expect(windows.components.map((component) => [component.name, component.health])).toEqual([
+        ["27H2", "maintenance"],
+        ["26H2", "operational"],
+        ["26H1", "operational"],
+        ["25H2", "operational"],
+      ]);
+      expect(String(windows.meta?.versions).startsWith("Windows 11 27H2=27500.1|Windows 11 26H2=")).toBe(true);
+    });
+
+    it("Windows release health: a page without the versions table is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.windows]: text("<!DOCTYPE html><html><body><h1>Service unavailable</h1></body></html>") });
+      const windows = await collect("windows");
+      expect(windows.health).toBe("unknown");
+      expect(windows.failure).toEqual({
+        kind: "parser",
+        message: "Windows release page had no readable version table.",
+      });
+      expect(windows.components).toEqual([]);
+      expect(windows.meta).toBeUndefined();
+    });
+
+    it("Windows release health: a versions table whose rows hold no version or date is unknown too", async () => {
+      stubFetch({
+        [URLS.windows]: text(
+          "<table><tr><th>Version</th><th>Availability date</th></tr><tr><td>coming soon</td><td>TBA</td></tr></table>",
+        ),
+      });
+      const windows = await collect("windows");
+      expect(windows.health).toBe("unknown");
+      expect(windows.failure?.kind).toBe("parser");
+    });
+
+    it("Windows release health: a page over the size limit is unknown, not parsed", async () => {
+      stubFetch({ [URLS.windows]: text(`<table>${"<tr><td>26H2</td></tr>".repeat(200_000)}</table>`) });
+      const windows = await collect("windows");
+      expect(windows.health).toBe("unknown");
+      expect(windows.failure).toEqual({
+        kind: "parser",
+        message: "Response from learn.microsoft.com is larger than 4 MiB",
+      });
     });
   });
 

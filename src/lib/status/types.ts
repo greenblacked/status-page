@@ -12,7 +12,8 @@ export type ServiceId =
   | "chatgpt"
   | "claude"
   | "mikrotik"
-  | "apple-os";
+  | "apple-os"
+  | "windows";
 
 export type CategoryId = "cloud" | "gaming" | "platforms" | "ai" | "updates";
 

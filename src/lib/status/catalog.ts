@@ -138,6 +138,14 @@ export const CATALOG: CatalogEntry[] = [
     sourceName: "Apple Developer Releases",
     sourceUrl: "https://developer.apple.com/news/releases/",
   },
+  {
+    id: "windows",
+    name: "Windows 11",
+    shortName: "Windows 11",
+    category: "updates",
+    sourceName: "Windows release health",
+    sourceUrl: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
+  },
 ];
 
 export const CATALOG_BY_ID = Object.fromEntries(CATALOG.map((entry) => [entry.id, entry])) as Record<
