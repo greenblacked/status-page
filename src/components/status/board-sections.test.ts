@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CATALOG } from "@/lib/status/catalog";
@@ -17,7 +17,12 @@ function all(health: Partial<Record<ServiceId, Health>> = {}): ServiceSnapshot[]
 
 function render(
   services: ServiceSnapshot[],
-  { mostUrgentId, changed = [] }: { mostUrgentId?: ServiceId; changed?: ServiceId[] } = {},
+  {
+    mostUrgentId,
+    changed = [],
+    feed,
+    placeholder,
+  }: { mostUrgentId?: ServiceId; changed?: ServiceId[]; feed?: ReactNode; placeholder?: ReactNode } = {},
 ): string {
   return renderToStaticMarkup(
     createElement(BoardSections, {
@@ -27,6 +32,8 @@ function render(
       starred: new Set<ServiceId>(),
       onToggleStar: noop,
       now: NOW,
+      feed,
+      placeholder,
     }),
   );
 }
@@ -131,6 +138,37 @@ describe("BoardSections", () => {
   it("marks a service that changed, in a card or a row", () => {
     const html = render(all({ aws: "outage" }), { changed: ["aws", "steam"] });
     expect(html.match(/data-changed="true"/g)).toHaveLength(2);
+  });
+
+  it("puts the feed right after Needs a look, before Couldn't read, the categories and Releases", () => {
+    const feed = createElement("section", { "data-feed": "" }, "Recent changes");
+    const html = render(all({ aws: "outage", epic: "maintenance", android: "unknown" }), { feed });
+    const at = (needle: string) => html.indexOf(needle);
+    expect(html.match(/data-feed/g)).toHaveLength(1);
+    expect(at('data-group="attention"')).toBeLessThan(at("data-feed"));
+    expect(at("data-feed")).toBeLessThan(at('data-group="unread"'));
+    expect(at('data-group="unread"')).toBeLessThan(at('data-group="up"'));
+    expect(at('data-group="up"')).toBeLessThan(at('data-group="releases"'));
+    // The feed shares the sections' column, so it keeps their gap-8.
+    expect(html.startsWith('<div class="flex flex-col gap-8"><section data-group="attention"')).toBe(true);
+  });
+
+  it("leads the board with the feed when nothing needs a look", () => {
+    const feed = createElement("section", { "data-feed": "" }, "Recent changes");
+    const html = render(all({ android: "unknown" }), { feed });
+    expect(sections(html).map(([group]) => group)).not.toContain("attention");
+    expect(html.startsWith('<div class="flex flex-col gap-8"><section data-feed="">')).toBe(true);
+    expect(html.indexOf("data-feed")).toBeLessThan(html.indexOf('data-group="unread"'));
+    const calm = render(all(), { feed });
+    expect(calm.indexOf("data-feed")).toBeLessThan(calm.indexOf('data-group="up"'));
+  });
+
+  it("draws the placeholder, then the feed, when there are no groups", () => {
+    const feed = createElement("section", { "data-feed": "" }, "Recent changes");
+    const placeholder = createElement("p", { "data-placeholder": "" }, "Nothing matches");
+    expect(render([], { feed, placeholder })).toBe(
+      '<div class="flex flex-col gap-8"><p data-placeholder="">Nothing matches</p><section data-feed="">Recent changes</section></div>',
+    );
   });
 
   it("draws nothing for an empty board", () => {

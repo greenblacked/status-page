@@ -3,7 +3,8 @@ import { isHealth } from "./history.ts";
 import { lastPulseAt, MAX_PULSES } from "./schedule.ts";
 import type { BoardSnapshot, Health } from "./types.ts";
 
-const STORAGE_KEY = "status-bar:pulses:v2";
+/** The local-storage key of the saved checks; the script that holds Recent changes' height reads it too (feed-reserve.ts). */
+export const PULSE_STORAGE_KEY = "status-bar:pulses:v2";
 
 export type Pulse = {
   slot: number;
@@ -166,7 +167,7 @@ export function parsePulseStore(value: unknown): PulseStore {
 export function loadPulseStore(): PulseStore {
   try {
     if (typeof localStorage === "undefined") return emptyPulseStore();
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(PULSE_STORAGE_KEY);
     if (!raw) return emptyPulseStore();
     return parsePulseStore(JSON.parse(raw));
   } catch {
@@ -177,7 +178,7 @@ export function loadPulseStore(): PulseStore {
 export function savePulseStore(store: PulseStore): void {
   try {
     if (typeof localStorage === "undefined") return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    localStorage.setItem(PULSE_STORAGE_KEY, JSON.stringify(store));
   } catch {
     // Private mode / quota — the in-memory store still works for this session.
   }

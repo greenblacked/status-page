@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
+import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, serveBoard } from "./fixture-board";
 
@@ -222,17 +223,13 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
   expect(blocking).toEqual([]);
 });
 
-test("starts the tab order with a skip link that moves focus to the services", async ({
-  page,
-  isMobile,
-  browserName,
-}) => {
+test("starts the tab order with a skip link that moves focus to the board", async ({ page, isMobile, browserName }) => {
   test.skip(isMobile, "no Tab key on a touch device");
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   // Unhydrated, Enter follows the link's href and puts #services in the address.
   await hydrated(page);
-  const skip = page.getByRole("link", { name: "Skip to services" });
+  const skip = page.getByRole("link", { name: "Skip to the board" });
   // First in the tab order by the markup itself: nothing before it can take
   // focus, and the compact header, hidden at the top, is inert.
   const first = await page.evaluate(() => {
@@ -241,7 +238,7 @@ test("starts the tab order with a skip link that moves focus to the services", a
     );
     return focusable?.textContent?.trim();
   });
-  expect(first).toBe("Skip to services");
+  expect(first).toBe("Skip to the board");
   if (browserName === "webkit") {
     // Safari only tabs to links with a setting switched on, and WebKit's
     // Tab handling differs by platform, so focus it directly there.
@@ -1040,22 +1037,28 @@ test("keeps one search input, focus, text and caret intact through the dock", as
   }
 });
 
-test("keeps a docked field docked when a search leaves almost nothing to scroll", async ({ page }) => {
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const bar = controlBar(page);
-  await scrollAndSettle(page, (await dockNatural(page)) + 100);
-  await expect(bar).toHaveAttribute("data-shown", "true");
-  await expect.poll(() => dockValue(page)).toBe(1);
+// On a board with things to look at, Recent changes sits in view under them; on a calm one it leads the board.
+// Both are served, so the page does not depend on what the vendors say today.
+for (const [name, board, ready] of [
+  ["with services to look at", fixtureBoard, { id: "aws", label: "Outage" }],
+  ["on a calm board", calmBoard, { id: "aws", label: "Operational" }],
+] as const) {
+  test(`keeps a docked field docked when a search leaves almost nothing to scroll (${name})`, async ({ page }) => {
+    await openFixture(page, () => board(Date.now()), ready);
+    await expect(cards(page)).toHaveCount(SERVICES);
+    const bar = controlBar(page);
+    await scrollAndSettle(page, (await dockNatural(page)) + 100);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    await expect.poll(() => dockValue(page)).toBe(1);
 
-  await page.getByLabel("Search services").fill("zzzzqq");
-  await expect(cards(page)).toHaveCount(0);
-  // The page has to stay tall enough to hold the field in the bar.
-  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  expect(await dockValue(page)).toBe(1);
-  await expect(bar).toHaveAttribute("data-shown", "true");
-});
+    await page.getByLabel("Search services").fill("zzzzqq");
+    await expect(cards(page)).toHaveCount(0);
+    // The page has to stay tall enough to hold the field in the bar.
+    await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+    expect(await dockValue(page)).toBe(1);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+  });
+}
 
 test("docks the search field inside the bar, between its dot and its buttons", async ({ page }) => {
   await page.goto("/");
@@ -2111,6 +2114,235 @@ test("puts the footer in a contentinfo landmark outside main, and names the rece
   await footer.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
 });
+
+test("puts Recent changes right after Needs a look and before the first category", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await expect(page.getByRole("region", { name: /^Needs a look/ })).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Recent changes" })).toHaveCount(1);
+  // The board's sections as they sit in the page, by the heading each one is named by.
+  const headings = await page
+    .locator("main section[aria-labelledby]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-labelledby")));
+  expect(headings.slice(0, 2)).toEqual(["attention-heading", "recent-heading"]);
+  // Every other section, Couldn't read and the categories included, follows the feed.
+  const rest = headings.slice(2);
+  expect(rest.some((id) => id?.startsWith("up-"))).toBe(true);
+  expect(rest).not.toContain("recent-heading");
+  expect(rest).not.toContain("attention-heading");
+});
+
+test("puts Recent changes first when nothing needs a look", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await expect(cards(page)).toHaveCount(SERVICES);
+  // Steam is operational, so the search leaves no Needs a look section.
+  await page.getByRole("searchbox").first().fill("steam");
+  await expect(cards(page)).toHaveCount(1);
+  await expect(page.locator('[data-group="attention"]')).toHaveCount(0);
+  const headings = await page
+    .locator("main section[aria-labelledby]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-labelledby")));
+  expect(headings[0]).toBe("recent-heading");
+  expect(headings).toHaveLength(2);
+});
+
+test("keeps one Recent changes region, in place, through an empty search", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await expect(cards(page)).toHaveCount(SERVICES);
+  const recent = page.getByRole("region", { name: "Recent changes" });
+  await expect(recent).toHaveCount(1);
+  // A JS property survives only on the same DOM node, so a remount would drop it.
+  await recent.evaluate((node) => {
+    (node as HTMLElement & { __kept?: boolean }).__kept = true;
+  });
+  const search = page.getByRole("searchbox").first();
+  await search.fill("zzzz-no-such-service");
+  await expect(cards(page)).toHaveCount(0);
+  await expect(recent).toHaveCount(1);
+  // After the empty message, with the same gap as between the sections.
+  const order = await page.evaluate(() => {
+    // The empty message is the one panel in the board that is in no section.
+    const message = [...document.querySelectorAll("main p.surface")].find((node) => !node.closest("section"));
+    const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
+    if (!message || !feed) return null;
+    return {
+      after: Boolean(message.compareDocumentPosition(feed) & Node.DOCUMENT_POSITION_FOLLOWING),
+      gap: Math.round(feed.getBoundingClientRect().top - message.getBoundingClientRect().bottom),
+      rem: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    };
+  });
+  expect(order).not.toBeNull();
+  expect(order?.after).toBe(true);
+  expect(order?.gap).toBe(2 * (order?.rem ?? 16));
+  await search.fill("");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await expect(recent).toHaveCount(1);
+  expect(await recent.evaluate((node) => (node as HTMLElement & { __kept?: boolean }).__kept)).toBe(true);
+});
+
+/**
+ * The saved checks of a returning visitor, as local storage holds them: eight
+ * checks from the last sixteen minutes, with the board the last one saw. They
+ * are as long as real ones get on a phone, where each caption wraps to several
+ * lines: changes to several services at once, summaries a sentence long, and
+ * a run of quiet checks that is one row. The load adds a quiet ninth in place
+ * of the oldest. The board is the one the page itself saved on a first visit,
+ * so the check the load makes finds nothing changed, as it does for a real
+ * visitor.
+ */
+async function savedChecks(page: Page): Promise<{ key: string; store: string }> {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), PULSE_STORAGE_KEY)).not.toBeNull();
+  const first = JSON.parse((await page.evaluate((key) => localStorage.getItem(key), PULSE_STORAGE_KEY)) ?? "null") as {
+    lastBoard: BoardSnapshot | null;
+  };
+  expect(first.lastBoard, "the page saved the board it showed").not.toBeNull();
+  const slot = Math.floor(Date.now() / 120_000) * 120_000;
+  const counts = { operational: 10, degraded: 3, outage: 1, maintenance: 0, unknown: 0 };
+  const aws = "Increased error rates and latency for API requests in US-EAST-1 affecting several services";
+  const routerOs = "Elevated connection failures for some users; engineers are investigating a network issue";
+  const change = (id: string, name: string, to: string, summary: string, from = "operational") => ({
+    id,
+    name,
+    from,
+    to,
+    summary,
+  });
+  const checks = [
+    [
+      change("gcp", "Google Cloud", "degraded", "Degraded performance"),
+      change("aws", "Amazon Web Services", "outage", aws),
+      change("android", "Android / Play", "degraded", routerOs),
+    ],
+    [change("aws", "Amazon Web Services", "degraded", aws)],
+    [change("mikrotik", "MikroTik RouterOS", "outage", routerOs)],
+    [
+      change("gcp", "Google Cloud", "operational", "", "degraded"),
+      change("aws", "Amazon Web Services", "operational", "", "outage"),
+      change("cs2-europe", "CS2 Europe", "maintenance", "Planned maintenance"),
+      change("epic", "Epic Games", "degraded", "Slow logins"),
+      change("apple", "Apple", "degraded", "Some services are slow"),
+    ],
+    [],
+    [],
+    [change("android", "Android / Play", "outage", aws)],
+    [change("chatgpt", "ChatGPT", "degraded", aws), change("mikrotik", "MikroTik RouterOS", "degraded", routerOs)],
+  ];
+  const pulses = checks.map((changes, index) => ({
+    slot: slot - (index + 1) * 120_000,
+    at: new Date(slot - (index + 1) * 120_000).toISOString(),
+    overall: "degraded",
+    counts,
+    changes,
+    opening: false,
+  }));
+  return {
+    key: PULSE_STORAGE_KEY,
+    store: JSON.stringify({ lastSlot: slot - 120_000, lastBoard: first.lastBoard, pulses }),
+  };
+}
+
+const feedSurface = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] .surface');
+const feedRows = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] li');
+
+test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
+  const saved = await savedChecks(page);
+  await page.addInitScript((saved) => {
+    localStorage.setItem(saved.key, saved.store);
+    const tracked = window as Window & { __cls?: number };
+    tracked.__cls = 0;
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
+        if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+      }
+    }).observe({ type: "layout-shift", buffered: true });
+  }, saved);
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  // The load's own check, then the saved ones with the quiet run as one row.
+  await expect(feedRows(page)).toHaveCount(7);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  await page.waitForTimeout(500);
+  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+  expect(shift, "cumulative layout shift").toBeLessThan(0.02);
+});
+
+// The reserve is measured from the markup the page draws, so it holds at any
+// width and any default font size. 21px is a line of the body text: the one
+// thing a wrap that differs by a line (a web font swapped in) moves.
+const TOLERANCE_PX = 21;
+
+for (const fontPx of [16, 20]) {
+  test(`holds the height of Recent changes for the saved checks, on a phone and a desktop, at a ${fontPx}px default font`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      fontPx !== 16 && browserName !== "chromium",
+      "the default font size is set over Chromium's DevTools protocol",
+    );
+    const saved = await savedChecks(page);
+    await page.addInitScript((saved) => localStorage.setItem(saved.key, saved.store), saved);
+    if (fontPx !== 16) {
+      const session = await page.context().newCDPSession(page);
+      await session.send("Page.setFontSizes", { fontSizes: { standard: fontPx } });
+    }
+    const surface = feedSurface(page);
+    const results: string[] = [];
+    for (const width of [320, 375, 390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      // Hold the page's scripts back, so the server's markup (the feed empty)
+      // is what paints, and let them go to read the feed once it is drawn.
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.route("**/*", async (route) => {
+        if (route.request().resourceType() === "script") await gate;
+        await route.continue();
+      });
+      await page.goto("/", { waitUntil: "commit" });
+      await expect(surface).toBeVisible();
+      await expect(feedRows(page)).toHaveCount(0);
+      // The page's own script has measured by the time the surface has its
+      // property; the browser then starts on the web font, and the script
+      // measures again when it is in. Wait for that: a visitor settles on the
+      // paint after it before the page hydrates.
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector<HTMLElement>('section[aria-labelledby="recent-heading"] .surface')
+            ?.style.getPropertyValue("--feed-reserve") !== "",
+      );
+      await page.evaluate(async () => {
+        await document.fonts.load("400 15px Inter").catch(() => []);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      });
+      const root = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize));
+      expect(root, "the default font size").toBe(fontPx);
+      const before = (await surface.boundingBox())?.height ?? 0;
+      release();
+      await hydrated(page);
+      // The load's own check, then the saved ones with the quiet run as one row.
+      await expect(feedRows(page)).toHaveCount(7);
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      );
+      const after = (await surface.boundingBox())?.height ?? 0;
+      results.push(`${width}px: reserved ${before}px, drawn ${after}px`);
+      // What the board below moves by, growing or shrinking.
+      expect(before, `${width}px reserves more than the empty card`).toBeGreaterThan(100);
+      expect(Math.abs(before - after), results.at(-1)).toBeLessThanOrEqual(TOLERANCE_PX);
+      await page.unroute("**/*");
+    }
+  });
+}
 
 test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
   const board = fixtureBoard(Date.now());
