@@ -295,6 +295,14 @@ describe("the Changed bar", () => {
     }
   });
 
+  it("keeps the neutral accent on a release tracker, which is not a recovery", () => {
+    const html = render("aws", { category: "updates", health: "operational" }, { emphasized: true });
+    const article = html.slice(0, html.indexOf(">"));
+    expect(article).toContain("after:bg-accent");
+    expect(article).not.toContain("after:bg-ok");
+    expect(article).toContain("forced-colors:after:bg-[CanvasText]");
+  });
+
   it("draws no bar, in any colour, on a service that did not change", () => {
     for (const health of Object.keys(BARS) as (keyof typeof BARS)[]) {
       const html = render("aws", { health });

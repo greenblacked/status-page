@@ -34,7 +34,8 @@ export function ChangedTag() {
  * hairline between rows.
  *
  * Changed: a 2px bar on the inline-start edge, fading in once, in the colour of
- * the state (green for a recovery, the accent for unknown). It uses ::after
+ * the state (green for a recovery, the accent for unknown), or in `bar` when a
+ * row has no state of its own to show (a release tracker). It uses ::after
  * because ::before draws the row's separator.
  */
 export function RowFrame({
@@ -43,9 +44,12 @@ export function RowFrame({
   starred,
   onToggleStar,
   lead,
+  bar,
   children,
 }: Pick<ServiceCardProps, "service" | "emphasized" | "starred" | "onToggleStar"> & {
   lead: ReactNode;
+  /** The Changed bar's colour class, when it is not the colour of the service's health. */
+  bar?: string;
   children: ReactNode;
 }) {
   return (
@@ -58,7 +62,7 @@ export function RowFrame({
         "row focus-ring grid min-h-(--row-h) scroll-mt-6 grid-cols-[20px_minmax(0,1fr)_auto] items-start gap-x-3 pl-4 focus-visible:-outline-offset-2!",
         emphasized && [
           "after:absolute after:inset-y-3 after:left-0 after:w-0.5 after:opacity-100 after:transition-opacity after:duration-(--t-reveal) after:ease-(--ease-out) after:content-[''] after:starting:opacity-0 motion-reduce:after:transition-none forced-colors:after:bg-[CanvasText] forced-colors:after:forced-color-adjust-none",
-          CHANGED_BAR.row[service.health],
+          bar ?? CHANGED_BAR.row[service.health],
         ],
       )}
     >

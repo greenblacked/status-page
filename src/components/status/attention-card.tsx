@@ -105,8 +105,8 @@ export function AttentionCard({
       className="surface spotlight focus-ring relative scroll-mt-6 p-4"
     >
       {emphasized ? (
-        // Changed: a 2px accent bar on the inline-start edge, fading in once, in the colour of the state: red for
-        // an outage, amber for degraded, the maintenance tone, green for a recovery. A real
+        // Changed: a 2px bar on the inline-start edge, fading in once, in the colour of the state: red for an
+        // outage, amber for degraded, the maintenance tone for maintenance. A real
         // element, not a pseudo-element: ::before and ::after carry the Glass and Full sheen and glint. The
         // important position outweighs the Glass rule that makes a panel's children relative.
         <span

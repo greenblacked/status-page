@@ -30,9 +30,9 @@ export const STATUS_TEXT: Record<Health, string> = {
 /**
  * The Changed bar on a card's or row's inline-start edge, in the colour of the
  * state the service is in now: the same tokens as STATUS_TEXT, so contrast,
- * dark, Increase Contrast and print follow the glyph. Unknown keeps the
- * neutral accent. Written out in full, because Tailwind reads class names
- * from the source. A card's bar is an element (`card`); a row's is its ::after
+ * dark and Increase Contrast follow the glyph (print drops the bar, as it
+ * always has). Unknown keeps the neutral accent. Written out in full, because
+ * Tailwind reads class names from the source. A card's bar is an element (`card`); a row's is its ::after
  * (`row`).
  */
 export const CHANGED_BAR: Record<"card" | "row", Record<Health, string>> = {
