@@ -166,14 +166,14 @@ jobs:
           retention-days: 1
 
   e2e:
-    # One shard per engine family and device. Every project runs the same 134
-    # tests (670 in all), but WebKit is several times slower than Chromium in
-    # CI, so the two Chromium projects share a shard and each WebKit project
+    # One shard per engine family and device. Every project runs the same 174
+    # tests (1044 in all), but WebKit is several times slower than Chromium in
+    # CI, so the three Chromium projects share a shard and each WebKit project
     # gets its own. Together the shards run every project exactly once.
     name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Per shard: at most 268 tests on one engine (Chromium) or 134 on WebKit,
+    # Per shard: at most 522 tests on one engine (Chromium) or 174 on WebKit,
     # which take 3 to 5 minutes, plus the browser and its system libraries to
     # install. WebKit's libraries are about 125 MB from apt, and on a slow
     # runner that fetch has taken over 20 minutes. apt is not retried: a
@@ -187,7 +187,7 @@ jobs:
         include:
           - shard: chromium
             browser: chromium
-            projects: desktop,mobile
+            projects: desktop,mobile,tablet
           - shard: desktop-safari
             browser: webkit
             projects: Desktop Safari
