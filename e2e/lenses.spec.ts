@@ -310,12 +310,14 @@ test.describe("styling", () => {
     await expect(lenses(page)).toBeHidden();
   });
 
-  /** Each bubble's running animations, by property: what moves it. */
+  /** Each drawn bubble's running animations, by name: what moves it. (A bubble a width does not draw has none.) */
   const motion = (page: Page) =>
     page
       .locator(".lens")
       .evaluateAll((all) =>
-        all.map((lens) => lens.getAnimations().map((animation) => (animation as CSSAnimation).animationName)),
+        all
+          .filter((lens) => getComputedStyle(lens).display !== "none")
+          .map((lens) => lens.getAnimations().map((animation) => (animation as CSSAnimation).animationName)),
       );
 
   test("reduced motion stills the bubbles", async ({ page }) => {
@@ -339,7 +341,7 @@ test.describe("styling", () => {
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     const fine = await page.evaluate(() => matchMedia("(hover: hover) and (pointer: fine)").matches);
     const running = await motion(page);
-    expect(running).toHaveLength(11);
+    expect(running.length).toBeGreaterThanOrEqual(6);
     if (!fine) {
       expect(running.flat()).toEqual([]);
       return;
@@ -347,13 +349,15 @@ test.describe("styling", () => {
     // Sideways, up and down, and a breath: compositor properties only, never a layout or paint property.
     for (const names of running) expect(names).toEqual(["bubble-sway", "bubble-bob", "bubble-breathe"]);
     const timing = await page.locator(".lens").evaluateAll((all) =>
-      all.map((lens) =>
-        lens.getAnimations().map((animation) => {
-          const effect = animation.effect as KeyframeEffect;
-          const properties = new Set(effect.getKeyframes().flatMap((frame) => Object.keys(frame)));
-          return { duration: effect.getTiming().duration, properties: [...properties].sort().join(",") };
-        }),
-      ),
+      all
+        .filter((lens) => getComputedStyle(lens).display !== "none")
+        .map((lens) =>
+          lens.getAnimations().map((animation) => {
+            const effect = animation.effect as KeyframeEffect;
+            const properties = new Set(effect.getKeyframes().flatMap((frame) => Object.keys(frame)));
+            return { duration: effect.getTiming().duration, properties: [...properties].sort().join(",") };
+          }),
+        ),
     );
     for (const bubble of timing) {
       expect(bubble.map((a) => a.properties)).toEqual([
@@ -361,16 +365,84 @@ test.describe("styling", () => {
         "composite,computedOffset,easing,offset,transform",
         "composite,computedOffset,easing,offset,scale",
       ]);
-      // Every loop is slow: the breath takes seconds, the drift tens of them.
-      for (const animation of bubble) expect(Number(animation.duration)).toBeGreaterThanOrEqual(4000);
+      // Every loop is slow (the breath is the shortest, and every iteration is a style recalculation on the main thread): ten seconds or more.
+      for (const animation of bubble) expect(Number(animation.duration)).toBeGreaterThanOrEqual(10_000);
     }
     // Their own timing: no two bubbles share a drift duration.
     const drifts = timing.map((bubble) => bubble[0].duration);
     expect(new Set(drifts).size).toBe(drifts.length);
   });
 
+  /**
+   * The drawn bubbles, each with the box it sweeps (its own box and its float's reach: --dx and --dy are cqmin),
+   * against the bare text of the page at the top: text outside every panel, whose blur would soften a bubble.
+   * Also, above phone width, against the margin column's whole x-range, which the text runs down as the page scrolls under the fixed layer.
+   */
+  async function bubblesOnText(page: Page) {
+    return page.evaluate(() => {
+      const unit = Math.min(innerWidth, innerHeight) / 100;
+      const sweeps = [...document.querySelectorAll<HTMLElement>(".lens")]
+        .filter((lens) => getComputedStyle(lens).display !== "none")
+        .map((lens, index) => {
+          const style = getComputedStyle(lens);
+          const box = lens.getBoundingClientRect();
+          const dx = Number.parseFloat(style.getPropertyValue("--dx")) * unit;
+          const dy = Number.parseFloat(style.getPropertyValue("--dy")) * unit;
+          return { index, left: box.left - dx, right: box.right + dx, top: box.top - dy, bottom: box.bottom + dy };
+        });
+      const texts: { label: string; left: number; right: number; top: number; bottom: number }[] = [];
+      const walker = document.createTreeWalker(document.querySelector(".liquid-content") as Node, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const element = node.parentElement;
+        if (!element || !node.textContent?.trim()) continue;
+        if (element.closest(".surface, .sr-only, [aria-hidden=true], .float")) continue;
+        if (getComputedStyle(element).visibility === "hidden") continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const box of range.getClientRects())
+          if (box.width > 0) texts.push({ label: node.textContent.trim().slice(0, 24), ...box.toJSON() });
+      }
+      const margin = [...document.querySelectorAll(".board-margin")].map((el) => el.getBoundingClientRect());
+      const hits: string[] = [];
+      for (const sweep of sweeps) {
+        for (const text of texts)
+          if (text.left < sweep.right && text.right > sweep.left && text.top < sweep.bottom && text.bottom > sweep.top)
+            hits.push(`bubble ${sweep.index + 1} over "${text.label}"`);
+        for (const column of margin)
+          if (innerWidth > 704 && column.width > 0 && column.left < sweep.right && column.right > sweep.left)
+            hits.push(
+              `bubble ${sweep.index + 1} inside the margin column (${Math.round(column.left)}-${Math.round(column.right)})`,
+            );
+      }
+      return hits;
+    });
+  }
+
+  for (const [width, height] of [
+    [1024, 768],
+    [1180, 820],
+    [1280, 720],
+    [1366, 768],
+    [1440, 900],
+    [1600, 900],
+    [1601, 900],
+    [2560, 1440],
+    [1920, 1080],
+  ] as const) {
+    test(`at ${width}x${height} no bubble sits over the margin column or any bare text`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== "desktop", "needs a desktop-width page");
+      await page.setViewportSize({ width, height });
+      await serveBoard(page, () => fixtureBoard(Date.now()));
+      await page.goto("/");
+      await hydrated(page);
+      expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+      expect(await bubblesOnText(page)).toEqual([]);
+    });
+  }
+
   test("a narrow screen draws fewer, smaller bubbles in its own places", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
+    await serveBoard(page, () => fixtureBoard(Date.now()));
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
@@ -383,23 +455,33 @@ test.describe("styling", () => {
     const drawn = boxes.filter((box) => box.shown);
     expect(drawn).toHaveLength(6);
     for (const box of drawn) expect(box.d).toBeLessThanOrEqual(48);
-    // Along the edges, clear of the middle of the column the text runs down.
+    // On the edges (some partly off the screen), clear of the middle of the column the text runs down.
     for (const box of drawn) expect(Math.abs(box.cx - 195)).toBeGreaterThan(120);
+    expect(await bubblesOnText(page)).toEqual([]);
   });
 
-  test("bubbles are small", async ({ page }, testInfo) => {
+  test("bubbles are small, and laptop and tablet widths draw nine", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "needs a desktop-width page");
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/");
-    await hydrated(page);
-    expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
-    const sizes = await page
-      .locator(".lens")
-      .evaluateAll((all) => all.map((lens) => lens.getBoundingClientRect().width));
-    expect(sizes).toHaveLength(11);
-    for (const size of sizes) {
-      expect(size).toBeGreaterThanOrEqual(12);
-      expect(size).toBeLessThanOrEqual(80);
+    for (const [width, height, count] of [
+      [1440, 900, 9],
+      [1920, 1080, 11],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto("/");
+      await hydrated(page);
+      expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+      const sizes = await page
+        .locator(".lens")
+        .evaluateAll((all) =>
+          all
+            .filter((lens) => getComputedStyle(lens).display !== "none")
+            .map((lens) => lens.getBoundingClientRect().width),
+        );
+      expect(sizes).toHaveLength(count);
+      for (const size of sizes) {
+        expect(size).toBeGreaterThanOrEqual(12);
+        expect(size).toBeLessThanOrEqual(80);
+      }
     }
   });
 
@@ -713,8 +795,8 @@ test.describe("contrast", () => {
           },
           { b64: Buffer.from(shot).toString("base64"), discs: setup.discs, colours: setup.colours },
         );
-        // Not vacuous: eleven small bubbles are on screen, a few thousand pixels between them.
-        expect(result.checked).toBeGreaterThan(3_000);
+        // Not vacuous: nine small bubbles are drawn at this width, a couple of thousand pixels between them.
+        expect(result.checked).toBeGreaterThan(1_500);
         expect(result.failures, `worst ratios ${JSON.stringify(result.worst)}`).toEqual({ subtle: 0, muted: 0 });
       } finally {
         await helper.close();

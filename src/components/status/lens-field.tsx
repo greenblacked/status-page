@@ -12,8 +12,9 @@ const BUBBLE_KEYS = Array.from({ length: BUBBLES }, (_, index) => `bubble-${inde
  * always rendered, so the server's HTML and the hydrated page agree. Where each
  * bubble sits, how big it is and how it floats (its own path, pace and phase,
  * all fixed numbers, never random) is in src/background.css, which also shows
- * the layer only on the Full background (Quiet and Glass hide it) and shows
- * fewer bubbles on a narrow screen.
+ * the layer only on the Full background (Quiet and Glass hide it) and gives
+ * laptop, tablet and phone widths their own places and fewer bubbles, so none
+ * sits over the margin column's bare text.
  *
  * On Full, with a mouse or trackpad, each bubble drifts and breathes slowly,
  * on transform alone and in pure CSS; touch screens and Reduce Motion keep

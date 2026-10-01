@@ -140,6 +140,14 @@
   --lens-glint: light-dark(rgb(255 255 255 / 0.75), rgb(255 255 255 / 0.04));
   --lens-fringe-a: light-dark(oklch(0.85 0.09 200 / 0.16), oklch(0.8 0.13 200 / 0.2));
   --lens-fringe-b: light-dark(oklch(0.82 0.1 340 / 0.16), oklch(0.72 0.17 340 / 0.18));
+  /*
+    The same two hues at the alpha the rim ring draws them with. Plain tokens,
+    not relative colours taken from the fringe ones: a light-dark() origin
+    colour in a relative colour is not supported everywhere (older Safari),
+    and one invalid stop would drop the whole ring.
+  */
+  --lens-iris-a: light-dark(oklch(0.85 0.09 200 / 0.6), oklch(0.8 0.13 200 / 0.6));
+  --lens-iris-b: light-dark(oklch(0.82 0.1 340 / 0.6), oklch(0.72 0.17 340 / 0.6));
 
   /* The period dial's own fine strokes and its warm point (Full only). */
   --dial-tick: light-dark(rgb(10 15 25 / 0.22), rgb(255 255 255 / 0.28));
@@ -221,10 +229,10 @@
     Where they sit: a bubble's place (--x, --y, percent of the layer), size
     (--d, from cqmin so it follows the screen, clamped so it stays a bubble)
     and float (below) are fixed numbers per position in the list, never random,
-    so the server and the browser draw one page. On a desktop most sit in the
-    gutters either side of the column of cards; behind a card, the panel's blur
-    softens one. On a narrow screen the first six take new places along the
-    edges and the rest are not drawn.
+    so the server and the browser draw one page. On a wide desktop most sit in
+    the gutters either side of the column of cards; behind a card, the panel's
+    blur softens one. Laptop, tablet and phone widths each take their own
+    places (below), so none sits under the margin column's bare text.
   */
   .lenses {
     display: none;
@@ -275,17 +283,52 @@
   .lens:nth-child(10) { --x: 71; --y: 95; --d: clamp(12px, 1.8cqmin, 22px); --dx: 1.4; --dy: 2.4; --t: 17; --ph: 9; }
   .lens:nth-child(11) { --x: 33; --y: 33; --d: clamp(12px, 1.6cqmin, 18px); --dx: 1.2; --dy: 2; --t: 14; --ph: 2; }
 
+  /*
+    Laptop and tablet widths: the left margin column (section labels, the
+    dateline, the live line) is bare text, and it moves with the window, so
+    the place a bubble would clear it at 1440 is on it at 1280 or 1024. Here
+    every bubble stands outside it: the left ones on the edge, in the page
+    gutter (small, and nearly still, so a float never reaches the text), the
+    rest on the right, where the cards are. Two are not drawn. From 100rem up
+    the margin column is far enough in for the first places to hold, bar three
+    (4, 5 and 11) that move further out to the left.
+  */
+  @container (min-width: 44.01rem) and (max-width: 100rem) {
+    .lens:is(:nth-child(5), :nth-child(11)) {
+      display: none;
+    }
+
+    .lens:nth-child(1) { --x: 2; --y: 12; --d: clamp(12px, 2cqmin, 20px); --dx: 0.6; --dy: 2.4; }
+    .lens:nth-child(2) { --x: 1.8; --y: 47; --d: clamp(14px, 2.4cqmin, 24px); --dx: 0.4; --dy: 3; }
+    .lens:nth-child(3) { --x: 2; --y: 74; --d: clamp(12px, 1.8cqmin, 18px); --dx: 0.5; --dy: 2.4; }
+    .lens:nth-child(4) { --x: 95; --y: 22; --d: clamp(16px, 3.2cqmin, 34px); }
+    .lens:nth-child(7) { --x: 96; --y: 45; --d: clamp(22px, 4.6cqmin, 52px); }
+    .lens:nth-child(9) { --x: 95; --y: 85; }
+    .lens:nth-child(10) { --x: 88; --y: 95; }
+  }
+
+  @container (min-width: 100.01rem) {
+    .lens:nth-child(4) { --x: 12; }
+    .lens:nth-child(5) { --x: 18; --y: 62; }
+    .lens:nth-child(11) { --x: 10; --y: 31; }
+  }
+
+  /*
+    A phone: the first six, hugging the edges (partly off the screen for the
+    bigger ones), where the text and the cards leave the page's own margin.
+    They hardly drift, so they stay there.
+  */
   @container (max-width: 44rem) {
     .lens:nth-child(n + 7) {
       display: none;
     }
 
-    .lens:nth-child(1) { --x: 91; --y: 9; }
-    .lens:nth-child(2) { --x: 8; --y: 38; }
-    .lens:nth-child(3) { --x: 91; --y: 34; }
-    .lens:nth-child(4) { --x: 6; --y: 63; }
-    .lens:nth-child(5) { --x: 90; --y: 79; }
-    .lens:nth-child(6) { --x: 18; --y: 94; }
+    .lens:nth-child(1) { --x: 93; --y: 9; --dx: 0.8; }
+    .lens:nth-child(2) { --x: 0; --y: 38; --dx: 0.8; }
+    .lens:nth-child(3) { --x: 98; --y: 34; --dx: 0.6; }
+    .lens:nth-child(4) { --x: 0; --y: 63; --dx: 0.8; }
+    .lens:nth-child(5) { --x: 99; --y: 79; --dx: 0.6; }
+    .lens:nth-child(6) { --x: 4; --y: 94; --dx: 0.8; }
   }
 
   /*
@@ -302,16 +345,16 @@
     padding: clamp(1px, 0.04em, 2px);
     background: conic-gradient(
       from 0deg,
-      oklch(from var(--lens-fringe-a) l c h / 0.6),
+      var(--lens-iris-a),
       transparent 38deg,
       transparent 96deg,
-      oklch(from var(--lens-fringe-b) l c h / 0.6) 126deg,
+      var(--lens-iris-b) 126deg,
       var(--lens-rim-mid) 152deg,
       transparent 196deg,
       transparent 256deg,
       var(--lens-rim-hi) 304deg,
-      oklch(from var(--lens-fringe-a) l c h / 0.6) 340deg,
-      oklch(from var(--lens-fringe-a) l c h / 0.6)
+      var(--lens-iris-a) 340deg,
+      var(--lens-iris-a)
     );
     -webkit-mask:
       linear-gradient(#000 0 0) content-box exclude,
@@ -597,17 +640,23 @@
       The bubbles float only here, where the aurora already drifts: a moving
       layer behind a blurred panel makes the panel blur again each frame, and
       with the aurora moving that is already so, so these small transform-only
-      loops add no repaint (measured: paint events match a still page). On a
-      touch screen the aurora holds still to spare the battery, so the
-      bubbles do too. Reduce Motion stops them through the global rule in
-      styles.css. No will-change: a running transform animation gets its own
-      layer without it.
+      loops add no repaint and no compositor work the aurora does not already
+      cause (Chromium: paint events match a still page; every bubble animation
+      runs on the compositor). They do cost the main thread a little, a few
+      style recalculations a second, measured at 1440x900
+      with the aurora and card light held still (5s windows, a busy machine):
+      9-11 recalculations with the bubbles still, 35-38 with the breath on a
+      4-9s loop, 17-30 with it on a 13-20s loop as it is now. That is why the
+      breath is the slowest loop. On a touch screen the aurora holds still to
+      spare the battery, so the bubbles do too. Reduce Motion stops them
+      through the global rule in styles.css. No will-change: a running
+      transform animation gets its own layer without it.
     */
     :root[data-background="full"] .lens {
       animation:
         bubble-sway calc(var(--t) * 1s) ease-in-out calc(var(--ph) * -1s) infinite alternate,
         bubble-bob calc(var(--t) * 0.73s) ease-in-out calc(var(--ph) * -0.61s) infinite alternate,
-        bubble-breathe calc(4s + var(--t) * 0.12s) ease-in-out calc(var(--ph) * -0.27s) infinite alternate;
+        bubble-breathe calc(9s + var(--t) * 0.3s) ease-in-out calc(var(--ph) * -0.27s) infinite alternate;
     }
 
     /*
