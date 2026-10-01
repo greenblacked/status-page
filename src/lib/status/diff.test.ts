@@ -64,6 +64,26 @@ describe("diffBoards", () => {
     ]);
   });
 
+  it("does not announce the listed versions as releases when a failed check recovers", () => {
+    const previous = board([service("android-os", { health: "unknown", summary: "Couldn't read the page" })]);
+    const next = board([
+      service("android-os", {
+        health: "operational",
+        summary: "Latest: Android 17",
+        meta: { latest: "Android 17", versions: "Android 17=released|Android 16=released" },
+      }),
+    ]);
+    assert.deepEqual(diffBoards(previous, next), [
+      {
+        id: "android-os",
+        name: "android-os",
+        from: "unknown",
+        to: "operational",
+        summary: "Latest: Android 17",
+      },
+    ]);
+  });
+
   it("does not report a version that only left the list as a change", () => {
     const previous = board([
       service("android-os", {

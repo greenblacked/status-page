@@ -17,13 +17,15 @@ export function overallHealth(board: BoardSnapshot): Health {
 /**
  * A release tracker's newest versions when they differ from the previous
  * snapshot's, such as "RouterOS 7 stable 7.21"; "" when they did not change
- * or the service reports none. (A changed fingerprint with no nameable
- * version yields "" too: the caller treats that as no release.)
+ * or the service reports none. A snapshot that had no versions (a failed
+ * check carries no meta) is not a baseline: the first reading after it is a
+ * recovery, not a release. (A changed fingerprint with no nameable version
+ * yields "" too: the caller treats that as no release.)
  */
 export function releaseChange(before: ServiceSnapshot, after: ServiceSnapshot): string {
   const previousVersions = versionFingerprint(before.meta);
   const nextVersions = versionFingerprint(after.meta);
-  if (!nextVersions || previousVersions === nextVersions) return "";
+  if (!previousVersions || !nextVersions || previousVersions === nextVersions) return "";
   return describeVersionChanges(previousVersions, nextVersions);
 }
 

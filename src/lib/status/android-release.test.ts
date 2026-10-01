@@ -1,11 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import {
-  ANDROID_VERSIONS_URL,
-  androidReleases,
-  MAX_ANDROID_LINKS,
-  readAndroidVersionLinks,
-} from "./android-release.ts";
+import { androidReleases, MAX_ANDROID_LINKS, readAndroidVersionLinks } from "./android-release.ts";
 
 const page = readFileSync(new URL("./__fixtures__/android-os/versions.html", import.meta.url), "utf8");
 
@@ -102,9 +97,5 @@ describe("androidReleases", () => {
 
   it("is empty for no versions", () => {
     expect(androidReleases([])).toEqual([]);
-  });
-
-  it("names the page it reads", () => {
-    expect(ANDROID_VERSIONS_URL).toBe("https://developer.android.com/about/versions");
   });
 });

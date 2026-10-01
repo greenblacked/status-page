@@ -13,6 +13,11 @@
  * have pages of their own that describe betas, with no stable release listed
  * anywhere on this page, so none is read as a release.
  *
+ * Assumption: Google links a version as "Android <number>" from the menu only
+ * once it has shipped; during a beta the menu says "Android Beta" and links the
+ * preview pages, which are not read. If a future beta were linked as
+ * "Android 18" from `/about/versions/18`, the card would show it as released.
+ *
  * The page is vendor input of up to 4 MiB, so everything below is a single
  * linear scan with a ceiling on links, tag length and text, never a regex that
  * can backtrack against itself.
@@ -25,9 +30,6 @@ export type AndroidRelease = {
 };
 
 export const ANDROID_NAME = "Android";
-
-/** The releases page, the one place the versions are read from. */
-export const ANDROID_VERSIONS_URL = "https://developer.android.com/about/versions";
 
 /** Newest versions kept: the ones in service, not the page's whole history. */
 const MAX_RELEASES = 4;
