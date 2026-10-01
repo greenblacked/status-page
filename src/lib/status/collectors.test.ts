@@ -800,6 +800,127 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       ]);
     });
 
+    // Trimmed from the live Claude page: every component Operational, the page indicator "none", and
+    // one open incident that the vendor has not tied to any component.
+    const claudeWithIncident = (incident: Record<string, unknown>) =>
+      statuspageSummary({
+        indicator: "none",
+        components: [
+          { id: "c1", name: "claude.ai", status: "operational" },
+          { id: "c2", name: "Claude API (api.anthropic.com)", status: "operational" },
+          { id: "c3", name: "Claude Code", status: "operational" },
+        ],
+        incidents: [
+          {
+            id: "credits",
+            name: "Delayed credits on the Claude Platform",
+            status: "monitoring",
+            started_at: "2026-10-01T19:20:00Z",
+            components: [],
+            ...incident,
+          },
+        ],
+      });
+
+    it.each([
+      ["minor", "degraded"],
+      ["major", "outage"],
+      ["critical", "outage"],
+    ])("an active %s incident makes the card %s, though every component is Operational", async (impact, health) => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe(health);
+      expect(claude.summary).toBe("Delayed credits on the Claude Platform");
+      expect(claude.components.every((component) => component.health === "operational")).toBe(true);
+      expect(claude.incidents).toHaveLength(1);
+      expect(claude.incidents[0]).toMatchObject({ health, title: "Delayed credits on the Claude Platform" });
+      expect(claude.incidents[0].informational).toBeUndefined();
+    });
+
+    it("an active impact-none notice leaves the same Claude page Operational, with the notice listed", async () => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact: "none" })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.summary).toBe("Nothing reported.");
+      expect(claude.incidents[0]).toMatchObject({ health: "operational", informational: true });
+    });
+
+    it("a resolved incident does not raise the card", async () => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact: "major", status: "resolved" })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.incidents).toEqual([]);
+    });
+
+    it("an incident is never masked by a notice, and never lowers a worse component or indicator", async () => {
+      const summary = claudeWithIncident({ impact: "minor" });
+      summary.incidents.push({ id: "n", name: "FYI", status: "monitoring", impact: "none" });
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("degraded");
+
+      const worse = statuspageSummary({
+        indicator: "major",
+        components: [{ id: "c1", name: "claude.ai", status: "major_outage" }],
+        incidents: [{ id: "i", name: "Slow", status: "investigating", impact: "minor" }],
+      });
+      stubFetch({ [URLS.claude]: json(worse) });
+      expect((await claudeOf()).health).toBe("outage");
+    });
+
+    it("an active incident outranks maintenance in progress, which still sets maintenance when otherwise up", async () => {
+      const summary = claudeWithIncident({ impact: "minor" });
+      summary.scheduled_maintenances = [{ id: "m", name: "Database upgrade", status: "in_progress" }];
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("degraded");
+
+      summary.incidents = [];
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("maintenance");
+    });
+
+    it("counts every active incident, including one the list is cut before", async () => {
+      const incidents = Array.from({ length: 12 }, (_, i) => ({
+        id: `n${i}`,
+        name: `Notice ${i}`,
+        status: "monitoring",
+        impact: "none",
+        started_at: `2026-10-01T10:${String(i).padStart(2, "0")}:00Z`,
+      }));
+      incidents.push({
+        id: "bad",
+        name: "Real problem",
+        status: "identified",
+        impact: "major",
+        started_at: "2026-09-01T00:00:00Z",
+      });
+      stubFetch({ [URLS.claude]: json(statuspageSummary({ incidents })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("outage");
+      expect(claude.incidents[0].id).toBe("bad");
+    });
+
+    it("an Epic/Fortnite incident raises only the card it belongs to", async () => {
+      const components = [
+        { id: "g1", name: "Fortnite", status: "operational", group: true },
+        { id: "1", name: "Login", status: "operational", group_id: "g1" },
+        { id: "g2", name: "Epic Games Store", status: "operational", group: true },
+        { id: "3", name: "Login", status: "operational", group_id: "g2" },
+      ];
+      stubFetch({
+        [URLS.epicFortnite]: json(
+          statuspageSummary({
+            components,
+            incidents: [
+              { id: "b", name: "Login failures", status: "investigating", impact: "major", components: [{ id: "1" }] },
+            ],
+          }),
+        ),
+      });
+      const services = await collectAllServices();
+      expect(services.find((s) => s.id === "fortnite")!.health).toBe("outage");
+      expect(services.find((s) => s.id === "epic")!.health).toBe("operational");
+    });
+
     it("sorts incidents by urgency, then recency, and names the worst one in the summary", async () => {
       stubFetch({
         [URLS.claude]: json(
@@ -1929,7 +2050,7 @@ describe("collectors bound vendor text and counts", () => {
     expect(claude.incidents.some((incident) => incident.informational)).toBe(false);
   });
 
-  it("Statuspage: the summary counts every incident, not only the 50 listed", async () => {
+  it("Statuspage: the card counts every incident, not only the 50 listed", async () => {
     stubFetch({
       [URLS.claude]: json(
         statuspageSummary({
@@ -1945,7 +2066,29 @@ describe("collectors bound vendor text and counts", () => {
     const claude = await collect("claude");
     expect(claude.incidents).toHaveLength(50);
     expect(claude.incidentCount).toBe(60);
-    expect(claude.summary).toBe("Up. 60 resolved recently.");
+    // Sixty open problems are a degraded card that names one of them, never "Up".
+    expect(claude.health).toBe("degraded");
+    expect(claude.summary).toBe("Minor 0");
+  });
+
+  it("Statuspage: sixty notices with no impact leave the card up and say nothing is reported", async () => {
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({
+          incidents: Array.from({ length: 60 }, (_, i) => ({
+            id: `n-${i}`,
+            name: `Notice ${i}`,
+            status: "monitoring",
+            impact: "none",
+          })),
+        }),
+      ),
+    });
+    const claude = await collect("claude");
+    expect(claude.incidents).toHaveLength(50);
+    expect(claude.incidentCount).toBe(60);
+    expect(claude.health).toBe("operational");
+    expect(claude.summary).toBe("Nothing reported.");
   });
 
   it("an uncapped list carries no incidentCount", async () => {
