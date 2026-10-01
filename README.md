@@ -315,20 +315,6 @@ The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search en
 
 Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request, and the rulesets require `CI OK` to pass. The owner and the release workflow can bypass them. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
 
-#### Deployment status
-
-Tick these off as each step is done:
-
-- [ ] `CLOUDFLARE_ACCOUNT_ID` (variable or secret) and `CLOUDFLARE_API_TOKEN` (secret) set on the `staging` and `production` environments
-- [ ] `staging` admits only `stage`, `production` only `main`
-- [x] Cloudflare Workers Builds disconnected
-- [ ] Branch protection (rulesets) on `dev`, `stage` and `main`
-- [ ] First preview from `stage` created
-- [ ] First production deploy from `main` live at [status.szolotov.com](https://status.szolotov.com), which publishes `previews_enabled`
-- [ ] [stage.status.szolotov.com](https://stage.status.szolotov.com) answers (wildcard certificate issued)
-- [ ] `DEPLOY_URL` set on both environments, so smoke tests and the production rollback run
-- [ ] Old `status-page-staging` Worker and `stage.status.szolotov.dev` removed, if present
-
 ## FAQ
 
 <details>
@@ -419,6 +405,24 @@ scripts/release/       version bump and changelog for a release
 .github/               workflows, the shared setup action, issue forms
 docs/                  commit and README conventions
 ```
+
+### Branch names
+
+Name a branch `<prefix>/<short-kebab-description>`, for example `feature/board-metrics-stars-shortcuts`. The prefix is one of:
+
+| Prefix | Use for |
+| --- | --- |
+| `feature/` | New capability |
+| `fix/` | Bug fix |
+| `docs/` | Documentation only |
+| `ci/` | Workflow and CI script changes |
+| `chore/` | Pins, tooling, housekeeping |
+| `refactor/` | Restructuring with no change in behavior |
+| `test/` | Adding or fixing tests only |
+| `perf/` | Performance work |
+| `build/` | Build system and its dependencies |
+
+CI checks the name. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the rules (lowercase letters and digits joined by single hyphens, 50 characters at most) and where each branch may open a pull request.
 
 ### Quality gates
 

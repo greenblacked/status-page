@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Check a branch name against CONTRIBUTING.md#branches:
-# <prefix>/<short-kebab-description>, prefix one of fb, fix, chore, docs, ci.
+# <prefix>/<short-kebab-description>, prefix one of feature, fix, docs, ci,
+# chore, refactor, test, perf, build.
 # Given the pull request's base branch too, also check which branches may open
 # a pull request into stage and main.
 # Run locally: ./scripts/ci/branch.sh "$(git branch --show-current)" [base]
@@ -17,11 +18,11 @@ DEV_PAUSED="${DEV_PAUSED:-true}"
 
 name="${1:?usage: branch.sh <branch-name> [<base-branch>]}"
 base="${2:-}"
-prefixes='fb|fix|chore|docs|ci'
+prefixes='feature|fix|docs|ci|chore|refactor|test|perf|build'
 max=50
 
-# The branch that takes pull requests from feature, fix, chore, docs and ci
-# branches, and from Dependabot.
+# The branch that takes pull requests from every <prefix>/ branch, and from
+# Dependabot.
 feature_base=dev
 if [[ "$DEV_PAUSED" == true ]]; then
   feature_base=stage
