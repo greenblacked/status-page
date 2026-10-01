@@ -54,6 +54,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Search field no longer zooms the page on iPhone.
 - On an iPhone the search field no longer jumps or flickers as it docks into the bar while you scroll. It moves in with a short animation of its own instead of following your finger frame by frame, and Safari's toolbar sliding away or back no longer makes the page measure it again. Under Reduce Motion it steps in with no animation.
 - The "+N more" under a service counts every incident it has, not only the ones the board kept.
+- In Safari the board no longer jumps when a check adds a line to Recent changes above what you are reading, and the floating bar on a phone gets out of the way as soon as the headline grows under it.
 
 ### Security
 
