@@ -2,12 +2,14 @@ import { type ReactNode, type RefObject, useEffect, useState, useSyncExternalSto
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
+  DOCK_MS,
   DOCK_REST,
   type DockGeometry,
   type DockState,
   type DockStore,
   dockFrame,
   dockGeometry,
+  transitionMs,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
@@ -30,34 +32,61 @@ export function useDockState(store: DockStore): DockState {
 
 /** The width from which the search field shares a row with the filter chips (Tailwind's lg). */
 const WIDE = "(min-width: 64rem)";
+
 /**
- * Scroll progress of the search dock (0 in the hero, 1 in the bar). The dock is a
- * position: sticky element, so the browser moves it with the page and pins it in
- * the bar's slot; this only maps the scroll position to --dock (plus the slot
- * geometry) on the dock itself. On a wide screen --dock is also written on
- * `chipsRef`, the filter chips beside the field, which follow it; nothing else
- * reads it, so a write restyles only the field and them. While the move is under
- * way (--dock above 0) the dock (and the chips) carry data-docking, and the dock
- * data-merging while it is part way.
+ * Runs `change`, which flips the field's pose (data-docked) and so changes the width of `chrome`, the field's
+ * fill, and has the fill move from where it was drawn to its new box with a transition of its own. The box
+ * takes its new width at once, so the fill never goes through a layout while it moves, and what is drawn
+ * is held to the old width with a scaleX for the one style recalculation in between (FLIP: first, last, invert,
+ * play). Read from where the fill is now, not from where it was at rest, so a move that is turned round part
+ * way carries on from the shape it has.
+ */
+function flipFill(chrome: HTMLElement, change: () => void): void {
+  const first = chrome.getBoundingClientRect().width;
+  chrome.style.transition = "none";
+  chrome.style.transform = "";
+  change();
+  const last = chrome.offsetWidth;
+  if (first > 0 && last > 0 && Math.abs(first - last) > 0.5) {
+    chrome.style.transform = `scaleX(${first / last})`;
+    // The style as it is held, so the move below starts from it.
+    void chrome.getBoundingClientRect();
+  }
+  chrome.style.transition = "";
+  chrome.style.transform = "";
+}
+
+/**
+ * Drives the search dock from the scroll position (window.scrollY), and writes down only what changes.
  *
- * Progress comes from window.scrollY against offsets measured when the layout
- * changes, never from a rect read on every frame. Every offset is worked out from
- * `end`, the scroll position at which the field reaches its pin.
+ * The dock is a position: sticky element, so the browser moves it with the page and pins it in the bar's slot
+ * (on iOS the compositor does, at the display's rate, with no help from this hook). What the page's
+ * main thread does here has to survive running late: on a 120Hz iPhone it runs at about 60fps and a frame or
+ * three behind the scrolling, so one flick crosses the whole of a merge between two of its frames. Nothing
+ * visible is therefore tied to the scroll position on a phone. This hook only compares it with thresholds
+ * (dockFrame), and the merge is a transition in time that CSS plays on the compositor, of transform and
+ * opacity only, from the moment the threshold is crossed (data-docked on the dock and on the bar).
  *
- * On a phone the bar is fixed at the top and the field is in the flow, so the
- * bar comes up on its own: at `end` minus the bar's height and PHONE_GAP, when
- * the field is still that far below it and the hero's last line (the live line)
- * has just scrolled out from under the bar's slide-in. The page's spacing puts
- * them at the same scroll position. The field then scrolls on up at the page's
- * pace, alone with the bar for PHONE_GAP px, until its top reaches the bar's
- * bottom edge; over the rest of the way to its pin it merges into the bar (its
- * x and width follow --dock). Nothing is ever pinned over the page without the
- * bar behind it, and the field is under the bar (see .search-dock) until it
- * merges, so under Reduce Motion, where it only snaps at the end, it never
- * covers the bar's buttons.
- * On a wide screen the field shares its row with the
- * chips, so it is a single move, and the bar comes up 67% of the way through it
- * (only once it is done under Reduce Motion, where the field snaps).
+ * Progress comes from window.scrollY against offsets measured when the layout changes, never from a rect
+ * read on every frame. Every offset is worked out from `end`, the scroll position at which the field reaches
+ * its pin. A resize that changes only the viewport's height, which is what iOS fires each time its toolbar
+ * collapses or returns mid-scroll, measures nothing again: only the width moves any of these offsets.
+ *
+ * On a phone (below 64rem) the bar is fixed at the top and the field is in the flow, so the bar comes up on
+ * its own: at `end` minus the bar's height and PHONE_GAP, when the field is still that far below it and the
+ * hero's last line (the live line) has just scrolled out from under the bar's slide-in. The page's spacing
+ * puts them at the same scroll position. The field then scrolls on up at the page's pace, alone with the bar
+ * for PHONE_GAP px, until its top reaches the bar's bottom edge; there it docks. Nothing is ever pinned
+ * over the page without the bar behind it, and the field is under the bar (see .search-dock) until it
+ * docks, so under Reduce Motion, where it only steps into the bar when it pins, it never covers the bar's
+ * buttons.
+ *
+ * On a wide screen the field shares its row with the chips, so it is a single move of 48px of scrolling that
+ * does follow the scroll position: --dock (0 to 1) is written on the dock and on the chips beside it, which
+ * fade with it, and the bar comes up 67% of the way through it (only once it is done under Reduce Motion,
+ * where the field snaps). It is kept as it was: a mouse or trackpad scrolls on the main thread there, so
+ * there is no frame gap to hide. While it is under way (--dock above 0) the dock, the chips and the bar
+ * carry data-docking.
  */
 export function useSearchDock({
   hostRef,
@@ -85,10 +114,27 @@ export function useSearchDock({
     let raf = 0;
     let lastP = -1;
     let docking = false;
-    let merging = false;
+    let painted = false;
+    // Whether a change of pose may play as a move: not until the page has loaded and drawn (see writeDocked).
+    let armed = false;
+    let instantFrames = 0;
+    let armFrames = 0;
+    let laidOutWide = wide.matches;
+    let width = 0;
+    let settling = 0;
+    let insets = { pin: 0, barTop: 0 };
     let state: DockState = DOCK_REST;
-    let geometry: DockGeometry = { start: 0, range: 1, barStart: 0, hysteresis: 8 };
+    let geometry: DockGeometry = {
+      wide: false,
+      start: 0,
+      range: 1,
+      barStart: 0,
+      hysteresis: 8,
+      dockAt: 0,
+      undockAt: 0,
+    };
     const measure = () => {
+      width = document.documentElement.clientWidth;
       const hostStyle = getComputedStyle(host);
       const contentTop =
         host.getBoundingClientRect().top +
@@ -105,13 +151,16 @@ export function useSearchDock({
           ? hero.getBoundingClientRect().bottom + window.scrollY - (Number.parseFloat(heroStyle.paddingBottom) || 0)
           : undefined;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
+      const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+      insets = { pin, barTop };
       geometry = dockGeometry({
         wide: wide.matches,
         reduce: reduce.matches,
         end,
         pin,
-        barTop: Number.parseFloat(getComputedStyle(bar).top) || 8,
+        barTop,
         barHeight: bar.offsetHeight,
+        fieldHeight: dock.offsetHeight,
         contentBottom,
       });
       const slot = slotRef.current;
@@ -119,13 +168,33 @@ export function useSearchDock({
       dock.style.setProperty("--dock-x", `${pageLeft(slot) - pageLeft(dock)}px`);
       dock.style.setProperty("--dock-w", `${slot.offsetWidth}px`);
     };
-    const write = (p: number) => {
+    /** Holds the field's, the fill's and the verdict's transitions off (data-instant) for two frames from now. */
+    const holdInstant = () => {
+      for (const element of [dock, bar]) element.setAttribute("data-instant", "");
+      cancelAnimationFrame(instantFrames);
+      instantFrames = requestAnimationFrame(() => {
+        instantFrames = requestAnimationFrame(() => {
+          instantFrames = 0;
+          for (const element of [dock, bar]) element.removeAttribute("data-instant");
+        });
+      });
+    };
+    /** Moves are on from two frames after the page has loaded (and this hook has run), never before. */
+    const arm = () => {
+      armFrames = requestAnimationFrame(() => {
+        armFrames = requestAnimationFrame(() => {
+          armFrames = 0;
+          armed = true;
+        });
+      });
+    };
+    /** Wide: the move's progress, on the dock and the chips, and whether it is under way. */
+    const writeProgress = (p: number) => {
       const value = String(p);
       dock.style.setProperty("--dock", value);
       const chips = chipsRef.current;
-      if (chips && wide.matches) chips.style.setProperty("--dock", value);
+      if (chips) chips.style.setProperty("--dock", value);
       const nextDocking = p > 0;
-      const nextMerging = p > 0 && p < 1;
       if (nextDocking !== docking) {
         docking = nextDocking;
         for (const element of [dock, chips, bar]) {
@@ -133,21 +202,92 @@ export function useSearchDock({
           else element?.removeAttribute("data-docking");
         }
       }
-      if (nextMerging !== merging) {
-        merging = nextMerging;
-        if (merging) dock.setAttribute("data-merging", "");
-        else dock.removeAttribute("data-merging");
+    };
+    /**
+     * Phone: the pose the field and the bar are in, which CSS moves them to over DOCK_MS. Returns whether it
+     * was written as a move (the CSS transition may play) rather than as the pose the page opened in.
+     */
+    const writeDocked = (docked: boolean): boolean => {
+      const set = () => {
+        for (const element of [dock, bar]) element.toggleAttribute("data-docked", docked);
+      };
+      const chrome = dock.querySelector<HTMLElement>(".search-chrome");
+      // The first pose is not a move: the page opened part way down, or came back to a scroll position, which a
+      // browser may restore after this hook has run (WebKit does, up to the end of the load). Until the page has
+      // loaded and drawn, and for the first write after a change of layout, the transitions are held off by an
+      // attribute (data-instant) that stays on for two frames: a frame draws the new pose before they are back,
+      // which holds in every engine, where a style flush between two inline writes is only as good as the
+      // engine's idea of when to recalculate.
+      if (!painted || !armed) {
+        holdInstant();
+        set();
+        painted = true;
+        return false;
       }
+      if (chrome && !reduce.matches) flipFill(chrome, set);
+      else set();
+      painted = true;
+      return true;
+    };
+    /** The other layout's marks, which a change across the 64rem line leaves behind. */
+    const clearMarks = () => {
+      if (laidOutWide === wide.matches) return;
+      laidOutWide = wide.matches;
+      if (wide.matches) {
+        dock.removeAttribute("data-docked");
+        bar.removeAttribute("data-docked");
+      } else {
+        dock.style.removeProperty("--dock");
+        chipsRef.current?.style.removeProperty("--dock");
+        docking = false;
+        for (const element of [dock, chipsRef.current, bar]) element?.removeAttribute("data-docking");
+      }
+      lastP = -1;
+      painted = false;
+    };
+    const settle = (docked: boolean) => {
+      window.clearTimeout(settling);
+      settling = 0;
+      dock.removeAttribute("data-moving");
+      state = { ...state, settled: docked };
+      store.set(state);
     };
     const frame = () => {
       raf = 0;
+      let instant = false;
       const next = dockFrame(window.scrollY, geometry, reduce.matches, state);
-      if (next.p !== lastP) {
-        lastP = next.p;
-        write(next.p);
+      if (wide.matches) {
+        if (next.p !== lastP) {
+          lastP = next.p;
+          writeProgress(next.p);
+        }
+      } else if (next.docked !== state.docked || !painted) {
+        instant = !writeDocked(next.docked);
       }
-      state = { barShown: next.barShown, docked: next.docked };
+      if (next.docked !== state.docked) {
+        window.clearTimeout(settling);
+        settling = 0;
+        dock.removeAttribute("data-moving");
+        const field = dock.querySelector<HTMLElement>(".search-field");
+        // What is written in the field waits for the move when there is one, and follows at once when there
+        // is none (Reduce Motion, a wide screen).
+        const moves = !instant && field !== null && transitionMs(getComputedStyle(field).transitionDuration) > 0;
+        state = { barShown: next.barShown, docked: next.docked, settled: moves ? state.settled : next.docked };
+        // transitionend usually ends the wait; the timer is for a move that never reports (a hidden tab).
+        if (moves) {
+          // The field's own controls (Clear) are at their docked place at once; they wait out the move.
+          dock.setAttribute("data-moving", "");
+          settling = window.setTimeout(() => settle(next.docked), DOCK_MS + 100);
+        }
+      } else {
+        state = { ...state, barShown: next.barShown };
+      }
       store.set(state);
+    };
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (settling && event.propertyName === "transform" && event.target === dock.querySelector(".search-field")) {
+        settle(state.docked);
+      }
     };
     const schedule = () => {
       if (alive && !raf) raf = requestAnimationFrame(frame);
@@ -155,15 +295,28 @@ export function useSearchDock({
     const remeasure = () => {
       if (!alive) return;
       measure();
-      // Across the wide/phone split the chips' copy of --dock has to come or go.
-      if (!wide.matches) chipsRef.current?.style.removeProperty("--dock");
-      lastP = -1;
+      clearMarks();
       schedule();
+    };
+    const onResize = () => {
+      if (!alive) return;
+      // Height only (iOS collapsing or returning its toolbar mid-scroll): the offsets do not follow it. The
+      // width is a read that costs nothing when the layout is clean. The safe-area insets the two pins are
+      // built from can move with the height, and those are style reads.
+      if (width === document.documentElement.clientWidth) {
+        const pin = Number.parseFloat(getComputedStyle(dock).top) || 10;
+        const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+        if (pin === insets.pin && barTop === insets.barTop) return;
+      }
+      remeasure();
     };
     measure();
     frame();
+    if (document.readyState === "complete") arm();
+    else window.addEventListener("load", arm, { once: true });
     window.addEventListener("scroll", schedule, { passive: true });
-    window.addEventListener("resize", remeasure);
+    window.addEventListener("resize", onResize);
+    dock.addEventListener("transitionend", onTransitionEnd);
     wide.addEventListener("change", remeasure);
     reduce.addEventListener("change", remeasure);
     void document.fonts?.ready.then(remeasure);
@@ -179,11 +332,18 @@ export function useSearchDock({
     }
     return () => {
       alive = false;
+      window.removeEventListener("load", arm);
+      cancelAnimationFrame(armFrames);
+      cancelAnimationFrame(instantFrames);
+      for (const element of [dock, bar]) element.removeAttribute("data-instant");
       window.removeEventListener("scroll", schedule);
-      window.removeEventListener("resize", remeasure);
+      window.removeEventListener("resize", onResize);
+      dock.removeEventListener("transitionend", onTransitionEnd);
       wide.removeEventListener("change", remeasure);
       reduce.removeEventListener("change", remeasure);
       ro.disconnect();
+      window.clearTimeout(settling);
+      dock.removeAttribute("data-moving");
       if (raf) cancelAnimationFrame(raf);
     };
   }, [hostRef, dockRef, barRef, slotRef, chipsRef, store]);
@@ -247,7 +407,7 @@ export function CompactHeader({
         {/*
           From 640px the verdict and the check time sit in the flow, before the field's slot. On a phone the
           slot needs the room, so the short verdict is laid over it, between the glyph and the buttons, and
-          fades out as the field merges in (data-docking, written by useSearchDock); "checked" stays for
+          fades out as the field docks (data-docked, written by useSearchDock); "checked" stays for
           screen readers only.
         */}
         <span
