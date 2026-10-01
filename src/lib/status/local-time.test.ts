@@ -63,25 +63,25 @@ describe("formatLocalDate", () => {
   });
 });
 
-// The whole site is English, so no browser language may change a date or a time: not the words, the
-// punctuation, the digits, the 12/24-hour clock, nor the zone's name.
 describe("formatUtcDay and formatLocalDay", () => {
   it("name the day without a time, and the year only when it is not the reference's", () => {
-    expect(formatUtcDay(Date.parse("2026-09-29T00:00:00Z"), at)).toBe("29 Sep");
-    expect(formatUtcDay(Date.parse("2025-09-30T00:00:00Z"), at)).toBe("30 Sep 2025");
-    expect(formatUtcDay(at)).toBe("30 Sep");
-    expect(formatLocalDay(Date.parse("2026-09-29T12:00:00Z"), at, utc)).toBe("29 Sep");
-    expect(formatLocalDay(Date.parse("2025-01-02T12:00:00Z"), at, berlin)).toBe("2 Jan 2025");
+    expect(formatUtcDay(Date.parse("2026-09-29T00:00:00Z"), at)).toBe("Sep 29");
+    expect(formatUtcDay(Date.parse("2025-09-30T00:00:00Z"), at)).toBe("Sep 30, 2025");
+    expect(formatUtcDay(at)).toBe("Sep 30");
+    expect(formatLocalDay(Date.parse("2026-09-29T12:00:00Z"), at, utc)).toBe("Sep 29");
+    expect(formatLocalDay(Date.parse("2025-01-02T12:00:00Z"), at, berlin)).toBe("Jan 2, 2025");
   });
 
   it("read the day in the viewer's zone, English whatever the browser's language", () => {
     const lateEvening = Date.parse("2026-09-30T23:30:00Z");
-    expect(formatLocalDay(lateEvening, at, berlin)).toBe("1 Oct");
-    expect(formatLocalDay(lateEvening, at, utc)).toBe("30 Sep");
-    expect(formatLocalDay(lateEvening, at, { timeZone: "Europe/Moscow", locale: "ru-RU" })).toBe("1 Oct");
+    expect(formatLocalDay(lateEvening, at, berlin)).toBe("Oct 1");
+    expect(formatLocalDay(lateEvening, at, utc)).toBe("Sep 30");
+    expect(formatLocalDay(lateEvening, at, { timeZone: "Europe/Moscow", locale: "ru-RU" })).toBe("Oct 1");
   });
 });
 
+// The whole site is English, so no browser language may change a date or a time: not the words, the
+// punctuation, the digits, the 12/24-hour clock, nor the zone's name.
 describe("in any browser language", () => {
   const locales = ["ru-RU", "de-DE", "ar-EG", "en-US", "ja-JP", "fa-IR"];
   const moscow = (locale: string) => ({ timeZone: "Europe/Moscow", locale });
@@ -140,7 +140,7 @@ describe("before and after hydration", () => {
     expect(formatBeforeHydration(yesterday, at, "clock")).toBe("29 Sep 09:00\u202fUTC");
     // A slot never carries a date.
     expect(formatBeforeHydration(yesterday, at, "slot")).toBe("09:00\u202fUTC");
-    expect(formatBeforeHydration(yesterday, at, "day")).toBe("29 Sep");
+    expect(formatBeforeHydration(yesterday, at, "day")).toBe("Sep 29");
   });
 
   it("then the viewer's own", () => {
@@ -150,6 +150,6 @@ describe("before and after hydration", () => {
     const yesterday = Date.parse("2026-09-29T09:00:00Z");
     expect(formatAfterHydration(yesterday, at, "clock", berlin)).toBe("29 Sep 11:00\u202fCEST");
     expect(formatAfterHydration(yesterday, at, "slot", berlin)).toBe("11:00\u202fCEST");
-    expect(formatAfterHydration(yesterday, at, "day", berlin)).toBe("29 Sep");
+    expect(formatAfterHydration(yesterday, at, "day", berlin)).toBe("Sep 29");
   });
 });

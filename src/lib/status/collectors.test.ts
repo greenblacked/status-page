@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bytes, type Handler, json, networkError, stubFetch, text, utf16 } from "../../test/stub-fetch.ts";
 import { CATALOG } from "./catalog.ts";
-import { collectAllServices } from "./sources.server.ts";
+import { clearMikrotikNotesCache, collectAllServices } from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
@@ -99,6 +99,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     // instead of the real global fetch reaching out to the network.
     stubFetch({});
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The collector remembers the changelogs it read; a test serves its own.
+    clearMikrotikNotesCache();
   });
 
   afterEach(() => {
@@ -1472,6 +1474,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         version: "7.20.2",
         releasedAt: "2026-09-15T12:00:00.000Z",
         url: "https://download.mikrotik.com/routeros/7.20.2/CHANGELOG",
+        linkLabel: "Release notes",
         // The important bullet first, four of the five, no markers or trailing semicolons.
         notes: [
           "lte - fixed a crash when a modem is removed during a firmware update",
@@ -1488,10 +1491,58 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         version: "6.49.19",
         releasedAt: expect.any(String),
         url: "https://download.mikrotik.com/routeros/6.49.19/CHANGELOG",
+        linkLabel: "Release notes",
       });
       // One ranged read of the start of each distinct version's changelog, not of the whole file.
       expect(asked).toHaveLength(5);
       expect(new Set(asked.map((line) => line.split(" ")[1]))).toEqual(new Set(["bytes=0-65535"]));
+    });
+
+    it("MikroTik: a version's changelog is read once, and a failed one is asked for again", async () => {
+      const asked: string[] = [];
+      let down = true;
+      const routes: Record<string, Handler> = {
+        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
+        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: () =>
+          down ? new Response("", { status: 503 }) : text(fixture("mikrotik/7.20.2/CHANGELOG"))(),
+      };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/CHANGELOG")) asked.push(url);
+        return routes[url]?.() ?? new Response("not found", { status: 404 });
+      });
+      const first = await collect("mikrotik");
+      expect(asked).toHaveLength(5);
+      expect(first.summary).toContain("What's new in 7.21beta4");
+      asked.length = 0;
+      // The second sweep asks only for what failed: 7.20.2 (503) and the three that 404 are not remembered.
+      down = false;
+      const second = await collect("mikrotik");
+      expect(asked.sort()).toEqual(
+        [
+          `${URLS.mikrotikDownload}6.49.19/CHANGELOG`,
+          `${URLS.mikrotikDownload}7.18.4/CHANGELOG`,
+          `${URLS.mikrotikDownload}7.20.2/CHANGELOG`,
+          `${URLS.mikrotikDownload}7.21beta3/CHANGELOG`,
+        ].sort(),
+      );
+      expect(
+        second.components.find((component) => component.name === "RouterOS 7 stable")?.release?.notes,
+      ).toBeTruthy();
+      expect(
+        second.components.find((component) => component.name === "RouterOS 7 development")?.release?.notes?.[0],
+      ).toBe("bgp - fixed route refresh handling when the peer restarts");
+      // The third asks for nothing that was read: the stable one now is too.
+      asked.length = 0;
+      await collect("mikrotik");
+      expect(asked.sort()).toEqual(
+        [
+          `${URLS.mikrotikDownload}6.49.19/CHANGELOG`,
+          `${URLS.mikrotikDownload}7.18.4/CHANGELOG`,
+          `${URLS.mikrotikDownload}7.21beta3/CHANGELOG`,
+        ].sort(),
+      );
     });
 
     it("MikroTik: a changelog that fails costs only that version's notes", async () => {
@@ -1545,6 +1596,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         build: "24B5089g",
         releasedAt: "2026-09-21T17:00:00.000Z",
         url: "https://developer.apple.com/news/releases/?id=09212026a",
+        // The post links the downloads and the notes; it is not the notes.
+        linkLabel: "Apple Developer post",
       });
       expect(appleOs.components[5].release).toMatchObject({ version: "27.0", build: "24M362" });
       expect(appleOs.components.some((component) => component.release?.notes !== undefined)).toBe(false);
@@ -1673,12 +1726,20 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(android.failure).toBeUndefined();
       expect(android.health).toBe("operational");
       expect(android.summary).toBe("Latest: Android 17");
-      expect(android.components).toEqual([
-        { name: "Android 17", health: "operational", detail: "released" },
-        { name: "Android 16", health: "operational", detail: "released" },
-        { name: "Android 15", health: "operational", detail: "released" },
-        { name: "Android 14", health: "operational", detail: "released" },
-      ]);
+      // The page gives no date and no notes, so the Details have each version's own page and nothing else: the
+      // version is the name (printed once) and "released" is not a version.
+      expect(android.components).toEqual(
+        [17, 16, 15, 14].map((version) => ({
+          name: `Android ${version}`,
+          health: "operational",
+          detail: "released",
+          release: {
+            version: `Android ${version}`,
+            url: `https://developer.android.com/about/versions/${version}`,
+            linkLabel: `Android ${version} page`,
+          },
+        })),
+      );
       expect(android.incidents).toEqual([]);
       expect(android.meta).toEqual({
         latest: "Android 17",

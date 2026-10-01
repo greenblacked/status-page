@@ -1,18 +1,23 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 
 // The Details pop-up of the Releases cards: every channel, OS or version a tracker holds, with its changelog
 // where the source has one. Opened from the card's main area or by keyboard, a modal dialog on every size,
 // centred on a desktop and a sheet from the bottom edge on a phone.
 
-const SERVICES = 15;
+const SERVICES = 16;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const dialog = (page: Page) => page.locator("dialog[data-release-details]");
 
 /** The fixture board on the page, after hydration and one Refresh, which is how the fixture reaches the cards. */
-async function openBoard(page: Page): Promise<void> {
-  await serveBoard(page, () => fixtureBoard(Date.now()));
+async function openBoard(
+  page: Page,
+  board: () => BoardSnapshot = () => fixtureBoard(Date.now()),
+  ready = "Stable 7.21",
+): Promise<void> {
+  await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
@@ -23,19 +28,19 @@ async function openBoard(page: Page): Promise<void> {
   await refresh.click();
   await answered;
   await expect(refresh).toHaveAttribute("aria-busy", "false");
-  await expect(page.locator("#service-mikrotik [data-card-header] p")).toContainText("Stable 7.21");
+  await expect(page.locator("#service-mikrotik [data-card-header] p")).toContainText(ready);
 }
 
 const trigger = (page: Page, id: string) => page.locator(`#service-${id} [data-release-details-trigger]`);
 
 test("every Releases card has a Details button, and only they do", async ({ page }) => {
   await openBoard(page);
-  for (const id of ["mikrotik", "apple-os", "windows"]) {
+  for (const id of ["mikrotik", "apple-os", "windows", "android-os"]) {
     await expect(trigger(page, id)).toHaveCount(1);
     await expect(trigger(page, id)).toHaveText(/^Details/);
     await expect(trigger(page, id)).toHaveAttribute("aria-haspopup", "dialog");
   }
-  await expect(page.locator("[data-release-details-trigger]")).toHaveCount(3);
+  await expect(page.locator("[data-release-details-trigger]")).toHaveCount(4);
   await expect(dialog(page)).toHaveCount(0);
 });
 
@@ -169,7 +174,8 @@ test("Apple OS shows the build, the date and the page on apple.com, and says its
   await expect(entries.nth(0)).toContainText("build 24B5089g");
   await expect(entries.nth(0)).toContainText("New release");
   await expect(entries.nth(0)).toContainText("No notes text from Apple Developer Releases.");
-  const link = entries.nth(0).getByRole("link", { name: /Release notes for iOS/ });
+  // The link is to Apple's post about the release, which links the notes: it says so and not "Release notes".
+  const link = entries.nth(0).getByRole("link", { name: /Apple Developer post for iOS/ });
   await expect(link).toHaveAttribute("href", /^https:\/\/developer\.apple\.com\//);
   await expect(link).toHaveAttribute("rel", "noreferrer");
 });
@@ -183,9 +189,129 @@ test("Windows 11 shows each version's build and UTC days, and links Microsoft's 
   await expect(entries.nth(0)).toContainText("build 26300.1000");
   await expect(entries.nth(0)).toContainText("New release");
   await expect(entries.nth(1)).toContainText("build 28000.1575");
-  await expect(entries.nth(1)).toContainText(/10 Feb/);
-  await expect(entries.nth(1)).toContainText(/updated \d+ \w{3}/);
+  await expect(entries.nth(1)).toContainText(/Feb 10/);
+  await expect(entries.nth(1)).toContainText(/updated \w{3} \d+/);
   await expect(entries.nth(1).getByRole("link")).toHaveAttribute("href", /learn\.microsoft\.com/);
+});
+
+test("Android shows each version with its own page and says the page gives no notes or date", async ({ page }) => {
+  await openBoard(page);
+  await trigger(page, "android-os").click();
+  const entries = dialog(page).locator("[data-release-entry]");
+  await expect(entries).toHaveCount(4);
+  await expect(entries.nth(0).getByRole("heading", { level: 3 })).toHaveText("Android 17");
+  // The name is the version, and "released" is not one: nothing is printed twice or made up.
+  await expect(entries.nth(0)).not.toContainText("released");
+  await expect(entries.nth(0)).not.toContainText("New release");
+  await expect(entries.nth(0)).not.toContainText("build");
+  await expect(entries.nth(0)).toContainText("No notes text from Android Developers releases.");
+  await expect(entries.nth(0).getByRole("link", { name: /Android 17 page for Android 17/ })).toHaveAttribute(
+    "href",
+    "https://developer.android.com/about/versions/17",
+  );
+  await expect(entries.nth(3).getByRole("link")).toHaveAttribute(
+    "href",
+    "https://developer.android.com/about/versions/14",
+  );
+});
+
+test("a card that needs a look has the Details button too, opened from the button or the card's name", async ({
+  page,
+}) => {
+  // A tracker with a new release in the attention list (maintenance), which is the card layout, not the row.
+  await openBoard(page, () => {
+    const board = fixtureBoard(Date.now());
+    return {
+      ...board,
+      services: board.services.map((service) =>
+        service.id === "windows" ? { ...service, health: "maintenance" as const } : service,
+      ),
+    };
+  });
+  const card = page.locator("#service-windows");
+  await expect(card.locator("[data-card-header]").first()).toBeVisible();
+  const button = trigger(page, "windows");
+  await expect(button).toHaveCount(1);
+  await expect(button).toHaveText(/^Details/);
+  await button.focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog(page)).toBeVisible();
+  await expect(dialog(page).getByRole("heading", { level: 2 })).toHaveText("Details · Windows 11");
+  await expect(dialog(page).locator("[data-release-entry]")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(button).toBeFocused();
+  // The card's name opens it too, as in a row; the star, which sits beside the name, does not.
+  await card.getByRole("heading", { name: "Windows 11" }).click();
+  await expect(dialog(page)).toBeVisible();
+  await dialog(page)
+    .getByRole("button", { name: /^Close details/ })
+    .click();
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(button).toBeFocused();
+  await card.getByRole("button", { name: "Star Windows 11" }).click();
+  await expect(dialog(page)).toHaveCount(0);
+});
+
+test("a press that starts in the panel and ends on the backdrop does not close it", async ({ page }) => {
+  await openBoard(page);
+  await trigger(page, "mikrotik").click();
+  await expect(dialog(page)).toBeVisible();
+  const entry = await dialog(page).locator("[data-release-entry]").first().boundingBox();
+  if (!entry) throw new Error("the pop-up has no entry");
+  // A drag, as a text selection is: down on a note, up over the dimmed page.
+  await page.mouse.move(entry.x + 20, entry.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(3, 3, { steps: 4 });
+  await page.mouse.up();
+  await expect(dialog(page)).toBeVisible();
+  // A whole click on the backdrop still closes it.
+  await page.mouse.click(3, 3);
+  await expect(dialog(page)).toHaveCount(0);
+});
+
+test("keeps its title and close button in view while a long list scrolls", async ({ page }) => {
+  await openBoard(
+    page,
+    () => {
+      const board = fixtureBoard(Date.now());
+      const long = Array.from({ length: 12 }, (_, at) => ({
+        name: `RouterOS channel ${at + 1}`,
+        health: "operational" as const,
+        detail: `7.${at}`,
+        release: {
+          version: `7.${at}`,
+          notes: Array.from(
+            { length: 5 },
+            (_, line) => `note ${line + 1} of channel ${at + 1} - changed something here`,
+          ),
+        },
+      }));
+      return {
+        ...board,
+        services: board.services.map((service) =>
+          service.id === "mikrotik" ? { ...service, components: long } : service,
+        ),
+      };
+    },
+    "RouterOS channel 1",
+  );
+  await trigger(page, "mikrotik").click();
+  await expect(dialog(page)).toBeVisible();
+  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+  const list = dialog(page).getByRole("list", { name: "Releases" });
+  expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await list.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  // The panel stays inside the viewport, and its header is still on screen at the end of the list.
+  const view = await page.evaluate(() => window.innerHeight);
+  const panel = await dialog(page).boundingBox();
+  if (!panel) throw new Error("no panel");
+  expect(panel.y).toBeGreaterThanOrEqual(0);
+  expect(panel.y + panel.height).toBeLessThanOrEqual(view + 0.5);
+  await expect(dialog(page).getByRole("button", { name: /^Close details/ })).toBeInViewport();
+  await expect(dialog(page).getByRole("heading", { level: 2 })).toBeInViewport();
 });
 
 test("is a small centred panel on a desktop and a sheet from the bottom edge on a phone", async ({ page }) => {
@@ -241,7 +367,7 @@ for (const scheme of ["light", "dark"] as const) {
   test(`has no accessibility violations open, in ${scheme}`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await openBoard(page);
-    for (const id of ["mikrotik", "apple-os", "windows"]) {
+    for (const id of ["mikrotik", "apple-os", "windows", "android-os"]) {
       await trigger(page, id).click();
       await expect(dialog(page)).toBeVisible();
       await page.waitForFunction(() =>

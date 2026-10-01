@@ -3,7 +3,7 @@ import { useId, useState } from "react";
 import { useServiceHistoryDays } from "@/components/status/board-history-provider";
 import { HistoryStrip } from "@/components/status/history-strip";
 import { PenLoop } from "@/components/status/pen";
-import { ReleaseDetails } from "@/components/status/release-details";
+import { openDetailsFromCard, ReleaseDetails } from "@/components/status/release-details";
 import {
   ComponentRow,
   HealthyComponents,
@@ -20,6 +20,7 @@ import {
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { Tag } from "@/components/ui/tag";
 import { incidentLink, serviceAnchor } from "@/lib/status/layout";
+import { hasReleaseDetails } from "@/lib/status/release-details";
 import { parseTimestamp } from "@/lib/status/schedule";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
@@ -62,6 +63,7 @@ export function AttentionCard({
 }: ServiceCardProps) {
   const days = useServiceHistoryDays(service.id);
   const changelog = service.category === "updates";
+  const details = hasReleaseDetails(service);
   const summary = norm(service.summary);
   const outage = service.health === "outage";
 
@@ -119,7 +121,11 @@ export function AttentionCard({
           <StatusGlyph health={service.health} size={22} className={cn("block", STATUS_TEXT[service.health])} />
           {outage ? <PenLoop seed={penSeed(service.id)} /> : null}
         </span>
-        <div className="min-w-0 flex-1">
+        {/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: a pointer's shortcut to the Details button below, which is what a keyboard and a screen reader use. */}
+        <div
+          className={cn("min-w-0 flex-1", details && "cursor-pointer")}
+          onClick={details ? openDetailsFromCard : undefined}
+        >
           <h3 className="text-row text-balance">{service.name}</h3>
           <p className="text-caption">
             {fresh ? <span className="font-semibold text-fg">New release</span> : <StateWord health={service.health} />}
@@ -217,7 +223,7 @@ export function AttentionCard({
             <span className="sr-only"> for {service.name}</span>
             <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
           </a>
-          {changelog ? <ReleaseDetails service={service} variant="button" /> : null}
+          {details ? <ReleaseDetails service={service} variant="button" /> : null}
         </div>
         <span className="whitespace-nowrap tabular-nums text-subtle" title="How long the vendor took to answer">
           <span aria-hidden>{`${service.latencyMs}\u202fms`}</span>

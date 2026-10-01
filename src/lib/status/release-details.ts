@@ -21,6 +21,8 @@ export type ReleaseEntry = {
   url: string;
   /** Whether `url` is this release's own page, not the tracker's page. */
   own: boolean;
+  /** What the collector calls the link ("Release notes", "Apple Developer post"); absent when it did not say. */
+  linkLabel?: string;
   /** A few plain-text lines from the vendor's notes; empty when the source has none. */
   notes: string[];
 };
@@ -65,6 +67,7 @@ function entryOf(service: ServiceSnapshot, component: ComponentHealth): ReleaseE
     ...base,
     version: release.version && release.version !== component.name ? release.version : undefined,
     build: release.build || undefined,
+    linkLabel: typeof release.linkLabel === "string" && release.linkLabel.trim() ? release.linkLabel : undefined,
     releasedAt,
     updatedAt: updatedAt && (!releasedAt || !sameDay(updatedAt, releasedAt)) ? updatedAt : undefined,
     // Plain text, whatever came in: a few lines, each short.

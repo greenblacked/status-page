@@ -25,6 +25,7 @@ const tracker = (overrides: Partial<ServiceSnapshot> = {}): ServiceSnapshot =>
           version: "7.20.2",
           releasedAt: "2026-09-29T12:00:00.000Z",
           url: "https://download.mikrotik.com/routeros/7.20.2/CHANGELOG",
+          linkLabel: "Release notes",
           notes: ["bridge - fixed VLAN filtering", "ipsec - improved rekeying"],
         },
       },
@@ -75,7 +76,7 @@ describe("ReleaseDetailsDialog", () => {
     expect(stable).toContain(">7.20.2</span>");
     // Before hydration a moment is a UTC day.
     expect(stable).toContain('<time dateTime="2026-09-29T12:00:00.000Z"');
-    expect(stable).toContain(">29 Sep</time>");
+    expect(stable).toContain(">Sep 29</time>");
     expect(stable).toContain('aria-label="Changes"');
     expect(stable).toContain('<li class="[overflow-wrap:anywhere]">bridge - fixed VLAN filtering</li>');
     expect(stable).toContain('href="https://download.mikrotik.com/routeros/7.20.2/CHANGELOG"');
@@ -83,6 +84,34 @@ describe("ReleaseDetailsDialog", () => {
     expect(stable).toContain('rel="noreferrer"');
     expect(stable).toContain("Release notes");
     expect(longTerm).not.toContain("New release");
+  });
+
+  it("names a release's link as the collector does, and as a page, not as notes, when it does not say", () => {
+    const text = dialog(
+      tracker({
+        components: [
+          {
+            name: "iOS",
+            health: "operational",
+            release: {
+              version: "27.1",
+              url: "https://developer.apple.com/news/releases/?id=1",
+              linkLabel: "Apple Developer post",
+            },
+          },
+          { name: "Other", health: "operational", release: { version: "1", url: "https://example.com/r/1" } },
+        ],
+      }),
+    );
+    expect(text).toContain("Apple Developer post");
+    expect(text).not.toContain("Release notes");
+    expect(text).toContain("Release page");
+  });
+
+  it("scrolls its list under a header that stays, and is not the scroller itself", () => {
+    expect(html).toMatch(/<dialog[^>]*class="details-dialog [^"]*"/);
+    expect(html).not.toMatch(/<dialog[^>]*overflow-y-auto/);
+    expect(html).toMatch(/<ul aria-label="Releases"[^>]*overflow-y-auto/);
   });
 
   it("says plainly when the source has no notes text, and links the tracker's page when the release has none", () => {
@@ -107,8 +136,8 @@ describe("ReleaseDetailsDialog", () => {
       }),
     );
     expect(windows).toContain("build 28000.1575");
-    expect(windows).toContain('<time dateTime="2026-02-10">10 Feb</time>');
-    expect(windows).toContain('updated <time dateTime="2026-09-22">22 Sep</time>');
+    expect(windows).toContain('<time dateTime="2026-02-10">Feb 10</time>');
+    expect(windows).toContain('updated <time dateTime="2026-09-22">Sep 22</time>');
     // The name is the version here, so it is not printed twice.
     expect(windows.match(/26H1/g)).toHaveLength(2);
   });
@@ -149,6 +178,31 @@ describe("ReleaseDetails", () => {
     for (const item of [tracker({ category: "cloud" }), tracker({ components: [] })]) {
       expect(renderToStaticMarkup(createElement(ReleaseDetails, { service: item, variant: "inline" }))).toBe("");
     }
+  });
+});
+
+describe("a card that needs a look", () => {
+  const card = (item: ServiceSnapshot) =>
+    renderToStaticMarkup(
+      createElement(ServiceCard, {
+        service: item,
+        starred: false,
+        onToggleStar: noop,
+        now: NOW,
+      }),
+    );
+
+  it("has the Details button in its footer, and a name that clicks through to it", () => {
+    const html = card(tracker({ health: "maintenance" }));
+    expect(html).toContain("data-release-details-trigger");
+    expect(html).toContain("cursor-pointer");
+    expect(html).toContain('Details<span class="sr-only"> for MikroTik RouterOS</span>');
+  });
+
+  it("has neither for a service that is not a tracker", () => {
+    const html = card(service("aws", { health: "degraded", components: [{ name: "EC2", health: "degraded" }] }));
+    expect(html).not.toContain("data-release-details-trigger");
+    expect(html).not.toContain("cursor-pointer");
   });
 });
 

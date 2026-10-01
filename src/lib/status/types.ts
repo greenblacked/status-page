@@ -36,6 +36,8 @@ export type ReleaseInfo = {
   updatedAt?: string;
   /** The vendor's own page for this release's notes (an https link). */
   url?: string;
+  /** What the link says it is, when "Release page" is not true enough: "Release notes", "Apple Developer post". */
+  linkLabel?: string;
   /** A few short plain-text lines taken from the vendor's notes, never more than MAX_NOTE_LINES. Absent when the source has none. */
   notes?: string[];
 };

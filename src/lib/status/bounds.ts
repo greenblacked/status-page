@@ -102,6 +102,7 @@ function boundRelease(release: ReleaseInfo): ReleaseInfo {
     if (release[key] !== undefined) next[key] = bound(release[key], MAX_RELEASE_FIELD_CHARS);
   }
   if (release.url !== undefined) next.url = boundUrl(release.url);
+  if (release.linkLabel !== undefined) next.linkLabel = bound(release.linkLabel, MAX_RELEASE_FIELD_CHARS);
   if (release.notes !== undefined) {
     const lines = Array.isArray(release.notes)
       ? release.notes

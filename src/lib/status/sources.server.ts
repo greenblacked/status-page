@@ -1544,6 +1544,26 @@ async function collectClaude(): Promise<ServiceSnapshot> {
   }
 }
 
+// What the Details and the summary take from one version's changelog.
+type MikrotikNotes = { summary: string; notes: string[] };
+const MIKROTIK_NOTES_REMEMBERED = 16;
+const mikrotikNotesCache = new Map<string, MikrotikNotes>();
+
+function rememberMikrotikNotes(version: string, read: MikrotikNotes): void {
+  // Oldest first out: a Map iterates in insertion order. The channels list five versions at most.
+  while (mikrotikNotesCache.size >= MIKROTIK_NOTES_REMEMBERED) {
+    const oldest = mikrotikNotesCache.keys().next();
+    if (oldest.done) break;
+    mikrotikNotesCache.delete(oldest.value);
+  }
+  mikrotikNotesCache.set(version, read);
+}
+
+/** Forgets the changelogs read so far; for tests, which serve different files under the same version. */
+export function clearMikrotikNotesCache(): void {
+  mikrotikNotesCache.clear();
+}
+
 async function collectMikrotik(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -1581,37 +1601,44 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
       }, channels[0]);
       // The changelog of every version the channels list (often fewer than five: stable and testing can share
       // one): the newest one's first note is the summary, and each version's first few notes are on its Details.
+      // A released version's changelog does not change, so each is read once per isolate and remembered
+      // (failures are not): a sweep asks only for versions it has not read, which is none on most sweeps.
       // The newest section is at the top of the file, so a short ranged read is enough; a server that ignores
       // the range sends the whole file, which fetchText caps. A changelog that fails costs that version its
       // notes, and nothing else.
-      const changelogs = new Map<string, string>();
+      const notesVersion = newest?.version ?? stable?.version;
+      const changelogs = new Map<string, MikrotikNotes>();
       await Promise.all(
         [...new Set(channels.map((channel) => channel.version))].map(async (version) => {
+          const known = mikrotikNotesCache.get(version);
+          if (known) {
+            changelogs.set(version, known);
+            return;
+          }
           // parseMikrotikNewest already refuses a malformed version; building
           // the URL through the same check keeps it that way if that changes.
           const url = mikrotikChangelogUrl(version);
           if (!url) return;
           try {
+            // The summary's changelog keeps the default deadline; the others are side requests.
             const { body } = await fetchText(url, {
               headers: { Range: `bytes=0-${CHANGELOG_RANGE_BYTES - 1}` },
-              timeoutMs: EXTRA_TIMEOUT_MS,
+              ...(version === notesVersion ? {} : { timeoutMs: EXTRA_TIMEOUT_MS }),
             });
-            changelogs.set(version, body);
+            const read = { summary: summarizeMikrotikChangelog(body), notes: mikrotikChangelogNotes(body) };
+            rememberMikrotikNotes(version, read);
+            changelogs.set(version, read);
           } catch {
-            // No notes for this version.
+            // No notes for this version, and nothing remembered: the next sweep tries again.
           }
         }),
       );
-      const notesVersion = newest?.version ?? stable?.version;
-      const notes =
-        notesVersion && changelogs.has(notesVersion)
-          ? summarizeMikrotikChangelog(changelogs.get(notesVersion) ?? "")
-          : "";
+      const notes = (notesVersion ? changelogs.get(notesVersion)?.summary : undefined) ?? "";
       return { channels, notes, stable, newest, changelogs };
     });
 
     const components: ComponentHealth[] = value.channels.map((channel) => {
-      const notes = mikrotikChangelogNotes(value.changelogs.get(channel.version) ?? "");
+      const notes = value.changelogs.get(channel.version)?.notes ?? [];
       const url = mikrotikChangelogUrl(channel.version);
       return {
         name: channel.name,
@@ -1620,7 +1647,7 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
         release: {
           version: channel.version,
           ...(channel.releasedAt ? { releasedAt: channel.releasedAt } : {}),
-          ...(url ? { url } : {}),
+          ...(url ? { url, linkLabel: "Release notes" } : {}),
           ...(notes.length > 0 ? { notes } : {}),
         },
       };
@@ -1670,6 +1697,8 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
           ...(build ? { build } : {}),
           ...(release.publishedAt ? { releasedAt: release.publishedAt } : {}),
           url: vendorUrl(release.link, sourceUrl, ["apple.com"]),
+          // The post links the downloads and the notes; it is not the notes.
+          linkLabel: "Apple Developer post",
         },
       };
     });
@@ -1768,6 +1797,13 @@ async function collectAndroidOs(): Promise<ServiceSnapshot> {
       name: release.name,
       health: "operational",
       detail: "released",
+      // The page gives no date and no notes, so the Details have only the version's own page: nothing is made up.
+      // `version` is digits only (the parser checks), so the link cannot leave developer.android.com.
+      release: {
+        version: release.name,
+        url: `https://developer.android.com/about/versions/${release.version}`,
+        linkLabel: `${release.name} page`,
+      },
     }));
 
     const headline = releases[0];

@@ -1,6 +1,6 @@
 // tokens-allow: rounded-full (the accent dot on a fresh release)
 import { ArrowUpRight, ChevronRight, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { LocalTime } from "@/components/status/local-time";
 import { Button } from "@/components/ui/button";
@@ -80,7 +80,7 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
         rel="noreferrer"
         className="focus-ring pressable mt-1 inline-flex min-h-8 items-center gap-1 rounded-md text-footnote text-accent pointer-coarse:min-h-11"
       >
-        {entry.own ? "Release notes" : service.sourceName}
+        {entry.own ? (entry.linkLabel ?? "Release page") : service.sourceName}
         <span className="sr-only">
           {" "}
           for {entry.name}
@@ -102,10 +102,20 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
  *
  * It mounts open (the parent renders it only while it is open) and calls
  * `onClose` however it closes. On a phone it is a sheet from the bottom edge,
- * elsewhere a small centred panel (styles.css).
+ * elsewhere a small centred panel (styles.css). The title and the close button
+ * stay put and the list scrolls under them.
+ *
+ * It belongs to the card that opened it: if a refresh moves the tracker to
+ * another list (it could not be read, or needs a look) while the pop-up is
+ * open, that card unmounts and takes the pop-up with it, and focus falls to
+ * the page. A tracker that cannot be read has no versions to show anyway, and
+ * a refresh is a few seconds apart from a person opening Details, so the
+ * board does not hold the open pop-up above the cards.
  */
 export function ReleaseDetailsDialog({ service, onClose }: { service: ServiceSnapshot; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
+  // Whether the press that began this click began on the backdrop too.
+  const pressedBackdrop = useRef(false);
   const headingId = useId();
   const entries = releaseEntries(service);
   const checkedAt = Date.parse(service.checkedAt);
@@ -121,17 +131,23 @@ export function ReleaseDetailsDialog({ service, onClose }: { service: ServiceSna
     <dialog
       ref={ref}
       onClose={onClose}
-      // A click on the backdrop lands on the dialog itself, not its content.
+      // A click on the backdrop lands on the dialog itself, not its content. It counts only when the press began
+      // there as well, so a text selection dragged from the panel and let go over the backdrop closes nothing.
+      onPointerDown={(event) => {
+        pressedBackdrop.current = event.target === event.currentTarget;
+      }}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        const outside = pressedBackdrop.current && event.target === event.currentTarget;
+        pressedBackdrop.current = false;
+        if (outside) onClose();
       }}
       aria-labelledby={headingId}
       aria-modal="true"
       data-release-details
-      className="details-dialog overflow-y-auto overscroll-contain bg-transparent p-0 text-fg backdrop:bg-bg/70"
+      className="details-dialog bg-transparent p-0 text-fg backdrop:bg-bg/70"
     >
       <div className="sheet p-5 sm:p-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex shrink-0 items-center justify-between gap-4">
           <h2 id={headingId} className="min-w-0 text-card text-balance">
             Details<span className="text-muted"> · {service.name}</span>
           </h2>
@@ -145,7 +161,10 @@ export function ReleaseDetailsDialog({ service, onClose }: { service: ServiceSna
             <X />
           </Button>
         </div>
-        <ul aria-label="Releases" className="mt-4 flex flex-col gap-2">
+        <ul
+          aria-label="Releases"
+          className="-mx-1 mt-4 flex min-h-0 flex-col gap-2 overflow-y-auto overscroll-contain px-1 pb-1"
+        >
           {entries.map((entry, at) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: a tracker can list two channels under one name; the index only breaks that tie.
             <Entry key={`${entry.name}-${at}`} entry={entry} service={service} reference={reference} />
@@ -154,6 +173,16 @@ export function ReleaseDetailsDialog({ service, onClose }: { service: ServiceSna
       </div>
     </dialog>
   );
+}
+
+/**
+ * A pointer's way into a card's Details from its name and line, for the card layout where the button sits in the
+ * footer and cannot stretch over the header: the click goes on to the button, which keyboards and screen readers
+ * use directly. A click that ends a text selection opens nothing.
+ */
+export function openDetailsFromCard(event: MouseEvent<HTMLElement>): void {
+  if (window.getSelection()?.isCollapsed === false) return;
+  event.currentTarget.closest("article")?.querySelector<HTMLButtonElement>("[data-release-details-trigger]")?.click();
 }
 
 /**

@@ -11,7 +11,7 @@ import { formatUtcTime, THIN_SPACE } from "@/lib/status/schedule";
  *   clock  "12:04 CET"  (a date first when it is not the reference's day)
  *   slot   "12:04 CET"  (never a date: a slot is one of the last few checks)
  *   date   "Wednesday 30 September"
- *   day    "29 Sep"  (the year too when it is not the reference's: "29 Sep 2025")
+ *   day    "Sep 29"  (the year too when it is not the reference's: "Sep 29, 2025"), month first like a release row
  */
 export type LocalTimeFormat = "clock" | "date" | "slot" | "day";
 
@@ -47,11 +47,11 @@ export function formatUtcTitle(at: number): string {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
 }
 
-/** A day as "29 Sep", from the UTC calendar, with the year when it is not the reference's UTC year. Never a time. */
+/** A day as "Sep 29", from the UTC calendar, with the year when it is not the reference's UTC year ("Sep 29, 2025"). Never a time. */
 export function formatUtcDay(at: number, reference: number = at): string {
   const date = new Date(at);
-  const day = `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}`;
-  return date.getUTCFullYear() === new Date(reference).getUTCFullYear() ? day : `${day} ${date.getUTCFullYear()}`;
+  const day = `${MONTHS[date.getUTCMonth()]} ${date.getUTCDate()}`;
+  return date.getUTCFullYear() === new Date(reference).getUTCFullYear() ? day : `${day}, ${date.getUTCFullYear()}`;
 }
 
 /** The server's and the hydrating render's date, "Wednesday 30 September", from the UTC calendar. */
@@ -141,11 +141,11 @@ export function formatLocalDate(at: number, options: ZoneOptions = {}): string {
   return `${WEEKDAYS[weekday]} ${day} ${MONTHS_LONG[month - 1]}`;
 }
 
-/** The day in the viewer's own zone, "29 Sep", in English; the year too when it is not the reference's. */
+/** The day in the viewer's own zone, "Sep 29", in English and month first like a release row; the year too when it is not the reference's ("Sep 29, 2025"). */
 export function formatLocalDay(at: number, reference: number = at, options: ZoneOptions = {}): string {
   const mine = momentIn(at, options.timeZone);
-  const day = `${mine.day} ${MONTHS[mine.month - 1]}`;
-  return mine.year === momentIn(reference, options.timeZone).year ? day : `${day} ${mine.year}`;
+  const day = `${MONTHS[mine.month - 1]} ${mine.day}`;
+  return mine.year === momentIn(reference, options.timeZone).year ? day : `${day}, ${mine.year}`;
 }
 
 /** What a time reads before the page has hydrated: UTC, the same text on the server and in the browser. */

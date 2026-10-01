@@ -237,6 +237,7 @@ describe("boundSnapshot: a release's Details", () => {
             releasedAt: long,
             updatedAt: long,
             url: `https://example.com/${long}`,
+            linkLabel: long,
             notes: [long, "", "  ", ...Array.from({ length: 20 }, (_, i) => `note ${i}`)],
           },
         },
@@ -248,6 +249,7 @@ describe("boundSnapshot: a release's Details", () => {
     expect(release?.releasedAt).toHaveLength(MAX_RELEASE_FIELD_CHARS);
     expect(release?.updatedAt).toHaveLength(MAX_RELEASE_FIELD_CHARS);
     expect(release?.url).toBeUndefined();
+    expect(release?.linkLabel).toHaveLength(MAX_RELEASE_FIELD_CHARS);
     expect(release?.notes).toHaveLength(MAX_NOTE_LINES);
     expect(release?.notes?.[0]).toHaveLength(MAX_NOTE_CHARS);
     expect(release?.notes?.slice(1)).toEqual(["note 0", "note 1", "note 2", "note 3"]);

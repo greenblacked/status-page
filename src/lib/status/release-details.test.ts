@@ -44,6 +44,7 @@ describe("releaseEntries", () => {
             build: "24B5089g",
             releasedAt: "2026-09-21T17:00:00.000Z",
             url: "https://developer.apple.com/news/releases/?id=1",
+            linkLabel: "Apple Developer post",
           },
         },
         {
@@ -68,6 +69,7 @@ describe("releaseEntries", () => {
         fresh: true,
         url: "https://developer.apple.com/news/releases/?id=1",
         own: true,
+        linkLabel: "Apple Developer post",
         notes: [],
       },
       {
@@ -79,6 +81,7 @@ describe("releaseEntries", () => {
         fresh: false,
         url: "https://download.mikrotik.com/routeros/7.20.2/CHANGELOG",
         own: true,
+        linkLabel: undefined,
         notes: ["bridge - fixed VLAN filtering", "ipsec - improved rekeying"],
       },
     ]);
