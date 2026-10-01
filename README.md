@@ -90,7 +90,7 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 
 The headline at the top of the page is one sentence about the board: **Everything is up.** when all fifteen are Operational, "Two things need a look." when an outage, a degradation or maintenance is under way (each service named and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
 
-The two Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel or OS was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
+The three Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
 <details>
 <summary><strong>The rule behind every card</strong></summary>
@@ -111,7 +111,7 @@ The two Releases services track releases, not incidents. Their rows carry no sta
 | Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days. Components: the status page's `v2/components.json` is attempted, but it may not exist or may be blocked (its JSON sits behind Cloudflare's challenge), and a list whose statuses are all unreadable is ignored, so the card falls back to the services that active items' titles lead with (`[API] Elevated error rates`, `[Grok (iOS)] Models outage`); they add detail and never change the card's health, so a component row from the vendor's list can read worse than the card's badge, which follows the feed |
 | MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus the newest version's `CHANGELOG` |
 | Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS |
-| Windows 11 | The versions table on the release health page: the four newest versions by availability date (26H2, then whatever Microsoft adds next, appears as a new row with no code change), each with its latest build and the date of its latest update. A page without that table reads Unknown. This is the one source read as HTML, an exception recorded in `CONTRIBUTING.md` |
+| Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. A page without that table reads Unknown. This is the one source read as HTML, an exception recorded in `CONTRIBUTING.md` |
 
 </details>
 
@@ -119,7 +119,7 @@ The two Releases services track releases, not incidents. Their rows carry no sta
 
 ```mermaid
 flowchart TB
-  vendors["14 official vendor sources"]
+  vendors["15 official vendor sources"]
   node["Node request and in-memory cache"]
   worker["Worker request and per-isolate cache"]
   browser["Browser refreshes every two minutes"]

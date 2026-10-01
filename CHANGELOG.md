@@ -8,7 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- A **Windows 11** card under Releases. I read the versions table on Microsoft's release health page and show the four newest versions (26H2 now) with their latest build, and "New release" when one shipped or got an update in the last 14 days. When Microsoft adds the next version, it appears on its own. Microsoft publishes no feed for this, so it is the one source read as HTML.
+- A **Windows 11** card under Releases. I read the versions table on Microsoft's release health page and show the four newest versions with their latest build, and "New release" when a new version became available in the last 14 days. When Microsoft adds the next version, it appears on its own. Microsoft publishes no feed for this, so it is the one source read as HTML.
 - A new look, quieter and more like a page than a dashboard. The top of the board is one sentence that says what needs a look, with the services it names linked to their cards, a pen line under the count and a loop around anything down; when all fifteen are up it says "Everything is up." and writes "all quiet" by hand. Below it, what needs a look is a card each, what could not be read has its own short list, and everything healthy is a compact row in a list per category.
 - **Background** in **Settings**: **Quiet** (the default) is flat paper, **Glass** brings back the frosted panels over a still glow, and **Full** adds the slow drift, the lenses, a light that wanders across the cards and the small period dial beside the live line. Reduce glass still turns any of them solid.
 - Times show in your own time zone once the page has loaded (UTC before that, and in the tooltip).
