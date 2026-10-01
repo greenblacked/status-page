@@ -78,9 +78,18 @@ export function RowFrame({
 }
 
 /** The name and the line under it, the part of a row that is also the summary of its <details>. */
-export function RowHeader({ name, children }: { name: string; children: ReactNode }) {
+export function RowHeader({
+  name,
+  children,
+  className,
+}: {
+  name: string;
+  children: ReactNode;
+  /** Extra classes for the header; a release row makes it `relative` so its Details button can cover it. */
+  className?: string;
+}) {
   return (
-    <div data-card-header className="min-w-0 py-2">
+    <div data-card-header className={cn("min-w-0 py-2", className)}>
       <h3 className="text-row text-balance">{name}</h3>
       <p className="text-caption text-subtle">{children}</p>
     </div>

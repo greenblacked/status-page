@@ -16,6 +16,7 @@ import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/l
 // events and the connection-manager directory.
 
 const minute = 60_000;
+const day = 24 * 60 * minute;
 
 /** A long, all-operational component list, the shape a big vendor (Google Cloud lists over two hundred) gives. */
 const longList = (prefix: string, count: number) =>
@@ -130,19 +131,102 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         { name: "Vienna", health: "operational", detail: "12 relays" },
       ],
     },
+    // The release trackers carry the Details their collectors build: RouterOS has the first lines of each
+    // version's changelog, Apple's feed has none, and Windows' table gives bare days and a build.
     mikrotik: {
       summary: "RouterOS 7.21 stable",
       components: [
-        { name: "Stable", health: "maintenance", detail: "7.21 · Sep 24" },
-        { name: "Long-term", health: "operational", detail: "7.18.2" },
-        { name: "Testing", health: "operational", detail: "7.22beta3" },
+        {
+          name: "Stable",
+          health: "maintenance",
+          detail: "7.21 · Sep 24",
+          release: {
+            version: "7.21",
+            releasedAt: at(-6 * day),
+            url: "https://download.mikrotik.com/routeros/7.21/CHANGELOG",
+            notes: [
+              "bgp - fixed route refresh handling when the peer restarts",
+              "bridge - improved MAC learning performance on CRS3xx series devices",
+              "wifi - fixed station roaming between access points on the same channel",
+            ],
+          },
+        },
+        {
+          name: "Long-term",
+          health: "operational",
+          detail: "7.18.2",
+          release: {
+            version: "7.18.2",
+            releasedAt: at(-70 * day),
+            url: "https://download.mikrotik.com/routeros/7.18.2/CHANGELOG",
+            notes: ["dhcpv4-server - fixed lease expiry reported in the wrong unit"],
+          },
+        },
+        {
+          name: "Testing",
+          health: "operational",
+          detail: "7.22beta3",
+          release: {
+            version: "7.22beta3",
+            releasedAt: at(-20 * day),
+            url: "https://download.mikrotik.com/routeros/7.22beta3/CHANGELOG",
+          },
+        },
       ],
     },
     "apple-os": {
       summary: "Latest: iOS 27.2 beta 2",
       components: [
-        { name: "iOS", health: "maintenance", detail: "27.2 beta 2 · Sep 21" },
-        { name: "macOS", health: "operational", detail: "27.1" },
+        {
+          name: "iOS",
+          health: "maintenance",
+          detail: "27.2 beta 2 · Sep 21",
+          release: {
+            version: "27.2 beta 2",
+            build: "24B5089g",
+            releasedAt: at(-9 * day),
+            url: "https://developer.apple.com/news/releases/?id=09212026a",
+          },
+        },
+        {
+          name: "macOS",
+          health: "operational",
+          detail: "27.1",
+          release: {
+            version: "27.1",
+            build: "26B5042",
+            releasedAt: at(-40 * day),
+            url: "https://developer.apple.com/news/releases/?id=08202026b",
+          },
+        },
+      ],
+    },
+    windows: {
+      summary: "Latest: Windows 11 26H2 (build 26300.1000) · Sep 29",
+      components: [
+        {
+          name: "26H2",
+          health: "maintenance",
+          detail: "26300.1000 · Sep 29",
+          release: {
+            version: "26H2",
+            build: "26300.1000",
+            releasedAt: at(-2 * day).slice(0, 10),
+            url: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
+          },
+        },
+        {
+          name: "26H1",
+          health: "operational",
+          detail: "28000.1575 · Sep 22",
+          release: {
+            version: "26H1",
+            build: "28000.1575",
+            releasedAt: "2026-02-10",
+            updatedAt: at(-9 * day).slice(0, 10),
+            url: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
+          },
+        },
       ],
     },
   };

@@ -11,8 +11,9 @@ import { formatUtcTime, THIN_SPACE } from "@/lib/status/schedule";
  *   clock  "12:04 CET"  (a date first when it is not the reference's day)
  *   slot   "12:04 CET"  (never a date: a slot is one of the last few checks)
  *   date   "Wednesday 30 September"
+ *   day    "29 Sep"  (the year too when it is not the reference's: "29 Sep 2025")
  */
-export type LocalTimeFormat = "clock" | "date" | "slot";
+export type LocalTimeFormat = "clock" | "date" | "slot" | "day";
 
 /**
  * Which zone to format in; the viewer's own when left out. `locale` is the
@@ -44,6 +45,13 @@ const pad = (n: number) => n.toString().padStart(2, "0");
 export function formatUtcTitle(at: number): string {
   const date = new Date(at);
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
+}
+
+/** A day as "29 Sep", from the UTC calendar, with the year when it is not the reference's UTC year. Never a time. */
+export function formatUtcDay(at: number, reference: number = at): string {
+  const date = new Date(at);
+  const day = `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}`;
+  return date.getUTCFullYear() === new Date(reference).getUTCFullYear() ? day : `${day} ${date.getUTCFullYear()}`;
 }
 
 /** The server's and the hydrating render's date, "Wednesday 30 September", from the UTC calendar. */
@@ -133,9 +141,17 @@ export function formatLocalDate(at: number, options: ZoneOptions = {}): string {
   return `${WEEKDAYS[weekday]} ${day} ${MONTHS_LONG[month - 1]}`;
 }
 
+/** The day in the viewer's own zone, "29 Sep", in English; the year too when it is not the reference's. */
+export function formatLocalDay(at: number, reference: number = at, options: ZoneOptions = {}): string {
+  const mine = momentIn(at, options.timeZone);
+  const day = `${mine.day} ${MONTHS[mine.month - 1]}`;
+  return mine.year === momentIn(reference, options.timeZone).year ? day : `${day} ${mine.year}`;
+}
+
 /** What a time reads before the page has hydrated: UTC, the same text on the server and in the browser. */
 export function formatBeforeHydration(at: number, reference: number, format: LocalTimeFormat): string {
   if (format === "date") return formatUtcDate(at);
+  if (format === "day") return formatUtcDay(at, reference);
   return formatUtcTime(at, format === "slot" ? at : reference);
 }
 
@@ -147,5 +163,6 @@ export function formatAfterHydration(
   options: ZoneOptions = {},
 ): string {
   if (format === "date") return formatLocalDate(at, options);
+  if (format === "day") return formatLocalDay(at, reference, options);
   return formatLocalTime(at, format === "slot" ? at : reference, options);
 }

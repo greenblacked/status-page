@@ -93,6 +93,8 @@ The headline at the top of the page is one sentence about the board: **Everythin
 
 The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days (the Android page gives no dates, so that card never carries the tag; see below). A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
+Each Releases row has a **Details** button, and clicking the row's name or line opens it too (the star and the open-in-a-new-tab link keep their own targets). It is a small pop-up on a desktop and a sheet from the bottom edge on a phone; **Esc** or a click outside closes it. It lists every channel, OS or version the card tracks, not only the two in the row's line: the version and build, the day it came out in your own time zone, **New release** while it is fresh, and a link to the vendor's notes. MikroTik RouterOS also shows the first few lines of each version's official changelog. Apple's feed and Microsoft's table have no notes text, so those say so and link the vendor's page instead of making something up. It adds nothing to `/api/status.json`, the feed, the badges or the metrics.
+
 <details>
 <summary><strong>The rule behind every card</strong></summary>
 

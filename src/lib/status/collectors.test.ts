@@ -1428,6 +1428,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       stubFetch({
         ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
         [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text(fixture("mikrotik/7.20.2/CHANGELOG")),
       });
       const mikrotik = await collect("mikrotik");
       expect(mikrotik.failure).toBeUndefined();
@@ -1437,7 +1438,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       );
       // Released within 14 days reads as "maintenance": a fresh release is
       // worth a look, not an all-clear.
-      expect(mikrotik.components).toEqual([
+      expect(mikrotik.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
         { name: "RouterOS 7 stable", health: "maintenance", detail: "7.20.2 · Sep 15" },
         { name: "RouterOS 7 long-term", health: "operational", detail: "7.18.4 · Jul 22" },
         { name: "RouterOS 7 testing", health: "maintenance", detail: "7.21beta3 · Sep 17" },
@@ -1451,6 +1452,58 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           "RouterOS 7 stable=7.20.2|RouterOS 7 long-term=7.18.4|RouterOS 7 testing=7.21beta3|" +
           "RouterOS 7 development=7.21beta4|RouterOS 6 long-term=6.49.19",
       });
+    });
+
+    it("MikroTik: each channel's Details carry its version, date, changelog link and first notes", async () => {
+      const asked: string[] = [];
+      const routes: Record<string, Handler> = {
+        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
+        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text(fixture("mikrotik/7.20.2/CHANGELOG")),
+      };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/CHANGELOG")) asked.push(`${url} ${new Headers(init?.headers).get("range")}`);
+        return routes[url]?.() ?? new Response("not found", { status: 404 });
+      });
+      const mikrotik = await collect("mikrotik");
+      const release = (name: string) => mikrotik.components.find((component) => component.name === name)?.release;
+      expect(release("RouterOS 7 stable")).toEqual({
+        version: "7.20.2",
+        releasedAt: "2026-09-15T12:00:00.000Z",
+        url: "https://download.mikrotik.com/routeros/7.20.2/CHANGELOG",
+        // The important bullet first, four of the five, no markers or trailing semicolons.
+        notes: [
+          "lte - fixed a crash when a modem is removed during a firmware update",
+          "bridge - fixed VLAN filtering after a port is moved between bridges",
+          "dhcpv4-server - fixed lease expiry reported in the wrong unit",
+          "ipsec - improved rekeying with peers that change address",
+        ],
+      });
+      expect(release("RouterOS 7 development")?.notes?.[0]).toBe(
+        "bgp - fixed route refresh handling when the peer restarts",
+      );
+      // A version whose changelog could not be read has its link and date, and no notes: nothing is made up.
+      expect(release("RouterOS 6 long-term")).toEqual({
+        version: "6.49.19",
+        releasedAt: expect.any(String),
+        url: "https://download.mikrotik.com/routeros/6.49.19/CHANGELOG",
+      });
+      // One ranged read of the start of each distinct version's changelog, not of the whole file.
+      expect(asked).toHaveLength(5);
+      expect(new Set(asked.map((line) => line.split(" ")[1]))).toEqual(new Set(["bytes=0-65535"]));
+    });
+
+    it("MikroTik: a changelog that fails costs only that version's notes", async () => {
+      stubFetch({
+        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
+        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text("", { status: 503 }),
+      });
+      const mikrotik = await collect("mikrotik");
+      expect(mikrotik.failure).toBeUndefined();
+      expect(mikrotik.summary).toBe("Latest RouterOS 7.20.2 · Sep 19");
+      expect(mikrotik.components.every((component) => component.release?.notes === undefined)).toBe(true);
+      expect(mikrotik.components.every((component) => component.release?.url?.endsWith("/CHANGELOG"))).toBe(true);
     });
 
     it("MikroTik: channel files that answer but hold no version are unknown with a parser failure", async () => {
@@ -1477,7 +1530,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       // TestFlight and Xcode are not OS releases and are skipped; iOS 27.0
       // loses to the beta listed above it; visionOS's newest item is the
       // Sep 14 release, now older than 14 days.
-      expect(appleOs.components).toEqual([
+      expect(appleOs.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
         { name: "iOS", health: "maintenance", detail: "27.2 beta 2 (24B5089g) · Sep 21" },
         { name: "iPadOS", health: "maintenance", detail: "27.2 beta 2 (24B5089g) · Sep 21" },
         { name: "macOS", health: "maintenance", detail: "27.2 beta 2 (26B5091g) · Sep 21" },
@@ -1485,6 +1538,16 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         { name: "tvOS", health: "maintenance", detail: "27.2 beta 2 (24K5093g) · Sep 21" },
         { name: "visionOS", health: "operational", detail: "27.0 (24M362) · Sep 14" },
       ]);
+      // The Details: the build apart from the version, the feed's own date and the release's page on apple.com;
+      // the feed has no notes text, so there is none.
+      expect(appleOs.components[0].release).toEqual({
+        version: "27.2 beta 2",
+        build: "24B5089g",
+        releasedAt: "2026-09-21T17:00:00.000Z",
+        url: "https://developer.apple.com/news/releases/?id=09212026a",
+      });
+      expect(appleOs.components[5].release).toMatchObject({ version: "27.0", build: "24M362" });
+      expect(appleOs.components.some((component) => component.release?.notes !== undefined)).toBe(false);
       expect(appleOs.incidents).toEqual([]);
       expect(appleOs.meta).toEqual({
         latest: "iOS 27.2 beta 2 (24B5089g)",
@@ -1517,12 +1580,28 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(windows.failure).toBeUndefined();
       expect(windows.health).toBe("operational");
       expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1000) · Sep 29");
-      expect(windows.components).toEqual([
+      expect(windows.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
         { name: "26H2", health: "maintenance", detail: "26300.1000 · Sep 29" },
         { name: "26H1", health: "operational", detail: "28000.1575 · Sep 22" },
         { name: "25H2", health: "operational", detail: "26200.8100 · Sep 8" },
         { name: "24H2", health: "operational", detail: "26100.8100 · Sep 8" },
       ]);
+      // The Details: bare UTC days (the table has no times), a later update only when it differs, and the page
+      // itself as the link, since it has no notes text.
+      const page = "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information";
+      expect(windows.components[0].release).toEqual({
+        version: "26H2",
+        build: "26300.1000",
+        releasedAt: "2026-09-29",
+        url: page,
+      });
+      expect(windows.components[1].release).toEqual({
+        version: "26H1",
+        build: "28000.1575",
+        releasedAt: "2026-02-10",
+        updatedAt: "2026-09-22",
+        url: page,
+      });
       expect(windows.incidents).toEqual([]);
       expect(windows.meta).toEqual({
         latest: "Windows 11 26H2 (build 26300.1000)",

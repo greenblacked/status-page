@@ -840,6 +840,60 @@ article[id^="service-"],
 }
 
 /*
+  A release tracker's Details. A small centred panel, the settings dialog's
+  size and entrance. On a phone it is a sheet from the bottom edge instead:
+  full width, square at the bottom, clear of the home indicator, rising from
+  below. Same rules as the settings dialog for the rest: transform only, and
+  it closes at once.
+*/
+.details-dialog {
+  margin: auto;
+  width: min(26rem, calc(100vw - 2rem));
+  max-width: none;
+  max-height: calc(100dvh - 2rem);
+}
+
+.details-dialog[open] {
+  transform: none;
+  transition: transform var(--t-reveal) var(--ease-out);
+}
+
+.details-dialog[open]::backdrop {
+  opacity: 1;
+  transition: opacity var(--t-reveal) var(--ease-out);
+}
+
+@starting-style {
+  .details-dialog[open] {
+    transform: translateY(0.5rem) scale(0.97);
+  }
+
+  .details-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+@media (width < 40rem) {
+  .details-dialog {
+    margin: auto 0 0;
+    width: 100%;
+    max-height: min(85dvh, calc(100dvh - 3rem));
+  }
+
+  .details-dialog > .sheet {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom-width: 0;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  }
+
+  @starting-style {
+    .details-dialog[open] {
+      transform: translateY(100%);
+    }
+  }
+}
+
+/*
   The signature. The pen underline draws itself once, left to right, when the
   headline first mounts (the element keeps its key, so a refetch never redraws
   it); the loop around an outage fades and settles in. Transform and opacity
@@ -945,7 +999,9 @@ article[id^="service-"],
   .compact-header,
   .compact-header[data-shown="false"],
   .settings-dialog[open],
-  .settings-dialog[open]::backdrop {
+  .settings-dialog[open]::backdrop,
+  .details-dialog[open],
+  .details-dialog[open]::backdrop {
     transform: none;
     transition: none;
   }
