@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { APP_NAME, CATALOG, CATALOG_BY_ID, CATEGORIES, SITE_ORIGIN } from "./catalog";
+import { APP_NAME, CATALOG, CATALOG_BY_ID, CATEGORIES, SITE_ORIGIN, WORDMARK } from "./catalog";
 
 describe("catalog", () => {
   it("names the site plainly and gives its origin without a trailing slash", () => {
     expect(APP_NAME).toBe("Status");
+    expect(WORDMARK).toBe("Status Page");
     expect(SITE_ORIGIN).toMatch(/^https:\/\/[^/]+$/);
   });
 

@@ -3232,7 +3232,11 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
     "https://github.com/greenblacked/status-page/blob/main/LICENSE",
   );
   await expect(footer).toContainText("Not affiliated with any of these vendors");
-  await expect(footer).toContainText("Made and kept by Serhii.");
+  await expect(footer).toContainText("Made by greenblacked.");
+  const signature = footer.getByRole("link", { name: "greenblacked", exact: true });
+  await expect(signature).toHaveAttribute("href", "https://github.com/greenblacked");
+  await expect(signature).toHaveAttribute("target", "_blank");
+  await expect(signature).toHaveAttribute("rel", /noopener/);
   await expect(footer).not.toContainText("every two minutes");
   await expect(footer.getByRole("link", { name: "JSON" })).toHaveAttribute("href", "/api/status.json");
   await expect(footer.getByRole("link", { name: "Atom feed" })).toHaveAttribute("href", "/feed.xml");
@@ -3738,6 +3742,71 @@ test("lays the hero out at 200% root text on a phone: no overflow, no overlap", 
       }
     }
   }
+});
+
+test("centres the wordmark in the header at md and up, clear of the dateline and the controls", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  const board = fixtureBoard(Date.now());
+  // A root font-size from a style tag does not move rem media queries, so md is still 768px; 200% text is the
+  // hardest case for overlap at the narrow end.
+  for (const [width, rootPx] of [
+    [768, 16],
+    [1024, 16],
+    [1280, 16],
+    [1440, 16],
+    [768, 32],
+    [1024, 32],
+    [1600, 32],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, () => board);
+    await page.addStyleTag({ content: `html { font-size: ${rootPx}px !important; }` });
+    const layout = await page.evaluate(() => {
+      const header = document.querySelector("header");
+      const mark = document.querySelector('header [data-testid="wordmark"]');
+      if (!header || !mark) throw new Error("no header or wordmark");
+      const inner = header.getBoundingClientRect();
+      const style = getComputedStyle(header);
+      const box = (element: Element | null, name: string) => {
+        const rect = element?.getBoundingClientRect();
+        if (!rect) throw new Error(`no ${name}`);
+        return { name, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      };
+      const left = inner.left + Number.parseFloat(style.paddingLeft);
+      const right = inner.right - Number.parseFloat(style.paddingRight);
+      return {
+        text: mark.textContent,
+        shown: getComputedStyle(mark).display !== "none",
+        headerCentre: (left + right) / 2,
+        markCentre: (mark.getBoundingClientRect().left + mark.getBoundingClientRect().right) / 2,
+        parts: [
+          box(mark, "wordmark"),
+          box(document.querySelector("header time"), "dateline"),
+          ...[...document.querySelectorAll("header button")]
+            .slice(0, 2)
+            .map((button, at) => box(button, `button ${at}`)),
+        ],
+      };
+    });
+    const at = `at ${width}px, ${rootPx}px text`;
+    expect(layout.text).toBe("Status Page");
+    expect(layout.shown, `wordmark shown ${at}`).toBe(true);
+    expect(Math.abs(layout.markCentre - layout.headerCentre), `wordmark centre ${at}`).toBeLessThanOrEqual(1);
+    const [mark, ...others] = layout.parts;
+    for (const other of others) {
+      const apart = mark.right <= other.left + 0.5 || other.right <= mark.left + 0.5;
+      expect(apart, `wordmark and ${other.name} overlap ${at}`).toBe(true);
+    }
+  }
+});
+
+test("hides the wordmark below md, where the dateline and the controls have the row", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  await page.setViewportSize({ width: 390, height: 800 });
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await expect(page.locator('header [data-testid="wordmark"]')).toBeHidden();
 });
 
 // Nothing loops on a Quiet board: with the check done, no animation is left running, whatever the motion setting.

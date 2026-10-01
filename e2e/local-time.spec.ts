@@ -61,6 +61,42 @@ test.describe("in Berlin", () => {
   });
 });
 
+// The whole site is English: a browser set to another language keeps its zone, not its words.
+test.describe("in a Russian browser", () => {
+  test.use({ timezoneId: "Europe/Moscow", locale: "ru-RU" });
+
+  test("the date and the clock are English, in the viewer's zone", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    const date = page.locator("header time").first();
+    await expect(date).toHaveText(/^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) \d{1,2} [A-Z][a-z]+$/);
+    const stamp = asOf(page);
+    await expect(stamp).toHaveText(/^\d\d:\d\d\sGMT\+3$/);
+
+    // The date is the viewer's own day in Moscow, spelled the way the server spells UTC dates.
+    const iso = (await date.getAttribute("datetime")) ?? "";
+    const moscow = new Date(new Date(iso).getTime() + 3 * 3_600_000);
+    const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const months = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    await expect(date).toHaveText(
+      `${weekdays[moscow.getUTCDay()]} ${moscow.getUTCDate()} ${months[moscow.getUTCMonth()]}`,
+    );
+  });
+});
+
 /** The clock a stamp prints in UTC, from the moment its `datetime` names: "08:04 UTC". */
 const utcClock = (iso: string) => {
   const at = new Date(iso);
