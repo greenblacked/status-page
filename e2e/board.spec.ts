@@ -3333,6 +3333,12 @@ test("keeps one Recent changes region, in place, through an empty search", async
  * a later load (a timeout reads as Unknown) makes the load's check a change
  * with a caption of its own, a few lines taller than the quiet row the
  * reserve counts on, which the page cannot know before it has the board.
+ * The board's own fetches are held back for the same reason, until a test has
+ * read what it measures: the server may hand a load a board up to a sweep old,
+ * which the page then refetches on mount, and a vendor that flipped in between
+ * turns the load's quiet check into a change row. A held request reads as a
+ * slow network (the page keeps its board and shows no error), where aborting
+ * it would show the error line.
  */
 async function savedChecks(page: Page): Promise<{ key: string; store: string }> {
   await page.goto("/");
@@ -3391,6 +3397,25 @@ async function savedChecks(page: Page): Promise<{ key: string; store: string }> 
 const feedSurface = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] .surface');
 const feedRows = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] li');
 
+/**
+ * Holds the board's GETs (the page's refetches) until the returned function is
+ * called, then lets them go on to any route registered before this one.
+ */
+async function holdBoardFetches(page: Page): Promise<() => Promise<void>> {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/_serverFn/**", async (route) => {
+    if (route.request().method() === "GET") await held;
+    await route.fallback();
+  });
+  return async () => {
+    release();
+    await page.unroute("**/_serverFn/**");
+  };
+}
+
 test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
   const saved = await savedChecks(page);
@@ -3404,6 +3429,7 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
       }
     }).observe({ type: "layout-shift", buffered: true });
   }, saved);
+  const releaseBoard = await holdBoardFetches(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
@@ -3414,6 +3440,7 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
   );
   await page.waitForTimeout(500);
   const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+  await releaseBoard();
   expect(shift, "cumulative layout shift").toBeLessThan(0.02);
 });
 
@@ -3449,8 +3476,9 @@ for (const fontPx of [16, 20]) {
       });
       await page.route("**/*", async (route) => {
         if (route.request().resourceType() === "script") await gate;
-        await route.continue();
+        await route.fallback();
       });
+      const releaseBoard = await holdBoardFetches(page);
       await page.goto("/", { waitUntil: "commit" });
       await expect(surface).toBeVisible();
       await expect(feedRows(page)).toHaveCount(0);
@@ -3479,6 +3507,7 @@ for (const fontPx of [16, 20]) {
         () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
       );
       const after = (await surface.boundingBox())?.height ?? 0;
+      await releaseBoard();
       results.push(`${width}px: reserved ${before}px, drawn ${after}px`);
       // What the board below moves by, growing or shrinking.
       expect(before, `${width}px reserves more than the empty card`).toBeGreaterThan(100);
