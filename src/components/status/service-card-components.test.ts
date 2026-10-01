@@ -145,6 +145,24 @@ describe("healthy service row", () => {
     expect(header(planned)).toContain(" · Maintenance planned");
     expect(planned).toContain("data-upcoming-maintenance");
   });
+
+  it("never calls an incident that is a problem a notice", () => {
+    const one = render("claude", {
+      incidents: [{ id: "i", title: "Delayed credits", health: "degraded" }],
+    });
+    expect(header(one)).toContain(" · Incident");
+    expect(header(one)).not.toContain("Notice");
+
+    const two = render("claude", {
+      incidents: [
+        { id: "a", title: "Delayed credits", health: "degraded" },
+        { id: "b", title: "Database upgrade", health: "operational", informational: true },
+        { id: "c", title: "Login errors", health: "outage" },
+      ],
+    });
+    expect(header(two)).toContain(" · 2 incidents");
+    expect(header(two)).not.toContain("Notice");
+  });
 });
 
 describe("row that could not be read", () => {
