@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 import { parseAppleOsTitle } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
-import { decodeXmlField, grokItemHealth, grokTitleService, MAX_RSS_ITEMS, parseRssItems } from "./sources.server.ts";
+import {
+  decodeXmlField,
+  grokItemHealth,
+  grokTitleService,
+  MAX_RSS_ITEMS,
+  MAX_RSS_SCANNED,
+  parseRssItems,
+} from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
 
 // Vendor bodies are untrusted input that is parsed on the Worker, so no
@@ -46,12 +53,32 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(elapsed(() => parseRssItems(`<item>${" ".repeat(SIZE)}`.repeat(4)))).toBeLessThan(BUDGET_MS);
   });
 
-  it("parseRssItems: stops at MAX_RSS_ITEMS items, keeping the first ones", () => {
+  it("parseRssItems: keeps MAX_RSS_ITEMS items, the first ones when none is dated", () => {
     const xml = Array.from({ length: MAX_RSS_ITEMS * 5 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
     const items = parseRssItems(xml);
     expect(items).toHaveLength(MAX_RSS_ITEMS);
     expect(items[0].title).toBe("t0");
     expect(items.at(-1)?.title).toBe(`t${MAX_RSS_ITEMS - 1}`);
+  });
+
+  it("parseRssItems: keeps the newest items wherever they sit in the feed, in the feed's order", () => {
+    const day = (n: number) => new Date(Date.UTC(2026, 0, 1) + n * 86_400_000).toUTCString();
+    // Oldest first, so the newest are at the end of the document; two undated items lead.
+    const dated = Array.from(
+      { length: MAX_RSS_ITEMS + 50 },
+      (_, i) => `<item><title>d${i}</title><pubDate>${day(i)}</pubDate></item>`,
+    );
+    const xml = `<item><title>undated-1</title></item><item><title>undated-2<pubDate>nope</pubDate></title></item>${dated.join("")}`;
+    const items = parseRssItems(xml);
+    expect(items).toHaveLength(MAX_RSS_ITEMS);
+    expect(items.map((item) => item.title)).toEqual(Array.from({ length: MAX_RSS_ITEMS }, (_, i) => `d${i + 50}`));
+  });
+
+  it("parseRssItems: a feed past the scan bound is still read in linear time and capped", () => {
+    const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
+    let items: ReturnType<typeof parseRssItems> = [];
+    expect(elapsed(() => (items = parseRssItems(xml)))).toBeLessThan(BUDGET_MS * 2);
+    expect(items).toHaveLength(MAX_RSS_ITEMS);
   });
 
   it("decodeXmlField: a repeated unclosed CDATA opener", () => {

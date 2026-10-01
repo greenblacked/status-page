@@ -1877,6 +1877,28 @@ describe("collectors bound vendor text and counts", () => {
     expect(apple.components[0].detail).toHaveLength(500);
   });
 
+  it("Grok: an active item past the 200th in document order is still found", async () => {
+    const item = (title: string, pubDate: string, status: string) =>
+      `<item><title>${title}</title><link>https://status.x.ai/incidents/${encodeURIComponent(title)}</link>
+      <pubDate>${pubDate}</pubDate><description>Status: ${status}</description></item>`;
+    // Oldest first: 400 stale resolved items, then the one that is live now, last in the document.
+    const stale = Array.from({ length: 400 }, (_, i) =>
+      item(`Old ${i}`, new Date(Date.UTC(2026, 0, 1) + i * 3_600_000).toUTCString(), "Resolved"),
+    );
+    const feed = `<rss version="2.0"><channel>${stale.join("")}${item("Live outage", "Sun, 20 Sep 2026 09:30:00 GMT", "Identified")}</channel></rss>`;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
+    try {
+      stubFetch({ [URLS.grok]: text(feed) });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("degraded");
+      expect(grok.incidents.map((incident) => incident.title)).toEqual(["Live outage"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("Grok: clips item titles and the details cut from them, and reads at most 200 feed items", async () => {
     const item = (
       i: number,

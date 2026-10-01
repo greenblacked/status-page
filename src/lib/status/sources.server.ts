@@ -1242,48 +1242,74 @@ export function decodeXmlField(raw: string): string {
   }
 }
 
-/** Most `<item>`s read from a feed. Real feeds carry tens; the rest is a hostile or runaway body. */
+/** Most `<item>`s kept from a feed: the newest by pubDate. Real feeds carry tens. */
 export const MAX_RSS_ITEMS = 200;
+/**
+ * Most `<item>`s looked at in one feed, in document order. status.x.ai serves
+ * its whole history and nothing says which end is newest, so every item up to
+ * this bound is dated before the newest MAX_RSS_ITEMS are chosen. The bound
+ * is for memory: a feed with more items than this is not a feed.
+ */
+export const MAX_RSS_SCANNED = 5000;
 
 const ITEM_CLOSE = /<\/item>/i;
+
+const FIELD_TAGS = new Map<string, [RegExp, RegExp]>();
 
 // The text between the first `<tag>` and the first `</tag>` after it, or
 // undefined. Two literal searches, so a field is read in one pass over its
 // item whatever the item holds; `<tag>([\s\S]*?)</tag>` rescanned the whole
 // item from every repeated, unclosed `<tag>`.
 function xmlField(chunk: string, tag: string): string | undefined {
-  const open = chunk.search(new RegExp(`<${tag}>`, "i"));
+  let tags = FIELD_TAGS.get(tag);
+  if (!tags) {
+    tags = [new RegExp(`<${tag}>`, "i"), new RegExp(`</${tag}>`, "i")];
+    FIELD_TAGS.set(tag, tags);
+  }
+  const open = chunk.search(tags[0]);
   if (open === -1) return undefined;
   const from = open + tag.length + 2;
-  const close = chunk.slice(from).search(new RegExp(`</${tag}>`, "i"));
+  const close = chunk.slice(from).search(tags[1]);
   return close === -1 ? undefined : chunk.slice(from, from + close);
 }
 
 export function parseRssItems(
   xml: string,
 ): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
-  const items: Array<{ title: string; description: string; pubDate?: string; link?: string }> = [];
   // Each item runs from its `<item>` to the next one, cut at its own
   // `</item>`; every search below stays inside that slice, so the whole feed
-  // is read once. At most MAX_RSS_ITEMS are read, before any mapping or
-  // sorting happens downstream.
+  // is read once. Only the date is read from all of the items scanned; the
+  // newest MAX_RSS_ITEMS are then read in full, before anything downstream
+  // maps or sorts them. An item with no readable date ranks last, and ties
+  // keep the feed's order. The items kept stay in the feed's order.
+  const scanned: Array<{ chunk: string; at: number; index: number }> = [];
   const itemOpen = /<item[\s>]/gi;
   let open = itemOpen.exec(xml);
-  while (open && items.length < MAX_RSS_ITEMS) {
+  while (open && scanned.length < MAX_RSS_SCANNED) {
     const bodyStart = open.index + open[0].length;
     const next = itemOpen.exec(xml);
     const block = xml.slice(bodyStart, next ? next.index : xml.length);
     const closed = block.search(ITEM_CLOSE);
     const chunk = closed === -1 ? block : block.slice(0, closed);
+    const date = Date.parse(xmlField(chunk, "pubDate")?.trim() ?? "");
+    scanned.push({ chunk, at: Number.isFinite(date) ? date : Number.NEGATIVE_INFINITY, index: scanned.length });
+    open = next;
+  }
+  const kept =
+    scanned.length > MAX_RSS_ITEMS
+      ? scanned
+          .sort((a, b) => (a.at === b.at ? a.index - b.index : a.at > b.at ? -1 : 1))
+          .slice(0, MAX_RSS_ITEMS)
+          .sort((a, b) => a.index - b.index)
+      : scanned;
+  return kept.map(({ chunk }) => {
     const title = decodeXmlField(xmlField(chunk, "title") ?? "").trim();
     const description = decodeXmlField(xmlField(chunk, "description") ?? "").trim();
     const pubDate = xmlField(chunk, "pubDate")?.trim();
     const rawLink = xmlField(chunk, "link");
     const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
-    items.push({ title, description, pubDate, link });
-    open = next;
-  }
-  return items;
+    return { title, description, pubDate, link };
+  });
 }
 
 export function grokItemHealth(description: string): Health {
