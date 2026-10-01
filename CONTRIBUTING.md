@@ -64,7 +64,7 @@ Name the branch `<prefix>/<short-kebab-description>`:
 | `refactor/` | Restructuring with no change in behavior | `refactor/split-collectors` |
 | `test/` | Adding or fixing tests only | `test/parser-edge-cases` |
 | `perf/` | Performance work | `perf/cache-catalog-lookup` |
-| `build/` | Build system and dependencies of the build | `build/pin-node-22` |
+| `build/` | Build system and its dependencies | `build/vite-chunk-split` |
 
 - **The description** is two to five lowercase words joined by single hyphens, saying what changes. Use only `a-z`, `0-9` and `-`, and keep the whole name to 50 characters.
 - **An issue number** goes first in the description when there is one: `fix/42-aws-stale-events`.

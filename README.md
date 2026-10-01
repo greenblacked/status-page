@@ -422,7 +422,7 @@ Name a branch `<prefix>/<short-kebab-description>`, for example `feature/board-m
 | `perf/` | Performance work |
 | `build/` | Build system and its dependencies |
 
-CI checks the name. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the rules (lowercase words joined by single hyphens, 50 characters at most) and where each branch may open a pull request.
+CI checks the name. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the rules (lowercase letters and digits joined by single hyphens, 50 characters at most) and where each branch may open a pull request.
 
 ### Quality gates
 
