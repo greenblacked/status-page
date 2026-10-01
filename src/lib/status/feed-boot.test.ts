@@ -36,7 +36,7 @@ const long = "Increased error rates and latency for API requests in US-EAST-1 af
 const many = [
   { ...down, id: "gcp" as const, name: "Google Cloud", to: "degraded" as const, summary: "Slow" },
   { ...down, name: "Amazon Web Services", summary: long },
-  { ...down, id: "play" as const, name: "Android / Play", to: "maintenance" as const, summary: "Planned" },
+  { ...down, id: "android" as const, name: "Android / Play", to: "maintenance" as const, summary: "Planned" },
 ];
 const busy = { operational: 10, degraded: 2, outage: 1, maintenance: 1, unknown: 0 };
 
@@ -109,7 +109,7 @@ function column(width: number): number {
 
 function expected(pulses: Pulse[], width: number): number {
   const across = column(width);
-  return recentRows(pulses).reduce(
+  return recentRows(pulses).reduce<number>(
     (sum, row) =>
       sum +
       M.pad +

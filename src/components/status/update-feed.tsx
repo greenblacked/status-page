@@ -29,9 +29,7 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
           on it) survives the saved checks arriving after hydration. Until they
           load, the boot script's estimate of their height holds it (feed-boot.ts).
         */}
-        <div
-          className={cn("surface spotlight card-list", rows.length === 0 && "min-h-[var(--feed-reserve,0px)]")}
-        >
+        <div className={cn("surface spotlight card-list", rows.length === 0 && "min-h-[var(--feed-reserve,0px)]")}>
           {rows.length === 0 ? (
             <p className="px-4 py-4 text-body text-muted">Waiting for the first check.</p>
           ) : (
