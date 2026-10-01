@@ -146,6 +146,14 @@ export const CATALOG: CatalogEntry[] = [
     sourceName: "Windows release health",
     sourceUrl: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
   },
+  {
+    id: "android-os",
+    name: "Android releases",
+    shortName: "Android OS",
+    category: "updates",
+    sourceName: "Android Developers Blog",
+    sourceUrl: "https://developer.android.com/blog",
+  },
 ];
 
 export const CATALOG_BY_ID = Object.fromEntries(CATALOG.map((entry) => [entry.id, entry])) as Record<

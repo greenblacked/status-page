@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseAndroidReleaseTitle } from "./android-release.ts";
 import { parseAppleOsTitle } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
@@ -6,8 +7,10 @@ import {
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
+  MAX_ATOM_ENTRIES,
   MAX_RSS_ITEMS,
   MAX_RSS_SCANNED,
+  parseAtomEntries,
   parseRssItems,
 } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
@@ -111,6 +114,36 @@ describe("parsers stay linear on crafted vendor input", () => {
     let parsed: ReturnType<typeof parseAppleOsTitle> = null;
     expect(elapsed(() => (parsed = parseAppleOsTitle(title)))).toBeLessThan(BUDGET_MS);
     expect(parsed).toBeNull();
+  });
+
+  it.each(["title", "published", "updated"])("parseAtomEntries: a repeated unclosed <%s>", (tag) => {
+    const xml = `<entry>${`<${tag} type="html">`.repeat(SIZE / 16)}`;
+    let posts: ReturnType<typeof parseAtomEntries> = [];
+    expect(elapsed(() => (posts = parseAtomEntries(xml)))).toBeLessThan(BUDGET_MS);
+    expect(posts.length).toBeLessThanOrEqual(1);
+  });
+
+  it("parseAtomEntries: a feed of unclosed <entry> openers, of empty entries and of long runs", () => {
+    expect(elapsed(() => parseAtomEntries("<entry>".repeat(SIZE / 7)))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => parseAtomEntries("<entry></entry>".repeat(SIZE / 15)))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => parseAtomEntries(`<entry>${" ".repeat(SIZE)}`.repeat(4)))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => parseAtomEntries(`<entry><title>${"<![CDATA[".repeat(SIZE / 9)}`))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => parseAtomEntries(`<entry><title type="${"<".repeat(SIZE)}`))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("parseAtomEntries: looks at no more than MAX_ATOM_ENTRIES entries", () => {
+    const xml = Array.from({ length: MAX_ATOM_ENTRIES * 2 }, (_, i) => `<entry><title>t${i}</title></entry>`).join("");
+    expect(parseAtomEntries(xml)).toHaveLength(MAX_ATOM_ENTRIES);
+  });
+
+  it.each([
+    ["a long run of spaces", `Android 17${" ".repeat(SIZE)}x is here`],
+    ["a long run of digits", `Android ${"1".repeat(SIZE)} is here`],
+    ["a long run of separators", `Android 17 ${"- ".repeat(SIZE / 2)}`],
+    ["repeated QPR markers", `Android 17 ${"QPR1 ".repeat(SIZE / 5)}`],
+    ["repeated dots", `Android 17${".".repeat(SIZE)}`],
+  ])("parseAndroidReleaseTitle: %s", (_label, title) => {
+    expect(elapsed(() => parseAndroidReleaseTitle(title))).toBeLessThan(BUDGET_MS);
   });
 
   it.each([

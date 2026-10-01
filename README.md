@@ -43,7 +43,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 | | |
 | --- | --- |
-| **One board, five states** | Fifteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
+| **One board, five states** | Sixteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
 | **At home on Apple devices** | Warm paper in light and true black in dark as your system is set, opaque panels with a hairline, the system typeface on Apple devices, and colour kept to small exact points. Pick **Glass** or **Full** in Settings for frosted panels over a still glow, or the slow drift, glass lenses over the glow, a light that wanders across the cards and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
@@ -54,7 +54,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 🟢 Operational · 🔧 Maintenance · 🟡 Degraded · 🔴 Outage · ❔ No data
 
-Fifteen services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
+Sixteen services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
 
 | Group | Service | Official source |
 | --- | --- | --- |
@@ -73,6 +73,7 @@ Fifteen services, each read from one official source. This table is the contract
 | Releases | MikroTik RouterOS | [MikroTik changelogs](https://mikrotik.com/download/changelogs) |
 | Releases | Apple OS | [Apple Developer Releases](https://developer.apple.com/news/releases/) |
 | Releases | Windows 11 | [Windows release health](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) (the table of versions, read as HTML: Microsoft publishes no feed for it) |
+| Releases | Android releases | [Android Developers Blog](https://developer.android.com/blog) (its Atom feed) |
 
 Missing a service? [Request it](https://github.com/greenblacked/status-page/issues/new?template=new-service.yml). It needs an official, machine-readable source.
 
@@ -88,9 +89,9 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 | 🔴 Outage | Major or critical impact |
 | ❔ No data | The source timed out, returned an error, or sent data Status Page could not read. Says nothing about whether the vendor is up. The API and the badges still call it `unknown` |
 
-The headline at the top of the page is one sentence about the board: **Everything is up.** when all fifteen are Operational, "Two things need a look." when an outage, a degradation or maintenance is under way (each service named and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
+The headline at the top of the page is one sentence about the board: **Everything is up.** when all sixteen are Operational, "Two things need a look." when an outage, a degradation or maintenance is under way (each service named and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
 
-The three Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
+The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS, Windows version or Android release was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
 <details>
 <summary><strong>The rule behind every card</strong></summary>
@@ -112,6 +113,7 @@ The three Releases services track releases, not incidents. Their rows carry no s
 | MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus the newest version's `CHANGELOG` |
 | Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS |
 | Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. A page without that table reads Unknown. This is the one source read as HTML, an exception recorded in `CONTRIBUTING.md` |
+| Android releases | The Android Developers Blog's Atom feed (`static/blog/atom.xml`). A post whose title announces a stable Android version ("Android 17 is here", "Android 17 QPR1 is rolling out") is a release; betas and previews are skipped. The four newest versions are listed with their post date, and one announced in the last 14 days is flagged **New release**. The feed carries only the blog's latest posts (about twenty), so a release drops out of it as newer posts arrive, and a feed with no release post reads as quiet, not Unknown. A body that is not a feed reads Unknown. The monthly security and Pixel updates are not covered |
 
 </details>
 
@@ -119,7 +121,7 @@ The three Releases services track releases, not incidents. Their rows carry no s
 
 ```mermaid
 flowchart TB
-  vendors["15 official vendor sources"]
+  vendors["16 official vendor sources"]
   node["Node request and in-memory cache"]
   worker["Worker request and per-isolate cache"]
   browser["Browser refreshes every two minutes"]
@@ -143,7 +145,7 @@ npm ci
 npm run dev
 ```
 
-Open the local URL that Vite prints. The first load reads all fifteen sources, which can take a few seconds.
+Open the local URL that Vite prints. The first load reads all sixteen sources, which can take a few seconds.
 
 No Node on the machine? Docker is enough: `docker compose up preview` builds the board and serves it on http://127.0.0.1:4173.
 
@@ -225,7 +227,7 @@ Use a service id, or `board` for the whole board:
 ![Status Page](https://img.shields.io/endpoint?url=https://<your-host>/api/badge/board)
 ```
 
-Service ids: `gcp`, `aws`, `steam`, `cs2-europe`, `epic`, `fortnite`, `spotify`, `apple`, `android`, `grok`, `chatgpt`, `claude`, `mikrotik`, `apple-os`, `windows`. An unknown id returns a grey "unknown service" badge instead of an error. Shields.io fetches the badge from your host, so badges need a public deployment.
+Service ids: `gcp`, `aws`, `steam`, `cs2-europe`, `epic`, `fortnite`, `spotify`, `apple`, `android`, `grok`, `chatgpt`, `claude`, `mikrotik`, `apple-os`, `windows`, `android-os`. An unknown id returns a grey "unknown service" badge instead of an error. Shields.io fetches the badge from your host, so badges need a public deployment.
 
 </details>
 
