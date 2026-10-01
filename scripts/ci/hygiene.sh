@@ -36,6 +36,8 @@ done
 # The project ships no credentials and never should (CONTRIBUTING.md).
 # No -q: grep -q exits at the first match, and git ls-files, still writing,
 # dies of SIGPIPE; under pipefail that fails the pipeline and the guard passes.
+# Relies on grep reading its input to the end when not -q (GNU grep; covered
+# by hygiene.test.ts).
 if git ls-files | grep -E '(^|/)\.env($|\.)' >/dev/null; then
   note ".env" "environment files must not be committed"
 fi

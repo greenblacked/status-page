@@ -25,15 +25,16 @@ beforeEach(() => {
 afterEach(() => rmSync(repo, { recursive: true, force: true }));
 
 /**
- * Tracks `extra` and, under a deeply nested directory, enough empty files that
+ * Tracks `extra` and, under a nested directory (paths of about 760 bytes, under
+ * macOS's PATH_MAX of 1024), enough empty files that
  * `git ls-files` writes about 400 KB of paths, far over a pipe buffer (64 KiB):
  * it is then still writing when the .env guard's grep has matched and stopped
  * reading. ".env" sorts before the nested files, so the match comes first.
  */
 function track(extra: string[]): void {
-  const dir = join(repo, ...Array.from({ length: 14 }, (_, i) => String(i).repeat(250).slice(0, 250)));
+  const dir = join(repo, ...Array.from({ length: 3 }, (_, i) => String(i).repeat(250).slice(0, 250)));
   mkdirSync(dir, { recursive: true });
-  for (let i = 0; i < 100; i++) writeFileSync(join(dir, `f${String(i).padStart(3, "0")}`), "");
+  for (let i = 0; i < 560; i++) writeFileSync(join(dir, `f${String(i).padStart(4, "0")}`), "");
   for (const name of extra) writeFileSync(join(repo, name), "");
   git("add", "--all");
 }

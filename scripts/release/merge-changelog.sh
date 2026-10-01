@@ -32,6 +32,8 @@ outside() {
 }
 
 # No -q: grep -q exits early and the writer dies of SIGPIPE under pipefail.
+# Relies on grep reading its input to the end when not -q (GNU grep; covered
+# by hygiene.test.ts).
 blank() { ! grep '[^[:space:]]' >/dev/null; }
 
 grep -q '^## \[Unreleased\]' "$main" || { echo "merge-changelog: main has no ## [Unreleased] heading" >&2; exit 1; }
