@@ -2276,17 +2276,18 @@ test("opens a long component list with Show all and closes it with Show fewer", 
 // from it. The "none" pass switches the browser's anchoring off to be Safari, which is the only way to see it
 // here. What is asserted is the reader's side: the Show all button stays where it is on screen, on every layout.
 // Whether the page scrolled itself follows from whether this browser anchors.
-for (const anchoring of ["auto", "none", "default"] as const) {
+for (const anchoring of ["none", "default"] as const) {
   test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({
     page,
   }, testInfo) => {
     await page.addInitScript(() => {
       const scrolled: number[] = [];
       (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
-      const scrollBy = window.scrollBy.bind(window) as (options: ScrollToOptions) => void;
-      window.scrollBy = ((options: ScrollToOptions) => {
-        scrolled.push(options.top ?? 0);
-        scrollBy(options);
+      const original = window.scrollBy;
+      window.scrollBy = ((...args: unknown[]) => {
+        const first = args[0] as ScrollToOptions | number | undefined;
+        scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
+        return (original as (...values: unknown[]) => void).apply(window, args);
       }) as typeof window.scrollBy;
     });
     await page.clock.install({ time: Date.now() });
@@ -2335,6 +2336,84 @@ for (const anchoring of ["auto", "none", "default"] as const) {
     }
   });
 }
+
+// With the browser's anchoring off (Safari), a check on a board the reader is not working must not move it: with
+// the hero or the search field in view, the page stays where it is, and the dock keeps its pose.
+for (const scrollY of [40, 190]) {
+  test(`leaves a calm board alone when a check lands at scroll ${scrollY} (anchoring off)`, async ({ page }) => {
+    await page.addInitScript(() => {
+      const scrolled: number[] = [];
+      (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
+      const original = window.scrollBy;
+      window.scrollBy = ((...args: unknown[]) => {
+        scrolled.push(1);
+        return (original as (...values: unknown[]) => void).apply(window, args);
+      }) as typeof window.scrollBy;
+    });
+    await page.clock.install({ time: Date.now() });
+    await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
+    await page.evaluate(() => {
+      document.documentElement.style.overflowAnchor = "none";
+    });
+    const dock = page.locator(".search-dock");
+    await page.evaluate((y) => window.scrollTo(0, y), scrollY);
+    // Let the page be still, and the hook see it.
+    await page.clock.fastForward(1000);
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    const state = () =>
+      page.evaluate(() => ({
+        y: window.scrollY,
+        docked: document.querySelector(".search-dock")?.hasAttribute("data-docked") ?? false,
+        calls: (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.length ?? 0,
+      }));
+    const before = await state();
+    await page.clock.fastForward("03:00");
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const after = await state();
+    expect(after.y).toBe(before.y);
+    expect(after.docked).toBe(before.docked);
+    expect(after.calls).toBe(before.calls);
+    await expect(dock).toHaveCount(1);
+  });
+}
+
+// A tap leaves no pointer and no focus on the board, so the hook holds the first thing in view: the cards under
+// the feed, never the feed itself.
+test("holds the cards in place after a tap with anchoring off", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "a finger is the phone project's");
+  await page.clock.install({ time: Date.now() });
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await page.evaluate(() => {
+    document.documentElement.style.overflowAnchor = "none";
+  });
+  const card = page.locator("article#service-spotify");
+  await card.locator("summary").click();
+  const toggle = card.getByRole("button", { name: /^Show all 32/ });
+  await toggle.scrollIntoViewIfNeeded();
+  await page.evaluate(() => window.scrollBy(0, 200));
+  const box = await toggle.boundingBox();
+  if (!box) throw new Error("no box");
+  await page.touchscreen.tap(box.x + 4, box.y + box.height / 2);
+  // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  const fewer = card.getByRole("button", { name: /^Show fewer/ });
+  await fewer.scrollIntoViewIfNeeded();
+  // The page is still for longer than the hook waits, and it has picked its anchor again.
+  await page.clock.fastForward(1000);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  const feed = page.locator('section[aria-labelledby="recent-heading"]');
+  const rows = await feed.locator("li").count();
+  const topOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top);
+  const topBefore = await topOf();
+  await page.clock.fastForward("03:00");
+  await expect(feed.locator("li")).not.toHaveCount(rows);
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+});
 
 test("operates Show all from the keyboard", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "a keyboard is the desktop project's");
