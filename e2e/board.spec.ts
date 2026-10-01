@@ -181,6 +181,25 @@ async function openFixture(
   await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
 }
 
+/**
+ * Waits until the page's own refetch is far off. The board refetches on the wall clock every two minutes, and while
+ * it does the live line reads "Checking…" and then "Checked … · next in m:ss" again, a different height. A sweep
+ * or a measure that spans that moves the hero under the test's feet, so it starts only when the countdown has
+ * room for it; one that lands in the last seconds waits the refetch out, which resets the countdown.
+ */
+async function awayFromRefetch(page: Page, seconds = 30): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const text = (await page.getByTestId("live-bar").textContent()) ?? "";
+        const match = /next in (\d+):(\d{2})/.exec(text);
+        return match ? Number(match[1]) * 60 + Number(match[2]) : 0;
+      },
+      { timeout: 90_000, intervals: [250] },
+    )
+    .toBeGreaterThanOrEqual(seconds);
+}
+
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
 function watchConsole(page: Page): string[] {
   const problems: string[] = [];
@@ -864,6 +883,8 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
         // The dock measures again when the hero and the bar change size.
         await page.waitForTimeout(400);
       }
+      // The page's own refetch changes the live line's height for a moment: sweep clear of it.
+      await awayFromRefetch(page);
       // The field is sticky: measure it at the top of the page, not where the last width left the scroll.
       await page.evaluate(() => window.scrollTo(0, 0));
       const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
@@ -917,34 +938,46 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
     }
 });
 
-test("takes the bar down in the frame that shows a taller hero, not a frame later", async ({ page }, testInfo) => {
+test("starts to take the bar down in the frame that shows a taller hero, not a frame later", async ({
+  page,
+}, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the width is set here, so one project measures it");
+  test.slow();
   await page.setViewportSize({ width: 390, height: 900 });
   await openFixture(page, () => fixtureBoard(Date.now()));
-  await page.evaluate(() => window.scrollTo(0, 0));
-  const { barStart } = await dockOffsets(page);
-  await scrollAndSettle(page, Math.ceil(barStart) + 4);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
-  await barSettled(page);
-  // The hero grows by a line or two in one task, as it does when the board's answer names more services. The
-  // test's own frame callback runs ahead of the layout observers in the frame that draws the change, and the one
-  // after it ahead of anything the page asked for in between: so the second callback reads the bar as the page
-  // left it for the frame after the one that shows the taller hero. The bar must already be down then.
-  const shown = await page.evaluate(
-    () =>
-      new Promise<string | null>((resolve) => {
-        const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
-        const grown = document.createElement("div");
-        grown.style.height = "60px";
-        hero.appendChild(grown);
-        requestAnimationFrame(() =>
+  // The hero grows by a line or two in one task, as it does when the board's answer names more services; and by
+  // a few pixels, which the bar's 8px hold on its place must not keep it up for: the new last line is under it.
+  for (const grow of [60, 6]) {
+    await awayFromRefetch(page);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const { barStart } = await dockOffsets(page);
+    await scrollAndSettle(page, Math.ceil(barStart) + 4);
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+    await barSettled(page);
+    // The test's own frame callback runs ahead of the layout observers in the frame that draws the change, and
+    // the one after it ahead of anything the page asked for in between: so the second callback reads the bar as
+    // the page left it for the frame after the one that shows the taller hero. The bar must have started down.
+    const shown = await page.evaluate(
+      (height) =>
+        new Promise<string | null>((resolve) => {
+          const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
+          const grown = document.createElement("div");
+          grown.dataset.grown = "";
+          grown.style.height = `${height}px`;
+          hero.appendChild(grown);
           requestAnimationFrame(() =>
-            resolve(document.querySelector('section[aria-label="Board controls"]')?.getAttribute("data-shown") ?? null),
-          ),
-        );
-      }),
-  );
-  expect(shown).toBe("false");
+            requestAnimationFrame(() =>
+              resolve(
+                document.querySelector('section[aria-label="Board controls"]')?.getAttribute("data-shown") ?? null,
+              ),
+            ),
+          );
+        }),
+      grow,
+    );
+    expect(shown, `a hero ${grow}px taller`).toBe("false");
+    await page.evaluate(() => document.querySelector("[data-grown]")?.remove());
+  }
 });
 
 test("takes the bar down when the hero grows under it, at every width below 64rem", async ({ page }, testInfo) => {
@@ -969,6 +1002,7 @@ test("takes the bar down when the hero grows under it, at every width below 64re
       }, rootPx);
       await page.waitForTimeout(400);
     }
+    await awayFromRefetch(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     // With the bar up and the page just past the point where it comes up, the answer to a Refresh names more
     // services: the hero's last line moves down, under the bar's place.
