@@ -2,6 +2,9 @@ import type { CategoryId, ServiceId } from "./types.ts";
 
 export const APP_NAME = "Status";
 
+/** The name in the page's top row. The tab title, manifest, feed and badges keep APP_NAME. */
+export const WORDMARK = "Status Page";
+
 /** The deployed origin, for the absolute URLs a link preview needs (og:url, og:image, the canonical link). */
 export const SITE_ORIGIN = "https://status.szolotov.com";
 

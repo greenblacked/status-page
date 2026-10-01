@@ -26,6 +26,26 @@ test.describe("a URL that is not on the board", () => {
     await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   });
 
+  test("names the page Status Page, centred over the content width", async ({ page }) => {
+    await page.goto("/nope");
+    const mark = page.getByTestId("wordmark");
+    await expect(mark).toHaveText("Status Page");
+    const { markCentre, mainCentre } = await page.evaluate(() => {
+      const main = document.querySelector("main");
+      const text = document.querySelector('[data-testid="wordmark"]');
+      if (!main || !text) throw new Error("no main or wordmark");
+      const rect = main.getBoundingClientRect();
+      const style = getComputedStyle(main);
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const run = range.getBoundingClientRect();
+      const left = rect.left + Number.parseFloat(style.paddingLeft);
+      const right = rect.right - Number.parseFloat(style.paddingRight);
+      return { markCentre: (run.left + run.right) / 2, mainCentre: (left + right) / 2 };
+    });
+    expect(Math.abs(markCentre - mainCentre)).toBeLessThanOrEqual(1);
+  });
+
   test("has no accessibility violations in either appearance", async ({ page }) => {
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme });

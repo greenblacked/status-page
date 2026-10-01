@@ -2,15 +2,15 @@ import type { MouseEvent, ReactNode } from "react";
 import { HandNote } from "@/components/status/hand-note";
 import { Dateline } from "@/components/status/local-time";
 import { PenUnderline } from "@/components/status/pen";
-import { APP_NAME } from "@/lib/status/catalog";
+import { WORDMARK } from "@/lib/status/catalog";
 import { serviceAnchor } from "@/lib/status/layout";
 import type { ServiceId } from "@/lib/status/types";
 import type { Verdict } from "@/lib/status/verdict";
 import { cn } from "@/lib/utils";
 
 /**
- * The top of the page. A dateline and the wordmark with the two icon buttons
- * on the first row; below it the verdict, which is the page's <h1>, and what
+ * The top of the page. A dateline, the wordmark in the middle and the two icon
+ * buttons on the first row; below it the verdict, which is the page's <h1>, and what
  * hangs from it: the services it names (each links to its card), the
  * handwritten "all quiet" when everything is up, and the live line, which
  * sits in the margin on a wide screen and under the verdict on a phone.
@@ -41,16 +41,15 @@ export function Hero({
   const [first, ...rest] = verdict.title.split(" ");
   return (
     <header className="page-gutter mx-auto max-w-[62rem] pt-6 pb-4 md:pt-10 md:pb-6">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 md:grid md:grid-cols-[var(--margin-col)_minmax(0,1fr)] md:gap-x-8">
-        <p className="text-caption text-muted md:col-start-1">
+      {/* Three equal-ended columns from md up: the wordmark is the middle one, so it sits on the header's own centre whatever the dateline or the controls weigh. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-x-8">
+        <p className="text-caption text-muted">
           <Dateline generatedAt={generatedAt} />
         </p>
-        <div className="flex items-center justify-between md:col-start-2">
-          <p className="hidden text-row md:block">
-            {APP_NAME} <span className="font-normal text-subtle">szolotov.com</span>
-          </p>
-          <div className="-mr-3 flex items-center">{controls}</div>
-        </div>
+        <p data-testid="wordmark" className="hidden text-row md:block">
+          {WORDMARK}
+        </p>
+        <div className="-mr-3 flex items-center md:justify-self-end">{controls}</div>
       </div>
 
       <div className="mt-6 md:mt-8 md:grid md:grid-cols-[var(--margin-col)_minmax(0,1fr)] md:gap-x-8">
