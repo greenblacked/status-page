@@ -16,7 +16,10 @@ describe("SiteFooter", () => {
   });
 
   it("is signed in plain words, not initials", () => {
-    expect(html).toContain("Made and kept by Serhii.");
+    expect(html).toMatch(
+      /Made by <a [^>]*href="https:\/\/github\.com\/greenblacked"[^>]*>greenblacked<svg[\s\S]*?<\/svg><\/a>\./,
+    );
+    expect(html).not.toContain("Serhii");
     expect(html).not.toMatch(/s\.z\./i);
     expect(html).not.toContain("font-hand");
   });

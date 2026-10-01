@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
  *
  *   Not affiliated with any of these vendors. I only read their public status pages.
  *   Source on GitHub · MIT License · JSON · Atom feed · Badges · Settings (press ?)
- *   Built with TanStack Start on Cloudflare Workers.            Made and kept by Serhii.
+ *   Built with TanStack Start on Cloudflare Workers.               Made by greenblacked.
  */
 const LINK =
   "focus-ring pressable inline-block rounded-sm underline decoration-hairline underline-offset-4 hover:text-fg pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center";
@@ -91,7 +91,13 @@ export function SiteFooter({
       </div>
       <div className="flex flex-col gap-x-8 gap-y-1 text-footnote md:flex-row md:items-baseline md:justify-between">
         <p>Built with TanStack Start on Cloudflare Workers.</p>
-        <p>Made and kept by Serhii.</p>
+        <p>
+          Made by{" "}
+          <Link href="https://github.com/greenblacked" external>
+            greenblacked
+          </Link>
+          .
+        </p>
       </div>
     </footer>
   );
