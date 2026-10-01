@@ -2,7 +2,7 @@ import { diffBoards, overallHealth, type PulseChange } from "./diff.ts";
 import { lastPulseAt, MAX_PULSES } from "./schedule.ts";
 import type { BoardSnapshot, Health } from "./types.ts";
 
-/** The local-storage key of the saved checks; the page's boot script reads it too (feed-boot.ts). */
+/** The local-storage key of the saved checks; the script that holds Recent changes' height reads it too (feed-reserve.ts). */
 export const PULSE_STORAGE_KEY = "status-bar:pulses:v2";
 
 export type Pulse = {

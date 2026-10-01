@@ -50,6 +50,17 @@ describe("UpdateFeed", () => {
     expect(render([pulse(0, { opening: true })])).not.toContain("min-h-");
   });
 
+  it("puts the script that measures the saved checks right after the surface, while it waits", () => {
+    const html = render([]);
+    const surface = html.indexOf('<div class="surface');
+    const script = html.indexOf("<script>");
+    expect(script).toBeGreaterThan(surface);
+    // Nothing between the surface's end and the script: it measures the element before it.
+    expect(html.slice(html.lastIndexOf("</div>", script), script)).toBe("</div>");
+    expect(html).toContain("--feed-reserve");
+    expect(render([pulse(0, { opening: true })])).not.toContain("<script");
+  });
+
   it("lists checks newest first, each time titled in UTC and printed in UTC before hydration", () => {
     const html = render([
       pulse(1, {
