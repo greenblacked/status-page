@@ -1712,3 +1712,185 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
   });
 });
+
+describe("collectors bound vendor text and counts", () => {
+  const HUGE = "y".repeat(100_000);
+
+  beforeEach(() => {
+    stubFetch({});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function collect(id: ServiceId): Promise<ServiceSnapshot> {
+    const snapshot = (await collectAllServices()).find((s) => s.id === id);
+    if (!snapshot) throw new Error(`no snapshot for ${id}`);
+    return snapshot;
+  }
+
+  it("Statuspage: clips names, details, titles and the summary to their limits", async () => {
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({
+          indicator: "major",
+          components: [{ id: "c", name: HUGE, status: "major_outage" }],
+          incidents: [{ id: "i", name: HUGE, status: "investigating", impact: "major" }],
+          scheduled_maintenances: [{ id: "m", name: HUGE, status: "scheduled", scheduled_for: "2026-09-25T02:00:00Z" }],
+        }),
+      ),
+    });
+    const claude = await collect("claude");
+    expect(claude.components[0].name).toHaveLength(120);
+    expect(claude.components[0].name.endsWith("…")).toBe(true);
+    expect(claude.incidents[0].title).toHaveLength(300);
+    expect(claude.upcomingMaintenance?.[0].title).toHaveLength(300);
+    // The summary leads with the worst title and has its own, longer, limit.
+    expect(claude.summary).toHaveLength(500);
+  });
+
+  it("Statuspage: clips a long status description used as the summary", async () => {
+    stubFetch({
+      [URLS.claude]: json({
+        status: { indicator: "minor", description: HUGE },
+        components: [],
+        incidents: [],
+        scheduled_maintenances: [],
+      }),
+    });
+    expect((await collect("claude")).summary).toHaveLength(500);
+  });
+
+  it("Google: clips long affected locations and descriptions, per string and not per count", async () => {
+    stubFetch({
+      [URLS.gcp]: json([
+        {
+          ...googleIncident({ external_desc: HUGE }),
+          currently_affected_locations: [{ title: HUGE }, { title: HUGE }],
+        },
+      ]),
+    });
+    const gcp = await collect("gcp");
+    expect(gcp.incidents[0].title).toHaveLength(300);
+    expect(gcp.components[0].name).toBe("Compute Engine");
+    expect(gcp.components[0].detail).toHaveLength(500);
+    expect(gcp.summary.length).toBeLessThanOrEqual(500);
+  });
+
+  it("Statuspage: a feed of thousands of incidents lists the worst 50, outage first", async () => {
+    const minor = Array.from({ length: 1500 }, (_, i) => ({
+      id: `minor-${i}`,
+      name: `Minor ${i}`,
+      status: "investigating",
+      impact: "minor",
+      started_at: new Date(Date.UTC(2026, 8, 1) + i * 60_000).toISOString(),
+    }));
+    const notices = Array.from({ length: 600 }, (_, i) => ({
+      id: `note-${i}`,
+      name: `Note ${i}`,
+      status: "monitoring",
+      impact: "none",
+    }));
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({
+          indicator: "major",
+          // The outage is listed last, behind two thousand milder items.
+          incidents: [
+            ...notices,
+            ...minor,
+            { id: "outage", name: "Total outage", status: "investigating", impact: "critical" },
+          ],
+        }),
+      ),
+    });
+    const claude = await collect("claude");
+    expect(claude.incidents).toHaveLength(50);
+    expect(claude.incidents[0].id).toBe("outage");
+    expect(claude.summary).toBe("Total outage");
+    // Among equals the newest come first, and no notice outranks a problem.
+    expect(claude.incidents[1].id).toBe("minor-1499");
+    expect(claude.incidents.some((incident) => incident.informational)).toBe(false);
+  });
+
+  it("Statuspage: keeps only the three soonest of many scheduled maintenances", async () => {
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({
+          scheduled_maintenances: Array.from({ length: 2000 }, (_, i) => ({
+            id: `m-${i}`,
+            name: `Window ${i}`,
+            status: "scheduled",
+            // Listed latest first, so the soonest are last in the array.
+            scheduled_for: new Date(Date.UTC(2027, 0, 1) - i * 3_600_000).toISOString(),
+          })),
+        }),
+      ),
+    });
+    const claude = await collect("claude");
+    expect(claude.upcomingMaintenance?.map((item) => item.id)).toEqual(["m-1999", "m-1998", "m-1997"]);
+  });
+
+  it("Google: many open incidents are capped at 50 with the outage first", async () => {
+    const many = Array.from({ length: 1200 }, (_, i) =>
+      googleIncident({ id: `i-${i}`, status_impact: "SERVICE_DISRUPTION", service_name: `Svc ${i}` }),
+    );
+    stubFetch({
+      [URLS.gcp]: json([
+        ...many,
+        googleIncident({ id: "worst", status_impact: "SERVICE_OUTAGE", service_name: "Core" }),
+      ]),
+    });
+    const gcp = await collect("gcp");
+    expect(gcp.incidents).toHaveLength(50);
+    expect(gcp.incidents[0].id).toBe("worst");
+    expect(gcp.health).toBe("outage");
+  });
+
+  it("Apple: clips a long event message in the incident title and the component detail", async () => {
+    stubFetch({
+      [URLS.apple]: text(
+        `jsonCallback(${JSON.stringify({
+          services: [
+            {
+              serviceName: "iCloud",
+              events: [
+                { eventStatus: "ongoing", statusType: "Outage", message: HUGE, epochStartDate: 1_790_000_000_000 },
+              ],
+            },
+          ],
+        })});`,
+      ),
+    });
+    const apple = await collect("apple");
+    expect(apple.incidents[0].title).toHaveLength(300);
+    expect(apple.components[0].detail).toHaveLength(500);
+  });
+
+  it("Grok: clips item titles and the details cut from them, and reads at most 200 feed items", async () => {
+    const item = (
+      i: number,
+      title: string,
+    ) => `<item><title>${title}</title><link>https://status.x.ai/incidents/${i}</link>
+      <pubDate>Sun, 20 Sep 2026 09:30:00 GMT</pubDate><description>Status: Identified</description></item>`;
+    const feed = `<rss version="2.0"><channel>${item(0, `[Grok] ${HUGE}`)}${Array.from({ length: 5000 }, (_, i) => item(i + 1, `[Svc ${i}] issue`)).join("")}</channel></rss>`;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
+    try {
+      stubFetch({ [URLS.grok]: text(feed) });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.incidents).toHaveLength(8);
+      expect(grok.incidents[0].title).toHaveLength(300);
+      expect(grok.components[0].name).toBe("Grok");
+      expect(grok.components[0].detail).toHaveLength(500);
+      // 200 items read: the first, plus 199 services.
+      expect(grok.componentCount).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

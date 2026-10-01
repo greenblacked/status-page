@@ -1,3 +1,4 @@
+import { boundSnapshot } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
   formatReleaseAge,
@@ -38,6 +39,11 @@ const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 // Upper bound on components kept per card. A vendor page can list hundreds;
 // the snapshot is cached and served as JSON, so it must not grow with them.
 const MAX_COMPONENTS = 24;
+// Upper bound on incidents kept per card. Each is a row in the board, the
+// JSON API and the Atom feed; a feed that lists thousands must not grow them.
+// Applied by sortIncidents after the board's ordering, so the cut drops the
+// mildest, oldest rows and never the outage.
+const MAX_INCIDENTS = 50;
 // Extra, optional fetches (component lists, the Steam connection managers)
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
@@ -209,6 +215,15 @@ function realIncidentCount(incidents: Incident[]): number {
   return incidents.filter((incident) => !incident.informational).length;
 }
 
+/** The `limit` items due soonest; one with no usable date is last. Dates are parsed once, not per comparison. */
+function soonest(items: UpcomingMaintenance[], limit: number): UpcomingMaintenance[] {
+  return items
+    .map((item) => ({ item, at: Date.parse(item.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.at - b.at)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
 /** The title of the worst incident that is a problem (the list is sorted worst first), if any. */
 function firstProblemTitle(incidents: Incident[]): string | undefined {
   return incidents.find((incident) => !incident.informational)?.title;
@@ -248,7 +263,7 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
       url: vendorUrl(incident.uri, sourceUrl, [hostOf(sourceUrl)]),
     };
   });
-  return { health, incidents: sortIncidents(mapped), components };
+  return { health, incidents: sortIncidents(mapped, MAX_INCIDENTS), components };
 }
 
 /**
@@ -284,12 +299,26 @@ export function parseGoogleProducts(payload: unknown): GoogleProduct[] {
  */
 export function googleComponents(products: GoogleProduct[], openIncidents: GoogleIncident[]): ComponentHealth[] {
   type Row = ComponentHealth & { id?: string };
-  const rows: Row[] = products.map((product) => ({ id: product.id, name: product.title, health: "operational" }));
+  const rows: Row[] = [];
+  // Rows by id and by lower-cased name, so matching a reference is a lookup
+  // rather than a scan of every product. The first row with a key wins, as
+  // the scan it replaces did; `rows` keeps the catalogue's order.
+  const byId = new Map<string, number>();
+  const byName = new Map<string, number>();
+  const add = (row: Row): Row => {
+    const index = rows.push(row) - 1;
+    if (row.id !== undefined && !byId.has(row.id)) byId.set(row.id, index);
+    const key = row.name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, index);
+    return row;
+  };
+  for (const product of products) add({ id: product.id, name: product.title, health: "operational" });
   const find = (ref: { id?: string; title?: string }): Row | undefined => {
     const title = ref.title?.trim().toLowerCase();
-    return rows.find(
-      (row) => (ref.id !== undefined && row.id === ref.id) || (title !== undefined && row.name.toLowerCase() === title),
-    );
+    const viaId = ref.id !== undefined ? byId.get(ref.id) : undefined;
+    const viaName = title !== undefined ? byName.get(title) : undefined;
+    const index = viaId === undefined ? viaName : viaName === undefined ? viaId : Math.min(viaId, viaName);
+    return index === undefined ? undefined : rows[index];
   };
   for (const incident of openIncidents) {
     const refs = incident.affected_products?.length
@@ -310,8 +339,7 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
       let row = find(ref);
       if (!row) {
         if (!name) continue;
-        row = { id: ref.id, name, health: "operational" };
-        rows.push(row);
+        row = add({ id: ref.id, name, health: "operational" });
       }
       // The worst incident wins the row; among equals, the first listed.
       const worse = worseHealth(row.health, itemHealth);
@@ -435,6 +463,7 @@ function fromStatuspage(
           url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
         };
       }),
+    MAX_INCIDENTS,
   );
 
   const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
@@ -446,21 +475,18 @@ function fromStatuspage(
   if (maintenances.length && health === "operational") health = "maintenance";
 
   // Announced but not started: shown as upcoming, never as a health.
-  const upcoming: UpcomingMaintenance[] = scheduled
-    .filter((item) => statusOf(item) === "scheduled")
-    .map((item) => ({
-      id: item.id || `statuspage-${fingerprint(`${item.name ?? ""}|${item.scheduled_for ?? ""}`)}`,
-      title: item.name || "Scheduled maintenance",
-      scheduledFor: isoTimestamp(item.scheduled_for),
-      scheduledUntil: isoTimestamp(item.scheduled_until),
-      url: item.shortlink ? vendorUrl(item.shortlink, sourceUrl, statuspageHosts) : undefined,
-    }))
-    .sort(
-      (a, b) =>
-        (Date.parse(a.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER) -
-        (Date.parse(b.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER),
-    )
-    .slice(0, MAX_UPCOMING_MAINTENANCE);
+  const upcoming: UpcomingMaintenance[] = soonest(
+    scheduled
+      .filter((item) => statusOf(item) === "scheduled")
+      .map((item) => ({
+        id: item.id || `statuspage-${fingerprint(`${item.name ?? ""}|${item.scheduled_for ?? ""}`)}`,
+        title: item.name || "Scheduled maintenance",
+        scheduledFor: isoTimestamp(item.scheduled_for),
+        scheduledUntil: isoTimestamp(item.scheduled_until),
+        url: item.shortlink ? vendorUrl(item.shortlink, sourceUrl, statuspageHosts) : undefined,
+      })),
+    MAX_UPCOMING_MAINTENANCE,
+  );
 
   // During maintenance with no incident, the maintenance itself is what the
   // card should name; the indicator description is only a generic fallback.
@@ -772,6 +798,7 @@ async function collectAws(): Promise<ServiceSnapshot> {
           url: "https://health.aws.amazon.com/health/status",
         };
       }),
+      MAX_INCIDENTS,
     );
     return {
       ...base("aws", new Date().toISOString(), ms),
@@ -1070,19 +1097,14 @@ async function collectApple(): Promise<ServiceSnapshot> {
         });
       }
     }
-    const sorted = sortIncidents(incidents);
-    upcoming.sort(
-      (a, b) =>
-        (Date.parse(a.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER) -
-        (Date.parse(b.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER),
-    );
+    const sorted = sortIncidents(incidents, MAX_INCIDENTS);
     return {
       ...base("apple", new Date().toISOString(), ms),
       health,
       summary: overallSummary(health, sorted.length, sorted[0]?.title),
       ...rankComponents(components),
       incidents: sorted,
-      ...(upcoming.length ? { upcomingMaintenance: upcoming.slice(0, MAX_UPCOMING_MAINTENANCE) } : {}),
+      ...(upcoming.length ? { upcomingMaintenance: soonest(upcoming, MAX_UPCOMING_MAINTENANCE) } : {}),
       meta: { services: value.services?.length ?? 0 },
     };
   } catch (error) {
@@ -1541,7 +1563,9 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
 // source's latency and download size per sweep, not only the broken ones.
 function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
   return meterBytes(async (meter) => {
-    const snapshot = await collect();
+    // Every string a vendor sent is held to its limit here, once, whichever
+    // collector built the snapshot.
+    const snapshot = boundSnapshot(await collect());
     if (!snapshot.failure) {
       console.log(
         JSON.stringify({

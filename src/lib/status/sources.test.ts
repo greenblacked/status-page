@@ -470,6 +470,50 @@ describe("googleComponents", () => {
     assert.equal(rows.length, 2);
     assert.ok(rows.every((row) => row.health === "operational"));
   });
+
+  it("matches by id or lower-cased title, the earliest product winning, and finds a product it added", () => {
+    const dup = [
+      { id: "a", title: "Alpha" },
+      { id: "b", title: "Beta" },
+    ];
+    // Id "b" names the second product, title "alpha" the first: the earlier row is the match.
+    const rows = googleComponents(dup, [
+      { id: "1", status_impact: "SERVICE_OUTAGE", affected_products: [{ id: "b", title: " ALPHA " }] },
+    ]);
+    assert.deepEqual(rows, [
+      { name: "Alpha", health: "outage" },
+      { name: "Beta", health: "operational" },
+    ]);
+    // A product the catalogue lacks is added once and then matched by later references.
+    const added = googleComponents(dup, [
+      { id: "1", status_impact: "SERVICE_DISRUPTION", affected_products: [{ id: "z", title: "Zeta" }] },
+      { id: "2", status_impact: "SERVICE_OUTAGE", affected_products: [{ title: "zeta" }, { id: "z" }] },
+    ]);
+    assert.deepEqual(
+      added.map((row) => [row.name, row.health]),
+      [
+        ["Alpha", "operational"],
+        ["Beta", "operational"],
+        ["Zeta", "outage"],
+      ],
+    );
+  });
+
+  it("stays fast with thousands of products and references", () => {
+    const many = Array.from({ length: 5000 }, (_, i) => ({ id: `p${i}`, title: `Product ${i}` }));
+    const incident = {
+      id: "1",
+      status_impact: "SERVICE_OUTAGE",
+      affected_products: many.map((product) => ({ id: product.id, title: product.title })),
+    };
+    const started = performance.now();
+    const rows = googleComponents(many, [incident]);
+    const took = performance.now() - started;
+    assert.equal(rows.length, 5000);
+    assert.ok(rows.every((row) => row.health === "outage"));
+    // The scan this replaced took seconds here; a lookup takes a few ms.
+    assert.ok(took < 200, `took ${took}ms`);
+  });
 });
 
 describe("steamCmCount", () => {
