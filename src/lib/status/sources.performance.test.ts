@@ -8,6 +8,12 @@ import { describe, it } from "vitest";
 // so a quadratic or unbounded regression is killed rather than hanging the
 // run. The budgets are far above what the linear parsers need (tens of
 // milliseconds, a few megabytes) so a slow CI runner never trips them.
+//
+// The child runs outside Vite, on Node's own type stripping: everything
+// sources.server.ts imports, directly or not, must use relative imports
+// with the .ts extension and plain erasable syntax. An "@/" alias, an
+// extensionless import, import.meta.env or an enum breaks every case here,
+// with only the child's stderr to go on.
 const moduleUrl = new URL("./sources.server.ts", import.meta.url).href;
 const DEADLINE_MS = 8_000;
 const HEAP_MB = 128;

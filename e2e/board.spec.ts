@@ -1205,6 +1205,8 @@ test("keeps the dock steady through a fast scroll, down and back up", async ({ p
  * move whatever the speed of the browser. `release` lets them finish. Phone only.
  */
 async function dockHeld(page: Page, y: number): Promise<{ clearOpacity: number | null }> {
+  // Moves are armed two frames after the load; a scroll before that is a snap, not a move.
+  await expect(page.locator(".search-dock")).toHaveAttribute("data-armed", "");
   return page.evaluate(
     (top) =>
       new Promise<{ clearOpacity: number | null }>((resolve, reject) => {
@@ -1530,7 +1532,7 @@ test("takes the pose a scroll gives it before the page has loaded without playin
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
   expect(await page.evaluate(() => document.readyState), "the load is still open").not.toBe("complete");
-  const { wide, moveEnd } = await dockOffsets(page);
+  const { wide, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
   await page.evaluate((to) => window.scrollTo(0, to), Math.ceil(moveEnd) + 80);
   await expect.poll(() => dockValue(page)).toBe(1);
@@ -1541,13 +1543,15 @@ test("takes the pose a scroll gives it before the page has loaded without playin
   expect(await played(), "the field's move played before the load").toEqual([]);
   release();
   await page.waitForLoadState("load");
-  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  expect(await played(), "the field's move played after the load").toEqual([]);
   expect(await dockValue(page)).toBe(1);
   const boxes = await dockBoxes(page);
   expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
-  // The transitions are back for the next pose: the hold is two frames long, not for good.
+  // The transitions are back for the next pose: the hold is two frames long, not for good, and the moves are
+  // armed. A pose change after the load is a move again.
   await expect(page.locator(".search-dock")).not.toHaveAttribute("data-instant", "");
+  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
+  expect((await played()).length, "the field's move comes back after the load").toBeGreaterThan(0);
+  await dockRelease(page);
 });
 
 test("hides the Clear button for the field's move and brings it back once the field has stopped", async ({ page }) => {

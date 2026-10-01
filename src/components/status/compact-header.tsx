@@ -179,12 +179,16 @@ export function useSearchDock({
         });
       });
     };
-    /** Moves are on from two frames after the page has loaded (and this hook has run), never before. */
+    /**
+     * Moves are on from two frames after the page has loaded (and this hook has run), never before. The dock
+     * says so (data-armed), for a test that must not scroll before then.
+     */
     const arm = () => {
       armFrames = requestAnimationFrame(() => {
         armFrames = requestAnimationFrame(() => {
           armFrames = 0;
           armed = true;
+          dock.setAttribute("data-armed", "");
         });
       });
     };
@@ -336,6 +340,7 @@ export function useSearchDock({
       cancelAnimationFrame(armFrames);
       cancelAnimationFrame(instantFrames);
       for (const element of [dock, bar]) element.removeAttribute("data-instant");
+      dock.removeAttribute("data-armed");
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", onResize);
       dock.removeEventListener("transitionend", onTransitionEnd);

@@ -60,6 +60,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Text from a vendor is kept to sensible lengths, with "…" where it was cut: a name to 120 characters, a title to 300 and a summary or detail to 500.
 - A source that sends the board to another site, or to another port, is no longer followed. Its card reads No data, with the host it was sent to.
 - HSTS now covers subdomains.
+- Vendor status feeds with malformed markup or large product lists no longer stall status checks.
 
 ## [0.5.0] - 2026-09-30
 
