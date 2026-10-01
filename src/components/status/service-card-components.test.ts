@@ -256,6 +256,54 @@ describe("degraded service card", () => {
   });
 });
 
+describe("the Changed bar", () => {
+  const BARS = {
+    outage: "bg-down",
+    degraded: "bg-warn",
+    maintenance: "bg-muted",
+    operational: "bg-ok",
+    unknown: "bg-accent",
+  } as const;
+
+  // A card for what needs a look, a row for the rest: the bar is an element in the first and the row's ::after in the second.
+  it("takes the colour of the state on a card", () => {
+    for (const health of ["outage", "degraded", "maintenance"] as const) {
+      const html = render("aws", { health }, { emphasized: true });
+      const bar = html.slice(
+        html.indexOf("<span aria-hidden"),
+        html.indexOf("</span>", html.indexOf("<span aria-hidden")),
+      );
+      expect(bar).toMatch(new RegExp(`class="[^"]* ${BARS[health]}( |")`));
+      expect(bar).not.toContain("bg-accent");
+      expect(bar).toContain("forced-colors:bg-[CanvasText]");
+      expect(bar).toContain("starting:opacity-0");
+      expect(bar).toContain("motion-reduce:transition-none");
+    }
+  });
+
+  it("takes the colour of the state on a row, green for a recovery and the accent for unknown", () => {
+    for (const health of ["operational", "unknown"] as const) {
+      const html = render("aws", { health }, { emphasized: true });
+      const article = html.slice(0, html.indexOf(">"));
+      expect(article).toContain(`after:${BARS[health]}`);
+      expect(article).toContain("forced-colors:after:bg-[CanvasText]");
+      expect(article).toContain("after:starting:opacity-0");
+      expect(article).toContain("motion-reduce:after:transition-none");
+      for (const other of Object.values(BARS)) {
+        if (other !== BARS[health]) expect(article).not.toContain(`after:${other}`);
+      }
+    }
+  });
+
+  it("draws no bar, in any colour, on a service that did not change", () => {
+    for (const health of Object.keys(BARS) as (keyof typeof BARS)[]) {
+      const html = render("aws", { health });
+      for (const bar of Object.values(BARS)) expect(html).not.toContain(`after:${bar}`);
+      expect(html).not.toContain("inset-y-4 left-0 w-0.5");
+    }
+  });
+});
+
 describe("release trackers and CS2 relays", () => {
   it("keep every component as a row on a card that needs a look, up or not", () => {
     const changelog = render("aws", { category: "updates", health: "maintenance", components: up(3) });

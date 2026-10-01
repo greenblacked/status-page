@@ -9,7 +9,7 @@ import {
   StarButton,
   StateWord,
 } from "@/components/status/service-card-shared";
-import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
+import { CHANGED_BAR, STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { Tag } from "@/components/ui/tag";
 import { serviceAnchor } from "@/lib/status/layout";
 import { cn } from "@/lib/utils";
@@ -33,8 +33,9 @@ export function ChangedTag() {
  * It sits in an <li> of a `.card-list` (board-sections.tsx), which draws the
  * hairline between rows.
  *
- * Changed: a 2px accent bar on the inline-start edge, fading in once. It uses
- * ::after because ::before draws the row's separator.
+ * Changed: a 2px bar on the inline-start edge, fading in once, in the colour of
+ * the state (green for a recovery, the accent for unknown). It uses ::after
+ * because ::before draws the row's separator.
  */
 export function RowFrame({
   service,
@@ -55,8 +56,10 @@ export function RowFrame({
       tabIndex={-1}
       className={cn(
         "row focus-ring grid min-h-(--row-h) scroll-mt-6 grid-cols-[20px_minmax(0,1fr)_auto] items-start gap-x-3 pl-4 focus-visible:-outline-offset-2!",
-        emphasized &&
-          "after:absolute after:inset-y-3 after:left-0 after:w-0.5 after:bg-accent after:opacity-100 after:transition-opacity after:duration-(--t-reveal) after:ease-(--ease-out) after:content-[''] after:starting:opacity-0 motion-reduce:after:transition-none",
+        emphasized && [
+          "after:absolute after:inset-y-3 after:left-0 after:w-0.5 after:opacity-100 after:transition-opacity after:duration-(--t-reveal) after:ease-(--ease-out) after:content-[''] after:starting:opacity-0 motion-reduce:after:transition-none forced-colors:after:bg-[CanvasText] forced-colors:after:forced-color-adjust-none",
+          CHANGED_BAR.row[service.health],
+        ],
       )}
     >
       {lead}

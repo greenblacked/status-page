@@ -16,7 +16,7 @@ import {
   StarButton,
   StateWord,
 } from "@/components/status/service-card-shared";
-import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
+import { CHANGED_BAR, STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { Tag } from "@/components/ui/tag";
 import { incidentLink, serviceAnchor } from "@/lib/status/layout";
 import { parseTimestamp } from "@/lib/status/schedule";
@@ -105,12 +105,16 @@ export function AttentionCard({
       className="surface spotlight focus-ring relative scroll-mt-6 p-4"
     >
       {emphasized ? (
-        // Changed: a 2px accent bar on the inline-start edge, fading in once. It has no hue of its own. A real
+        // Changed: a 2px accent bar on the inline-start edge, fading in once, in the colour of the state: red for
+        // an outage, amber for degraded, the maintenance tone, green for a recovery. A real
         // element, not a pseudo-element: ::before and ::after carry the Glass and Full sheen and glint. The
         // important position outweighs the Glass rule that makes a panel's children relative.
         <span
           aria-hidden
-          className="absolute! inset-y-4 left-0 w-0.5 bg-accent opacity-100 transition-opacity duration-(--t-reveal) ease-(--ease-out) starting:opacity-0 motion-reduce:transition-none"
+          className={cn(
+            "absolute! inset-y-4 left-0 w-0.5 opacity-100 transition-opacity duration-(--t-reveal) ease-(--ease-out) starting:opacity-0 motion-reduce:transition-none forced-colors:bg-[CanvasText] forced-colors:forced-color-adjust-none",
+            CHANGED_BAR.card[service.health],
+          )}
         />
       ) : null}
       <div data-card-header className="flex items-start gap-3">
