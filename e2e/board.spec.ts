@@ -4,7 +4,7 @@ import { CATALOG } from "../src/lib/status/catalog.ts";
 import { DOCK_HYSTERESIS, DOCK_MS, transitionMs } from "../src/lib/status/dock.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
-import { calmBoard, fixtureBoard, serveBoard } from "./fixture-board";
+import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
 
 const SERVICES = 14;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
@@ -837,78 +837,169 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
   test.slow();
+  // Served boards, not the vendors: the hero's words are the board's, and a live board changes them while the
+  // sweep runs (the first answer to the page names other services than the page was served with), which moves
+  // the last line between two readings. Two heroes, the usual one and the longest the page can have.
+  for (const [boardName, board] of [
+    ["usual hero", fixtureBoard],
+    ["longest hero", longHeroBoard],
+  ] as const)
+    for (const { width, rootPx } of [
+      { width: 375, rootPx: 16 },
+      { width: 390, rootPx: 16 },
+      { width: 412, rootPx: 16 },
+      { width: 430, rootPx: 16 },
+      { width: 768, rootPx: 16 },
+      { width: 900, rootPx: 16 },
+      { width: 430, rootPx: 32 },
+    ]) {
+      const at = `${boardName}, ${width}px, ${rootPx}px text`;
+      await page.setViewportSize({ width, height: 900 });
+      await openFixture(page, () => board(Date.now()));
+      await expect(page.getByTestId("live-bar")).toContainText("Checked");
+      if (rootPx !== 16) {
+        await page.evaluate((px) => {
+          document.documentElement.style.fontSize = `${px}px`;
+        }, rootPx);
+        // The dock measures again when the hero and the bar change size.
+        await page.waitForTimeout(400);
+      }
+      // The field is sticky: measure it at the top of the page, not where the last width left the scroll.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
+      // The spacing under the hero's last line (the live line on a phone) is the bar's height, the 8px it slides
+      // in from and PHONE_GAP: the smallest gap at which the bar can come up clear of that line with the field
+      // still PHONE_GAP below it, and about 80px at a 16px root.
+      const { gap, barHeight } = await page.evaluate(() => {
+        const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
+        const field = document.querySelector(".search-field") as HTMLElement;
+        const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+        const last = hero.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(hero).paddingBottom);
+        return { gap: field.getBoundingClientRect().top - last, barHeight: bar.offsetHeight };
+      });
+      expect(gap, at).toBeGreaterThanOrEqual(barHeight + 8 + PHONE_GAP - 1);
+      expect(gap, at).toBeLessThanOrEqual(barHeight + 8 + PHONE_GAP + 2);
+      if (rootPx === 16) expect(gap, at).toBeLessThanOrEqual(88);
+      // The bar is alone for at least 24px of scrolling, and the field has at least 46px left to rise to its pin.
+      expect(moveStart - barStart, at).toBeGreaterThanOrEqual(24 - 0.5);
+      expect(moveEnd - moveStart, at).toBeGreaterThanOrEqual(46 - 0.5);
+
+      const { up } = await dockPath(page, 2);
+      const stops = await sweepDock(page, up);
+      const shown = stops.filter((stop) => stop.shown === "true");
+      const first = shown[0];
+      expect(first, `${at}: the bar never showed`).toBeDefined();
+      // (a) It comes up with only itself on screen: the field entirely below its bottom edge, with a visible gap,
+      // the hero's last line already out from under it, and the field not docked.
+      expect(first?.docked, at).toBe(false);
+      expect(first?.fieldTop ?? 0, at).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 16);
+      for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
+      for (const stop of shown.filter((stop) => !stop.docked)) {
+        expect(stop.fieldTop, `${at}, ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
+      }
+      // Measured off the sweep, not worked out: the bar is up and the field not docked for a real stretch.
+      const firstDocked = stops.find((stop) => stop.docked);
+      expect(
+        firstDocked && first ? firstDocked.scrollY - first.scrollY : 0,
+        `${at}: the bar alone`,
+      ).toBeGreaterThanOrEqual(22);
+      // (b) The field rises 1:1 with the page the whole way, docked or not, until it reaches its pin: it is the
+      // page's own (sticky) position, not something the dock moves.
+      for (const stop of stops.filter((stop) => stop.scrollY <= moveEnd)) {
+        expect(stop.fieldTop, `${at}, ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
+      }
+      // (c) The field docks within a few px of moveStart, where it meets the bar, and from there on stays docked.
+      expect(firstDocked?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
+      expect(firstDocked?.scrollY ?? Number.POSITIVE_INFINITY, at).toBeLessThanOrEqual(moveStart + 6);
+      for (const stop of stops.filter((stop) => stop.scrollY >= moveStart + 6)) {
+        expect(stop.docked, `${at}, ${stop.y}`).toBe(true);
+      }
+    }
+});
+
+test("takes the bar down in the frame that shows a taller hero, not a frame later", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the width is set here, so one project measures it");
+  await page.setViewportSize({ width: 390, height: 900 });
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const { barStart } = await dockOffsets(page);
+  await scrollAndSettle(page, Math.ceil(barStart) + 4);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  await barSettled(page);
+  // The hero grows by a line or two in one task, as it does when the board's answer names more services. The
+  // test's own frame callback runs ahead of the layout observers in the frame that draws the change, and the one
+  // after it ahead of anything the page asked for in between: so the second callback reads the bar as the page
+  // left it for the frame after the one that shows the taller hero. The bar must already be down then.
+  const shown = await page.evaluate(
+    () =>
+      new Promise<string | null>((resolve) => {
+        const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
+        const grown = document.createElement("div");
+        grown.style.height = "60px";
+        hero.append(grown);
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() =>
+            resolve(document.querySelector('section[aria-label="Board controls"]')?.getAttribute("data-shown") ?? null),
+          ),
+        );
+      }),
+  );
+  expect(shown).toBe("false");
+});
+
+test("takes the bar down when the hero grows under it, at every width below 64rem", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  test.slow();
+  let board = fixtureBoard(Date.now());
+  const grew: number[] = [];
   for (const { width, rootPx } of [
     { width: 375, rootPx: 16 },
-    { width: 390, rootPx: 16 },
-    { width: 412, rootPx: 16 },
     { width: 430, rootPx: 16 },
     { width: 768, rootPx: 16 },
     { width: 900, rootPx: 16 },
     { width: 430, rootPx: 32 },
   ]) {
     const at = `at ${width}px, ${rootPx}px text`;
+    board = fixtureBoard(Date.now());
     await page.setViewportSize({ width, height: 900 });
-    await page.goto("/");
-    await expect(cards(page)).toHaveCount(SERVICES);
-    await hydrated(page);
+    await openFixture(page, () => board);
     if (rootPx !== 16) {
       await page.evaluate((px) => {
         document.documentElement.style.fontSize = `${px}px`;
       }, rootPx);
-      // The dock measures again when the hero and the bar change size.
       await page.waitForTimeout(400);
     }
-    // The field is sticky: measure it at the top of the page, not where the last width left the scroll.
     await page.evaluate(() => window.scrollTo(0, 0));
-    const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
-    // The spacing under the hero's last line (the live line on a phone) is the bar's height, the 8px it slides
-    // in from and PHONE_GAP: the smallest gap at which the bar can come up clear of that line with the field
-    // still PHONE_GAP below it, and about 80px at a 16px root.
-    const { gap, barHeight } = await page.evaluate(() => {
+    // With the bar up and the page just past the point where it comes up, the answer to a Refresh names more
+    // services: the hero's last line moves down, under the bar's place.
+    const { barStart } = await dockOffsets(page);
+    await scrollAndSettle(page, Math.ceil(barStart) + 4);
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+    await barSettled(page);
+    const heroBottom = () =>
+      page.evaluate(() => {
+        const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
+        return hero.getBoundingClientRect().bottom + window.scrollY;
+      });
+    const before = await heroBottom();
+    board = longHeroBoard(Date.now());
+    await pressRefresh(page, controlBar(page).getByRole("button", { name: "Refresh status now" }));
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Eleven things need a look.");
+    await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+    grew.push((await heroBottom()) - before);
+    // Either the bar went down with the line under it, or the line is out from under the bar: never both there.
+    const { shown, contentBottom, barTop } = await page.evaluate(() => {
       const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
-      const field = document.querySelector(".search-field") as HTMLElement;
       const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
-      const last = hero.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(hero).paddingBottom);
-      return { gap: field.getBoundingClientRect().top - last, barHeight: bar.offsetHeight };
+      return {
+        shown: bar.getAttribute("data-shown"),
+        contentBottom: hero.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(hero).paddingBottom),
+        barTop: bar.getBoundingClientRect().top,
+      };
     });
-    expect(gap, at).toBeGreaterThanOrEqual(barHeight + 8 + PHONE_GAP - 1);
-    expect(gap, at).toBeLessThanOrEqual(barHeight + 8 + PHONE_GAP + 2);
-    if (rootPx === 16) expect(gap, at).toBeLessThanOrEqual(88);
-    // The bar is alone for at least 24px of scrolling, and the field has at least 46px left to rise to its pin.
-    expect(moveStart - barStart, at).toBeGreaterThanOrEqual(24 - 0.5);
-    expect(moveEnd - moveStart, at).toBeGreaterThanOrEqual(46 - 0.5);
-
-    const { up } = await dockPath(page, 2);
-    const stops = await sweepDock(page, up);
-    const shown = stops.filter((stop) => stop.shown === "true");
-    const first = shown[0];
-    expect(first, `${at}: the bar never showed`).toBeDefined();
-    // (a) It comes up with only itself on screen: the field entirely below its bottom edge, with a visible gap,
-    // the hero's last line already out from under it, and the field not docked.
-    expect(first?.docked, at).toBe(false);
-    expect(first?.fieldTop ?? 0, at).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 16);
-    for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
-    for (const stop of shown.filter((stop) => !stop.docked)) {
-      expect(stop.fieldTop, `${at}, ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
-    }
-    // Measured off the sweep, not worked out: the bar is up and the field not docked for a real stretch.
-    const firstDocked = stops.find((stop) => stop.docked);
-    expect(
-      firstDocked && first ? firstDocked.scrollY - first.scrollY : 0,
-      `${at}: the bar alone`,
-    ).toBeGreaterThanOrEqual(22);
-    // (b) The field rises 1:1 with the page the whole way, docked or not, until it reaches its pin: it is the
-    // page's own (sticky) position, not something the dock moves.
-    for (const stop of stops.filter((stop) => stop.scrollY <= moveEnd)) {
-      expect(stop.fieldTop, `${at}, ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
-    }
-    // (c) The field docks within a few px of moveStart, where it meets the bar, and from there on stays docked.
-    expect(firstDocked?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
-    expect(firstDocked?.scrollY ?? Number.POSITIVE_INFINITY, at).toBeLessThanOrEqual(moveStart + 6);
-    for (const stop of stops.filter((stop) => stop.scrollY >= moveStart + 6)) {
-      expect(stop.docked, `${at}, ${stop.y}`).toBe(true);
-    }
+    if (shown === "true") expect(contentBottom, at).toBeLessThanOrEqual(barTop + 0.5);
   }
+  expect(Math.max(...grew), "the longer hero never made the page taller").toBeGreaterThan(8);
 });
 
 test("keeps the bar's buttons clear of the field under Reduce Motion on a phone", async ({ page }) => {
