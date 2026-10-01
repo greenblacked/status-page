@@ -56,6 +56,10 @@ function flipFill(chrome: HTMLElement, change: () => void): void {
   chrome.style.transform = "";
 }
 
+/** How long after the load a reloaded page's scroll may still be restored, and what ends that: the reader's input. */
+const RESTORE_MS = 1500;
+const RESTORE_ENDS = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+
 /**
  * Drives the search dock from the scroll position (window.scrollY), and writes down only what changes.
  *
@@ -117,6 +121,12 @@ export function useSearchDock({
     let painted = false;
     // Whether a change of pose may play as a move: not until the page has loaded and drawn (see writeDocked).
     let armed = false;
+    // A reloaded page, or one come back to, has its scroll restored by the browser. WebKit does it at any time
+    // up to well after the load event (once the page is tall enough), which no event or frame count pins down,
+    // so until the reader's own first input (or RESTORE_MS after the load) a change of pose is that restore,
+    // not a move.
+    let restoring = false;
+    let restoreTimer = 0;
     let instantFrames = 0;
     let armFrames = 0;
     let laidOutWide = wide.matches;
@@ -184,6 +194,7 @@ export function useSearchDock({
      * says so (data-armed), for a test that must not scroll before then.
      */
     const arm = () => {
+      if (restoring) restoreTimer = window.setTimeout(endRestore, RESTORE_MS);
       armFrames = requestAnimationFrame(() => {
         armFrames = requestAnimationFrame(() => {
           armFrames = 0;
@@ -192,6 +203,16 @@ export function useSearchDock({
         });
       });
     };
+    const endRestore = () => {
+      restoring = false;
+      window.clearTimeout(restoreTimer);
+      for (const type of RESTORE_ENDS) window.removeEventListener(type, endRestore, true);
+    };
+    const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    if (nav && nav.type !== "navigate") {
+      restoring = true;
+      for (const type of RESTORE_ENDS) window.addEventListener(type, endRestore, { capture: true, passive: true });
+    }
     /** Wide: the move's progress, on the dock and the chips, and whether it is under way. */
     const writeProgress = (p: number) => {
       const value = String(p);
@@ -222,9 +243,13 @@ export function useSearchDock({
       // attribute (data-instant) that stays on for two frames: a frame draws the new pose before they are back,
       // which holds in every engine, where a style flush between two inline writes is only as good as the
       // engine's idea of when to recalculate.
-      if (!painted || !armed) {
+      if (!painted || !armed || restoring) {
         holdInstant();
         set();
+        // A transition already started (an engine that begins one before it is told not to) is finished, not played.
+        for (const element of [dock.querySelector<HTMLElement>(".search-field"), chrome]) {
+          for (const animation of element?.getAnimations() ?? []) animation.finish();
+        }
         painted = true;
         return false;
       }
@@ -337,6 +362,7 @@ export function useSearchDock({
     return () => {
       alive = false;
       window.removeEventListener("load", arm);
+      endRestore();
       cancelAnimationFrame(armFrames);
       cancelAnimationFrame(instantFrames);
       for (const element of [dock, bar]) element.removeAttribute("data-instant");
