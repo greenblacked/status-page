@@ -2270,16 +2270,16 @@ test("opens a long component list with Show all and closes it with Show fewer", 
   await expect(card.getByRole("button", { name: /^Show all 32/ })).toHaveAttribute("aria-expanded", "false");
 });
 
-// The check at the turn of a slot adds a row to Recent changes, above the lists. Chrome and Firefox keep the
-// reader's place when that happens (scroll anchoring); Safari has none, so the page has to scroll by the row's
-// height itself, or the button under the reader's finger drops away from it. The second pass switches the
-// browser's anchoring off to be Safari, which is the only way to see it here. (The distance on screen is not
-// asserted: the rest of the board moves with the clock too, a "Changed" tag going out, so it is the page's own
-// scroll that is measured.)
-for (const anchoring of ["auto", "none"] as const) {
-  test(`scrolls by a new feed row's height only where the browser does not anchor (scroll anchoring ${anchoring})`, async ({
+// The check at the turn of a slot adds a row to Recent changes and clears the "Changed" tags of the one before,
+// above the lists. Chrome and Firefox keep the reader's place when that happens (scroll anchoring); Safari has
+// none, so the page has to scroll by the distance itself, or the button under the reader's finger moves away
+// from it. The "none" pass switches the browser's anchoring off to be Safari, which is the only way to see it
+// here. What is asserted is the reader's side: the Show all button stays where it is on screen, on every layout.
+// Whether the page scrolled itself follows from whether this browser anchors.
+for (const anchoring of ["auto", "none", "default"] as const) {
+  test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({
     page,
-  }) => {
+  }, testInfo) => {
     await page.addInitScript(() => {
       const scrolled: number[] = [];
       (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
@@ -2292,28 +2292,47 @@ for (const anchoring of ["auto", "none"] as const) {
     await page.clock.install({ time: Date.now() });
     const board = fixtureBoard(Date.now());
     await openFixture(page, () => board);
-    await page.evaluate((value) => {
-      document.documentElement.style.overflowAnchor = value;
-    }, anchoring);
+    if (anchoring !== "default") {
+      await page.evaluate((value) => {
+        document.documentElement.style.overflowAnchor = value;
+      }, anchoring);
+    }
+    // What this browser does with the request: Safari ignores "auto" when it has no scroll anchoring.
+    const anchors = await page.evaluate(
+      () =>
+        CSS.supports("overflow-anchor", "auto") && getComputedStyle(document.documentElement).overflowAnchor !== "none",
+    );
     const card = page.locator("article#service-spotify");
     await card.locator("summary").click();
-    await card.getByRole("button", { name: /^Show all 32/ }).scrollIntoViewIfNeeded();
-    // The feed is wholly above the top of the window.
+    const toggle = card.getByRole("button", { name: /^Show all 32/ });
+    await toggle.scrollIntoViewIfNeeded();
+    // The feed is above the top of the window.
     await page.evaluate(() => window.scrollBy(0, 200));
+    // The reader is about to press it.
+    await toggle.hover();
+    // Let the hook see where the reader is.
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     await page.evaluate(() => {
       (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.splice(0);
     });
     const feed = page.locator('section[aria-labelledby="recent-heading"]');
     const height = () => feed.evaluate((element) => element.getBoundingClientRect().height);
+    const topOf = () => toggle.evaluate((element) => element.getBoundingClientRect().top);
     const rows = await feed.locator("li").count();
-    const before = await height();
+    const heightBefore = await height();
+    const topBefore = await topOf();
     await page.clock.fastForward("03:00");
     await expect(feed.locator("li")).not.toHaveCount(rows);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    const grew = (await height()) - before;
-    expect(grew).toBeGreaterThan(0);
+    expect((await height()) - heightBefore).toBeGreaterThan(0);
     const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy);
-    expect(scrolled).toEqual(anchoring === "none" ? [grew] : []);
+    if (anchors) expect(scrolled).toEqual([]);
+    else expect(scrolled?.length).toBeGreaterThan(0);
+    // Where the browser anchors, it holds its own pick of the page, which on a phone's layout is not always the
+    // button under the pointer (a "Changed" tag going out between the two moves it); the wide layout is held.
+    if (!anchors || testInfo.project.name === "desktop") {
+      expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+    }
   });
 }
 

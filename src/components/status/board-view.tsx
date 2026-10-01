@@ -5,6 +5,7 @@ import { BoardSections } from "@/components/status/board-sections";
 import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
 import { prefersReducedMotion, useWanderLight, withCardMotion } from "@/components/status/effects";
 import { Hero } from "@/components/status/hero";
+import { useHoldPlace } from "@/components/status/hold-place";
 import { LensField } from "@/components/status/lens-field";
 import { LiveBar, nextInText, useFreshness } from "@/components/status/live-bar";
 import { PeriodDial } from "@/components/status/period-dial";
@@ -117,6 +118,7 @@ export function BoardView({
   const { starred, ready: starsReady, toggle: toggleStar } = useStarred();
   const pulseStore = store ?? emptyPulseStore();
   // Recent changes follows Needs a look (or leads the board when nothing needs a look).
+  useHoldPlace(mainRef, store?.pulses);
   const feed = <UpdateFeed pulses={pulseStore.pulses} />;
   const changedIds = new Set(
     (pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? [])).map((change) => change.id),
