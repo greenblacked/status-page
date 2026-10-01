@@ -114,28 +114,38 @@ export async function readBodyCapped(
 const MAX_REDIRECTS = 3;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-// Hosts that serve unrelated tenants from one registrable domain: a
-// redirect from one tenant to another is a different party, not the vendor.
-const SHARED_DOMAINS = new Set(["statuspage.io", "stspg.io"]);
-
-// The last two labels, which is the registrable domain for every host the
-// collectors request (none of them sits under a multi-part public suffix).
-function registrableDomain(hostname: string): string {
-  return hostname.split(".").slice(-2).join(".");
-}
+/**
+ * Where a request may be redirected, other than to the host it asked: the
+ * hosts a vendor itself spreads one data set over. Everything else is
+ * refused, a sibling subdomain included, because a registrable domain can
+ * also host other people's content (`sites.google.com`, any `*.amazon.com`
+ * bucket or `*.statuspage.io` tenant). Keyed by the requested host; add an
+ * entry only for a redirect a collector's real URL has been seen to make.
+ */
+const REDIRECT_ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  "upgrade.mikrotik.com": ["download.mikrotik.com"],
+  "download.mikrotik.com": ["upgrade.mikrotik.com"],
+};
 
 /**
  * Whether a redirect to `target` stays with the vendor that was asked: https,
- * no credentials, and the requested host itself or another host of its
- * registrable domain (`status.claude.com` to `claude.com`). A redirect to
- * anything else is not followed, so a hijacked or misconfigured vendor
- * endpoint cannot send the Worker to an arbitrary host.
+ * no credentials, and exactly the requested host or one REDIRECT_ALLOWED
+ * lists for it. A redirect to anything else is not followed, so a hijacked or
+ * misconfigured vendor endpoint cannot send the Worker to an arbitrary host.
  */
 function staysWithVendor(requested: URL, target: URL): boolean {
   if (target.protocol !== "https:" || target.username || target.password) return false;
-  if (target.hostname === requested.hostname) return true;
-  const domain = registrableDomain(requested.hostname);
-  return !SHARED_DOMAINS.has(domain) && domain.includes(".") && registrableDomain(target.hostname) === domain;
+  return (
+    target.hostname === requested.hostname || (REDIRECT_ALLOWED[requested.hostname] ?? []).includes(target.hostname)
+  );
+}
+
+// Where a refused redirect went, for the error: the host (never the path or
+// query, which are the vendor's to make long), with the scheme when that is
+// what was wrong.
+function describeTarget(target: URL | undefined): string {
+  if (!target) return "an unreadable location";
+  return target.protocol === "https:" ? target.host : `${target.protocol}//${target.host}`;
 }
 
 // fetch with redirects followed by hand, at most MAX_REDIRECTS and only
@@ -156,7 +166,9 @@ async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
       target = undefined;
     }
     if (!target || !staysWithVendor(requested, target)) {
-      throw new SourceError(`Request to ${sourceHost(url)} redirected off the vendor's host`);
+      throw new SourceError(
+        `Request to ${sourceHost(url)} redirected to ${describeTarget(target)}, off the vendor's host`,
+      );
     }
     if (hops >= MAX_REDIRECTS) throw new SourceError(`Too many redirects from ${sourceHost(url)}`);
     current = target;

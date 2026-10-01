@@ -181,31 +181,48 @@ describe("fetchText redirects", () => {
     ]);
   });
 
-  it("follows a redirect to another host of the vendor's own domain", async () => {
+  it("follows a redirect to a host the vendor is known to use for the same data", async () => {
     routed({
-      "https://status.claude.com/api": () => redirect("https://www.claude.com/status/api"),
-      "https://www.claude.com/status/api": () => new Response("moved"),
+      "https://upgrade.mikrotik.com/routeros/NEWESTa7.stable": () =>
+        redirect("https://download.mikrotik.com/routeros/NEWESTa7.stable"),
+      "https://download.mikrotik.com/routeros/NEWESTa7.stable": () => new Response("7.16"),
     });
-    expect((await fetchText("https://status.claude.com/api")).body).toBe("moved");
+    expect((await fetchText("https://upgrade.mikrotik.com/routeros/NEWESTa7.stable")).body).toBe("7.16");
   });
 
   it.each([
-    ["another site", "https://evil.example.net/steal"],
-    ["a lookalike domain", "https://status.example.com.evil.net/"],
-    ["a domain that only ends the same way", "https://notexample.com/"],
-    ["a plain http URL on the same host", "http://status.example.com/b"],
-    ["a URL with credentials", "https://user:pass@status.example.com/b"],
-    ["a non-http scheme", "javascript:alert(1)"],
-    ["a location that is not a URL", "https://"],
-  ])("refuses a redirect to %s, without requesting it", async (_name, location) => {
+    ["another site", "https://evil.example.net/steal", "evil.example.net"],
+    ["a lookalike domain", "https://status.example.com.evil.net/", "status.example.com.evil.net"],
+    ["a domain that only ends the same way", "https://notexample.com/", "notexample.com"],
+    ["a sibling subdomain of the same domain", "https://sites.example.com/x", "sites.example.com"],
+    ["the bare parent domain", "https://example.com/", "example.com"],
+    ["a plain http URL on the same host", "http://status.example.com/b?token=secret", "http://status.example.com"],
+    ["a URL with credentials", "https://user:pass@elsewhere.example.org/b", "elsewhere.example.org"],
+    ["a non-http scheme", "javascript:alert(1)", "javascript://"],
+    ["a location that is not a URL", "https://", "an unreadable location"],
+  ])("refuses a redirect to %s, naming only where it went, without requesting it", async (_name, location, named) => {
     const calls = routed({
       "https://status.example.com/a": () => redirect(location),
       [location]: () => new Response("should never be fetched"),
     });
     const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(SourceError);
-    expect((error as SourceError).message).toBe("Request to status.example.com redirected off the vendor's host");
+    expect((error as SourceError).message).toBe(
+      `Request to status.example.com redirected to ${named}, off the vendor's host`,
+    );
     expect(calls).toHaveLength(1);
+  });
+
+  it("names the target host when a vendor moves to another domain", async () => {
+    routed({ "https://spotify.statuspage.io/api": () => redirect("https://status.spotify.com/api") });
+    await expect(fetchText("https://spotify.statuspage.io/api")).rejects.toThrow(
+      "Request to spotify.statuspage.io redirected to status.spotify.com, off the vendor's host",
+    );
+  });
+
+  it("does not let the allow-list of one host apply to another", async () => {
+    routed({ "https://status.example.com/a": () => redirect("https://download.mikrotik.com/x") });
+    await expect(fetchText("https://status.example.com/a")).rejects.toThrow("off the vendor's host");
   });
 
   it("does not follow a redirect from one Statuspage tenant to another", async () => {
@@ -213,7 +230,7 @@ describe("fetchText redirects", () => {
       "https://spotify.statuspage.io/api": () => redirect("https://other.statuspage.io/api"),
       "https://other.statuspage.io/api": () => new Response("x"),
     });
-    await expect(fetchText("https://spotify.statuspage.io/api")).rejects.toThrow("redirected off the vendor's host");
+    await expect(fetchText("https://spotify.statuspage.io/api")).rejects.toThrow("off the vendor's host");
     expect(calls).toHaveLength(1);
   });
 
