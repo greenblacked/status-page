@@ -1,3 +1,4 @@
+import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { boundSnapshot, clip, MAX_TEXT_CHARS } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
@@ -1680,6 +1681,41 @@ async function collectWindows(): Promise<ServiceSnapshot> {
   }
 }
 
+async function collectAndroidOs(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() =>
+      fetchText(CATALOG_BY_ID["android-os"].sourceUrl, { headers: { Accept: "text/html, */*" } }),
+    );
+    const releases = androidReleases(readAndroidVersionLinks(value.body));
+    if (!releases.length) throw new PayloadError("Android releases page had no readable version list.");
+
+    // The page gives no dates, so a version is never marked fresh here: a
+    // version that appears on the page is announced as a release in the
+    // change feed, by the version map below, instead.
+    const components: ComponentHealth[] = releases.map((release) => ({
+      name: release.name,
+      health: "operational",
+      detail: "released",
+    }));
+
+    const headline = releases[0];
+    return {
+      ...base("android-os", new Date().toISOString(), ms),
+      health: "operational",
+      summary: `Latest: ${headline.name}`,
+      components,
+      incidents: [],
+      meta: {
+        latest: headline.name,
+        versions: formatVersionMap(releases.map((release) => ({ name: release.name, version: "released" }))),
+      },
+    };
+  } catch (error) {
+    return failed("android-os", started, error);
+  }
+}
+
 // Runs one collector with its own byte meter, and logs the success line
 // that pairs with failed()'s collector_failed, so the log shows every
 // source's latency and download size per sweep, not only the broken ones.
@@ -1722,6 +1758,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectMikrotik,
       collectAppleOs,
       collectWindows,
+      collectAndroidOs,
     ].map(metered),
   );
 }
