@@ -13,7 +13,8 @@ export type ServiceId =
   | "claude"
   | "mikrotik"
   | "apple-os"
-  | "windows";
+  | "windows"
+  | "android-os";
 
 export type CategoryId = "cloud" | "gaming" | "platforms" | "ai" | "updates";
 
