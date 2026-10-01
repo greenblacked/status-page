@@ -68,7 +68,7 @@ describe("boundSnapshot", () => {
   it("holds every vendor string to its limit", () => {
     const bounded = boundSnapshot({
       ...base,
-      summary: long,
+      summary: "y".repeat(10_000),
       components: [
         { name: long, health: "outage", detail: long },
         { name: "short", health: "operational" },
@@ -84,6 +84,39 @@ describe("boundSnapshot", () => {
     expect(bounded.incidents[0].title).toHaveLength(MAX_TITLE_CHARS);
     expect(bounded.upcomingMaintenance?.[0].title).toHaveLength(MAX_TITLE_CHARS);
     expect(bounded.failure?.message).toHaveLength(MAX_TEXT_CHARS);
+  });
+
+  it("clips a summary that is an incident's title the same way as the title", () => {
+    // Between the title and summary limits: clipped as a summary alone it would
+    // stay whole while the title is cut, and the board would list the incident
+    // again under a summary that no longer equals it.
+    const title = "a".repeat(399);
+    const bounded = boundSnapshot({
+      ...base,
+      summary: title,
+      incidents: [{ id: "i", title, health: "outage" }],
+    });
+    expect(bounded.incidents[0].title).toHaveLength(MAX_TITLE_CHARS);
+    expect(bounded.summary).toBe(bounded.incidents[0].title);
+  });
+
+  it("matches the summary to a title the way the board does, trimmed and case-folded", () => {
+    const title = "B".repeat(399);
+    const bounded = boundSnapshot({
+      ...base,
+      summary: ` ${title.toLowerCase()} `,
+      incidents: [{ id: "i", title, health: "outage" }],
+    });
+    expect(bounded.summary.trim().toLowerCase()).toBe(bounded.incidents[0].title.trim().toLowerCase());
+  });
+
+  it("keeps the summary limit for a summary that is not an incident's title", () => {
+    const bounded = boundSnapshot({
+      ...base,
+      summary: "s".repeat(399),
+      incidents: [{ id: "i", title: "t".repeat(399), health: "outage" }],
+    });
+    expect(bounded.summary).toHaveLength(399);
   });
 
   it("leaves a snapshot within the limits equal to itself, without adding fields", () => {

@@ -72,11 +72,29 @@ function boundMeta(meta: Record<string, string | number>): Record<string, string
   );
 }
 
+// A collector often sets the summary to the worst incident's title. The board
+// matches the two by text to print that incident once, so a summary that is an
+// incident's title must be cut exactly as the title is: held to the longer
+// summary limit it would no longer equal the clipped title, and the incident
+// would be listed a second time under it. The comparison is the board's own
+// (trimmed, case-folded); a match takes the clipped title itself, which also
+// settles whitespace at the cut.
+function boundSummary(snapshot: ServiceSnapshot): string {
+  const { summary } = snapshot;
+  if (typeof summary !== "string") return summary;
+  const wanted = summary.trim().toLowerCase();
+  const match = snapshot.incidents.find(
+    (incident) => typeof incident.title === "string" && incident.title.trim().toLowerCase() === wanted,
+  );
+  if (match && match.title.length > MAX_TITLE_CHARS) return clip(match.title, MAX_TITLE_CHARS);
+  return clip(summary, MAX_TEXT_CHARS);
+}
+
 /** The snapshot with every vendor-sourced string held to its limit. */
 export function boundSnapshot(snapshot: ServiceSnapshot): ServiceSnapshot {
   return {
     ...snapshot,
-    summary: bound(snapshot.summary, MAX_TEXT_CHARS),
+    summary: boundSummary(snapshot),
     components: snapshot.components.map((component) => {
       const next = { ...component, name: bound(component.name, MAX_NAME_CHARS) };
       if (component.detail !== undefined) next.detail = bound(component.detail, MAX_TEXT_CHARS);
