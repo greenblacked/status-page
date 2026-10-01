@@ -176,12 +176,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # Per shard: at most 368 tests on one engine (Chromium) or 174 on WebKit,
-    # which take 3 to 5 minutes, plus the browser and its system libraries to
-    # install. WebKit's libraries are about 125 MB from apt, and on a slow
-    # runner that fetch has taken over 20 minutes. apt is not retried: a
-    # killed apt keeps the dpkg lock, so a retry in the same job would fail.
-    # The install step's 30-minute limit only catches a real hang.
+    # which take 3 to 5 minutes, plus getting the browser. Chromium is
+    # downloaded, with its 32 MB of system libraries from apt. WebKit's
+    # libraries are about 125 MB from apt, and on a slow runner that fetch
+    # took over 30 minutes and failed the job, so the WebKit shards run in
+    # Playwright's own image (below), which has them and the browser already.
+    # apt is not retried: a killed apt keeps the dpkg lock, so a retry in the
+    # same job would fail.
     timeout-minutes: 40
+    # Only the WebKit shards set a container; for Chromium the matrix has no
+    # value, and the job runs on the runner itself.
+    container: ${{ matrix.container }}
     strategy:
       # A slow or failing shard must not hide the results of the others.
       fail-fast: false
@@ -190,15 +195,24 @@ jobs:
           - shard: chromium
             browser: chromium
             projects: desktop,mobile,tablet
+          # The image carries WebKit's system libraries and the browser build
+          # that matches @playwright/test, so these shards fetch nothing from
+          # apt. Pinned by digest (Scorecard) and by tag for the reader; when
+          # @playwright/test moves, the "Check the browser" step fails until
+          # both follow: `docker buildx imagetools inspect <image>:<tag>`
+          # prints the new digest.
           - shard: desktop-safari
             browser: webkit
             projects: Desktop Safari
+            container: &playwright-image mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
           - shard: iphone
             browser: webkit
             projects: iPhone 17 Pro
+            container: *playwright-image
           - shard: ipad
             browser: webkit
             projects: iPad Pro 11
+            container: *playwright-image
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -210,16 +224,38 @@ jobs:
           name: node-build
           path: dist/
 
-      # The browser matching the @playwright/test version in the lockfile,
-      # and only the one this shard runs. The install is split in two so the
-      # log shows which phase is slow: the apt libraries or the download.
+      # Chromium is downloaded to match the @playwright/test version in the
+      # lockfile. The install is split in two so the log shows which phase is
+      # slow: the apt libraries or the download. The WebKit shards skip it:
+      # their image has the browser.
       - name: Install Playwright's browser
+        if: matrix.container == ''
         timeout-minutes: 30
         env:
           BROWSER: ${{ matrix.browser }}
         run: |
           npx --no-install playwright install-deps "$BROWSER"
           npx --no-install playwright install "$BROWSER"
+
+      # Playwright looks for the exact browser build its version expects. If
+      # @playwright/test moved but the image did not, say so here instead of
+      # failing every test with "Executable doesn't exist".
+      - name: Check the browser
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          node - <<'EOF'
+          const { existsSync } = require("node:fs");
+          const playwright = require("@playwright/test");
+          const version = require("@playwright/test/package.json").version;
+          const browser = process.env.BROWSER;
+          const path = playwright[browser].executablePath();
+          if (!existsSync(path)) {
+            console.error(`::error::${browser} is not at ${path}. The Playwright image in this job is for another @playwright/test version than the lockfile's ${version}: move the image tag and digest in the matrix to it.`);
+            process.exit(1);
+          }
+          console.log(`${browser} for Playwright ${version}: ${path}`);
+          EOF
 
       - name: Browser tests (Playwright)
         # Runs take 3 to 4.3 minutes; this stops a hung suite long before
