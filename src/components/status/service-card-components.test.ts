@@ -11,7 +11,7 @@ const NOW = Date.parse("2026-09-27T12:00:00.000Z");
 function render(
   id: ServiceSnapshot["id"],
   overrides: Partial<ServiceSnapshot> = {},
-  props: { highlight?: boolean; emphasized?: boolean; starred?: boolean } = {},
+  props: { highlight?: boolean; emphasized?: boolean; released?: boolean; starred?: boolean } = {},
 ): string {
   return renderToStaticMarkup(
     createElement(ServiceCard, {
@@ -295,11 +295,19 @@ describe("the Changed bar", () => {
     }
   });
 
-  it("keeps the neutral accent on a release tracker, which is not a recovery", () => {
-    const html = render("aws", { category: "updates", health: "operational" }, { emphasized: true });
+  it("keeps the neutral accent on a release tracker whose change is a new release", () => {
+    const html = render("aws", { category: "updates", health: "operational" }, { emphasized: true, released: true });
     const article = html.slice(0, html.indexOf(">"));
     expect(article).toContain("after:bg-accent");
     expect(article).not.toContain("after:bg-ok");
+    expect(article).toContain("forced-colors:after:bg-[CanvasText]");
+  });
+
+  it("turns a release tracker green when its source recovered with the same versions", () => {
+    const html = render("aws", { category: "updates", health: "operational" }, { emphasized: true });
+    const article = html.slice(0, html.indexOf(">"));
+    expect(article).toContain("after:bg-ok");
+    expect(article).not.toContain("after:bg-accent");
     expect(article).toContain("forced-colors:after:bg-[CanvasText]");
   });
 

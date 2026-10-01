@@ -8,6 +8,13 @@ export type PulseChange = {
   from: Health;
   to: Health;
   summary: string;
+  /**
+   * Set (to true) when the service's newest versions changed: a new release,
+   * which a release tracker shows with the neutral Changed bar. Left out for a
+   * health-only change, so a recovery keeps the green one. When a check sees
+   * both, it counts as a release.
+   */
+  release?: true;
 };
 
 export function overallHealth(board: BoardSnapshot): Health {
@@ -43,6 +50,7 @@ export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseC
       from: before.health,
       to: service.health,
       summary: releaseSummary || service.summary,
+      ...(latestChanged ? { release: true as const } : {}),
     });
   }
   return changes;

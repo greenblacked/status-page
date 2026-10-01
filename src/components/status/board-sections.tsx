@@ -56,6 +56,8 @@ function Section({
 
 type Handlers = {
   changedIds: ReadonlySet<ServiceId>;
+  /** The changed services whose change was a new release (see PulseChange.release). */
+  releasedIds?: ReadonlySet<ServiceId>;
   starred: ReadonlySet<ServiceId>;
   onToggleStar: (id: ServiceId) => void;
   now: number;
@@ -66,6 +68,7 @@ function RowList({
   services,
   describedBy,
   changedIds,
+  releasedIds,
   starred,
   onToggleStar,
   now,
@@ -77,6 +80,7 @@ function RowList({
           <ServiceCard
             service={service}
             emphasized={changedIds.has(service.id)}
+            released={releasedIds?.has(service.id)}
             starred={starred.has(service.id)}
             onToggleStar={onToggleStar}
             now={now}
@@ -107,6 +111,7 @@ export function BoardSections({
   groups,
   mostUrgentId,
   changedIds,
+  releasedIds,
   starred,
   onToggleStar,
   now,
@@ -116,6 +121,7 @@ export function BoardSections({
   groups: BoardGroups;
   mostUrgentId?: ServiceId;
   changedIds: ReadonlySet<ServiceId>;
+  releasedIds?: ReadonlySet<ServiceId>;
   starred: ReadonlySet<ServiceId>;
   onToggleStar: (id: ServiceId) => void;
   now: number;
@@ -124,7 +130,7 @@ export function BoardSections({
 }) {
   const { attention, unread } = groups;
   const up = upByCategory(groups.operational);
-  const handlers = { changedIds, starred, onToggleStar, now };
+  const handlers = { changedIds, releasedIds, starred, onToggleStar, now };
 
   return (
     <div className="flex flex-col gap-8">
@@ -143,6 +149,7 @@ export function BoardSections({
                   service={service}
                   highlight={index === 0 && service.id === mostUrgentId}
                   emphasized={changedIds.has(service.id)}
+                  released={releasedIds?.has(service.id)}
                   starred={starred.has(service.id)}
                   onToggleStar={onToggleStar}
                   now={now}

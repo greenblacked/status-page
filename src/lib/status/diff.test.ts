@@ -60,7 +60,36 @@ describe("diffBoards", () => {
         from: "operational",
         to: "operational",
         summary: "RouterOS 7 stable 7.24.4",
+        release: true,
       },
     ]);
+  });
+
+  it("tells a recovery from a new release by the release flag", () => {
+    const meta = { latest: "7.24.3", versions: "RouterOS 7 stable=7.24.3" };
+    const unread = board([service("mikrotik", { health: "unknown", meta })]);
+    const recovered = board([service("mikrotik", { health: "operational", meta })]);
+    const [recovery] = diffBoards(unread, recovered);
+    assert.equal(recovery?.from, "unknown");
+    assert.equal(recovery?.to, "operational");
+    assert.equal("release" in (recovery ?? {}), false);
+
+    const released = board([
+      service("mikrotik", {
+        health: "operational",
+        meta: { latest: "7.24.4", versions: "RouterOS 7 stable=7.24.4" },
+      }),
+    ]);
+    assert.equal(diffBoards(recovered, released)[0]?.release, true);
+  });
+
+  it("counts a recovery that brings a new version as a release", () => {
+    const unread = board([
+      service("mikrotik", { health: "unknown", meta: { latest: "7.24.3", versions: "RouterOS 7 stable=7.24.3" } }),
+    ]);
+    const both = board([
+      service("mikrotik", { health: "operational", meta: { latest: "7.24.4", versions: "RouterOS 7 stable=7.24.4" } }),
+    ]);
+    assert.equal(diffBoards(unread, both)[0]?.release, true);
   });
 });

@@ -45,7 +45,9 @@ export function mergeChanges(existing: PulseChange[], incoming: PulseChange[]): 
   const byId = new Map(existing.map((change) => [change.id, change]));
   for (const change of incoming) {
     const previous = byId.get(change.id);
-    byId.set(change.id, previous ? { ...change, from: previous.from } : change);
+    // A release seen earlier in the slot stays a release when a later check only moves the health.
+    const release = previous?.release || change.release;
+    byId.set(change.id, previous ? { ...change, from: previous.from, ...(release ? { release } : {}) } : change);
   }
   return [...byId.values()];
 }
@@ -96,7 +98,8 @@ function isPulseChange(value: unknown): value is PulseChange {
     typeof value.name === "string" &&
     isHealth(value.from) &&
     isHealth(value.to) &&
-    typeof value.summary === "string"
+    typeof value.summary === "string" &&
+    (value.release === undefined || value.release === true)
   );
 }
 

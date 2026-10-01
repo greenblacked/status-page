@@ -24,7 +24,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
-- The thin bar beside a card that changed in the latest check now shows how serious it is: red for an outage, amber for degraded, green for a recovery, and the maintenance tone for maintenance. A new release keeps the neutral bar.
+- The thin bar beside a card that changed in the latest check now shows how serious it is: red for an outage, amber for degraded, green for a recovery, and the maintenance tone for maintenance. A new release keeps the neutral bar; a release tracker whose source came back with the same versions gets the green one.
 - The name at the top of the page reads Status Page and sits in the middle.
 - Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until the search field takes its place). The settings button is called **Settings**.
 - The site is called **Status**, and the words are plainer and in the first person. The headline counts what needs a look ("Two things need a look.") or says "Everything is up."; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The line under the headline names one or two of them, linked ("I couldn't read Android."), and counts more than that ("I couldn't read three of them."). The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.

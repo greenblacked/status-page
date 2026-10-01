@@ -37,10 +37,11 @@ export function releaseLine(service: ServiceSnapshot): string {
  * its line is the newest versions, and a release from the last two weeks says
  * "New release" in a tag with an accent dot. Unreadable or in-maintenance
  * trackers are never rows here (they are unread rows and attention cards).
- * A new release is not a recovery, so its Changed bar keeps the neutral accent
- * and never the green of a service that came back.
+ * Its Changed bar says what changed: a new release (`released`, also when a
+ * recovery came with it) is not a recovery, so it keeps the neutral accent;
+ * a source that came back with the same versions gets the green of its state.
  */
-export function ReleaseRow({ service, emphasized, starred, onToggleStar }: ServiceCardProps) {
+export function ReleaseRow({ service, emphasized, released, starred, onToggleStar }: ServiceCardProps) {
   const fresh = hasFreshRelease(service);
   return (
     <RowFrame
@@ -48,7 +49,7 @@ export function ReleaseRow({ service, emphasized, starred, onToggleStar }: Servi
       emphasized={emphasized}
       starred={starred}
       onToggleStar={onToggleStar}
-      bar="after:bg-accent"
+      bar={released ? "after:bg-accent" : undefined}
       lead={<TagIcon aria-hidden strokeWidth={1.7} className={cn("block size-5 text-subtle", ROW_LEAD)} />}
     >
       <div className="flex min-h-(--row-h) min-w-0 items-center">
