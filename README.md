@@ -399,7 +399,7 @@ React 19 on TanStack Start, Tailwind CSS 4, TypeScript in strict mode, Vitest an
 | `npm run check` | Lint, typecheck, unit tests, and the hygiene and link checks: run it before you push |
 | `npm run lint` / `npm run lint:fix` | Biome lint, format and import order; `:fix` applies the fixes |
 | `npm run typecheck` | Type-check without emitting |
-| `npm test` | Unit tests, fully offline |
+| `npm test` | Unit tests and a property-based fuzz of the vendor parsers (fast-check, fixed seed), fully offline |
 | `npm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
 | `npm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `npm run build` first, and `npx playwright install chromium webkit` once |
 | `npm run build` / `npm run preview` | Production build into `dist/`, and a local server for it |
