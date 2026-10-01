@@ -36,7 +36,18 @@ describe("UpdateFeed", () => {
   it("waits for the first check", () => {
     const html = render([]);
     expect(html).toContain("Waiting for the first check.");
-    expect(html).not.toContain("card-list");
+    expect(html).not.toContain("<ol");
+  });
+
+  it("draws the same surface, a spotlight card list, whether or not there are checks yet", () => {
+    const surface = /<div class="surface spotlight card-list[^"]*">/;
+    expect(render([])).toMatch(surface);
+    expect(render([pulse(0, { opening: true })])).toMatch(surface);
+  });
+
+  it("holds the height of the saved checks only while it waits for them", () => {
+    expect(render([])).toContain("min-h-[calc(var(--feed-rows,0)*3.9rem)]");
+    expect(render([pulse(0, { opening: true })])).not.toContain("min-h-");
   });
 
   it("lists checks newest first, each time titled in UTC and printed in UTC before hydration", () => {
