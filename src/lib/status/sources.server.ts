@@ -22,7 +22,7 @@ import {
   urgencyOf,
   worseHealth,
 } from "./health.ts";
-import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
+import { fetchJson, fetchText, meterBytes, meteredBytes, NotJsonError, PayloadError, SourceError } from "./http.ts";
 import { sortIncidents } from "./layout.ts";
 import type {
   ComponentHealth,
@@ -183,7 +183,12 @@ export function classifyFailure(error: unknown): SourceFailure {
 }
 
 function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot {
-  const message = error instanceof SourceError ? error.message : "Official source did not respond.";
+  // A SourceError's message is written to be read, except a non-JSON hint: that
+  // is for logs and the failure record, so the card gets the generic sentence.
+  const message =
+    error instanceof SourceError && !(error instanceof NotJsonError)
+      ? error.message
+      : "Official source did not respond.";
   const failure = classifyFailure(error);
   const latencyMs = Date.now() - started;
   // One JSON line per failed collector, so a host's log shows which vendor

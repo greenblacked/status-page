@@ -1026,6 +1026,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       // What the body looked like and how it was labelled, never its text.
       message: "SyntaxError: response was not valid JSON (looks like HTML, text/xml)",
     });
+    // The hint is for the failure record; the reader-visible summary stays generic.
+    expect(snapshot.summary).toBe("Official source did not respond.");
     expect(JSON.stringify(snapshot)).not.toContain("SECRET-CHALLENGE-TEXT");
   });
 

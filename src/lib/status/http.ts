@@ -63,6 +63,15 @@ function sourceHost(url: string): string {
   }
 }
 
+// A body that is not JSON. Its message is a diagnostic for logs and the failure
+// record; a reader sees the generic sentence instead (see `failed`).
+export class NotJsonError extends PayloadError {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotJsonError";
+  }
+}
+
 function tooLarge(url: string, maxBytes: number): PayloadError {
   return new PayloadError(`Response from ${sourceHost(url)} is larger than ${Math.round(maxBytes / 1024 / 1024)} MiB`);
 }
@@ -241,7 +250,7 @@ export async function fetchJson<T>(
     // V8's message quotes the start of the body, which is vendor text and
     // must not reach logs, hydration data or public issues. What helps a
     // maintainer diagnose it, and is safe, is built here instead.
-    throw new PayloadError(`SyntaxError: response was not valid JSON${notJsonHint(trimmed, contentType)}`);
+    throw new NotJsonError(`SyntaxError: response was not valid JSON${notJsonHint(trimmed, contentType)}`);
   }
 }
 
