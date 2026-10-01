@@ -5,6 +5,7 @@ import {
   formatVersionMap,
   isFreshRelease,
   latestAppleOsByFamily,
+  mikrotikChangelogIsFor,
   mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   parseAppleOsTitle,
@@ -192,5 +193,23 @@ describe("version maps", () => {
       { name: "macOS", version: "27.2 beta 2 (26B5091g)" },
     ]);
     assert.equal(describeVersionChanges(previous, next), "iOS 27.2 beta 3 (24B5090a)");
+  });
+});
+
+describe("mikrotikChangelogIsFor", () => {
+  it("accepts the heading of exactly this version, case-insensitively", () => {
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2 (2026-Sep-19 12:00):\n*) a;", "7.2"), true);
+    assert.equal(mikrotikChangelogIsFor("\n  WHAT'S NEW IN 7.21BETA4:\r\n*) a;", "7.21beta4"), true);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2", "7.2"), true);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2 ", "7.2"), true);
+  });
+
+  it("refuses another version, a longer one, or no heading first", () => {
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.21 (2026-Sep-19):\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2.1:\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.21beta4:\n*) a;", "7.20.2"), false);
+    assert.equal(mikrotikChangelogIsFor("Changelog\nWhat's new in 7.2:\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("<html>Not found</html>", "7.2"), false);
   });
 });

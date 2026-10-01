@@ -97,6 +97,30 @@ export function mikrotikChangelogNotes(text: string, max: number = MAX_MIKROTIK_
 }
 
 /**
+ * Whether a RouterOS changelog's first non-empty line is the "What's new in <version>" heading of
+ * exactly this version (case-insensitive): after the version comes the end of the line, a space,
+ * "(" or ":", so "7.2" does not match a "7.21" heading. Only the first line is read.
+ */
+export function mikrotikChangelogIsFor(text: string, version: string): boolean {
+  const end = Math.min(text.length, MAX_NOTES_SCAN_CHARS);
+  let pos = 0;
+  while (pos < end) {
+    const newline = text.indexOf("\n", pos);
+    const lineEnd = newline === -1 || newline > end ? end : newline;
+    const line = text.slice(pos, lineEnd).trim();
+    pos = lineEnd + 1;
+    if (line.length === 0) continue;
+    const prefix = "what's new in ";
+    if (line.slice(0, prefix.length).toLowerCase() !== prefix) return false;
+    const rest = line.slice(prefix.length);
+    if (rest.slice(0, version.length).toLowerCase() !== version.toLowerCase()) return false;
+    const next = rest[version.length];
+    return next === undefined || next === " " || next === "(" || next === ":";
+  }
+  return false;
+}
+
+/**
  * An Apple OS version split from its build: "27.2 beta 2 (24B5089g)" is the
  * version "27.2 beta 2" and the build "24B5089g". A version with no trailing
  * parenthesis, or one whose parenthesis is not a build number (letters and

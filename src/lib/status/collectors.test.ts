@@ -1615,6 +1615,28 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       });
     });
 
+    it("MikroTik: a changelog for another version is not remembered under this one", async () => {
+      const url = `${URLS.mikrotikDownload}7.20.2/CHANGELOG`;
+      const asked: string[] = [];
+      const routes: Record<string, Handler> = {
+        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
+        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+        [url]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+      };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const requested = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (requested === url) asked.push(requested);
+        return routes[requested]?.() ?? new Response("not found", { status: 404 });
+      });
+      const first = await collect("mikrotik");
+      const stable = first.components.find((component) => component.name === "RouterOS 7 stable")?.release;
+      expect(stable?.notes).toBeUndefined();
+      expect(stable?.url).toBe("https://download.mikrotik.com/routeros/7.20.2/CHANGELOG");
+      expect(asked).toHaveLength(1);
+      await collect("mikrotik");
+      expect(asked).toHaveLength(2);
+    });
+
     it("MikroTik: a changelog that fails costs only that version's notes", async () => {
       stubFetch({
         ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
