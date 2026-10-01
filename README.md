@@ -15,6 +15,7 @@
   <a href="https://github.com/greenblacked/status-page/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/greenblacked/status-page/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/greenblacked/status-page/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/greenblacked/status-page/actions/workflows/codeql.yml/badge.svg"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/greenblacked/status-page"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/greenblacked/status-page/badge"></a>
+  <a href="https://www.bestpractices.dev/projects/15113"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/15113/badge"></a>
   <a href="https://github.com/greenblacked/status-page/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/greenblacked/status-page?sort=semver"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/github/license/greenblacked/status-page"></a>
 </p>
@@ -432,7 +433,7 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 | Security | CodeQL for TypeScript and the workflows, dependency review |
 | Cloudflare | The Worker built, run in workerd, and dry-run deployed |
 
-Outside pull requests, an hourly job calls every real vendor and opens an issue when a source breaks, OpenSSF Scorecard grades the supply chain on every push to `main`, and Dependabot proposes updates only once a release has been public for a few days. [.github/workflows/README.md](.github/workflows/README.md) covers each workflow.
+Outside pull requests, an hourly job calls every real vendor and opens an issue when a source breaks, OpenSSF Scorecard grades the supply chain on every push to `main` (the project also has an [OpenSSF Best Practices](https://www.bestpractices.dev/projects/15113) entry), and Dependabot proposes updates only once a release has been public for a few days. [.github/workflows/README.md](.github/workflows/README.md) covers each workflow.
 
 **Releases:** pull requests merge into `dev`, which never releases, and the owner promotes `dev` to `stage` (the preview) and `stage` to `main`. Merging `stage` into `main` with a merge commit releases everything it brings: CI picks the version from the commit types, commits the bump, tags it `vX.Y.Z`, publishes a GitHub Release with notes taken from [CHANGELOG.md](CHANGELOG.md), and merges `main` back into `stage` and `dev`. [CONTRIBUTING.md](CONTRIBUTING.md#releases) has the details.
 
