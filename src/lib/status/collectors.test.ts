@@ -1759,8 +1759,9 @@ describe("collectors bound vendor text and counts", () => {
     expect(claude.components[0].name.endsWith("…")).toBe(true);
     expect(claude.incidents[0].title).toHaveLength(300);
     expect(claude.upcomingMaintenance?.[0].title).toHaveLength(300);
-    // The summary leads with the worst title and has its own, longer, limit.
-    expect(claude.summary).toHaveLength(500);
+    // The summary is the worst incident's title, so it is cut like the title:
+    // the board prints that incident once by matching the two.
+    expect(claude.summary).toBe(claude.incidents[0].title);
   });
 
   it("Statuspage: clips a long status description used as the summary", async () => {
