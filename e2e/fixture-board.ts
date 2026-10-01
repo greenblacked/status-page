@@ -219,21 +219,24 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
 }
 
 /**
- * The longest hero the page can have: eleven services need a look, so the headline is "Eleven things need a look."
- * and the line under it names three of them, "and 8 more", says the other two are running normally, and that two
- * could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
+ * The longest hero the page can have: eleven services need a look, in all three states, so the headline is
+ * "Four are down, four are degraded and three are in maintenance." and the line under it names three of each
+ * ("and 1 more" after the first two), says the other two are running normally, and that two could not be read
+ * (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
  * sits under them.
  */
 export function longHeroBoard(now: number): BoardSnapshot {
   const board = fixtureBoard(now);
   const unread = new Set<ServiceId>(["android", "grok"]);
   const calm = new Set<ServiceId>(["apple-os", "windows"]);
-  const services = board.services.map((service, index): ServiceSnapshot => {
+  const states: Health[] = ["outage", "degraded", "maintenance"];
+  let next = 0;
+  const services = board.services.map((service): ServiceSnapshot => {
     if (unread.has(service.id)) {
       return { ...service, health: "unknown", summary: "The official source did not answer in time" };
     }
     if (calm.has(service.id)) return service;
-    const health: Health = index % 2 ? "outage" : "degraded";
+    const health = states[next++ % states.length];
     return {
       ...service,
       health,

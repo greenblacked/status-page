@@ -90,7 +90,7 @@ export function shieldsBadge(board: BoardSnapshot, id: string): ShieldsBadge {
     return {
       schemaVersion: 1,
       label: "status",
-      // "two things need a look": the headline as a phrase, without its full stop.
+      // "two services are down": the headline as a phrase, without its full stop.
       message:
         overall === "operational" ? "all operational" : boardHeadline(board).title.toLowerCase().replace(/\.$/, ""),
       color: SHIELDS_COLOR[overall],

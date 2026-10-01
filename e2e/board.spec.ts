@@ -1018,7 +1018,9 @@ test("takes the bar down when the hero grows under it, at every width below 64re
     const before = await heroBottom();
     board = longHeroBoard(Date.now());
     await pressRefresh(page, controlBar(page).getByRole("button", { name: "Refresh status now" }));
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Eleven things need a look.");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      "Four are down, four are degraded and three are in maintenance.",
+    );
     await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
     grew.push((await heroBottom()) - before);
     // Either the bar went down with the line under it, or the line is out from under the bar: never both there.
@@ -3867,14 +3869,16 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
 }) => {
   await openFixture(page, () => fixtureBoard(Date.now()));
   const headline = page.getByRole("heading", { level: 1 });
-  await expect(headline).toHaveText("Three things need a look.");
+  await expect(headline).toHaveText("One is down, one is degraded and one is in maintenance.");
   await expect(headline).toHaveAttribute("id", "board-headline");
   // One pen stroke, under the count only, drawn from constants (aria-hidden, no text of its own).
   await expect(headline.locator("svg.pen-underline")).toHaveCount(1);
   await expect(headline.locator("svg.pen-underline")).toHaveAttribute("aria-hidden", "true");
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
-  await expect(sub).toContainText("The other eleven are running normally.");
+  await expect(sub).toContainText(
+    "AWS is down. GCP is degraded. Epic is in maintenance. The other eleven are running normally.",
+  );
   await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
   await expect(links).toHaveText(["AWS", "GCP", "Epic", "Android"]);
@@ -4007,7 +4011,7 @@ test("puts the floating bar's verdict, check time and countdown beside the docke
   await page.locator("footer").scrollIntoViewIfNeeded();
   await expect(bar).toHaveAttribute("data-shown", "true");
   const lead = bar.locator("p[data-bar-lead]");
-  await expect(lead).toContainText("3 need a look");
+  await expect(lead).toContainText("1 down · 1 degraded · 1 in maintenance");
   await expect(lead).toContainText(/Checked \d\d:\d\d\sUTC · next in \d:\d\d/);
   // The bar is a float: the one translucent element on a Quiet page.
   await expect(bar).toHaveClass(/\bfloat\b/);

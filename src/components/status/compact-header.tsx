@@ -377,7 +377,7 @@ export function useSearchDock({
 }
 
 /**
- * The floating control bar: the verdict in short ("2 need a look") with when
+ * The floating control bar: the verdict in short ("1 down · 1 degraded") with when
  * the board was last checked, the search field once it has docked, and the same
  * Alerts and Refresh controls as the hero. It is shown once the hero has
  * scrolled away, and it is the only translucent element on a Quiet page.

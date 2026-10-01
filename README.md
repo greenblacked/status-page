@@ -88,7 +88,7 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 | 🔴 Outage | Major or critical impact |
 | ❔ No data | The source timed out, returned an error, or sent data Status Page could not read. Says nothing about whether the vendor is up. The API and the badges still call it `unknown` |
 
-The headline at the top of the page is one sentence about the board: **Everything is up.** when all fifteen are Operational, "Two things need a look." when an outage, a degradation or maintenance is under way (each service named and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
+The headline at the top of the page is one sentence about the board: **Everything is up.** when all fifteen are Operational, what is wrong when an outage, a degradation or maintenance is under way ("Two services are down.", "One service is degraded.", or "One is down, one is degraded." when the states differ; each service named by state and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
 
 The three Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 

@@ -23,7 +23,7 @@ describe("publicStatus", () => {
       ]),
     );
     expect(status.overall).toBe("degraded");
-    expect(status.headline).toBe("One thing needs a look.");
+    expect(status.headline).toBe("One service is degraded.");
     expect(status.services[0]).toEqual({
       id: "gcp",
       name: "Google Cloud",
@@ -42,11 +42,11 @@ describe("overall health across the public endpoints", () => {
 
   it("reports the degradation, not the unreadable source, as overall and as the headline", () => {
     expect(publicStatus(mixed).overall).toBe("degraded");
-    expect(publicStatus(mixed).headline).toBe("One thing needs a look.");
+    expect(publicStatus(mixed).headline).toBe("One service is degraded.");
   });
 
   it("colours the board badge by the same overall health", () => {
-    expect(shieldsBadge(mixed, "board")).toMatchObject({ message: "one thing needs a look", color: "yellow" });
+    expect(shieldsBadge(mixed, "board")).toMatchObject({ message: "one service is degraded", color: "yellow" });
   });
 });
 
@@ -66,9 +66,12 @@ describe("shieldsBadge", () => {
   it("summarises the whole board under the id 'board'", () => {
     expect(shieldsBadge(snapshot, "board")).toMatchObject({
       label: "status",
-      message: "one thing needs a look",
+      message: "one service is down",
       color: "red",
     });
+    expect(
+      shieldsBadge(board([gcp({ health: "outage" }), service("aws", { health: "degraded" })]), "board"),
+    ).toMatchObject({ message: "one is down, one is degraded", color: "red" });
     expect(shieldsBadge(board([service("aws", { health: "operational" })]), "board")).toMatchObject({
       message: "all operational",
       color: "brightgreen",
@@ -196,7 +199,7 @@ describe("atomFeed", () => {
     const xml = atomFeed(board([gcp({ health: "degraded" })]), "https://s");
     expect(xml).toContain("  <title>Status</title>");
     expect(xml).toContain("<author><name>Status</name></author>");
-    expect(xml).toContain("  <subtitle>One thing needs a look.</subtitle>");
+    expect(xml).toContain("  <subtitle>One service is degraded.</subtitle>");
     expect(atomFeed(board([gcp({ health: "operational" })]), "https://s")).toContain(
       "  <subtitle>Everything is up.</subtitle>",
     );

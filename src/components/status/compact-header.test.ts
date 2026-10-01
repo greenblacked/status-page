@@ -51,13 +51,13 @@ describe("CompactHeader", () => {
   });
 
   it("leads with the verdict's glyph and its short form, shown on a phone too, where the check time is for a screen reader only", () => {
-    const html = render({ tone: "outage", short: "2 need a look" });
+    const html = render({ tone: "outage", short: "2 down" });
     expect(html).toMatch(/^<section[^>]*><p data-bar-lead/);
     expect(html).toContain('data-health="outage"');
     expect(html).toContain("text-down");
     expect(html).toContain("data-bar-verdict");
     expect(html).not.toMatch(/data-bar-verdict[^>]*max-sm:sr-only/);
-    expect(html).toContain(">2 need a look</span>");
+    expect(html).toContain(">2 down</span>");
     expect(html).toMatch(/max-sm:sr-only">Checked /);
   });
 
