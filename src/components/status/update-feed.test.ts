@@ -46,7 +46,7 @@ describe("UpdateFeed", () => {
   });
 
   it("holds the height of the saved checks only while it waits for them", () => {
-    expect(render([])).toContain("min-h-[calc(var(--feed-rows,0)*3.9rem)]");
+    expect(render([])).toContain("min-h-[var(--feed-reserve,0px)]");
     expect(render([pulse(0, { opening: true })])).not.toContain("min-h-");
   });
 

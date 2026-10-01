@@ -27,10 +27,10 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
         {/*
           One surface in both states, so the node (and the light the page seeds
           on it) survives the saved checks arriving after hydration. Until they
-          load, the boot script's row count holds their height (feed-boot.ts).
+          load, the boot script's estimate of their height holds it (feed-boot.ts).
         */}
         <div
-          className={cn("surface spotlight card-list", rows.length === 0 && "min-h-[calc(var(--feed-rows,0)*3.9rem)]")}
+          className={cn("surface spotlight card-list", rows.length === 0 && "min-h-[var(--feed-reserve,0px)]")}
         >
           {rows.length === 0 ? (
             <p className="px-4 py-4 text-body text-muted">Waiting for the first check.</p>
