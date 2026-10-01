@@ -17,9 +17,9 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
     // Never the scroll anchor: it sits in view under Needs a look, and when a search empties the sections above it
     // the browser would scroll up to keep it in place, out from under a field that is docked in the bar.
     <section
-      data-no-anchor=""
       aria-labelledby="recent-heading"
       className={cn("board-grid [overflow-anchor:none]", className)}
+      data-no-anchor=""
     >
       <div className="board-margin">
         <h2 id="recent-heading" className="mb-2 text-caption font-semibold text-muted md:mb-0 md:pt-4">
