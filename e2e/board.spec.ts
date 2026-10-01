@@ -2393,7 +2393,9 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
       return (original as (...values: unknown[]) => void).apply(window, args);
     }) as typeof window.scrollBy;
   });
-  await page.clock.install({ time: Date.now() });
+  // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row and clear the
+  // tags early, and the 3:00 jump would then cross a boundary that changes no row count.
+  await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
   await openFixture(page, () => fixtureBoard(Date.now()));
   await page.evaluate(() => {
     document.documentElement.style.overflowAnchor = "none";
