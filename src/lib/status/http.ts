@@ -73,6 +73,34 @@ export class NotJsonError extends PayloadError {
   }
 }
 
+// The standard reason phrase of the status codes a vendor is likely to answer
+// with. The phrase a server sent along is its own text (HTTP/2 has none), so it
+// never reaches a message; a code not listed here is named by its number alone.
+const REASON_PHRASES: Readonly<Record<number, string>> = {
+  301: "Moved Permanently",
+  302: "Found",
+  303: "See Other",
+  307: "Temporary Redirect",
+  308: "Permanent Redirect",
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  405: "Method Not Allowed",
+  408: "Request Timeout",
+  410: "Gone",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+
+function describeStatus(status: number): string {
+  const phrase = REASON_PHRASES[status];
+  return phrase ? `${status} ${phrase}` : String(status);
+}
+
 function tooLarge(url: string, maxBytes: number): PayloadError {
   return new PayloadError(`Response from ${sourceHost(url)} is larger than ${Math.round(maxBytes / 1024 / 1024)} MiB`);
 }
@@ -209,7 +237,7 @@ export async function fetchText(
     if (!response.ok) {
       // Nothing in an error page is used, so it is never downloaded.
       await response.body?.cancel().catch(() => {});
-      throw new SourceError(`${response.status} ${response.statusText} from ${sourceHost(url)}`, response.status);
+      throw new SourceError(`${describeStatus(response.status)} from ${sourceHost(url)}`, response.status);
     }
     // Still under the timeout above: a vendor trickling a body in slowly
     // is aborted like one that never answers.

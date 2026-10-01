@@ -119,6 +119,31 @@ describe("readBodyCapped / fetchText size cap", () => {
   });
 });
 
+describe("fetchText on an HTTP error", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const messageFor = async (status: number, statusText: string) => {
+    stubFetch(() => new Response("body", { status, statusText }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as SourceError).status).toBe(status);
+    return (error as SourceError).message;
+  };
+
+  it("names the standard phrase for the code, not the one the vendor sent", async () => {
+    expect(await messageFor(503, "SECRET-REASON <b>")).toBe("503 Service Unavailable from status.example.com");
+    expect(await messageFor(429, "")).toBe("429 Too Many Requests from status.example.com");
+    expect(await messageFor(404, "Gone Fishing")).toBe("404 Not Found from status.example.com");
+  });
+
+  it("names a code with no standard phrase listed by its number alone", async () => {
+    expect(await messageFor(599, "SECRET-REASON")).toBe("599 from status.example.com");
+    expect(await messageFor(418, "I'm a teapot")).toBe("418 from status.example.com");
+  });
+});
+
 describe("unwrapJsonp", () => {
   it("unwraps a callback call, with or without a trailing semicolon and whitespace", () => {
     expect(unwrapJsonp('cb({"a":1})')).toBe('{"a":1}');
@@ -290,7 +315,9 @@ describe("fetchText redirects", () => {
   });
 
   it("reports a redirect with no Location as the HTTP status, like any other non-2xx", async () => {
-    routed({ "https://status.example.com/a": () => new Response(null, { status: 302, statusText: "Found" }) });
+    routed({
+      "https://status.example.com/a": () => new Response(null, { status: 302, statusText: "Moved Temporarily" }),
+    });
     const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
     expect((error as SourceError).status).toBe(302);
     expect((error as SourceError).message).toBe("302 Found from status.example.com");
