@@ -223,7 +223,7 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
   expect(blocking).toEqual([]);
 });
 
-test("starts the tab order with a skip link that moves focus to the services", async ({ page, isMobile, browserName }) => {
+test("starts the tab order with a skip link that moves focus to the board", async ({ page, isMobile, browserName }) => {
   test.skip(isMobile, "no Tab key on a touch device");
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
