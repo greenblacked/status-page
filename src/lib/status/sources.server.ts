@@ -285,11 +285,20 @@ export function parseGoogleProducts(payload: unknown): GoogleProduct[] {
 export function googleComponents(products: GoogleProduct[], openIncidents: GoogleIncident[]): ComponentHealth[] {
   type Row = ComponentHealth & { id?: string };
   const rows: Row[] = products.map((product) => ({ id: product.id, name: product.title, health: "operational" }));
+  const firstId = new Map<string, number>();
+  const firstName = new Map<string, number>();
+  const index = (row: Row, at: number) => {
+    if (row.id !== undefined && !firstId.has(row.id)) firstId.set(row.id, at);
+    const name = row.name.toLowerCase();
+    if (!firstName.has(name)) firstName.set(name, at);
+  };
+  rows.forEach(index);
   const find = (ref: { id?: string; title?: string }): Row | undefined => {
     const title = ref.title?.trim().toLowerCase();
-    return rows.find(
-      (row) => (ref.id !== undefined && row.id === ref.id) || (title !== undefined && row.name.toLowerCase() === title),
-    );
+    const byId = ref.id === undefined ? undefined : firstId.get(ref.id);
+    const byName = title === undefined ? undefined : firstName.get(title);
+    const at = byId === undefined ? byName : byName === undefined ? byId : Math.min(byId, byName);
+    return at === undefined ? undefined : rows[at];
   };
   for (const incident of openIncidents) {
     const refs = incident.affected_products?.length
@@ -312,6 +321,7 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
         if (!name) continue;
         row = { id: ref.id, name, health: "operational" };
         rows.push(row);
+        index(row, rows.length - 1);
       }
       // The worst incident wins the row; among equals, the first listed.
       const worse = worseHealth(row.health, itemHealth);
@@ -1095,8 +1105,44 @@ async function collectApple(): Promise<ServiceSnapshot> {
 // erased "Status: Resolved" from an otherwise operational item. Plain text
 // such as "a<b ... c>d" still reads as a tag; regex stripping cannot tell.
 function stripHtml(value: string): string {
-  return value
-    .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^<>]*>/g, " ")
+  const parts: string[] = [];
+  // A comment without a closer must remain text; tags inside it can still be
+  // stripped. Checking the final closer once avoids searching the same tail
+  // after every unterminated comment opener.
+  const lastCommentEnd = value.lastIndexOf("-->");
+  let cursor = 0;
+  let scan = 0;
+  while (scan < value.length) {
+    const start = value.indexOf("<", scan);
+    if (start === -1) break;
+    if (value.startsWith("<!--", start) && start + 4 <= lastCommentEnd) {
+      const end = value.indexOf("-->", start + 4);
+      if (cursor < start) parts.push(value.slice(cursor, start));
+      parts.push(" ");
+      cursor = end + 3;
+      scan = cursor;
+      continue;
+    }
+    const letter = value[start + 1] === "/" ? start + 2 : start + 1;
+    const code = value.charCodeAt(letter);
+    if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) {
+      let end = letter + 1;
+      while (end < value.length && value[end] !== "<" && value[end] !== ">") end++;
+      if (value[end] === ">") {
+        if (cursor < start) parts.push(value.slice(cursor, start));
+        parts.push(" ");
+        cursor = end + 1;
+        scan = cursor;
+        continue;
+      }
+    }
+    // Keep malformed markup as plain text and inspect later '<' positions.
+    // Retain it as one contiguous span rather than allocating per opener.
+    scan = start + 1;
+  }
+  parts.push(value.slice(cursor));
+  return parts
+    .join("")
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1148,47 +1194,73 @@ export function decodeXmlEntities(text: string): string {
 // CDATA content is already literal text, so it must never be re-decoded
 // (`<![CDATA[a &amp; b]]>` should stay `a &amp; b`). Split on CDATA sections
 // and decode only the parts outside them.
-const CDATA_RE = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-
 const CDATA_START = "<![CDATA[";
 
 export function decodeXmlField(raw: string): string {
-  let result = "";
-  let lastIndex = 0;
-  for (const match of raw.matchAll(CDATA_RE)) {
-    result += decodeXmlEntities(raw.slice(lastIndex, match.index));
-    result += match[1];
-    lastIndex = match.index + match[0].length;
+  const parts: string[] = [];
+  let cursor = 0;
+  while (cursor < raw.length) {
+    const start = raw.indexOf(CDATA_START, cursor);
+    if (start === -1) break;
+    parts.push(decodeXmlEntities(raw.slice(cursor, start)));
+    const end = raw.indexOf("]]>", start + CDATA_START.length);
+    if (end === -1) {
+      // An unclosed section makes the remainder literal, including any more
+      // CDATA openers. Only its first marker is removed.
+      parts.push(raw.slice(start + CDATA_START.length));
+      return parts.join("");
+    }
+    parts.push(raw.slice(start + CDATA_START.length, end));
+    cursor = end + 3;
   }
-  // Any `<![CDATA[` left in the tail has no closing `]]>` anywhere later in
-  // the string, or the loop above would already have consumed it. Treat
-  // everything from that marker onward as literal CDATA content: strip the
-  // marker and leave the rest undecoded, rather than decoding text the feed
-  // meant to be taken as-is.
-  const tail = raw.slice(lastIndex);
-  const unterminated = tail.indexOf(CDATA_START);
-  if (unterminated === -1) {
-    result += decodeXmlEntities(tail);
-  } else {
-    result += decodeXmlEntities(tail.slice(0, unterminated));
-    result += tail.slice(unterminated + CDATA_START.length);
-  }
-  return result;
+  parts.push(decodeXmlEntities(raw.slice(cursor)));
+  return parts.join("");
 }
 
 export function parseRssItems(
   xml: string,
 ): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
   const items: Array<{ title: string; description: string; pubDate?: string; link?: string }> = [];
-  const blocks = xml.split(/<item[\s>]/i).slice(1);
-  for (const block of blocks) {
-    const chunk = block.split(/<\/item>/i)[0] ?? "";
-    const title = decodeXmlField(chunk.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
-    const description = decodeXmlField(chunk.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "").trim();
-    const pubDate = chunk.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]?.trim();
-    const rawLink = chunk.match(/<link>([\s\S]*?)<\/link>/i)?.[1];
+  // Fixed-token searches retain offsets in the original text, even around
+  // Unicode characters whose lowercase form has a different length.
+  // Item starts move forward, so each field delimiter also needs inspecting
+  // at most once, even when many malformed <item> blocks overlap.
+  const field = (name: string) => {
+    const opening = `<${name}>`;
+    const closing = `</${name}>`;
+    const openings = new RegExp(opening, "gi");
+    const closings = new RegExp(closing, "gi");
+    let open = openings.exec(xml)?.index ?? -1;
+    let close = closings.exec(xml)?.index ?? -1;
+    return (start: number, end: number): string | undefined => {
+      while (open !== -1 && open < start) open = openings.exec(xml)?.index ?? -1;
+      if (open === -1 || open >= end) return undefined;
+      while (close !== -1 && close < open + opening.length) close = closings.exec(xml)?.index ?? -1;
+      return close !== -1 && close + closing.length <= end ? xml.slice(open + opening.length, close) : undefined;
+    };
+  };
+  const titleField = field("title");
+  const descriptionField = field("description");
+  const dateField = field("pubdate");
+  const linkField = field("link");
+  const itemEnds = /<\/item>/gi;
+  let itemClose = itemEnds.exec(xml)?.index ?? -1;
+  const itemStart = /<item[\s>]/gi;
+  let match = itemStart.exec(xml);
+  while (match) {
+    const next = itemStart.exec(xml);
+    const start = match.index + match[0].length;
+    while (itemClose !== -1 && itemClose < start) itemClose = itemEnds.exec(xml)?.index ?? -1;
+    // Splitting on <item> also ends the previous block, even when that block
+    // has no </item>. The closing tag, if present, ends it sooner.
+    const end = Math.min(next?.index ?? xml.length, itemClose === -1 ? xml.length : itemClose);
+    const title = decodeXmlField(titleField(start, end) ?? "").trim();
+    const description = decodeXmlField(descriptionField(start, end) ?? "").trim();
+    const pubDate = dateField(start, end)?.trim();
+    const rawLink = linkField(start, end);
     const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
     items.push({ title, description, pubDate, link });
+    match = next;
   }
   return items;
 }

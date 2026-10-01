@@ -34,6 +34,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- Vendor status feeds with malformed markup or large product lists no longer stall status checks.
 - Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.
 - Apple's upcoming events no longer change a service's health.
 - The live bar keeps one height on a phone.

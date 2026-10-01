@@ -166,6 +166,10 @@ describe("decodeXmlField", () => {
   it("decodes outside CDATA and leaves CDATA content literal", () => {
     assert.equal(decodeXmlField("Errors &amp; <![CDATA[a &amp; b]]> latency"), "Errors & a &amp; b latency");
   });
+
+  it("keeps later openers literal when the first CDATA section has no closer", () => {
+    assert.equal(decodeXmlField("&amp; <![CDATA[a <![CDATA[b &lt; c"), "& a <![CDATA[b &lt; c");
+  });
 });
 
 describe("parseRssItems", () => {
@@ -239,6 +243,31 @@ ${items}
     // The marker is stripped; everything after it is literal, undecoded text.
     assert.equal(item.title, "a &amp; b unterminated");
   });
+
+  it("keeps the first complete field pair and the original item delimiters", () => {
+    assert.deepEqual(parseRssItems("<ITEM\t><TITLE> first </TITLE><title>second</title><link>&amp;</link></ITEM>"), [
+      { title: "first", description: "", pubDate: undefined, link: "&" },
+    ]);
+    assert.deepEqual(parseRssItems("<items><title>ignored</title></items><item><title>kept</title></item>"), [
+      { title: "kept", description: "", pubDate: undefined, link: undefined },
+    ]);
+    assert.deepEqual(parseRssItems("İ<item><title>İssue</title><description>İ</description></item>"), [
+      { title: "İssue", description: "İ", pubDate: undefined, link: undefined },
+    ]);
+  });
+
+  it("leaves a field empty after repeated unclosed openers while reading the next field", () => {
+    assert.deepEqual(parseRssItems(`<item>${"<title>".repeat(100)}<description>Working</description></item>`), [
+      { title: "", description: "Working", pubDate: undefined, link: undefined },
+    ]);
+    assert.deepEqual(parseRssItems("<item><title>unclosed<item><title>second</title></item>"), [
+      { title: "", description: "", pubDate: undefined, link: undefined },
+      { title: "second", description: "", pubDate: undefined, link: undefined },
+    ]);
+    assert.deepEqual(parseRssItems(`<item><title>Okay</title>${"<description><pubDate><link>".repeat(20)}</item>`), [
+      { title: "Okay", description: "", pubDate: undefined, link: undefined },
+    ]);
+  });
 });
 
 describe("grok feed html stripping end to end", () => {
@@ -273,6 +302,13 @@ describe("grok feed html stripping end to end", () => {
     const xml = feed("<![CDATA[<p>Status:&nbsp;Resolved</p>]]>");
     const [item] = parseRssItems(xml);
     assert.equal(grokItemHealth(item.description), "operational");
+  });
+
+  it("keeps malformed markup and finds complete tags inside an unclosed comment", () => {
+    assert.equal(grokItemHealth("abc<!--> Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("<!-- <p>Status:&nbsp;Resolved</p>"), "operational");
+    assert.equal(grokItemHealth("<p <b>Status: Resolved</b>"), "operational");
+    assert.equal(grokItemHealth("Latency < 500ms. Status: Resolved. Errors > 1%"), "operational");
   });
 });
 
@@ -424,6 +460,49 @@ describe("googleComponents", () => {
     const rows = googleComponents(products, [{ id: "1", status_impact: "SERVICE_OUTAGE", affected_products: [{}] }]);
     assert.equal(rows.length, 2);
     assert.ok(rows.every((row) => row.health === "operational"));
+  });
+
+  it("chooses the earliest matching row across ID and title, including duplicate and empty IDs", () => {
+    const rows = googleComponents(
+      [
+        { id: "", title: "First" },
+        { id: "duplicate", title: "By title" },
+        { id: "duplicate", title: "By ID" },
+      ],
+      [
+        {
+          id: "1",
+          status_impact: "SERVICE_OUTAGE",
+          affected_products: [{ id: "duplicate", title: " first " }],
+        },
+        {
+          id: "2",
+          status_impact: "SERVICE_DISRUPTION",
+          affected_products: [{ id: "duplicate", title: "unknown" }],
+        },
+      ],
+    );
+    assert.deepEqual(
+      rows.map((row) => row.health),
+      ["outage", "degraded", "operational"],
+    );
+  });
+
+  it("does not add an ID alias to a row matched by its title", () => {
+    const rows = googleComponents(
+      [{ id: "catalogue", title: "Cloud Run" }],
+      [
+        { id: "1", status_impact: "SERVICE_DISRUPTION", affected_products: [{ id: "alias", title: "cloud run" }] },
+        { id: "2", status_impact: "SERVICE_OUTAGE", affected_products: [{ id: "alias", title: "New product" }] },
+      ],
+    );
+    assert.deepEqual(
+      rows.map((row) => [row.name, row.health]),
+      [
+        ["Cloud Run", "degraded"],
+        ["New product", "outage"],
+      ],
+    );
   });
 });
 
