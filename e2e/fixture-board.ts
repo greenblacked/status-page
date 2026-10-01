@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { toCrossJSONAsync } from "seroval";
 import { CATALOG } from "../src/lib/status/catalog.ts";
 import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/lib/status/types.ts";
@@ -185,6 +185,9 @@ export function calmBoard(now: number): BoardSnapshot {
   };
 }
 
+const SERVER_FN = "**/_serverFn/**";
+const served = new WeakMap<Page, (route: Route) => Promise<void>>();
+
 /**
  * Answers the board's server functions (the Refresh POST and the
  * scheduled GET) with `board()` instead of the vendors, in the same
@@ -197,7 +200,11 @@ export function calmBoard(now: number): BoardSnapshot {
  * machine, serves the change there.
  */
 export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed?: () => BoardSnapshot): Promise<void> {
-  await page.route("**/_serverFn/**", async (route) => {
+  // One answer at a time: the newest replaces the one before, so a test that opens many boards on one page does
+  // not stack a handler for each.
+  const before = served.get(page);
+  if (before) await page.unroute(SERVER_FN, before);
+  const handler = async (route: Route) => {
     const answer = pressed && route.request().method() === "POST" ? pressed() : board();
     const body = await toCrossJSONAsync({ result: answer, error: undefined, context: {} }, { refs: new Map() });
     await route.fulfill({
@@ -206,5 +213,34 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
       headers: { "x-tss-serialized": "true" },
       body: JSON.stringify(body),
     });
+  };
+  served.set(page, handler);
+  await page.route(SERVER_FN, handler);
+}
+
+/**
+ * The longest hero the page can have: eleven services need a look, so the headline is "Eleven things need a look."
+ * and the line under it names three of them, "and 8 more", says the other one is running normally, and that two
+ * could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
+ * sits under them.
+ */
+export function longHeroBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const unread = new Set<ServiceId>(["android", "grok"]);
+  const calm = new Set<ServiceId>(["apple-os"]);
+  const services = board.services.map((service, index): ServiceSnapshot => {
+    if (unread.has(service.id)) {
+      return { ...service, health: "unknown", summary: "The official source did not answer in time" };
+    }
+    if (calm.has(service.id)) return service;
+    const health: Health = index % 2 ? "outage" : "degraded";
+    return {
+      ...service,
+      health,
+      summary: service.summary === "All systems operational" ? "Elevated error rates" : service.summary,
+    };
   });
+  const counts: Record<Health, number> = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const service of services) counts[service.health] += 1;
+  return { ...board, services, counts };
 }

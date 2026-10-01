@@ -121,6 +121,10 @@ export function useSearchDock({
     let armFrames = 0;
     let laidOutWide = wide.matches;
     let width = 0;
+    // Where the hero's last line ended at the last reading, and whether the next frame is the first after that
+    // line moved down (a hero that has grown): then the bar's hold on its place (the hysteresis) is let go.
+    let lastBottom: number | undefined;
+    let grew = false;
     let settling = 0;
     let insets = { pin: 0, barTop: 0 };
     let state: DockState = DOCK_REST;
@@ -150,6 +154,8 @@ export function useSearchDock({
         hero && heroStyle
           ? hero.getBoundingClientRect().bottom + window.scrollY - (Number.parseFloat(heroStyle.paddingBottom) || 0)
           : undefined;
+      if (contentBottom !== undefined && lastBottom !== undefined && contentBottom > lastBottom + 0.5) grew = true;
+      lastBottom = contentBottom;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
       const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
       insets = { pin, barTop };
@@ -266,7 +272,12 @@ export function useSearchDock({
     const frame = () => {
       raf = 0;
       let instant = false;
-      const next = dockFrame(window.scrollY, geometry, reduce.matches, state);
+      // The 8px hysteresis keeps a bar up that the page has scrolled back a little from its place. It is not for
+      // a hero that has grown: the new last line may sit under the bar, which is slowly sliding in, so the bar
+      // goes by the threshold itself (it waits for the line to be out from under the bar's highest point).
+      const held = grew && !wide.matches ? { ...geometry, hysteresis: 0 } : geometry;
+      grew = false;
+      const next = dockFrame(window.scrollY, held, reduce.matches, state);
       if (wide.matches) {
         if (next.p !== lastP) {
           lastP = next.p;
@@ -307,7 +318,11 @@ export function useSearchDock({
       if (!alive) return;
       measure();
       clearMarks();
-      schedule();
+      // Now, not on the next frame: a hero that has just grown (the board's answer names more services, the live
+      // line wraps to another line) has moved its last line under a bar that is already up. This runs after the
+      // layout and before the paint, so the bar starts to leave in the frame that shows the new hero, not one frame later.
+      if (raf) cancelAnimationFrame(raf);
+      frame();
     };
     const onResize = () => {
       if (!alive) return;
