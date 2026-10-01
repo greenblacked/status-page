@@ -90,7 +90,7 @@ describe("parsers stay linear on crafted vendor input", () => {
     // Many closed comments and tags, which must all be stripped, not just survive.
     let health = "";
     expect(
-      elapsed(() => (health = grokItemHealth("<!-- x -->".repeat(SIZE / 10) + "<b>Status: Resolved</b>"))),
+      elapsed(() => (health = grokItemHealth(`${"<!-- x -->".repeat(SIZE / 10)}<b>Status: Resolved</b>`))),
     ).toBeLessThan(BUDGET_MS);
     expect(health).toBe("operational");
     expect(elapsed(() => grokItemHealth(`<a${"x".repeat(SIZE)}`))).toBeLessThan(BUDGET_MS);
