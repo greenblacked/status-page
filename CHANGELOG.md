@@ -51,6 +51,13 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The summary says "2 outages", not "2 outage".
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
+- The "+N more" under a service counts every incident it has, not only the ones the board kept.
+
+### Security
+
+- Text from a vendor is kept to sensible lengths, with "…" where it was cut: a name to 120 characters, a title to 300 and a summary or detail to 500.
+- A source that sends the board to another site, or to another port, is no longer followed. Its card reads No data, with the host it was sent to.
+- HSTS now covers subdomains.
 
 ## [0.5.0] - 2026-09-30
 

@@ -1,3 +1,4 @@
+import { boundSnapshot, clip, MAX_TEXT_CHARS } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
   formatReleaseAge,
@@ -21,7 +22,7 @@ import {
   urgencyOf,
   worseHealth,
 } from "./health.ts";
-import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
+import { fetchJson, fetchText, meterBytes, meteredBytes, NotJsonError, PayloadError, SourceError } from "./http.ts";
 import { sortIncidents } from "./layout.ts";
 import type {
   ComponentHealth,
@@ -39,6 +40,11 @@ const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 // Google Cloud (~215 products); the snapshot is cached and served as JSON, so a
 // runaway page must still not grow it without limit.
 const MAX_COMPONENTS = 300;
+// Upper bound on incidents kept per card. Each is a row in the board, the
+// JSON API and the Atom feed; a feed that lists thousands must not grow them.
+// Applied by sortIncidents after the board's ordering, so the cut drops the
+// mildest, oldest rows and never the outage.
+const MAX_INCIDENTS = 50;
 // Extra, optional fetches (component lists, the Steam connection managers)
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
@@ -157,6 +163,8 @@ function base(
   };
 }
 
+const JSON_SYNTAX_MESSAGE = "SyntaxError: response was not valid JSON";
+
 // SourceError is raised by http.ts for transport problems. Anything else that
 // escapes a collector (SyntaxError from JSON.parse, TypeError from a missing
 // field) means the vendor answered with a shape the collector does not expect.
@@ -167,12 +175,21 @@ export function classifyFailure(error: unknown): SourceFailure {
     if (error.message.startsWith("Timed out")) return { kind: "timeout", message: error.message };
     return { kind: "network", message: error.message };
   }
+  // V8's JSON.parse message quotes the first characters of the body, which
+  // would carry vendor (or attacker) text into hydration data, logs and the
+  // public source-health issue. A fixed sentence says the same thing.
+  if (error instanceof SyntaxError) return { kind: "parser", message: JSON_SYNTAX_MESSAGE };
   const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return { kind: "parser", message };
 }
 
 function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot {
-  const message = error instanceof SourceError ? error.message : "Official source did not respond.";
+  // A SourceError's message is written to be read, except a non-JSON hint: that
+  // is for logs and the failure record, so the card gets the generic sentence.
+  const message =
+    error instanceof SourceError && !(error instanceof NotJsonError)
+      ? error.message
+      : "Official source did not respond.";
   const failure = classifyFailure(error);
   const latencyMs = Date.now() - started;
   // One JSON line per failed collector, so a host's log shows which vendor
@@ -185,7 +202,8 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
       service: id,
       kind: failure.kind,
       status: failure.status,
-      message: failure.message,
+      // Logged before boundSnapshot sees the snapshot, so held to its limit here.
+      message: clip(failure.message, MAX_TEXT_CHARS),
       latencyMs,
       bytes: meteredBytes(),
     }),
@@ -208,6 +226,36 @@ function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }> {
 /** Incidents that are problems: notices with no impact are listed but not counted. */
 function realIncidentCount(incidents: Incident[]): number {
   return incidents.filter((incident) => !incident.informational).length;
+}
+
+/** The `limit` items due soonest; one with no usable date is last. Dates are parsed once, not per comparison. */
+function soonest(items: UpcomingMaintenance[], limit: number): UpcomingMaintenance[] {
+  return items
+    .map((item) => ({ item, at: Date.parse(item.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.at - b.at)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
+/**
+ * The incidents to list, in board order and cut to MAX_INCIDENTS, with what
+ * the cut hides: `incidentCount` (everything the source listed) is set only
+ * when some were cut, like `componentCount`, and `problems` counts the real
+ * ones in the whole list, which is what a summary should say.
+ */
+function listIncidents(
+  all: Incident[],
+  limit = MAX_INCIDENTS,
+): {
+  incidents: Incident[];
+  problems: number;
+  incidentCount?: number;
+} {
+  return {
+    incidents: sortIncidents(all, limit),
+    problems: realIncidentCount(all),
+    ...(all.length > limit ? { incidentCount: all.length } : {}),
+  };
 }
 
 /** The title of the worst incident that is a problem (the list is sorted worst first), if any. */
@@ -249,7 +297,7 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
       url: vendorUrl(incident.uri, sourceUrl, [hostOf(sourceUrl)]),
     };
   });
-  return { health, incidents: sortIncidents(mapped), components };
+  return { health, ...listIncidents(mapped), components };
 }
 
 /**
@@ -285,12 +333,26 @@ export function parseGoogleProducts(payload: unknown): GoogleProduct[] {
  */
 export function googleComponents(products: GoogleProduct[], openIncidents: GoogleIncident[]): ComponentHealth[] {
   type Row = ComponentHealth & { id?: string };
-  const rows: Row[] = products.map((product) => ({ id: product.id, name: product.title, health: "operational" }));
+  const rows: Row[] = [];
+  // Rows by id and by lower-cased name, so matching a reference is a lookup
+  // rather than a scan of every product. The first row with a key wins, as
+  // the scan it replaces did; `rows` keeps the catalogue's order.
+  const byId = new Map<string, number>();
+  const byName = new Map<string, number>();
+  const add = (row: Row): Row => {
+    const index = rows.push(row) - 1;
+    if (row.id !== undefined && !byId.has(row.id)) byId.set(row.id, index);
+    const key = row.name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, index);
+    return row;
+  };
+  for (const product of products) add({ id: product.id, name: product.title, health: "operational" });
   const find = (ref: { id?: string; title?: string }): Row | undefined => {
     const title = ref.title?.trim().toLowerCase();
-    return rows.find(
-      (row) => (ref.id !== undefined && row.id === ref.id) || (title !== undefined && row.name.toLowerCase() === title),
-    );
+    const viaId = ref.id !== undefined ? byId.get(ref.id) : undefined;
+    const viaName = title !== undefined ? byName.get(title) : undefined;
+    const index = viaId === undefined ? viaName : viaName === undefined ? viaId : Math.min(viaId, viaName);
+    return index === undefined ? undefined : rows[index];
   };
   for (const incident of openIncidents) {
     const refs = incident.affected_products?.length
@@ -311,8 +373,7 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
       let row = find(ref);
       if (!row) {
         if (!name) continue;
-        row = { id: ref.id, name, health: "operational" };
-        rows.push(row);
+        row = add({ id: ref.id, name, health: "operational" });
       }
       // The worst incident wins the row; among equals, the first listed.
       const worse = worseHealth(row.health, itemHealth);
@@ -418,7 +479,7 @@ function fromStatuspage(
     },
   );
 
-  const incidents: Incident[] = sortIncidents(
+  const { incidents, problems, incidentCount } = listIncidents(
     activeIncidents
       .filter((incident) => belongs(incident))
       .map((incident) => {
@@ -447,21 +508,18 @@ function fromStatuspage(
   if (maintenances.length && health === "operational") health = "maintenance";
 
   // Announced but not started: shown as upcoming, never as a health.
-  const upcoming: UpcomingMaintenance[] = scheduled
-    .filter((item) => statusOf(item) === "scheduled")
-    .map((item) => ({
-      id: item.id || `statuspage-${fingerprint(`${item.name ?? ""}|${item.scheduled_for ?? ""}`)}`,
-      title: item.name || "Scheduled maintenance",
-      scheduledFor: isoTimestamp(item.scheduled_for),
-      scheduledUntil: isoTimestamp(item.scheduled_until),
-      url: item.shortlink ? vendorUrl(item.shortlink, sourceUrl, statuspageHosts) : undefined,
-    }))
-    .sort(
-      (a, b) =>
-        (Date.parse(a.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER) -
-        (Date.parse(b.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER),
-    )
-    .slice(0, MAX_UPCOMING_MAINTENANCE);
+  const upcoming: UpcomingMaintenance[] = soonest(
+    scheduled
+      .filter((item) => statusOf(item) === "scheduled")
+      .map((item) => ({
+        id: item.id || `statuspage-${fingerprint(`${item.name ?? ""}|${item.scheduled_for ?? ""}`)}`,
+        title: item.name || "Scheduled maintenance",
+        scheduledFor: isoTimestamp(item.scheduled_for),
+        scheduledUntil: isoTimestamp(item.scheduled_until),
+        url: item.shortlink ? vendorUrl(item.shortlink, sourceUrl, statuspageHosts) : undefined,
+      })),
+    MAX_UPCOMING_MAINTENANCE,
+  );
 
   // During maintenance with no incident, the maintenance itself is what the
   // card should name; the indicator description is only a generic fallback.
@@ -472,9 +530,10 @@ function fromStatuspage(
   return {
     ...base(id, checkedAt, latencyMs),
     health,
-    summary: overallSummary(health, realIncidentCount(incidents), hint),
+    summary: overallSummary(health, problems, hint),
     ...rankComponents(components),
     incidents,
+    ...(incidentCount ? { incidentCount } : {}),
     ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),
   };
 }
@@ -501,9 +560,10 @@ async function collectGoogle(id: "gcp" | "android", origin: string): Promise<Ser
     return {
       ...base(id, new Date().toISOString(), ms),
       health: parsed.health,
-      summary: overallSummary(parsed.health, realIncidentCount(parsed.incidents), firstProblemTitle(parsed.incidents)),
+      summary: overallSummary(parsed.health, parsed.problems, firstProblemTitle(parsed.incidents)),
       ...rankComponents(components),
       incidents: parsed.incidents,
+      ...(parsed.incidentCount ? { incidentCount: parsed.incidentCount } : {}),
     };
   } catch (error) {
     return failed(id, started, error);
@@ -747,7 +807,7 @@ async function collectAws(): Promise<ServiceSnapshot> {
     const now = Date.now();
     const active = value.filter((event) => awsEventActive(event, now));
     let health: Health = "operational";
-    const incidents: Incident[] = sortIncidents(
+    const { incidents, problems, incidentCount } = listIncidents(
       active.map((event) => {
         const itemHealth = awsEventHealth(event);
         health = worseHealth(health, itemHealth);
@@ -779,11 +839,12 @@ async function collectAws(): Promise<ServiceSnapshot> {
       health,
       summary: overallSummary(
         health,
-        incidents.length,
+        problems,
         incidents[0]?.title ?? `${value.length} public Health items, none currently active.`,
       ),
       ...rankComponents(awsComponents(active)),
       incidents,
+      ...(incidentCount ? { incidentCount } : {}),
       meta: { publicEvents: value.length, active: active.length },
     };
   } catch (error) {
@@ -1071,19 +1132,15 @@ async function collectApple(): Promise<ServiceSnapshot> {
         });
       }
     }
-    const sorted = sortIncidents(incidents);
-    upcoming.sort(
-      (a, b) =>
-        (Date.parse(a.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER) -
-        (Date.parse(b.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER),
-    );
+    const { incidents: sorted, problems, incidentCount } = listIncidents(incidents);
     return {
       ...base("apple", new Date().toISOString(), ms),
       health,
-      summary: overallSummary(health, sorted.length, sorted[0]?.title),
+      summary: overallSummary(health, problems, sorted[0]?.title),
       ...rankComponents(components),
       incidents: sorted,
-      ...(upcoming.length ? { upcomingMaintenance: upcoming.slice(0, MAX_UPCOMING_MAINTENANCE) } : {}),
+      ...(incidentCount ? { incidentCount } : {}),
+      ...(upcoming.length ? { upcomingMaintenance: soonest(upcoming, MAX_UPCOMING_MAINTENANCE) } : {}),
       meta: { services: value.services?.length ?? 0 },
     };
   } catch (error) {
@@ -1095,9 +1152,53 @@ async function collectApple(): Promise<ServiceSnapshot> {
 // a letter). A blanket `<[^>]+>` also ate a decoded "Latency < 500ms", which
 // erased "Status: Resolved" from an otherwise operational item. Plain text
 // such as "a<b ... c>d" still reads as a tag; regex stripping cannot tell.
+//
+// A single pass over the `<` positions rather than a regex: `<!--[\s\S]*?-->`
+// rescans to the end of the text from every unclosed `<!--`, which is
+// quadratic on a body of repeated openers. Here a missing "-->" is looked
+// for once, and a tag body stops at the next `<` or `>`, so nothing is
+// scanned twice.
+function stripMarkup(value: string): string {
+  let out = "";
+  let from = 0;
+  let commentsClose = true;
+  for (;;) {
+    const lt = value.indexOf("<", from);
+    if (lt === -1) return out + value.slice(from);
+    out += value.slice(from, lt);
+    from = lt + 1;
+    if (value.startsWith("<!--", lt)) {
+      const end = commentsClose ? value.indexOf("-->", lt + 4) : -1;
+      if (end !== -1) {
+        out += " ";
+        from = end + 3;
+        continue;
+      }
+      commentsClose = false;
+      out += "<";
+      continue;
+    }
+    let at = lt + 1;
+    if (value[at] === "/") at += 1;
+    if (isAsciiLetter(value.charCodeAt(at))) {
+      at += 1;
+      while (at < value.length && value[at] !== "<" && value[at] !== ">") at += 1;
+      if (value[at] === ">") {
+        out += " ";
+        from = at + 1;
+        continue;
+      }
+    }
+    out += "<";
+  }
+}
+
+function isAsciiLetter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
 function stripHtml(value: string): string {
-  return value
-    .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^<>]*>/g, " ")
+  return stripMarkup(value)
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1148,50 +1249,97 @@ export function decodeXmlEntities(text: string): string {
 
 // CDATA content is already literal text, so it must never be re-decoded
 // (`<![CDATA[a &amp; b]]>` should stay `a &amp; b`). Split on CDATA sections
-// and decode only the parts outside them.
-const CDATA_RE = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-
+// and decode only the parts outside them. Found with indexOf rather than a
+// lazy regex, which rescans to the end from every unclosed opener.
 const CDATA_START = "<![CDATA[";
+const CDATA_END = "]]>";
 
 export function decodeXmlField(raw: string): string {
   let result = "";
-  let lastIndex = 0;
-  for (const match of raw.matchAll(CDATA_RE)) {
-    result += decodeXmlEntities(raw.slice(lastIndex, match.index));
-    result += match[1];
-    lastIndex = match.index + match[0].length;
+  let from = 0;
+  for (;;) {
+    const start = raw.indexOf(CDATA_START, from);
+    if (start === -1) return result + decodeXmlEntities(raw.slice(from));
+    result += decodeXmlEntities(raw.slice(from, start));
+    const end = raw.indexOf(CDATA_END, start + CDATA_START.length);
+    // An opener with no closing `]]>` anywhere later: treat everything from
+    // that marker onward as literal CDATA content (strip the marker, leave
+    // the rest undecoded), rather than decoding text the feed meant to be
+    // taken as-is.
+    if (end === -1) return result + raw.slice(start + CDATA_START.length);
+    result += raw.slice(start + CDATA_START.length, end);
+    from = end + CDATA_END.length;
   }
-  // Any `<![CDATA[` left in the tail has no closing `]]>` anywhere later in
-  // the string, or the loop above would already have consumed it. Treat
-  // everything from that marker onward as literal CDATA content: strip the
-  // marker and leave the rest undecoded, rather than decoding text the feed
-  // meant to be taken as-is.
-  const tail = raw.slice(lastIndex);
-  const unterminated = tail.indexOf(CDATA_START);
-  if (unterminated === -1) {
-    result += decodeXmlEntities(tail);
-  } else {
-    result += decodeXmlEntities(tail.slice(0, unterminated));
-    result += tail.slice(unterminated + CDATA_START.length);
+}
+
+/** Most `<item>`s kept from a feed: the newest by pubDate. Real feeds carry tens. */
+export const MAX_RSS_ITEMS = 200;
+/**
+ * Most `<item>`s looked at in one feed, in document order. status.x.ai serves
+ * its whole history and nothing says which end is newest, so every item up to
+ * this bound is dated before the newest MAX_RSS_ITEMS are chosen. The bound
+ * is for memory: a feed with more items than this is not a feed.
+ */
+export const MAX_RSS_SCANNED = 5000;
+
+const ITEM_CLOSE = /<\/item>/i;
+
+const FIELD_TAGS = new Map<string, [RegExp, RegExp]>();
+
+// The text between the first `<tag>` and the first `</tag>` after it, or
+// undefined. Two literal searches, so a field is read in one pass over its
+// item whatever the item holds; `<tag>([\s\S]*?)</tag>` rescanned the whole
+// item from every repeated, unclosed `<tag>`.
+function xmlField(chunk: string, tag: string): string | undefined {
+  let tags = FIELD_TAGS.get(tag);
+  if (!tags) {
+    tags = [new RegExp(`<${tag}>`, "i"), new RegExp(`</${tag}>`, "i")];
+    FIELD_TAGS.set(tag, tags);
   }
-  return result;
+  const open = chunk.search(tags[0]);
+  if (open === -1) return undefined;
+  const from = open + tag.length + 2;
+  const close = chunk.slice(from).search(tags[1]);
+  return close === -1 ? undefined : chunk.slice(from, from + close);
 }
 
 export function parseRssItems(
   xml: string,
 ): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
-  const items: Array<{ title: string; description: string; pubDate?: string; link?: string }> = [];
-  const blocks = xml.split(/<item[\s>]/i).slice(1);
-  for (const block of blocks) {
-    const chunk = block.split(/<\/item>/i)[0] ?? "";
-    const title = decodeXmlField(chunk.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
-    const description = decodeXmlField(chunk.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "").trim();
-    const pubDate = chunk.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]?.trim();
-    const rawLink = chunk.match(/<link>([\s\S]*?)<\/link>/i)?.[1];
-    const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
-    items.push({ title, description, pubDate, link });
+  // Each item runs from its `<item>` to the next one, cut at its own
+  // `</item>`; every search below stays inside that slice, so the whole feed
+  // is read once. Only the date is read from all of the items scanned; the
+  // newest MAX_RSS_ITEMS are then read in full, before anything downstream
+  // maps or sorts them. An item with no readable date ranks last, and ties
+  // keep the feed's order. The items kept stay in the feed's order.
+  const scanned: Array<{ chunk: string; at: number; index: number }> = [];
+  const itemOpen = /<item[\s>]/gi;
+  let open = itemOpen.exec(xml);
+  while (open && scanned.length < MAX_RSS_SCANNED) {
+    const bodyStart = open.index + open[0].length;
+    const next = itemOpen.exec(xml);
+    const block = xml.slice(bodyStart, next ? next.index : xml.length);
+    const closed = block.search(ITEM_CLOSE);
+    const chunk = closed === -1 ? block : block.slice(0, closed);
+    const date = Date.parse(xmlField(chunk, "pubDate")?.trim() ?? "");
+    scanned.push({ chunk, at: Number.isFinite(date) ? date : Number.NEGATIVE_INFINITY, index: scanned.length });
+    open = next;
   }
-  return items;
+  const kept =
+    scanned.length > MAX_RSS_ITEMS
+      ? scanned
+          .sort((a, b) => (a.at === b.at ? a.index - b.index : a.at > b.at ? -1 : 1))
+          .slice(0, MAX_RSS_ITEMS)
+          .sort((a, b) => a.index - b.index)
+      : scanned;
+  return kept.map(({ chunk }) => {
+    const title = decodeXmlField(xmlField(chunk, "title") ?? "").trim();
+    const description = decodeXmlField(xmlField(chunk, "description") ?? "").trim();
+    const pubDate = xmlField(chunk, "pubDate")?.trim();
+    const rawLink = xmlField(chunk, "link");
+    const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
+    return { title, description, pubDate, link };
+  });
 }
 
 export function grokItemHealth(description: string): Health {
@@ -1247,7 +1395,9 @@ export function parseInstatusComponents(payload: unknown): ComponentHealth[] {
  * service. A title without that lead names no service, and none is guessed.
  */
 export function grokTitleService(title: string): { name: string; detail: string } | null {
-  const match = title.match(/^\[([^\]]{1,64})\]\s*(.+)$/);
+  // `(\S.*)`, not `\s*(.+)`: with both able to match spaces, a title holding a
+  // line break after a long run of them backtracked quadratically.
+  const match = title.match(/^\[([^\]]{1,64})\]\s*(\S.*)$/);
   const name = match?.[1]?.trim();
   const detail = match?.[2]?.trim();
   return name && detail ? { name, detail } : null;
@@ -1306,7 +1456,7 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     );
     // Sorted worst first before the first 8 are kept, so the cut never drops
     // the most urgent item.
-    const incidents: Incident[] = sortIncidents(
+    const { incidents, problems, incidentCount } = listIncidents(
       active.map((item, index) => ({
         id: item.link ?? `${item.title}-${index}`,
         title: item.title,
@@ -1314,16 +1464,18 @@ async function collectGrok(): Promise<ServiceSnapshot> {
         startedAt: isoTimestamp(item.pubDate),
         url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
       })),
-    ).slice(0, 8);
+      8,
+    );
     return {
       ...base("grok", new Date().toISOString(), ms),
       health,
-      summary: overallSummary(health, incidents.length, incidents[0]?.title),
+      summary: overallSummary(health, problems, incidents[0]?.title),
       // The vendor's own list when it is readable; otherwise only the
       // services the current feed's titles name. Health above is the feed's
       // alone: components add detail and never move it.
       ...rankComponents(listed.length ? listed : grokFeedComponents(active)),
       incidents,
+      ...(incidentCount ? { incidentCount } : {}),
     };
   } catch (error) {
     return failed("grok", started, error);
@@ -1477,7 +1629,9 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
 // source's latency and download size per sweep, not only the broken ones.
 function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
   return meterBytes(async (meter) => {
-    const snapshot = await collect();
+    // Every string a vendor sent is held to its limit here, once, whichever
+    // collector built the snapshot.
+    const snapshot = boundSnapshot(await collect());
     if (!snapshot.failure) {
       console.log(
         JSON.stringify({

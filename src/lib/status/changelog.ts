@@ -1,3 +1,5 @@
+import { clip } from "./bounds.ts";
+
 export type ChannelRelease = {
   name: string;
   version: string;
@@ -13,13 +15,15 @@ export type OsRelease = {
   link?: string;
 };
 
+const MAX_OS_VERSION_CHARS = 64;
+
 const OS_FAMILIES = ["iOS", "iPadOS", "macOS", "watchOS", "tvOS", "visionOS"] as const;
 
 // A RouterOS version as the NEWEST* files write it ("7.16.2", "7.17beta4",
 // "7.17rc1"). It becomes a path segment of the changelog URL below and
 // appears on the card, so anything else (a slash, "..", a query, markup)
 // is treated as an unreadable file rather than trusted.
-const MIKROTIK_VERSION = /^\d[\w.-]*$/;
+const MIKROTIK_VERSION = /^\d[\w.-]{0,31}$/;
 
 export function isMikrotikVersion(version: string): boolean {
   return MIKROTIK_VERSION.test(version) && !version.includes("..");
@@ -53,13 +57,22 @@ export function summarizeMikrotikChangelog(text: string): string {
 }
 
 export function parseAppleOsTitle(title: string): { family: string; version: string; beta: boolean } | null {
-  const match = title.trim().match(/^(iOS|iPadOS|macOS|watchOS|tvOS|visionOS)\s+(.+)$/i);
-  if (!match) return null;
-  const family = OS_FAMILIES.find((name) => name.toLowerCase() === match[1].toLowerCase());
+  // "<family> <version>": the family, whitespace, then the rest of one line.
+  // Read with startsWith and trimStart, not `^(...)\s+(.+)$`, whose `\s+`
+  // and `.+` both match spaces and backtrack against each other when the
+  // version holds a line break (quadratic in the run of spaces before it).
+  const text = title.trim();
+  const family = OS_FAMILIES.find((name) => text.slice(0, name.length).toLowerCase() === name.toLowerCase());
   if (!family) return null;
+  const rest = text.slice(family.length);
+  if (rest.trimStart() === rest) return null;
+  const version = rest.trim();
+  if (!version || /[\n\r\u2028\u2029]/.test(version)) return null;
   return {
     family,
-    version: match[2].trim(),
+    // A version is a few words ("26.1 beta 3 (23B5045g)"); the title can be
+    // anything, and the version goes into meta and the pulse log.
+    version: clip(version, MAX_OS_VERSION_CHARS),
     beta: /\b(beta|rc)\b/i.test(title),
   };
 }

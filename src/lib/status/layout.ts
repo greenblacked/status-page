@@ -51,13 +51,20 @@ function incidentTime(incident: Incident): number {
  * before they derive a summary or a health, and the card slices the front of
  * the list, so the first entry is always the worst current incident.
  */
-export function sortIncidents(incidents: Incident[]): Incident[] {
-  return [...incidents].sort(
-    (a, b) =>
-      Number(a.informational === true) - Number(b.informational === true) ||
-      urgencyOf(a.health) - urgencyOf(b.health) ||
-      newerFirst(incidentTime(a), incidentTime(b)),
-  );
+export function sortIncidents(incidents: Incident[], limit = Number.POSITIVE_INFINITY): Incident[] {
+  // Each incident's sort key is worked out once, not on every comparison, so
+  // ordering a feed of thousands stays cheap. `limit` keeps only the first
+  // that many, so a cut never drops a worse incident for a milder one.
+  return incidents
+    .map((incident) => ({
+      incident,
+      notice: Number(incident.informational === true),
+      urgency: urgencyOf(incident.health),
+      at: incidentTime(incident),
+    }))
+    .sort((a, b) => a.notice - b.notice || a.urgency - b.urgency || newerFirst(a.at, b.at))
+    .slice(0, limit)
+    .map(({ incident }) => incident);
 }
 
 /** Same page: scheme, host, path (minus a trailing slash) and query match; a fragment does not count. */
@@ -65,7 +72,13 @@ function samePage(a: string, b: string): boolean {
   try {
     const first = new URL(a);
     const second = new URL(b);
-    const path = (url: URL) => url.pathname.replace(/\/+$/, "");
+    // Not `replace(/\/+$/, "")`: that rescans a run of slashes from every
+    // position in it, which is quadratic on a hostile path.
+    const path = (url: URL) => {
+      let end = url.pathname.length;
+      while (end > 0 && url.pathname[end - 1] === "/") end -= 1;
+      return url.pathname.slice(0, end);
+    };
     return first.origin === second.origin && path(first) === path(second) && first.search === second.search;
   } catch {
     return a === b;
