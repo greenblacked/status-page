@@ -43,7 +43,7 @@ export const FEED_ROW_CLASSES = {
  * found changes is taller, and the reserve is then short by the difference.
  *
  * The wording of the rows is a copy of `recentRows` (feed-reserve.test.ts
- * holds it to the real thing). It never throws: any failure leaves the
+ * holds it to the real thing). It never throws: when it fails it leaves the
  * property unset, which reads as 0. Inline, which the page's
  * Content-Security-Policy allows ('unsafe-inline' in script-src).
  */
