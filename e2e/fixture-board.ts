@@ -219,8 +219,8 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
 }
 
 /**
- * The longest hero the page can have: eleven services need a look, so the headline is "Eleven things need a look."
- * and the line under it names three of them, "and 8 more", says the other three are running normally, and that two
+ * The longest hero the page can have: fifteen services need a look, so the headline is "Fifteen things need a look."
+ * and the line under it names three of them, "and 12 more", says the other three are running normally, and that two
  * could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
  * sits under them.
  */

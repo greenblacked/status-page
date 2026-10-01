@@ -6,7 +6,7 @@ import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
 
-const SERVICES = 16;
+const SERVICES = 20;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 /** The services of one board group: "attention", "unread" (Couldn't read), "up" (every category's list) or "releases". */
 const group = (page: Page, id: "attention" | "unread" | "up" | "releases") =>
@@ -1018,7 +1018,7 @@ test("takes the bar down when the hero grows under it, at every width below 64re
     const before = await heroBottom();
     board = longHeroBoard(Date.now());
     await pressRefresh(page, controlBar(page).getByRole("button", { name: "Refresh status now" }));
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Eleven things need a look.");
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("Fifteen things need a look.");
     await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
     grew.push((await heroBottom()) - before);
     // Either the bar went down with the line under it, or the line is out from under the bar: never both there.
@@ -2685,10 +2685,18 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
 
-  // Needs a look first, then what could not be read, then one list per category (Cloud is all down here), then Releases.
+  // Needs a look first, then what could not be read, then one list per category (Cloud lists only Azure, the one healthy row), then Releases.
   await expect(
     page.locator('#attention-heading, #unread-heading, [id^="up-"][id$="-heading"], #releases-heading'),
-  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*4/]);
+  ).toHaveText([
+    /Needs a look\s*3/,
+    /Couldn't read\s*1/,
+    /Cloud\s*1/,
+    /Gaming\s*3/,
+    /Platforms\s*5/,
+    /AI\s*3/,
+    /Releases\s*4/,
+  ]);
 
   // Issues only leaves the three that need a look, the highlight among them: the unreadable
   // source in the fixture is not an issue, only a source that could not be read.
@@ -3876,7 +3884,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   await expect(headline.locator("svg.pen-underline")).toHaveAttribute("aria-hidden", "true");
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
-  await expect(sub).toContainText("The other twelve are running normally.");
+  await expect(sub).toContainText("The other sixteen are running normally.");
   await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
   await expect(links).toHaveText(["AWS", "GCP", "Epic", "Android"]);
