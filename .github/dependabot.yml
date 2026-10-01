@@ -16,6 +16,15 @@ updates:
     cooldown:
       default-days: 7
     groups:
+      # Alone, and first (a dependency joins the first group that matches):
+      # the WebKit shards run in Playwright's image, pinned in ci.yml, so a
+      # Playwright bump stays red until that image tag and digest move to the
+      # same version. Grouped with the rest it would hold their updates up.
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "playwright-core"
       development-dependencies:
         dependency-type: development
       production-dependencies:
