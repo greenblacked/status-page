@@ -2182,12 +2182,23 @@ test("keeps one Recent changes region, in place, through an empty search", async
 
 /**
  * The saved checks of a returning visitor, as local storage holds them: eight
- * checks from the last sixteen minutes. They are as long as real ones get on
- * a phone, where each caption wraps to several lines: changes to several
- * services at once, summaries a sentence long, and a run of quiet checks that
- * is one row. The load adds a ninth in place of the oldest.
+ * checks from the last sixteen minutes, with the board the last one saw. They
+ * are as long as real ones get on a phone, where each caption wraps to several
+ * lines: changes to several services at once, summaries a sentence long, and
+ * a run of quiet checks that is one row. The load adds a quiet ninth in place
+ * of the oldest. The board is the one the page itself saved on a first visit,
+ * so the check the load makes finds nothing changed, as it does for a real
+ * visitor.
  */
-function savedChecks(): { key: string; store: string } {
+async function savedChecks(page: Page): Promise<{ key: string; store: string }> {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), PULSE_STORAGE_KEY)).not.toBeNull();
+  const first = JSON.parse((await page.evaluate((key) => localStorage.getItem(key), PULSE_STORAGE_KEY)) ?? "null") as {
+    lastBoard: BoardSnapshot | null;
+  };
+  expect(first.lastBoard, "the page saved the board it showed").not.toBeNull();
   const slot = Math.floor(Date.now() / 120_000) * 120_000;
   const counts = { operational: 10, degraded: 3, outage: 1, maintenance: 0, unknown: 0 };
   const aws = "Increased error rates and latency for API requests in US-EAST-1 affecting several services";
@@ -2227,13 +2238,18 @@ function savedChecks(): { key: string; store: string } {
     changes,
     opening: false,
   }));
-  return { key: PULSE_STORAGE_KEY, store: JSON.stringify({ lastSlot: slot - 120_000, lastBoard: null, pulses }) };
+  return {
+    key: PULSE_STORAGE_KEY,
+    store: JSON.stringify({ lastSlot: slot - 120_000, lastBoard: first.lastBoard, pulses }),
+  };
 }
 
 const feedSurface = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] .surface');
+const feedRows = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] li');
 
 test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
+  const saved = await savedChecks(page);
   await page.addInitScript((saved) => {
     localStorage.setItem(saved.key, saved.store);
     const tracked = window as Window & { __cls?: number };
@@ -2243,12 +2259,12 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
         if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
       }
     }).observe({ type: "layout-shift", buffered: true });
-  }, savedChecks());
+  }, saved);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
   // The load's own check, then the saved ones with the quiet run as one row.
-  await expect(page.locator('section[aria-labelledby="recent-heading"] li')).toHaveCount(7);
+  await expect(feedRows(page)).toHaveCount(7);
   await page.evaluate(
     () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
   );
@@ -2257,51 +2273,81 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
   expect(shift, "cumulative layout shift").toBeLessThan(0.02);
 });
 
-test("holds the height of Recent changes for the saved checks, on a phone and on a desktop", async ({
-  page,
-  browserName,
-}) => {
-  test.skip(browserName !== "chromium", "the estimate of the text's width is tuned to Chromium's rendering");
-  await page.addInitScript((saved) => localStorage.setItem(saved.key, saved.store), savedChecks());
-  const surface = feedSurface(page);
-  const items = page.locator('section[aria-labelledby="recent-heading"] li');
-  for (const width of [320, 390, 768, 1440]) {
-    await page.setViewportSize({ width, height: 900 });
-    // Hold the page's scripts back, so the server's markup (the feed empty)
-    // is what paints, and let them go to read the feed once it is drawn.
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await page.route("**/*", async (route) => {
-      if (route.request().resourceType() === "script") await gate;
-      await route.continue();
-    });
-    await page.goto("/", { waitUntil: "commit" });
-    await expect(surface).toBeVisible();
-    // Styled by now: the surface has its border.
-    await page.waitForFunction(() => {
-      const node = document.querySelector('section[aria-labelledby="recent-heading"] .surface');
-      return node !== null && Number.parseFloat(getComputedStyle(node).borderTopWidth) > 0;
-    });
-    await expect(items).toHaveCount(0);
-    const before = (await surface.boundingBox())?.height ?? 0;
-    release();
-    await hydrated(page);
-    // The load's own check, then the saved ones with the quiet run as one row.
-    await expect(items).toHaveCount(7);
-    await page.evaluate(
-      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+// The reserve is measured from the markup the page draws, so it holds at any
+// width and any default font size. 21px is a line of the body text: the one
+// thing a wrap that differs by a line (a web font swapped in) moves.
+const TOLERANCE_PX = 21;
+
+for (const fontPx of [16, 20]) {
+  test(`holds the height of Recent changes for the saved checks, on a phone and a desktop, at a ${fontPx}px default font`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(
+      fontPx !== 16 && browserName !== "chromium",
+      "the default font size is set over Chromium's DevTools protocol",
     );
-    const after = (await surface.boundingBox())?.height ?? 0;
-    const rows = await items.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height));
-    const row = Math.min(...rows);
-    // What the board below moves by: less than a row, growing or shrinking.
-    expect(before, `${width}px: reserved ${before}px, drawn ${after}px`).toBeGreaterThan(row);
-    expect(Math.abs(before - after), `${width}px: reserved ${before}px, drawn ${after}px`).toBeLessThan(row);
-    await page.unroute("**/*");
-  }
-});
+    const saved = await savedChecks(page);
+    await page.addInitScript((saved) => localStorage.setItem(saved.key, saved.store), saved);
+    if (fontPx !== 16) {
+      const session = await page.context().newCDPSession(page);
+      await session.send("Page.setFontSizes", { fontSizes: { standard: fontPx } });
+    }
+    const surface = feedSurface(page);
+    const results: string[] = [];
+    for (const width of [320, 375, 390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      // Hold the page's scripts back, so the server's markup (the feed empty)
+      // is what paints, and let them go to read the feed once it is drawn.
+      let release = () => {};
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.route("**/*", async (route) => {
+        if (route.request().resourceType() === "script") await gate;
+        await route.continue();
+      });
+      await page.goto("/", { waitUntil: "commit" });
+      await expect(surface).toBeVisible();
+      await expect(feedRows(page)).toHaveCount(0);
+      // The page's own script has measured by the time the surface has its
+      // property; the browser then starts on the web font, and the script
+      // measures again when it is in. Wait for that: a visitor settles on the
+      // paint after it before the page hydrates.
+      await page.waitForFunction(
+        () =>
+          document
+            .querySelector<HTMLElement>('section[aria-labelledby="recent-heading"] .surface')
+            ?.style.getPropertyValue("--feed-reserve") !== "",
+      );
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            const settle = () => requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+            if (document.fonts.status === "loaded") return settle();
+            document.fonts.addEventListener("loadingdone", settle);
+            window.setTimeout(settle, 5000);
+          }),
+      );
+      const root = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize));
+      expect(root, "the default font size").toBe(fontPx);
+      const before = (await surface.boundingBox())?.height ?? 0;
+      release();
+      await hydrated(page);
+      // The load's own check, then the saved ones with the quiet run as one row.
+      await expect(feedRows(page)).toHaveCount(7);
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      );
+      const after = (await surface.boundingBox())?.height ?? 0;
+      results.push(`${width}px: reserved ${before}px, drawn ${after}px`);
+      // What the board below moves by, growing or shrinking.
+      expect(before, `${width}px reserves more than the empty card`).toBeGreaterThan(100);
+      expect(Math.abs(before - after), results.at(-1)).toBeLessThanOrEqual(TOLERANCE_PX);
+      await page.unroute("**/*");
+    }
+  });
+}
 
 test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
   const board = fixtureBoard(Date.now());
