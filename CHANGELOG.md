@@ -31,6 +31,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - `/api/status.json` adds the `informational` and `upcomingMaintenance` fields.
 - Starring and refresh move cards with a light glide instead of a page snapshot, so they respond at once on iPhone, iPad and Safari.
 - The MikroTik RouterOS and Apple OS trackers no longer show an "Operational" badge, which a changelog has no state for. They show "New release" when something shipped in the last 14 days, and a tracker whose source cannot be read is listed with the other sources that could not be read, as No data.
+- "Recent changes" now sits right after "Needs a look" (first on the board when nothing does) instead of at the foot of the board, and its space is held while saved checks load, so the page does not jump. The skip link is now "Skip to the board".
 
 ### Fixed
 
