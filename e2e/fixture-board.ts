@@ -17,6 +17,10 @@ import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/l
 
 const minute = 60_000;
 
+/** A long, all-operational component list, the shape a big vendor (Google Cloud lists over two hundred) gives. */
+const longList = (prefix: string, count: number) =>
+  Array.from({ length: count }, (_, index) => ({ name: `${prefix} ${index + 1}`, health: "operational" as const }));
+
 type Override = Partial<Omit<ServiceSnapshot, "id">>;
 
 function overrides(now: number, grok: Health): Partial<Record<ServiceId, Override>> {
@@ -53,6 +57,7 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         { name: "Cloud Build", health: "degraded" },
         { name: "Google Compute Engine", health: "operational" },
         { name: "BigQuery", health: "operational" },
+        ...longList("Cloud product", 36),
       ],
       incidents: [
         {
@@ -88,6 +93,8 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         { name: "API", health: "operational" },
       ],
     },
+    // A healthy row with a long list: six shown, the rest behind "Show all".
+    spotify: { components: longList("Spotify part", 32) },
     claude: {
       components: [
         { name: "claude.ai", health: "operational" },

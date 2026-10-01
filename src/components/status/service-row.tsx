@@ -149,6 +149,7 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
         <HealthyComponents
           components={service.components}
           total={service.componentCount ?? service.components.length}
+          sourceUrl={service.sourceUrl}
         />
       </div>
     </details>
