@@ -44,6 +44,11 @@ function categorize(workflow, _jobName, stepName) {
   // Step names from ci.yml. A failure inside .github/actions/setup shows
   // as its step in the job, "Set up the toolchain (npm ci)".
   const rules = [
+    [/initialize containers/, "infrastructure"],
+    [
+      /check the browser/,
+      "browser build missing: the Playwright image and @playwright/test differ, or the install failed",
+    ],
     [/set up job|checkout|setup-node|download-artifact|upload-artifact|post /, "infrastructure"],
     [/pin npm|declared toolchain/, "toolchain version"],
     [/npm ci/, "dependency install, toolchain version or npm signature check"],
