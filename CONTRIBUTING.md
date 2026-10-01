@@ -56,16 +56,20 @@ Name the branch `<prefix>/<short-kebab-description>`:
 
 | Prefix | Use for | Example |
 | --- | --- | --- |
-| `fb/` | Feature: new capability | `fb/board-metrics-stars-shortcuts` |
-| `fix/` | Bug | `fix/42-aws-stale-events` |
-| `chore/` | Pins, tooling, housekeeping | `chore/bump-tanstack-start` |
+| `feature/` | New capability | `feature/board-metrics-stars-shortcuts` |
+| `fix/` | Bug fix | `fix/42-aws-stale-events` |
 | `docs/` | Documentation only | `docs/readme-integrations` |
-| `ci/` | Workflow changes | `ci/cache-actionlint-image` |
+| `ci/` | Workflow and CI script changes | `ci/cache-actionlint-image` |
+| `chore/` | Pins, tooling, housekeeping | `chore/bump-tanstack-start` |
+| `refactor/` | Restructuring with no change in behavior | `refactor/split-collectors` |
+| `test/` | Adding or fixing tests only | `test/parser-edge-cases` |
+| `perf/` | Performance work | `perf/cache-catalog-lookup` |
+| `build/` | Build system and dependencies of the build | `build/pin-node-22` |
 
 - **The description** is two to five lowercase words joined by single hyphens, saying what changes. Use only `a-z`, `0-9` and `-`, and keep the whole name to 50 characters.
 - **An issue number** goes first in the description when there is one: `fix/42-aws-stale-events`.
-- **Refactors, tests, builds and performance work** use `chore/`, unless they fix a bug (`fix/`).
-- **The prefix is not the commit type.** The pull request title is still a [Conventional Commit](#commits), and it picks the [release](#releases): an `fb/` branch has a `feat:` title.
+- **Pick the prefix that fits most of the change.** Work that fixes a bug is `fix/`, whatever it touches. The prefixes follow the Conventional Commit types, except that `feature/` is the branch for `feat:`; `feat/`, `style/`, `revert/` and the former `fb/` are not accepted.
+- **The prefix is not the commit type.** The pull request title is still a [Conventional Commit](#commits), and it picks the [release](#releases): a `feature/` branch has a `feat:` title.
 - **Tooling names its own branches.** Dependabot opens `dependabot/…`, and [`scripts/release/bump.sh`](scripts/release/bump.sh) opens `release/vX.Y.Z`. Don't create either by hand.
 
 The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request whose branch breaks these rules. It also checks where the pull request goes: `main` takes only `stage` (and the `release/vX.Y.Z` branch that [`scripts/release/bump.sh`](scripts/release/bump.sh) opens), `stage` takes only `dev` (and `chore/sync-main`, see [Releases](#releases)), and `dev` takes everything else. While `dev` is paused, `stage` also takes everything else, a fork's feature branch included, and `main` still takes only `stage` and `release/vX.Y.Z`. `dev` and `stage` are accepted as head branches for those two promotions only, and never from a fork; `main` is never a head branch. A Dependabot security update opens against `main`, the default branch: change its base to `dev` (to `stage` while `dev` is paused). Check a name before pushing, with the base branch as a second argument for the full check:
@@ -76,7 +80,9 @@ The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request w
 
 | Not | Instead | Why |
 | --- | --- | --- |
-| `feature/Board_Metrics` | `fb/board-metrics` | One prefix per kind of change, lowercase, hyphens only |
+| `feature/Board_Metrics` | `feature/board-metrics` | Lowercase, hyphens only |
+| `fb/board-metrics` | `feature/board-metrics` | The prefix is spelled out; `fb/` is no longer accepted |
+| `feat/board-metrics` | `feature/board-metrics` | `feat` is the commit type; the branch prefix is `feature/` |
 | `fix-aws` | `fix/aws-stale-events` | The slash lets Git clients group branches, and the description says what is fixed |
 | `username/readme` | `docs/readme-integrations` | Say what changes, not who changes it; the commit author already records who |
 | `wip-2026-09-25` | `chore/pin-node-22` | A date says nothing about the change |

@@ -406,6 +406,24 @@ scripts/release/       version bump and changelog for a release
 docs/                  commit and README conventions
 ```
 
+### Branch names
+
+Name a branch `<prefix>/<short-kebab-description>`, for example `feature/board-metrics-stars-shortcuts`. The prefix is one of:
+
+| Prefix | Use for |
+| --- | --- |
+| `feature/` | New capability |
+| `fix/` | Bug fix |
+| `docs/` | Documentation only |
+| `ci/` | Workflow and CI script changes |
+| `chore/` | Pins, tooling, housekeeping |
+| `refactor/` | Restructuring with no change in behavior |
+| `test/` | Adding or fixing tests only |
+| `perf/` | Performance work |
+| `build/` | Build system and its dependencies |
+
+CI checks the name. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the rules (lowercase words joined by single hyphens, 50 characters at most) and where each branch may open a pull request.
+
 ### Quality gates
 
 Every pull request runs the same checks, and `CI OK` sums them up in one required check:
