@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
+import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, serveBoard } from "./fixture-board";
 
@@ -222,11 +223,7 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
   expect(blocking).toEqual([]);
 });
 
-test("starts the tab order with a skip link that moves focus to the services", async ({
-  page,
-  isMobile,
-  browserName,
-}) => {
+test("starts the tab order with a skip link that moves focus to the services", async ({ page, isMobile, browserName }) => {
   test.skip(isMobile, "no Tab key on a touch device");
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -2042,21 +2039,62 @@ test("keeps one Recent changes region, in place, through an empty search", async
   expect(await recent.evaluate((node) => (node as HTMLElement & { __kept?: boolean }).__kept)).toBe(true);
 });
 
+/**
+ * The saved checks of a returning visitor, as local storage holds them: eight
+ * checks from the last sixteen minutes. They are as long as real ones get on
+ * a phone, where each caption wraps to several lines: changes to several
+ * services at once, summaries a sentence long, and a run of quiet checks that
+ * is one row. The load adds a ninth in place of the oldest.
+ */
+function savedChecks(): { key: string; store: string } {
+  const slot = Math.floor(Date.now() / 120_000) * 120_000;
+  const counts = { operational: 10, degraded: 3, outage: 1, maintenance: 0, unknown: 0 };
+  const aws = "Increased error rates and latency for API requests in US-EAST-1 affecting several services";
+  const routerOs = "Elevated connection failures for some users; engineers are investigating a network issue";
+  const change = (id: string, name: string, to: string, summary: string, from = "operational") => ({
+    id,
+    name,
+    from,
+    to,
+    summary,
+  });
+  const checks = [
+    [
+      change("gcp", "Google Cloud", "degraded", "Degraded performance"),
+      change("aws", "Amazon Web Services", "outage", aws),
+      change("android", "Android / Play", "degraded", routerOs),
+    ],
+    [change("aws", "Amazon Web Services", "degraded", aws)],
+    [change("mikrotik", "MikroTik RouterOS", "outage", routerOs)],
+    [
+      change("gcp", "Google Cloud", "operational", "", "degraded"),
+      change("aws", "Amazon Web Services", "operational", "", "outage"),
+      change("cs2-europe", "CS2 Europe", "maintenance", "Planned maintenance"),
+      change("epic", "Epic Games", "degraded", "Slow logins"),
+      change("apple", "Apple", "degraded", "Some services are slow"),
+    ],
+    [],
+    [],
+    [change("android", "Android / Play", "outage", aws)],
+    [change("chatgpt", "ChatGPT", "degraded", aws), change("mikrotik", "MikroTik RouterOS", "degraded", routerOs)],
+  ];
+  const pulses = checks.map((changes, index) => ({
+    slot: slot - (index + 1) * 120_000,
+    at: new Date(slot - (index + 1) * 120_000).toISOString(),
+    overall: "degraded",
+    counts,
+    changes,
+    opening: false,
+  }));
+  return { key: PULSE_STORAGE_KEY, store: JSON.stringify({ lastSlot: slot - 120_000, lastBoard: null, pulses }) };
+}
+
+const feedSurface = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] .surface');
+
 test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
-  await page.addInitScript(() => {
-    // Eight saved checks, each with a change, as a returning visitor has.
-    const slot = Math.floor(Date.now() / 120_000) * 120_000;
-    const counts = { operational: 13, degraded: 1, outage: 0, maintenance: 0, unknown: 0 };
-    const pulses = Array.from({ length: 8 }, (_, index) => ({
-      slot: slot - (index + 1) * 120_000,
-      at: new Date(slot - (index + 1) * 120_000).toISOString(),
-      overall: "degraded",
-      counts,
-      changes: [{ id: "gcp", name: "Google Cloud", from: "operational", to: "degraded", summary: "Slow" }],
-      opening: false,
-    }));
-    localStorage.setItem("status-bar:pulses:v2", JSON.stringify({ lastSlot: slot - 120_000, lastBoard: null, pulses }));
+  await page.addInitScript((saved) => {
+    localStorage.setItem(saved.key, saved.store);
     const tracked = window as Window & { __cls?: number };
     tracked.__cls = 0;
     new PerformanceObserver((list) => {
@@ -2064,18 +2102,64 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
         if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
       }
     }).observe({ type: "layout-shift", buffered: true });
-  });
+  }, savedChecks());
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  // The saved checks plus the one made on load: eight rows are drawn.
-  await expect(page.locator('section[aria-labelledby="recent-heading"] li')).toHaveCount(8);
+  // The load's own check, then the saved ones with the quiet run as one row.
+  await expect(page.locator('section[aria-labelledby="recent-heading"] li')).toHaveCount(7);
   await page.evaluate(
     () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
   );
   await page.waitForTimeout(500);
   const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
   expect(shift, "cumulative layout shift").toBeLessThan(0.02);
+});
+
+test("holds the height of Recent changes for the saved checks, on a phone and on a desktop", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "the estimate of the text's width is tuned to Chromium's rendering");
+  await page.addInitScript((saved) => localStorage.setItem(saved.key, saved.store), savedChecks());
+  const surface = feedSurface(page);
+  const items = page.locator('section[aria-labelledby="recent-heading"] li');
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    // Hold the page's scripts back, so the server's markup (the feed empty)
+    // is what paints, and let them go to read the feed once it is drawn.
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/*", async (route) => {
+      if (route.request().resourceType() === "script") await gate;
+      await route.continue();
+    });
+    await page.goto("/", { waitUntil: "commit" });
+    await expect(surface).toBeVisible();
+    // Styled by now: the surface has its border.
+    await page.waitForFunction(() => {
+      const node = document.querySelector('section[aria-labelledby="recent-heading"] .surface');
+      return node !== null && Number.parseFloat(getComputedStyle(node).borderTopWidth) > 0;
+    });
+    await expect(items).toHaveCount(0);
+    const before = (await surface.boundingBox())?.height ?? 0;
+    release();
+    await hydrated(page);
+    // The load's own check, then the saved ones with the quiet run as one row.
+    await expect(items).toHaveCount(7);
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    const after = (await surface.boundingBox())?.height ?? 0;
+    const rows = await items.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height));
+    const row = Math.min(...rows);
+    // What the board below moves by: less than a row, growing or shrinking.
+    expect(before, `${width}px: reserved ${before}px, drawn ${after}px`).toBeGreaterThan(row);
+    expect(Math.abs(before - after), `${width}px: reserved ${before}px, drawn ${after}px`).toBeLessThan(row);
+    await page.unroute("**/*");
+  }
 });
 
 test("drops the Operational placeholder from release cards and names a fresh release", async ({ page }) => {
