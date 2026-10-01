@@ -954,6 +954,215 @@ test("keeps the bar up while the page hovers just above where it appears", async
   await expect(bar).toHaveAttribute("data-shown", "true");
 });
 
+/**
+ * What the dock shows at each of `positions`, with window.scrollY reporting that position whether or not the page
+ * can rest there: a stand-in for iOS's rubber band, which reports a negative scrollY above the top and more than
+ * the page's end below it, and which no desktop browser produces. Each position is a scroll event and two frames
+ * (the dock's own write is coalesced into a frame of its own). The real property is put back afterwards.
+ */
+async function overscroll(
+  page: Page,
+  positions: number[],
+): Promise<{ y: number; dock: number; shown: string | null; fieldTop: number }[]> {
+  return page.evaluate(async (ys) => {
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const original = Object.getOwnPropertyDescriptor(window, "scrollY");
+    const dock = document.querySelector<HTMLElement>(".search-dock");
+    const field = document.querySelector<HTMLElement>(".search-field");
+    const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+    const seen: { y: number; dock: number; shown: string | null; fieldTop: number }[] = [];
+    try {
+      for (const y of ys) {
+        Object.defineProperty(window, "scrollY", { configurable: true, get: () => y });
+        window.dispatchEvent(new Event("scroll"));
+        await frame();
+        await frame();
+        seen.push({
+          y,
+          dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          shown: bar?.getAttribute("data-shown") ?? null,
+          fieldTop: field?.getBoundingClientRect().top ?? 0,
+        });
+      }
+    } finally {
+      if (original) Object.defineProperty(window, "scrollY", original);
+      else Reflect.deleteProperty(window, "scrollY");
+    }
+    return seen;
+  }, positions);
+}
+
+test("keeps the dock still through a rubber band above the top of the page", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+  const [at] = await overscroll(page, [0]);
+  const seen = await overscroll(page, [-4, -90, -1, -320, 0, -40, -2000, 0]);
+  // The field does not move on its own account, and the bar never comes up for a position above the page.
+  for (const stop of seen) {
+    expect(stop.dock, `at ${stop.y}`).toBe(0);
+    expect(stop.shown, `at ${stop.y}`).toBe("false");
+    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(at.fieldTop, 0);
+  }
+});
+
+test("keeps the dock docked through a rubber band below the end of the page", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const limit = await maxScroll(page);
+  await scrollAndSettle(page, limit);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect(await dockValue(page)).toBe(1);
+  const [at] = await overscroll(page, [limit]);
+  const seen = await overscroll(page, [limit + 6, limit + 120, limit + 2, limit + 600, limit, limit + 60]);
+  for (const stop of seen) {
+    expect(stop.dock, `at ${stop.y}`).toBe(1);
+    expect(stop.shown, `at ${stop.y}`).toBe("true");
+    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(at.fieldTop, 0);
+  }
+});
+
+test("does not move the dock when only the viewport's height changes, as iOS's toolbar does", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { moveStart, moveEnd } = await dockOffsets(page);
+  const frames = (count: number) =>
+    page.evaluate(
+      (n) =>
+        new Promise<void>((resolve) => {
+          const next = (left: number) => (left === 0 ? resolve() : requestAnimationFrame(() => next(left - 1)));
+          next(n);
+        }),
+      count,
+    );
+  const look = () =>
+    page.evaluate(() => {
+      const dock = document.querySelector<HTMLElement>(".search-dock");
+      const field = document.querySelector<HTMLElement>(".search-field");
+      const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+      const box = field?.getBoundingClientRect();
+      return {
+        scrollY: window.scrollY,
+        dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+        shown: bar?.getAttribute("data-shown") ?? null,
+        box: box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null,
+      };
+    });
+  // Count how often the dock measures the page: it reads the body's rect each time it does.
+  await page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>(".board-body") as HTMLElement & { measured?: number };
+    host.measured = 0;
+    const read = host.getBoundingClientRect.bind(host);
+    host.getBoundingClientRect = () => {
+      host.measured = (host.measured ?? 0) + 1;
+      return read();
+    };
+  });
+  const measured = () => page.evaluate(() => (document.querySelector(".board-body") as { measured?: number }).measured);
+  const size = page.viewportSize();
+  if (!size) throw new Error("no viewport");
+
+  // Part way through the merge, where the dock is most sensitive to being measured again.
+  const mid = Math.round((moveStart + moveEnd) / 2);
+  await scrollAndSettle(page, mid);
+  const before = await look();
+  expect(before.dock).toBeGreaterThan(0);
+  expect(before.dock).toBeLessThan(1);
+  const measuredBefore = await measured();
+
+  // The toolbar collapses (the page gets taller by about 80px), comes back, and does it again.
+  for (const height of [size.height + 80, size.height, size.height + 80, size.height]) {
+    await page.setViewportSize({ width: size.width, height });
+    await frames(3);
+    const after = await look();
+    expect(after.scrollY, `height ${height}`).toBeCloseTo(before.scrollY, 0);
+    expect(after.dock, `height ${height}`).toBe(before.dock);
+    expect(after.shown, `height ${height}`).toBe(before.shown);
+    expect(after.box?.y, `height ${height}`).toBeCloseTo(before.box?.y ?? 0, 0);
+    expect(after.box?.x, `height ${height}`).toBeCloseTo(before.box?.x ?? 0, 0);
+    expect(after.box?.width, `height ${height}`).toBeCloseTo(before.box?.width ?? 0, 0);
+    expect(after.box?.height, `height ${height}`).toBeCloseTo(before.box?.height ?? 0, 0);
+  }
+  expect(await measured(), "a change of height alone measures the page again").toBe(measuredBefore);
+
+  // A change of width does (a rotation), so the guard is not just deaf to resizes.
+  await page.setViewportSize({ width: size.width - 20, height: size.height });
+  await frames(3);
+  expect(await measured(), "a change of width does not measure the page again").toBeGreaterThan(measuredBefore ?? 0);
+});
+
+test("moves the field steadily through a fast scroll, down and back up", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await lightenPaint(page);
+  const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
+  const limit = await maxScroll(page);
+  const from = Math.max(0, Math.round(Math.min(barStart, moveStart) - 80));
+  const to = Math.min(limit, Math.round(moveEnd + 80));
+  // One frame a stop and a long stride: a flick, not the sweeps' careful steps.
+  const run = (ys: number[]) =>
+    page.evaluate(async (stops) => {
+      const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const dock = document.querySelector<HTMLElement>(".search-dock");
+      const field = document.querySelector<HTMLElement>(".search-field");
+      const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+      const seen: { scrollY: number; fieldTop: number; dock: number; shown: string | null }[] = [];
+      for (const y of stops) {
+        window.scrollTo(0, y);
+        await frame();
+        seen.push({
+          scrollY: window.scrollY,
+          fieldTop: field?.getBoundingClientRect().top ?? 0,
+          dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          shown: bar?.getAttribute("data-shown") ?? null,
+        });
+      }
+      return seen;
+    }, ys);
+  const down: number[] = [];
+  for (let y = from; y <= to; y += 11) down.push(y);
+  const downward = await run(down);
+  const upward = await run([...down].reverse());
+  // Let the last frame's write land before the next scroll.
+  await scrollAndSettle(page, 0);
+
+  const flips = (stops: { shown: string | null }[]) => stops.filter((s, i) => i > 0 && s.shown !== stops[i - 1].shown);
+  // Down: the page goes only one way, so the field only rises (it stops at its pin), --dock only grows and
+  // the bar comes up once. Up is the same run backwards. Not one stop goes back and forth.
+  for (const [index, stop] of downward.entries()) {
+    expect(stop.scrollY, `down, stop ${index}`).toBeGreaterThanOrEqual(downward[Math.max(0, index - 1)].scrollY);
+    if (index === 0) continue;
+    const previous = downward[index - 1];
+    expect(stop.fieldTop, `down, at ${stop.scrollY}`).toBeLessThanOrEqual(previous.fieldTop + 0.5);
+    expect(stop.dock, `down, at ${stop.scrollY}`).toBeGreaterThanOrEqual(previous.dock);
+  }
+  for (const [index, stop] of upward.entries()) {
+    if (index === 0) continue;
+    const previous = upward[index - 1];
+    expect(stop.scrollY, `up, stop ${index}`).toBeLessThanOrEqual(previous.scrollY);
+    expect(stop.fieldTop, `up, at ${stop.scrollY}`).toBeGreaterThanOrEqual(previous.fieldTop - 0.5);
+    expect(stop.dock, `up, at ${stop.scrollY}`).toBeLessThanOrEqual(previous.dock);
+  }
+  expect(flips(downward).length, "the bar came up more than once on the way down").toBeLessThanOrEqual(1);
+  expect(flips(upward).length, "the bar went more than once on the way up").toBeLessThanOrEqual(1);
+  // Above its pin the field is the page's own: it is where the page puts it, at every stop, not a frame behind.
+  const pin = await page.evaluate(() =>
+    Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
+  );
+  for (const stop of [...downward, ...upward].filter((stop) => natural - stop.scrollY > pin + 1)) {
+    expect(stop.fieldTop, `at ${stop.scrollY}`).toBeCloseTo(natural - stop.scrollY, 0);
+  }
+  expect(downward.at(-1)?.dock).toBe(1);
+  expect(upward.at(-1)?.dock).toBe(0);
+});
+
 test("changes the search placeholder only where the field is at rest", async ({ page }) => {
   test.slow();
   await page.goto("/");

@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   BAR_RISE,
+  clampScroll,
   createDockStore,
   DOCK_REST,
   type DockGeometry,
   dockFrame,
   dockGeometry,
   PHONE_GAP,
+  resizeMovesDock,
   WIDE_BAR_AT,
   WIDE_RANGE,
 } from "./dock";
@@ -295,5 +297,121 @@ describe("dockFrame", () => {
       '{"barShown":false,"docked":true}',
       '{"barShown":false,"docked":false}',
     ]);
+  });
+});
+
+describe("clampScroll", () => {
+  it("holds a position the page can rest at", () => {
+    expect(clampScroll(0, 2000)).toBe(0);
+    expect(clampScroll(640.5, 2000)).toBe(640.5);
+    expect(clampScroll(2000, 2000)).toBe(2000);
+  });
+
+  it("brings the rubber band's overshoot back to the two ends", () => {
+    expect(clampScroll(-84, 2000)).toBe(0);
+    expect(clampScroll(2096, 2000)).toBe(2000);
+  });
+
+  it("never lets a page that cannot scroll go below 0", () => {
+    expect(clampScroll(40, 0)).toBe(0);
+    expect(clampScroll(40, -12)).toBe(0);
+  });
+});
+
+describe("resizeMovesDock", () => {
+  it("ignores a resize that changes only the height, as the iOS toolbar does", () => {
+    // 430 wide throughout; the viewport's height going from 740 to 820 is not a change of width.
+    expect(resizeMovesDock(430, 430)).toBe(false);
+  });
+
+  it("follows a change of width, a rotation or a window resize", () => {
+    expect(resizeMovesDock(430, 932)).toBe(true);
+    expect(resizeMovesDock(1280, 1279)).toBe(true);
+  });
+});
+
+describe("dockFrame, on an iPhone", () => {
+  const geometry: DockGeometry = { start: 400, range: 48, barStart: 420, hysteresis: 8 };
+  const rest = { barShown: false, docked: false };
+  const docked = { barShown: true, docked: true };
+
+  it("reads a rubber band above the top as the top, whatever the state before", () => {
+    for (const prev of [rest, docked]) {
+      const frame = dockFrame(-300, geometry, false, prev, 2000);
+      expect(frame.p).toBe(0);
+      expect(frame.barShown).toBe(false);
+    }
+  });
+
+  it("reads a rubber band below the bottom as the bottom: docked, bar up, and nothing flips", () => {
+    expect(dockFrame(2000, geometry, false, docked, 2000)).toEqual({ p: 1, barShown: true, docked: true });
+    expect(dockFrame(2090, geometry, false, docked, 2000)).toEqual({ p: 1, barShown: true, docked: true });
+  });
+
+  it("is the same wherever the bounce goes, down to the pixel it started from", () => {
+    const store = createDockStore();
+    const seen: string[] = [];
+    store.subscribe(() => seen.push(JSON.stringify(store.get())));
+    // A fling down to the bottom, the bounce back past it, and the settle.
+    for (const y of [300, 460, 1200, 2000, 2060, 2110, 2060, 2000, 1990]) {
+      const next = dockFrame(y, geometry, false, store.get(), 2000);
+      store.set({ barShown: next.barShown, docked: next.docked });
+    }
+    expect(seen).toEqual(['{"barShown":true,"docked":true}']);
+  });
+
+  it("does not flip the bar while a bounce at the top swings across 0", () => {
+    const store = createDockStore();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    for (const y of [0, -60, -4, -90, 0, -30, 0]) {
+      const next = dockFrame(y, geometry, false, store.get(), 2000);
+      store.set({ barShown: next.barShown, docked: next.docked });
+    }
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("does not flicker the bar when a finger rests within a pixel of where it comes up", () => {
+    const store = createDockStore();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    for (const y of [419.4, 420, 419.6, 420.2, 419, 420.4, 415, 420, 412]) {
+      const next = dockFrame(y, geometry, false, store.get());
+      store.set({ barShown: next.barShown, docked: next.docked });
+    }
+    // Up once at 420 and held through the hysteresis: 412 is as low as it goes.
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("dockFrame, under Reduce Motion", () => {
+  const phone: DockGeometry = { start: 400, range: 48, barStart: 420, hysteresis: 8 };
+  const wide: DockGeometry = { start: 952, range: 48, barStart: 1000, hysteresis: 0 };
+
+  it("holds the snap through the hysteresis on a phone, so a finger at the end cannot flip the field", () => {
+    const store = createDockStore();
+    const listener = vi.fn();
+    store.subscribe(listener);
+    for (const y of [447, 448, 447.5, 448.4, 446, 449, 444, 448, 441]) {
+      const next = dockFrame(y, phone, true, store.get());
+      store.set({ barShown: next.barShown, docked: next.docked });
+    }
+    // Docked once at 448 and held down to 440; the settle at 441 is still docked.
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(store.get()).toEqual({ barShown: true, docked: true });
+  });
+
+  it("undocks on a phone once the page is the hysteresis above the end", () => {
+    const prev = { barShown: true, docked: true };
+    expect(dockFrame(440, phone, true, prev).docked).toBe(true);
+    expect(dockFrame(439.9, phone, true, prev).docked).toBe(false);
+    expect(dockFrame(448, phone, true, { barShown: true, docked: false }).docked).toBe(true);
+    expect(dockFrame(447.9, phone, true, { barShown: true, docked: false }).docked).toBe(false);
+  });
+
+  it("keeps the wide snap exact: the bar must not stay up over a field that has left it", () => {
+    const prev = { barShown: true, docked: true };
+    expect(dockFrame(1000, wide, true, prev)).toEqual({ p: 1, barShown: true, docked: true });
+    expect(dockFrame(999.9, wide, true, prev)).toEqual({ p: 0, barShown: false, docked: false });
   });
 });
