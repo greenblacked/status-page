@@ -6,7 +6,7 @@ import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
 
-const SERVICES = 15;
+const SERVICES = 16;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 /** The services of one board group: "attention", "unread" (Couldn't read), "up" (every category's list) or "releases". */
 const group = (page: Page, id: "attention" | "unread" | "up" | "releases") =>
@@ -2690,7 +2690,7 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   // Needs a look first, then what could not be read, then one list per category (Cloud is all down here), then Releases.
   await expect(
     page.locator('#attention-heading, #unread-heading, [id^="up-"][id$="-heading"], #releases-heading'),
-  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*3/]);
+  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*4/]);
 
   // Issues only leaves the three that need a look, the highlight among them: the unreadable
   // source in the fixture is not an issue, only a source that could not be read.
@@ -3877,7 +3877,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
   await expect(sub).toContainText(
-    "AWS is down. GCP is degraded. Epic is in maintenance. The other eleven are running normally.",
+    "AWS is down. GCP is degraded. Epic is in maintenance. The other twelve are running normally.",
   );
   await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
@@ -3888,7 +3888,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   await expect(page.locator("#service-aws svg.pen-loop")).toHaveCount(1);
 });
 
-test("writes all quiet by hand, and says so in words, when all fifteen are up", async ({ page }) => {
+test("writes all quiet by hand, and says so in words, when all sixteen are up", async ({ page }) => {
   await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Everything is up.");
   await expect(page.locator("h1 svg.pen-underline")).toHaveCount(0);
@@ -3896,7 +3896,7 @@ test("writes all quiet by hand, and says so in words, when all fifteen are up", 
   await expect(note).toBeVisible();
   await expect(note).toHaveAttribute("aria-hidden", "true");
   expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
-  await expect(page.getByText("All fifteen services are running normally.")).toHaveClass(/sr-only/);
+  await expect(page.getByText("All sixteen services are running normally.")).toHaveClass(/sr-only/);
   // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
   await expect(page).toHaveTitle("Status");
   await expect(group(page, "attention")).toHaveCount(0);

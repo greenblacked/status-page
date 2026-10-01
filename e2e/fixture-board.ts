@@ -166,7 +166,7 @@ export function fixtureBoard(now: number, { grok = "operational" }: { grok?: Hea
   return { generatedAt: new Date(now).toISOString(), durationMs: 480, services, counts };
 }
 
-/** The same fifteen services with nothing wrong anywhere: every one operational, no incident, no failure. */
+/** The same sixteen services with nothing wrong anywhere: every one operational, no incident, no failure. */
 export function calmBoard(now: number): BoardSnapshot {
   const board = fixtureBoard(now);
   const services = board.services.map((service) => ({
@@ -221,14 +221,14 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
 /**
  * The longest hero the page can have: eleven services need a look, in all three states, so the headline is
  * "Four are down, four are degraded and three are in maintenance." and the line under it names three of each
- * ("and 1 more" after the first two), says the other two are running normally, and that two could not be read
+ * ("and 1 more" after the first two), says the other three are running normally, and that two could not be read
  * (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
  * sits under them.
  */
 export function longHeroBoard(now: number): BoardSnapshot {
   const board = fixtureBoard(now);
   const unread = new Set<ServiceId>(["android", "grok"]);
-  const calm = new Set<ServiceId>(["apple-os", "windows"]);
+  const calm = new Set<ServiceId>(["apple-os", "windows", "android-os"]);
   const states: Health[] = ["outage", "degraded", "maintenance"];
   let next = 0;
   const services = board.services.map((service): ServiceSnapshot => {

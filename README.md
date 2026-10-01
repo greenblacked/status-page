@@ -43,7 +43,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 | | |
 | --- | --- |
-| **One board, five states** | Fifteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
+| **One board, five states** | Sixteen services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
 | **At home on Apple devices** | Warm paper in light and true black in dark as your system is set, opaque panels with a hairline, the system typeface on Apple devices, and colour kept to small exact points. Pick **Glass** or **Full** in Settings for frosted panels over a still glow, or the slow drift, glass lenses over the glow, a light that wanders across the cards and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
@@ -54,7 +54,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 🟢 Operational · 🔧 Maintenance · 🟡 Degraded · 🔴 Outage · ❔ No data
 
-Fifteen services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
+Sixteen services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
 
 | Group | Service | Official source |
 | --- | --- | --- |
@@ -73,6 +73,7 @@ Fifteen services, each read from one official source. This table is the contract
 | Releases | MikroTik RouterOS | [MikroTik changelogs](https://mikrotik.com/download/changelogs) |
 | Releases | Apple OS | [Apple Developer Releases](https://developer.apple.com/news/releases/) |
 | Releases | Windows 11 | [Windows release health](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) (the table of versions, read as HTML: Microsoft publishes no feed for it) |
+| Releases | Android releases | [Android Developers releases](https://developer.android.com/about/versions) (the releases page, read as HTML: Google publishes no feed for it) |
 
 Missing a service? [Request it](https://github.com/greenblacked/status-page/issues/new?template=new-service.yml). It needs an official, machine-readable source.
 
@@ -88,9 +89,9 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 | 🔴 Outage | Major or critical impact |
 | ❔ No data | The source timed out, returned an error, or sent data Status Page could not read. Says nothing about whether the vendor is up. The API and the badges still call it `unknown` |
 
-The headline at the top of the page is one sentence about the board: **Everything is up.** when all fifteen are Operational, what is wrong when an outage, a degradation or maintenance is under way ("Two services are down.", "One service is degraded.", or "One is down, one is degraded." when the states differ; each service named by state and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
+The headline at the top of the page is one sentence about the board: **Everything is up.** when all sixteen are Operational, what is wrong when an outage, a degradation or maintenance is under way ("Two services are down.", "One service is degraded.", or "One is down, one is degraded." when the states differ; each service named by state and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
 
-The three Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
+The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days (the Android page gives no dates, so that card never carries the tag; see below). A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
 <details>
 <summary><strong>The rule behind every card</strong></summary>
@@ -111,7 +112,8 @@ The three Releases services track releases, not incidents. Their rows carry no s
 | Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days. Components: the status page's `v2/components.json` is attempted, but it may not exist or may be blocked (its JSON sits behind Cloudflare's challenge), and a list whose statuses are all unreadable is ignored, so the card falls back to the services that active items' titles lead with (`[API] Elevated error rates`, `[Grok (iOS)] Models outage`); they add detail and never change the card's health, so a component row from the vendor's list can read worse than the card's badge, which follows the feed |
 | MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus the newest version's `CHANGELOG` |
 | Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS |
-| Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. A page without that table reads Unknown. This is the one source read as HTML, an exception recorded in `CONTRIBUTING.md` |
+| Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. A page without that table reads Unknown. This is one of two sources read as HTML, an exception recorded in `CONTRIBUTING.md` |
+| Android releases | The releases page on developer.android.com: the four newest Android versions it links as "Android 17", "Android 16" and so on, newest first, read from the site menu and the footer. A new major version (Android 18) appears as a new link with no code change, and the oldest drops off. The page gives no release dates, so the card never carries **New release**. A browser that already had the board sees a version joining the list in **Recent changes** as "Android 18 released" and, with alerts on, gets an alert; a first-time visitor sees only the list. The page links a version as "Android 18" once it has shipped (a beta is linked as "Android Beta"), which is an assumption about Google's markup. The quarterly platform releases (QPRs) are not listed: the page links only betas for them, so none is read as a release. A page with no such links reads Unknown. This is the second source read as HTML, an exception recorded in `CONTRIBUTING.md` |
 
 </details>
 
@@ -119,7 +121,7 @@ The three Releases services track releases, not incidents. Their rows carry no s
 
 ```mermaid
 flowchart TB
-  vendors["15 official vendor sources"]
+  vendors["16 official vendor sources"]
   node["Node request and in-memory cache"]
   worker["Worker request and per-isolate cache"]
   browser["Browser refreshes every two minutes"]
@@ -143,7 +145,7 @@ npm ci
 npm run dev
 ```
 
-Open the local URL that Vite prints. The first load reads all fifteen sources, which can take a few seconds.
+Open the local URL that Vite prints. The first load reads all sixteen sources, which can take a few seconds.
 
 No Node on the machine? Docker is enough: `docker compose up preview` builds the board and serves it on http://127.0.0.1:4173.
 
@@ -225,7 +227,7 @@ Use a service id, or `board` for the whole board:
 ![Status Page](https://img.shields.io/endpoint?url=https://<your-host>/api/badge/board)
 ```
 
-Service ids: `gcp`, `aws`, `steam`, `cs2-europe`, `epic`, `fortnite`, `spotify`, `apple`, `android`, `grok`, `chatgpt`, `claude`, `mikrotik`, `apple-os`, `windows`. An unknown id returns a grey "unknown service" badge instead of an error. Shields.io fetches the badge from your host, so badges need a public deployment.
+Service ids: `gcp`, `aws`, `steam`, `cs2-europe`, `epic`, `fortnite`, `spotify`, `apple`, `android`, `grok`, `chatgpt`, `claude`, `mikrotik`, `apple-os`, `windows`, `android-os`. An unknown id returns a grey "unknown service" badge instead of an error. Shields.io fetches the badge from your host, so badges need a public deployment.
 
 </details>
 
@@ -314,20 +316,6 @@ The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search en
 `dev` is paused for now: pull requests go into `stage` (squash-merged) instead, and `stage` → `main` is unchanged. [CONTRIBUTING.md](CONTRIBUTING.md#branches) says how `dev` comes back.
 
 Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request, and the rulesets require `CI OK` to pass. The owner and the release workflow can bypass them. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
-
-#### Deployment status
-
-Tick these off as each step is done:
-
-- [ ] `CLOUDFLARE_ACCOUNT_ID` (variable or secret) and `CLOUDFLARE_API_TOKEN` (secret) set on the `staging` and `production` environments
-- [ ] `staging` admits only `stage`, `production` only `main`
-- [x] Cloudflare Workers Builds disconnected
-- [ ] Branch protection (rulesets) on `dev`, `stage` and `main`
-- [ ] First preview from `stage` created
-- [ ] First production deploy from `main` live at [status.szolotov.com](https://status.szolotov.com), which publishes `previews_enabled`
-- [ ] [stage.status.szolotov.com](https://stage.status.szolotov.com) answers (wildcard certificate issued)
-- [ ] `DEPLOY_URL` set on both environments, so smoke tests and the production rollback run
-- [ ] Old `status-page-staging` Worker and `stage.status.szolotov.dev` removed, if present
 
 ## FAQ
 
@@ -419,6 +407,24 @@ scripts/release/       version bump and changelog for a release
 .github/               workflows, the shared setup action, issue forms
 docs/                  commit and README conventions
 ```
+
+### Branch names
+
+Name a branch `<prefix>/<short-kebab-description>`, for example `feature/board-metrics-stars-shortcuts`. The prefix is one of:
+
+| Prefix | Use for |
+| --- | --- |
+| `feature/` | New capability |
+| `fix/` | Bug fix |
+| `docs/` | Documentation only |
+| `ci/` | Workflow and CI script changes |
+| `chore/` | Pins, tooling, housekeeping |
+| `refactor/` | Restructuring with no change in behavior |
+| `test/` | Adding or fixing tests only |
+| `perf/` | Performance work |
+| `build/` | Build system and its dependencies |
+
+CI checks the name. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the rules (lowercase letters and digits joined by single hyphens, 50 characters at most) and where each branch may open a pull request.
 
 ### Quality gates
 
