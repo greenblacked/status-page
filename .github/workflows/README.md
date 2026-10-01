@@ -1,8 +1,10 @@
 # Workflows
 
+`dev` is paused for now: feature pull requests go into `stage`, squash-merged, and `stage` still goes to `main` with a merge commit. Every workflow below that names `dev` works unchanged without the branch (`release.yml` skips a missing `dev` when it syncs). To bring `dev` back, recreate it from `stage` and set `DEV_PAUSED=false` in [`scripts/ci/branch.sh`](../../scripts/ci/branch.sh).
+
 | Workflow | Trigger | What it guards |
 | --- | --- | --- |
-| [`ci.yml`](ci.yml) | push to `main`, `stage` or `dev` (not the commits `release.yml` pushes, which start no workflow), PRs into any of them, a merge queue, manual | One job per concern: `lint` (Biome, hygiene, documentation links, changelog section, shellcheck), `typecheck`, `test` (with coverage thresholds) and `build` plus SSR smoke (`scripts/ci/smoke.sh`) on the Node version in `.nvmrc` and on Node 24, `browser tests` (Playwright and axe against that build), `browser tests (history build)` (builds with `VITE_STATUS_HISTORY=1` and runs the `@history`-tagged tests on Chromium), `commit messages`, `branch name` (the naming convention, and that `main` takes pull requests only from `stage` and `stage` only from `dev`), and `workflow lint` (actionlint and zizmor). `CI OK` passes only when all of them did and is the one check to require. Job summaries show coverage and client bundle sizes |
+| [`ci.yml`](ci.yml) | push to `main`, `stage` or `dev` (not the commits `release.yml` pushes, which start no workflow), PRs into any of them, a merge queue, manual | One job per concern: `lint` (Biome, hygiene, documentation links, changelog section, shellcheck), `typecheck`, `test` (with coverage thresholds) and `build` plus SSR smoke (`scripts/ci/smoke.sh`) on the Node version in `.nvmrc` and on Node 24, `browser tests (chromium)`, `browser tests (desktop-safari)`, `browser tests (iphone)` and `browser tests (ipad)` (Playwright and axe against that build, sharded so each finishes well inside its timeout: Chromium runs the `desktop` and `mobile` projects, WebKit one project per shard, and each shard installs only its own browser, with room in the timeout because WebKit's system libraries can be slow to fetch), `browser tests (history build)` (builds with `VITE_STATUS_HISTORY=1` and runs the `@history`-tagged tests on Chromium), `commit messages`, `branch name` (the naming convention, and that `main` takes pull requests only from `stage` and `stage` only from `dev`; while `dev` is paused, `stage` takes feature branches too: `DEV_PAUSED` at the top of `scripts/ci/branch.sh` is the switch), and `workflow lint` (actionlint and zizmor). `CI OK` passes only when all of them did and is the one check to require. Job summaries show coverage and client bundle sizes |
 | [`scorecard.yml`](scorecard.yml) | push to `main`, branch protection changes, weekly, manual | OpenSSF Scorecard: grades pinning, token permissions, branch protection, review and the rest of the supply chain, uploads findings to code scanning and publishes the score behind the README badge |
 | [`codeql.yml`](codeql.yml) | push to `main`, `stage` or `dev`, PRs into any of them, weekly, manual | Static security and quality analysis of the TypeScript sources and of the workflows themselves (CodeQL's `actions` language) |
 | [`dependency-review.yml`](dependency-review.yml) | PRs into `main`, `stage` or `dev` | Blocks high or critical vulnerabilities in dependency changes. Warns, and does not fail, when Dependency graph is off |
@@ -14,7 +16,7 @@
 | [`pr-title.yml`](pr-title.yml) | PRs into `main`, `stage` or `dev`, including title edits | The PR title is a Conventional Commit. A squash merge into `dev` makes it the commit that `release.yml` reads once it reaches `main` |
 | [`base-images.yml`](base-images.yml) | PRs that change `compose.yaml`, its script or the dependencies; weekly; manual | Runs `compose.yaml` against the real `ci-node22`, `ci-node24` and `ci-security` images, so a base-image change that breaks this repository shows up here first |
 
-Jobs that need Node use the shared [`../actions/setup`](../actions/setup/action.yml) action: Node from `.nvmrc` (or a given version), npm pinned to `packageManager`, `npm ci` and `npm audit signatures`. `deploy.yml` and `release.yml` install explicitly instead, so the workflows that publish can be read on their own, and the release gate never restores a shared cache.
+Jobs that need Node use the shared [`../actions/setup`](../actions/setup/action.yml) action: Node from `.nvmrc` (or a given version), npm pinned to `packageManager` (installed from the hash-locked `tools/npm` by `scripts/ci/npm-pin.sh`), `npm ci` and `npm audit signatures`. `deploy.yml` and `release.yml` install explicitly instead, so the workflows that publish can be read on their own, and the release gate never restores a shared cache.
 
 Every check in `ci.yml` has a local equivalent:
 
@@ -29,7 +31,7 @@ actionlint && uvx zizmor .github   # the workflow lint job: syntax, then a secur
 ./scripts/ci/verify-deploy.sh   # by hand after a deploy (no workflow runs it): headers, robots and TLS of the live hosts
 ./scripts/ci/commits.sh origin/dev..HEAD   # origin/stage..HEAD for a promotion
 ./scripts/ci/commits.sh --subject "feat: add a feed"   # a PR title, as pr-title.yml checks it
-./scripts/ci/branch.sh "$(git branch --show-current)" dev   # the branch name and its base, as CI checks them
+./scripts/ci/branch.sh "$(git branch --show-current)" stage   # the branch name and its base, as CI checks them (dev, once it is back)
 ./scripts/release/next.sh level "v$(node -p "require('./package.json').version")..origin/stage"   # the bump merging stage into main would release
 ./scripts/ci/release-notes.sh           # the CHANGELOG.md section release.yml would publish
 node --experimental-strip-types scripts/ci/source-health.ts   # live vendor check, exits 1 on any failure

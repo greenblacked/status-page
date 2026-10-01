@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-tests a running Status Page: the same checks for CI's Node preview,
+# Smoke-tests a running board: the same checks for CI's Node preview,
 # the Worker running locally in workerd, and a fresh Cloudflare deploy.
 #
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4173
@@ -29,8 +29,8 @@
 set -euo pipefail
 
 SERVICES=14
-TITLE='<title>Status Page</title>'
-FOOTER='Cached server snapshots update every two minutes from official vendor feeds.'
+TITLE='<title>Status</title>'
+FOOTER='Not affiliated with any of these vendors. I only read their public status pages.'
 usage() {
   echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
 }
@@ -132,7 +132,9 @@ run_checks() {
     fail "/: $status, expected 200"
   else
     grep -aqF "$TITLE" "$work/body" || fail "/: no $TITLE"
-    grep -aqF "$FOOTER" "$work/body" || fail "/: no footer line \"$FOOTER\""
+    # React's server renderer separates adjacent text nodes with <!-- -->; the
+    # sentence is still one sentence to a reader, so match it without them.
+    sed 's/<!-- -->//g' "$work/body" | grep -aqF "$FOOTER" || fail "/: no footer line \"$FOOTER\""
     [ -n "$(header Content-Security-Policy)" ] || fail "/: no Content-Security-Policy header"
     [ -n "$(header X-Frame-Options)" ] || fail "/: no X-Frame-Options header"
   fi

@@ -24,11 +24,12 @@ runs:
         node-version: ${{ inputs.node-version }}
         cache: npm
 
-    # npm is pinned to the exact version package.json names, not installed
-    # from a range, so this is as reproducible as the lockfile itself.
+    # npm is pinned to the exact version package.json names, installed from
+    # tools/npm's lockfile, which records the tarball's hash, so this is as
+    # reproducible as the root lockfile itself.
     - name: Pin npm
       shell: bash
-      run: npm install --global "npm@$(node -p "require('./package.json').packageManager.split('@')[1]")" # zizmor: ignore[adhoc-packages]
+      run: ./scripts/ci/npm-pin.sh install
 
     - name: Check the declared toolchain
       shell: bash

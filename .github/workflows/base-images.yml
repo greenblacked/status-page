@@ -10,6 +10,8 @@ on:
     paths:
       - compose.yaml
       - scripts/ci/container-checks.sh
+      - scripts/ci/npm-pin.sh
+      - tools/npm/**
       - package.json
       - package-lock.json
       - .github/workflows/base-images.yml

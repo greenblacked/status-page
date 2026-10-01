@@ -23,7 +23,7 @@ describe("publicStatus", () => {
       ]),
     );
     expect(status.overall).toBe("degraded");
-    expect(status.headline).toBe("Degraded: Google Cloud");
+    expect(status.headline).toBe("One thing needs a look.");
     expect(status.services[0]).toEqual({
       id: "gcp",
       name: "Google Cloud",
@@ -34,6 +34,19 @@ describe("publicStatus", () => {
       incidents: [{ title: "Elevated errors", health: "degraded", url: "https://x/1", startedAt: undefined }],
     });
     expect(JSON.stringify(status)).not.toMatch(/latencyMs|components|collector detail/);
+  });
+});
+
+describe("overall health across the public endpoints", () => {
+  const mixed = board([service("aws", { health: "unknown" }), gcp({ health: "degraded" })]);
+
+  it("reports the degradation, not the unreadable source, as overall and as the headline", () => {
+    expect(publicStatus(mixed).overall).toBe("degraded");
+    expect(publicStatus(mixed).headline).toBe("One thing needs a look.");
+  });
+
+  it("colours the board badge by the same overall health", () => {
+    expect(shieldsBadge(mixed, "board")).toMatchObject({ message: "one thing needs a look", color: "yellow" });
   });
 });
 
@@ -53,7 +66,7 @@ describe("shieldsBadge", () => {
   it("summarises the whole board under the id 'board'", () => {
     expect(shieldsBadge(snapshot, "board")).toMatchObject({
       label: "status",
-      message: "outage: google cloud",
+      message: "one thing needs a look",
       color: "red",
     });
     expect(shieldsBadge(board([service("aws", { health: "operational" })]), "board")).toMatchObject({
@@ -90,11 +103,143 @@ describe("atomFeed", () => {
     expect(xml).toContain("<updated>2026-09-24T23:00:00.000Z</updated>");
   });
 
-  it("gives an entry a new id when its message changes, so readers post it again", () => {
-    const id = (summary: string) =>
-      atomFeed(board([gcp({ health: "degraded", summary })]), "https://s").match(/<id>(urn:[^<]+)<\/id>/)?.[1];
-    expect(id("Investigating")).not.toBe(id("Mitigated"));
-    expect(id("Investigating")).toBe(id("Investigating"));
+  const ids = (xml: string) => [...xml.matchAll(/<entry>\s*<id>([^<]+)<\/id>/g)].map((match) => match[1]);
+
+  it("keeps an entry's id when its message changes, and changes it for a different incident", () => {
+    const feed = (summary: string, incidentId: string) =>
+      atomFeed(
+        board([gcp({ health: "degraded", summary, incidents: [{ id: incidentId, title: "t", health: "degraded" }] })]),
+        "https://s",
+      );
+    expect(ids(feed("Investigating", "inc-1"))).toEqual(["urn:status-bar:gcp:degraded:inc-1"]);
+    // A reworded summary is the same incident: same id, so no repost.
+    expect(ids(feed("Mitigated", "inc-1"))).toEqual(["urn:status-bar:gcp:degraded:inc-1"]);
+    // A new incident is a new entry.
+    expect(ids(feed("Investigating", "inc-2"))).toEqual(["urn:status-bar:gcp:degraded:inc-2"]);
+  });
+
+  it("gives the same incident a new id when the service escalates, so a feed reader posts it again", () => {
+    const feed = (health: "degraded" | "outage") =>
+      atomFeed(board([gcp({ health, incidents: [{ id: "inc-1", title: "t", health }] })]), "https://s");
+    const before = ids(feed("degraded"));
+    const after = ids(feed("outage"));
+    expect(before).toEqual(["urn:status-bar:gcp:degraded:inc-1"]);
+    expect(after).toEqual(["urn:status-bar:gcp:outage:inc-1"]);
+    expect(after).not.toEqual(before);
+  });
+
+  it("keys the entry on the worst incident, whatever order the incidents arrive in", () => {
+    const xml = atomFeed(
+      board([
+        gcp({
+          health: "outage",
+          incidents: [
+            { id: "note", title: "FYI", health: "operational", informational: true },
+            { id: "minor", title: "Minor", health: "degraded" },
+            { id: "major", title: "Major", health: "outage" },
+          ],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(ids(xml)).toEqual(["urn:status-bar:gcp:outage:major"]);
+  });
+
+  it("keys an entry with no incident on its health, and escapes an id with special characters", () => {
+    expect(ids(atomFeed(board([gcp({ health: "maintenance" })]), "https://s"))).toEqual([
+      "urn:status-bar:gcp:maintenance",
+    ]);
+    const arn = "arn:aws:health:us-east-1::event/EC2/X 1";
+    expect(
+      ids(
+        atomFeed(
+          board([gcp({ health: "degraded", incidents: [{ id: arn, title: "t", health: "degraded" }] })]),
+          "https://s",
+        ),
+      ),
+    ).toEqual(["urn:status-bar:gcp:degraded:arn%3Aaws%3Ahealth%3Aus-east-1%3A%3Aevent%2FEC2%2FX%201"]);
+  });
+
+  it("dates an entry by the latest real vendor time across its incidents, not the sweep time", () => {
+    const xml = atomFeed(
+      board([
+        gcp({
+          health: "degraded",
+          incidents: [
+            { id: "a", title: "a", health: "degraded", startedAt: "2026-09-24T08:00:00Z" },
+            {
+              id: "b",
+              title: "b",
+              health: "degraded",
+              startedAt: "2026-09-24T06:00:00Z",
+              updatedAt: "2026-09-24T09:30:00Z",
+            },
+          ],
+        }),
+        service("aws", {
+          health: "outage",
+          name: "AWS",
+          incidents: [{ id: "c", title: "c", health: "outage", startedAt: "2026-09-23T01:00:00Z" }],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(xml.match(/<updated>([^<]+)<\/updated>/g)).toEqual([
+      // the feed: the latest entry time
+      "<updated>2026-09-24T09:30:00.000Z</updated>",
+      "<updated>2026-09-24T09:30:00.000Z</updated>",
+      "<updated>2026-09-23T01:00:00.000Z</updated>",
+    ]);
+  });
+
+  it("titles the feed with the app name", () => {
+    const xml = atomFeed(board([gcp({ health: "degraded" })]), "https://s");
+    expect(xml).toContain("  <title>Status</title>");
+    expect(xml).toContain("<author><name>Status</name></author>");
+    expect(xml).toContain("  <subtitle>One thing needs a look.</subtitle>");
+    expect(atomFeed(board([gcp({ health: "operational" })]), "https://s")).toContain(
+      "  <subtitle>Everything is up.</subtitle>",
+    );
+  });
+
+  it("leaves unreadable services out: one failed sweep cannot be told from a blackout without history", () => {
+    const xml = atomFeed(
+      board([
+        gcp({ health: "unknown", summary: "Couldn't read their status page." }),
+        service("aws", { health: "degraded", name: "AWS" }),
+      ]),
+      "https://s",
+    );
+    expect(ids(xml)).toEqual(["urn:status-bar:aws:degraded"]);
+    expect(xml).not.toContain("Google Cloud");
+  });
+
+  it("links an entry to the worst incident page, and to the source when that is only a dashboard", () => {
+    const linked = atomFeed(
+      board([
+        gcp({
+          health: "outage",
+          incidents: [
+            { id: "minor", title: "Minor", health: "degraded", url: "https://x/minor" },
+            { id: "major", title: "Major", health: "outage", url: "https://x/major" },
+          ],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(linked).toContain('<link rel="alternate" href="https://x/major"/>');
+    const dashboard = atomFeed(
+      board([
+        gcp({
+          health: "outage",
+          sourceUrl: "https://health.example.com/status/",
+          incidents: [{ id: "a", title: "A", health: "outage", url: "https://health.example.com/status#x" }],
+        }),
+      ]),
+      "https://s",
+    );
+    expect(dashboard).toContain('<link rel="alternate" href="https://health.example.com/status/"/>');
+    expect(dashboard).not.toContain("status#x");
   });
 
   it("falls back to the board time when a vendor timestamp does not parse", () => {
@@ -104,6 +249,11 @@ describe("atomFeed", () => {
       ]),
       "https://s",
     );
+    expect(xml).toContain("<updated>2026-09-25T00:00:00.000Z</updated>");
+  });
+
+  it("dates an empty feed by the board time", () => {
+    const xml = atomFeed(board([service("aws", { health: "operational" })]), "https://s");
     expect(xml).toContain("<updated>2026-09-25T00:00:00.000Z</updated>");
   });
 

@@ -21,6 +21,17 @@ describe("diffBoards", () => {
     ]);
   });
 
+  it("does not let an unreadable source mask a confirmed degradation", () => {
+    assert.equal(
+      overallHealth(board([service("aws", { health: "unknown" }), service("gcp", { health: "degraded" })])),
+      "degraded",
+    );
+    assert.equal(
+      overallHealth(board([service("aws", { health: "unknown" }), service("gcp", { health: "maintenance" })])),
+      "unknown",
+    );
+  });
+
   it("treats the worst service as overall health", () => {
     assert.equal(
       overallHealth(board([service("aws", { health: "degraded" }), service("gcp", { health: "outage" })])),

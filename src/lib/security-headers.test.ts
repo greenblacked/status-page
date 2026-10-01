@@ -10,9 +10,34 @@ describe("securityHeaders", () => {
     expect(csp).not.toMatch(/https?:|\*/);
   });
 
+  it("pins HTTPS for a year on the host and its subdomains, without asking to be preloaded", () => {
+    const hsts = securityHeaders({ dev: false })["Strict-Transport-Security"];
+    expect(hsts).toBe("max-age=31536000; includeSubDomains");
+    expect(hsts).not.toContain("preload");
+    expect(securityHeaders({ dev: true })["Strict-Transport-Security"]).toBe(hsts);
+  });
+
+  it("keeps inline scripts and styles, which hydration needs, and nothing broader", () => {
+    const csp = securityHeaders({ dev: false })["Content-Security-Policy"];
+    expect(csp).toContain("script-src 'self' 'unsafe-inline';");
+    expect(csp).toContain("style-src 'self' 'unsafe-inline';");
+  });
+
+  it("does not deny the motion sensors Tilt lighting reads", () => {
+    const policy = securityHeaders({ dev: false })["Permissions-Policy"] ?? "";
+    for (const feature of ["accelerometer", "gyroscope", "magnetometer"]) expect(policy).not.toContain(feature);
+  });
+
   it("leaves the policy out in development, where Vite injects its client", () => {
     expect(securityHeaders({ dev: true })).not.toHaveProperty("Content-Security-Policy");
     expect(securityHeaders({ dev: true })["X-Content-Type-Options"]).toBe("nosniff");
+  });
+
+  it("names only Permissions-Policy features every engine knows", () => {
+    const policy = securityHeaders({ dev: false })["Permissions-Policy"];
+    // usb is Chromium-only, and Safari logs a warning for an unknown feature.
+    expect(policy).not.toContain("usb");
+    expect(policy).toBe("camera=(), microphone=(), geolocation=(), payment=()");
   });
 });
 

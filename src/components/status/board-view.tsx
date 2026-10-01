@@ -1,25 +1,28 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, BellOff, BellRing, RefreshCw, Search, Star } from "lucide-react";
-import { type MouseEvent, type ReactNode, useEffect, useId, useMemo, useRef, useState } from "react";
-import { CompactHeader, useScrolledPast } from "@/components/status/compact-header";
-import { prefersReducedMotion, useCountUp, useSpotlight, withViewTransition } from "@/components/status/effects";
-import { HealthDot } from "@/components/status/health-dot";
-import { LiveBar, useFreshness } from "@/components/status/live-bar";
-import { LiveSignal } from "@/components/status/live-signal";
+import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { AlertsButton, FilterBar, RefreshButton, SearchField, WhileBarUp } from "@/components/status/board-controls";
+import { BoardSections } from "@/components/status/board-sections";
+import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
+import { prefersReducedMotion, useWanderLight, withCardMotion } from "@/components/status/effects";
+import { Hero } from "@/components/status/hero";
+import { useHoldPlace } from "@/components/status/hold-place";
+import { LensField } from "@/components/status/lens-field";
+import { LiveBar, nextInText, useFreshness } from "@/components/status/live-bar";
 import { PeriodDial } from "@/components/status/period-dial";
-import { ServiceCard } from "@/components/status/service-card";
 import { SettingsDialog } from "@/components/status/settings-dialog";
+import { SiteFooter } from "@/components/status/site-footer";
 import { UpdateFeed } from "@/components/status/update-feed";
-import { type AlertsState, useBoardAlerts } from "@/components/status/use-alerts";
+import { useBoardAlerts } from "@/components/status/use-alerts";
+import { useBackground } from "@/components/status/use-background";
 import { useNow } from "@/components/status/use-now";
 import { useReduceGlass } from "@/components/status/use-reduce-glass";
 import { useShortcuts, useSingleKeyShortcuts } from "@/components/status/use-shortcuts";
 import { useStarred } from "@/components/status/use-starred";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useTiltLighting } from "@/components/status/use-tilt-lighting";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
-import { APP_NAME, CATEGORIES } from "@/lib/status/catalog";
+import { APP_NAME } from "@/lib/status/catalog";
+import { createDockStore } from "@/lib/status/dock";
 import {
   type BoardFilters,
   DEFAULT_FILTERS,
@@ -28,23 +31,12 @@ import {
   matchesFilters,
   resultsAnnouncement,
 } from "@/lib/status/filters";
-import { attentionBreakdown } from "@/lib/status/health";
-import { boardHeadline, documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
+import { documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
-import {
-  CACHE_TTL_MS,
-  type Freshness,
-  formatUtcTime,
-  lastPulseAt,
-  nextRefetchAt,
-  parseTimestamp,
-  pickRefetchJitter,
-} from "@/lib/status/schedule";
+import { CACHE_TTL_MS, lastPulseAt, nextRefetchAt, parseTimestamp, pickRefetchJitter } from "@/lib/status/schedule";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
-import { cn } from "@/lib/utils";
-
-const FILTERS: Array<{ id: "all" | CategoryId; label: string }> = [{ id: "all", label: "All" }, ...CATEGORIES];
+import { verdict as verdictOf } from "@/lib/status/verdict";
 
 // Long enough for a search to settle between keystrokes.
 const ANNOUNCE_DELAY_MS = 700;
@@ -67,19 +59,28 @@ export function BoardView({
   // Local state drives the board; the URL follows it. Reading the filters
   // back from the URL would make every keystroke wait on a router update.
   const [filters, setFilters] = useState(initialFilters);
-  const { query, category, issuesOnly, starredOnly } = filters;
+  const { query, issuesOnly, starredOnly } = filters;
   const updateFilters = (patch: Partial<BoardFilters>) => setFilters((current) => ({ ...current, ...patch }));
   const [store, setStore] = useState<PulseStore | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const manualRefreshInFlight = useRef(false);
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const heroRef = useRef<HTMLDivElement>(null);
-  const heroGone = useScrolledPast(heroRef);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const barRef = useRef<HTMLElement>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
+  const chipsRef = useRef<HTMLElement>(null);
+  // The dock's two discrete states live outside this component: the board must not render mid-move.
+  const [dock] = useState(createDockStore);
+  useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, chipsRef, store: dock });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
-  useSpotlight(mainRef);
+  const background = useBackground();
+  // The light only draws on Glass and Full, and Reduce glass takes it away everywhere.
+  const tilt = useTiltLighting({ paused: reduceGlass.enabled || background.value === "quiet" });
+  useWanderLight(mainRef);
   // Chosen once per page load: the tab keeps its own spot in every slot.
   const [refetchJitter] = useState(() => pickRefetchJitter());
 
@@ -111,10 +112,14 @@ export function BoardView({
   });
 
   const board = boardQuery.data ?? initial;
-  const headline = boardHeadline(board);
+  const verdict = useMemo(() => verdictOf(board), [board]);
+  const checkedAt = parseTimestamp(board.generatedAt);
   const alerts = useBoardAlerts(board);
   const { starred, ready: starsReady, toggle: toggleStar } = useStarred();
   const pulseStore = store ?? emptyPulseStore();
+  // Recent changes follows Needs a look (or leads the board when nothing needs a look).
+  useHoldPlace(mainRef, store?.pulses);
+  const feed = <UpdateFeed pulses={pulseStore.pulses} />;
   const changedIds = new Set(
     (pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? [])).map((change) => change.id),
   );
@@ -182,15 +187,17 @@ export function BoardView({
   // soon as the filters move on or it has had its moment, so a card that
   // turns up later, with a refetch, never pulls the page to it unasked.
   const [revealing, setRevealing] = useState<{ id: ServiceId; filters: BoardFilters } | null>(null);
-  function revealService(service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) {
+  function revealService(id: ServiceId, event: MouseEvent<HTMLAnchorElement>) {
+    const service = board.services.find((candidate) => candidate.id === id);
+    if (!service) return;
     const next = filtersToReveal(service, filters, starred);
     // On the board already: the plain anchor scrolls to it.
     if (!next) return;
     event.preventDefault();
     setRevealing({ id: service.id, filters: next });
-    // Plainly, not in a View Transition: a filter change has to feel
-    // instant (see withViewTransition), and the cards' stagger already
-    // animates the board that comes back.
+    // Plainly, without a glide: a filter change has to feel instant (see
+    // withCardMotion), and the cards' stagger already animates the board
+    // that comes back.
     setFilters(next);
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: `visible` is the trigger, not an input: the card to focus exists only once the cleared filters have rendered it.
@@ -212,9 +219,10 @@ export function BoardView({
     return () => window.clearTimeout(timer);
   }, [revealing]);
 
-  const issueCount = board.services.length - board.counts.operational;
+  // "Issues" are what needs a look; a source that could not be read is not one (see matchesFilters).
+  const issueCount = board.services.length - board.counts.operational - board.counts.unknown;
   // Starring moves a card, so it glides there like a refresh does.
-  const onToggleStar = (id: ServiceSnapshot["id"]) => withViewTransition(() => toggleStar(id));
+  const onToggleStar = (id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id));
   const groups = groupServices(visible);
   // The board's most urgent service, from the whole board rather than the
   // filtered view (starred services first among equals, as on the cards).
@@ -222,7 +230,10 @@ export function BoardView({
   // filter or search that hides it leaves no highlight rather than crowning
   // whatever is left.
   const mostUrgentId = useMemo(
-    () => groupServices(starredFirst(board.services, starred)).attention[0]?.id,
+    () =>
+      groupServices(starredFirst(board.services, starred)).attention.find(
+        (service) => service.health === "outage" || service.health === "degraded",
+      )?.id,
     [board.services, starred],
   );
   const categoryCount = (id: "all" | CategoryId) =>
@@ -240,7 +251,7 @@ export function BoardView({
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
       const next = await refreshStatusBoard();
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
-      withViewTransition(() => queryClient.setQueryData(["status-board"], next));
+      withCardMotion(() => queryClient.setQueryData(["status-board"], next));
     } catch {
       await boardQuery.refetch();
     } finally {
@@ -255,6 +266,20 @@ export function BoardView({
   // hydration, and "Checking official sources" then replaced the server's
   // "Live" in the first client render, a hydration mismatch.
   const fetching = now > 0 && (boardQuery.isFetching || refreshing);
+  // What stands where the groups would be while there are none; Recent changes follows it either way.
+  const placeholder =
+    fetching && !board.services.length ? (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {Array.from({ length: 6 }).map((_, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
+          <Skeleton key={index} className="h-56 rounded-lg" />
+        ))}
+      </div>
+    ) : visible.length === 0 && !(starredOnly && !starsReady) ? (
+      // Stars load after hydration; until then an empty Starred view proves nothing.
+      // Not a live region: the results announcement already says this.
+      <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
+    ) : null;
   const freshness = useFreshness(board.generatedAt, fetching, now);
 
   useShortcuts(
@@ -295,7 +320,7 @@ export function BoardView({
   return (
     <div className="liquid-stage text-fg">
       <div className="aurora" aria-hidden />
-      <div className="aurora-grid" aria-hidden />
+      <LensField />
       <div className="liquid-content">
         {/*
           First in the tab order, so a keyboard user can pass the header's
@@ -309,256 +334,114 @@ export function BoardView({
             event.preventDefault();
             mainRef.current?.focus();
           }}
-          className="focus-ring sr-only rounded-full bg-accent px-4 py-2 text-sm font-medium text-bg focus:not-sr-only focus:fixed focus:top-[calc(env(safe-area-inset-top)+0.75rem)] focus:left-[calc(env(safe-area-inset-left)+0.75rem)] focus:z-50"
+          className="focus-ring sr-only rounded-md bg-accent px-4 py-2 text-body font-medium text-bg focus:not-sr-only focus:fixed focus:top-[calc(env(safe-area-inset-top)+0.75rem)] focus:left-[calc(env(safe-area-inset-left)+0.75rem)] focus:z-50"
         >
-          Skip to services
+          Skip to the board
         </a>
-        <CompactHeader shown={heroGone} name={APP_NAME} live={freshness.state} headline={headline}>
-          <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
-          <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
-        </CompactHeader>
-        <header className="page-gutter relative mx-auto flex max-w-6xl flex-col gap-6 pt-8 pb-4 sm:pt-12">
-          <div ref={heroRef} className="flex items-start justify-between gap-4">
-            <div className="hero-recede min-w-0">
-              <p className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.22em] text-subtle">
-                <LiveSignal state={freshness.state} />
-                Live status board
-              </p>
-              <h1 className="mt-2 font-display text-4xl tracking-[-0.035em] text-balance [font-optical-sizing:auto] [font-weight:350] sm:text-6xl">
-                {APP_NAME}
-              </h1>
-              <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted text-pretty sm:text-base">
-                Official vendor status for {board.services.length} services, checked every two minutes.
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
-              <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
-            </div>
-          </div>
-
-          <SummaryPanel
-            board={board}
-            headline={headline}
-            fetching={fetching}
-            freshness={freshness}
-            now={now}
-            refetchJitter={refetchJitter}
-            onReveal={revealService}
-          />
-
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <label className="relative block min-w-0 flex-1">
-              <span className="sr-only">Search services</span>
-              <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-subtle" />
-              <Input
-                ref={searchRef}
-                value={query}
-                onChange={(event) => updateFilters({ query: event.target.value })}
-                placeholder="Search GCP, CS2 Europe, RouterOS…"
-                className="pl-10 sm:pr-10"
-              />
-              {singleKey.enabled ? (
-                <kbd
-                  aria-hidden
-                  className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-subtle sm:block"
-                >
-                  /
-                </kbd>
-              ) : null}
-            </label>
-            {/* One scrolling row on phones instead of three wrapped ones. */}
-            {/* biome-ignore lint/a11y/useSemanticElements: a <fieldset> cannot be this scrolling flex row in every browser; role="group" gives it the same name and grouping. */}
-            <div
-              className="page-bleed flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 [&::-webkit-scrollbar]:hidden"
-              role="group"
-              aria-label="Filter services"
-            >
-              {FILTERS.map((filter) => (
-                <Button
-                  key={filter.id}
-                  variant={category === filter.id ? "default" : "outline"}
-                  size="sm"
-                  className="shrink-0"
-                  aria-pressed={category === filter.id}
-                  onClick={() => updateFilters({ category: filter.id })}
-                >
-                  {filter.label}
-                  <span className="font-mono text-[11px] tabular-nums opacity-70">{categoryCount(filter.id)}</span>
-                </Button>
-              ))}
-              <Button
-                variant={issuesOnly ? "default" : "outline"}
-                size="sm"
-                className="shrink-0"
-                aria-pressed={issuesOnly}
-                onClick={() => updateFilters({ issuesOnly: !issuesOnly })}
-              >
-                Issues only
-                <span className="font-mono text-[11px] tabular-nums opacity-70">{issueCount}</span>
-              </Button>
-              <Button
-                variant={starredOnly ? "default" : "outline"}
-                size="sm"
-                className="shrink-0"
-                aria-pressed={starredOnly}
-                onClick={() => updateFilters({ starredOnly: !starredOnly })}
-              >
-                <Star className={cn("size-3.5", starredOnly && "fill-current")} />
-                Starred
-                <span className="font-mono text-[11px] tabular-nums opacity-70">{starred.size}</span>
-              </Button>
-            </div>
-          </div>
+        <Hero
+          generatedAt={board.generatedAt}
+          verdict={verdict}
+          onReveal={revealService}
+          controls={
+            // With the bar up, its copies are the ones in reach: Tab goes from them to the search field.
+            <WhileBarUp store={dock}>
+              {(barUp) => (
+                <>
+                  <AlertsButton skipTab={barUp} state={alerts.state} onToggle={alerts.toggle} />
+                  <RefreshButton skipTab={barUp} fetching={fetching} onRefresh={() => void handleRefresh()} />
+                </>
+              )}
+            </WhileBarUp>
+          }
+          live={
+            <LiveBar
+              freshness={freshness}
+              now={now}
+              refetchJitterMs={refetchJitter}
+              checkedAt={checkedAt}
+              // The dial is a Full-background flourish; the words say the same.
+              dial={
+                background.value === "full" ? (
+                  <PeriodDial now={now} jitterMs={refetchJitter} tone={verdict.tone} className="size-6 shrink-0" />
+                ) : null
+              }
+            />
+          }
+        >
           <p role="status" className="sr-only">
             {announcement}
           </p>
-        </header>
-
-        {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
-        <main
-          ref={mainRef}
-          id="services"
-          tabIndex={-1}
-          className="page-gutter relative mx-auto max-w-6xl scroll-mt-4 pb-20 outline-none"
+        </Hero>
+        <div
+          ref={bodyRef}
+          className="board-body page-gutter relative mx-auto flex max-w-[62rem] flex-wrap content-start items-start gap-x-4 lg:gap-x-8"
         >
-          {boardQuery.isError ? (
-            <p role="alert" className="mb-4 rounded-md glass px-4 py-3 text-sm text-down">
-              Could not refresh official sources. Showing the last successful snapshot.
-            </p>
-          ) : null}
-
-          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
-            <div className="flex min-w-0 flex-col gap-8">
-              {fetching && !board.services.length ? (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
-                    <Skeleton key={index} className="h-56 rounded-lg" />
-                  ))}
-                </div>
-              ) : visible.length === 0 ? (
-                // Stars load after hydration; until then an empty Starred view proves nothing.
-                // Not a live region: the results announcement already says this.
-                starredOnly && !starsReady ? null : (
-                  // The board's one serif phrase: a caption for the quiet, not a UI label.
-                  <p className="rounded-lg glass px-5 py-10 text-center font-serif text-lg text-muted italic">
-                    {emptyMessage}
-                  </p>
-                )
-              ) : (
-                <>
-                  <ServiceSection id="attention" title="Needs attention" services={groups.attention}>
-                    {/* items-start: a short card keeps its own height instead of stretching to its row's tallest. */}
-                    <div className="grid grid-cols-1 items-start gap-3 @xl:grid-cols-2">
-                      {groups.attention.map((service, index) => (
-                        // One element type at every position, so a card that moves in or out of
-                        // first place is moved, not remounted: keyboard focus stays on its Star
-                        // button and the fade-in does not replay.
-                        <ServiceCard
-                          key={service.id}
-                          service={service}
-                          index={index}
-                          highlight={index === 0 && service.id === mostUrgentId}
-                          emphasized={changedIds.has(service.id)}
-                          starred={starred.has(service.id)}
-                          onToggleStar={onToggleStar}
-                          now={now}
-                        />
-                      ))}
-                    </div>
-                  </ServiceSection>
-                  <ServiceSection id="operational" title="Operational" services={groups.operational}>
-                    {/* The full card, healthy or not, in the attention grid's columns. */}
-                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                      {groups.operational.map((service, index) => (
-                        <ServiceCard
-                          key={service.id}
-                          service={service}
-                          index={index}
-                          emphasized={changedIds.has(service.id)}
-                          starred={starred.has(service.id)}
-                          onToggleStar={onToggleStar}
-                          now={now}
-                        />
-                      ))}
-                    </div>
-                  </ServiceSection>
-                  <ServiceSection id="releases" title="Releases" services={groups.releases}>
-                    <div className="grid grid-cols-1 gap-3 @xl:grid-cols-2">
-                      {groups.releases.map((service, index) => (
-                        <ServiceCard
-                          key={service.id}
-                          service={service}
-                          index={index}
-                          emphasized={changedIds.has(service.id)}
-                          starred={starred.has(service.id)}
-                          onToggleStar={onToggleStar}
-                          now={now}
-                        />
-                      ))}
-                    </div>
-                  </ServiceSection>
-                </>
-              )}
-            </div>
-            {/* Pinned beside the cards on wide screens instead of stretching to their height. */}
-            <UpdateFeed pulses={pulseStore.pulses} className="board-log-pin" />
+          {/* Right before the search field in the markup, so Tab goes from the bar's buttons to it. */}
+          <CompactHeader
+            store={dock}
+            barRef={barRef}
+            slotRef={slotRef}
+            verdict={verdict}
+            live={freshness.state}
+            checkedAt={checkedAt}
+            nextIn={nextInText(now, refetchJitter)}
+          >
+            <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
+            <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
+          </CompactHeader>
+          {/* biome-ignore lint/a11y/useSemanticElements: <search> is Safari 17+; role="search" on a div names the same landmark everywhere. */}
+          <div ref={dockRef} role="search" className="search-dock basis-full lg:flex-none lg:basis-[var(--margin-col)]">
+            <SearchField
+              store={dock}
+              dockRef={dockRef}
+              inputRef={searchRef}
+              query={query}
+              onQuery={(next) => updateFilters({ query: next })}
+              showSlash={singleKey.enabled}
+            />
           </div>
+          {/* The row's landmark, and its flex item. The segments scroll sideways on a phone; the two toggles follow them. */}
+          <section
+            ref={chipsRef}
+            aria-label="Filter services"
+            className="board-chips mt-3 flex min-w-0 basis-full flex-wrap items-center gap-2 lg:mt-0 lg:flex-1 lg:basis-0 lg:self-center"
+          >
+            <FilterBar
+              filters={filters}
+              onChange={updateFilters}
+              categoryCount={categoryCount}
+              issueCount={issueCount}
+              starredCount={starred.size}
+            />
+          </section>
 
+          {/* tabIndex -1: the skip link can move focus here; Tab never stops on it. */}
+          <main ref={mainRef} id="services" tabIndex={-1} className="relative mt-6 basis-full outline-none">
+            {boardQuery.isError ? (
+              <p role="alert" className="surface mb-4 px-4 py-3 text-body text-down">
+                Could not refresh official sources. Showing the last successful snapshot.
+              </p>
+            ) : null}
+
+            <div className="min-w-0">
+              <BoardSections
+                groups={groups}
+                mostUrgentId={mostUrgentId}
+                changedIds={changedIds}
+                starred={starred}
+                onToggleStar={onToggleStar}
+                now={now}
+                feed={feed}
+                placeholder={placeholder}
+              />
+            </div>
+          </main>
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
-          <footer className="mt-14 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] text-sm text-subtle">
-            <p>
-              Status Page reads vendor status feeds only. It is not affiliated with Google, Amazon, Valve, Epic,
-              Spotify, Apple, MikroTik, xAI, OpenAI, or Anthropic.
-            </p>
-            <p>Cached server snapshots update every two minutes from official vendor feeds.</p>
-            <p>
-              Use the board elsewhere:{" "}
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/api/status.json"
-              >
-                JSON API
-              </a>
-              {" · "}
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/feed.xml"
-              >
-                Atom feed
-              </a>{" "}
-              for Slack, Teams and feed readers ·{" "}
-              <a
-                className="focus-ring pressable inline-block rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                href="/api/badge/board"
-              >
-                status badges
-              </a>
-              .
-            </p>
-            {/*
-              On every screen width: with the single-key shortcuts off, ? no
-              longer opens the list, and this button is the way back to the
-              switches, including on a desktop zoomed to a phone's width, and
-              the only way to them on a touch screen.
-            */}
-            <p>
-              <button
-                type="button"
-                className="focus-ring pressable rounded-2xs underline decoration-border underline-offset-4 hover:text-fg"
-                onClick={() => setSettingsOpen(true)}
-              >
-                Settings and shortcuts
-              </button>
-              {singleKey.enabled ? (
-                <span className="hidden sm:inline">
-                  {" "}
-                  (press <kbd className="rounded-2xs glass-inset px-1.5 font-mono text-[11px] text-muted">?</kbd>)
-                </span>
-              ) : null}
-            </p>
-          </footer>
+          <SiteFooter
+            className="mt-14 basis-full pb-[calc(5rem+env(safe-area-inset-bottom))]"
+            onOpenSettings={() => setSettingsOpen(true)}
+            singleKey={singleKey.enabled}
+          />
           <SettingsDialog
             open={settingsOpen}
             onClose={() => setSettingsOpen(false)}
@@ -566,209 +449,16 @@ export function BoardView({
             onSingleKeyChange={singleKey.setEnabled}
             reduceGlass={reduceGlass.enabled}
             onReduceGlassChange={reduceGlass.setEnabled}
-          />
-        </main>
-      </div>
-    </div>
-  );
-}
-
-function ServiceSection({
-  id,
-  title,
-  services,
-  children,
-}: {
-  id: string;
-  title: string;
-  services: ServiceSnapshot[];
-  children: ReactNode;
-}) {
-  if (services.length === 0) return null;
-  return (
-    <section aria-labelledby={`${id}-heading`}>
-      <h2
-        id={`${id}-heading`}
-        className="mb-3 flex items-baseline gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-subtle"
-      >
-        {title}
-        <span className="tabular-nums text-muted">{services.length}</span>
-      </h2>
-      {/* A size container: the grid inside, and each card in it, lay out by their own width. */}
-      <div className="@container">{children}</div>
-    </section>
-  );
-}
-
-function SummaryPanel({
-  board,
-  headline,
-  fetching,
-  freshness,
-  now,
-  refetchJitter,
-  onReveal,
-}: {
-  board: BoardSnapshot;
-  headline: ReturnType<typeof boardHeadline>;
-  fetching: boolean;
-  freshness: Freshness;
-  now: number;
-  refetchJitter: number;
-  /** A chip was followed; clears the filters first if they hide its card. */
-  onReveal: (service: ServiceSnapshot, event: MouseEvent<HTMLAnchorElement>) => void;
-}) {
-  const total = board.services.length;
-  const attention = total - board.counts.operational;
-  const affected = groupServices(board.services).attention;
-  const generatedAt = parseTimestamp(board.generatedAt);
-
-  return (
-    <section aria-labelledby="board-headline" className="glass rounded-xl p-5 sm:p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <h2
-            id="board-headline"
-            className="flex items-center gap-3 font-display text-2xl font-medium tracking-[-0.03em] text-balance sm:text-3xl"
-          >
-            <HealthDot
-              health={headline.tone}
-              ping={headline.tone !== "operational"}
-              pingColor="event"
-              className="size-2.5"
-            />
-            {/* Live on the sentence alone: the counts below roll as they change. */}
-            <span aria-live="polite">{headline.title}</span>
-          </h2>
-          <p className="mt-1.5 font-mono text-[11px] tabular-nums text-subtle">
-            {attention ? attentionBreakdown(board.counts) : `All ${total} official sources report normal operation`}
-            {/* UTC, so the server and the browser agree on the text. */}
-            {generatedAt === null ? null : (
-              <>
-                {" · as of "}
-                <time dateTime={board.generatedAt}>{formatUtcTime(generatedAt)}</time>
-              </>
-            )}
-          </p>
-          {affected.length ? (
-            <ul className="mt-4 flex flex-wrap gap-1.5" aria-label="Services that need attention">
-              {affected.map((service) => (
-                <li key={service.id}>
-                  <a
-                    href={`#${serviceAnchor(service.id)}`}
-                    onClick={(event) => onReveal(service, event)}
-                    className="focus-ring pressable inline-flex min-h-8 items-center gap-1.5 rounded-full glass-inset px-3 text-xs text-muted hover:text-fg"
-                  >
-                    <HealthDot health={service.health} />
-                    {service.name}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-        {/* On a phone the counts stack into a specimen table beside the dial; wider, they sit in a row. */}
-        <div className="flex items-center justify-between gap-5 sm:gap-10 lg:shrink-0 lg:justify-end">
-          <dl className="flex min-w-0 flex-1 flex-col gap-1.5 sm:grid sm:flex-none sm:grid-cols-3 sm:gap-10">
-            <Stat label="Operational" value={board.counts.operational} of={total} />
-            <Stat label="Attention" value={attention} />
-            <Stat label="Sources" value={total - board.counts.unknown} of={total} />
-          </dl>
-          <PeriodDial
-            now={now}
-            jitterMs={refetchJitter}
-            tone={headline.tone}
-            className="size-20 min-[380px]:size-24 sm:size-28 lg:size-32"
+            background={{ value: background.value, onChange: background.setValue }}
+            tilt={{
+              supported: tilt.supported,
+              enabled: tilt.enabled,
+              status: tilt.status,
+              onChange: tilt.setEnabled,
+            }}
           />
         </div>
       </div>
-      <LiveBar
-        freshness={freshness}
-        isFetching={fetching}
-        now={now}
-        refetchJitterMs={refetchJitter}
-        className="mt-5 border-t border-border pt-4"
-      />
-    </section>
-  );
-}
-
-function Stat({ label, value, of }: { label: string; value: number; of?: number }) {
-  const shown = useCountUp(value);
-  return (
-    <div className="flex items-baseline justify-between gap-2 sm:block">
-      <dt className="font-mono text-[10px] uppercase tracking-[0.16em] text-subtle">{label}</dt>
-      <dd className="font-display text-lg tabular-nums tracking-[-0.03em] sm:mt-1 sm:text-2xl">
-        {shown}
-        {of !== undefined ? <span className="text-subtle">/{of}</span> : null}
-      </dd>
     </div>
-  );
-}
-
-const ALERT_LABEL: Record<AlertsState, string> = {
-  unsupported: "Alerts are not supported in this browser",
-  off: "Get a browser alert when a service changes",
-  on: "Browser alerts are on; click to turn them off",
-  blocked: "Alerts are blocked in this browser's site settings",
-};
-
-/**
- * Rendered twice, in the hero and in the compact header, both driven by
- * the board's one handleRefresh. It carries no id, so the copies never
- * collide.
- */
-function RefreshButton({ fetching, onRefresh }: { fetching: boolean; onRefresh: () => void }) {
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="shrink-0"
-      onClick={onRefresh}
-      // Not `disabled`: every background refetch would drop keyboard
-      // focus to <body>. handleRefresh ignores a press while its own
-      // refresh is in flight, cancels a background one, and aria-busy
-      // says a check is running.
-      aria-busy={fetching}
-      aria-label="Refresh status now"
-    >
-      <RefreshCw className={cn("size-3.5", fetching && "animate-spin")} />
-      <span className="hidden sm:inline">Refresh</span>
-    </Button>
-  );
-}
-
-function AlertsButton({ state, onToggle }: { state: AlertsState; onToggle: () => void }) {
-  // Two copies render, one in the compact header, so the hint's id is per copy.
-  const hintId = useId();
-  if (state === "unsupported") return null;
-  const Icon = state === "on" ? BellRing : state === "blocked" ? BellOff : Bell;
-  const blocked = state === "blocked";
-  return (
-    <>
-      <Button
-        variant={state === "on" ? "default" : "outline"}
-        size="sm"
-        // aria-disabled, not disabled: a disabled button drops out of the Tab
-        // order, so a keyboard or screen reader user never learns why alerts
-        // are off. This one stays reachable, does nothing, and says why.
-        onClick={blocked ? undefined : onToggle}
-        aria-disabled={blocked || undefined}
-        aria-describedby={blocked ? hintId : undefined}
-        // A toggle keeps one name and lets aria-pressed carry the state; the
-        // title explains the current state to pointer users.
-        aria-pressed={state === "on"}
-        aria-label="Browser alerts"
-        title={ALERT_LABEL[state]}
-      >
-        <Icon className="size-3.5" />
-        <span className="hidden sm:inline">Alerts</span>
-      </Button>
-      {blocked ? (
-        <span id={hintId} className="sr-only">
-          Blocked in this browser's site settings
-        </span>
-      ) : null}
-    </>
   );
 }

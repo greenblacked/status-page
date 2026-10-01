@@ -30,11 +30,14 @@ export function securityHeaders({ dev }: { dev: boolean }): Record<string, strin
   return {
     ...(dev ? {} : { "Content-Security-Policy": CONTENT_SECURITY_POLICY }),
     // Browsers ignore it over plain HTTP, so local previews are unaffected.
-    "Strict-Transport-Security": "max-age=31536000",
+    // includeSubDomains covers the staging site on a subdomain of the same
+    // HTTPS-only Worker. No `preload`: that is a commitment made to browsers
+    // through a list, not something a response header should opt into alone.
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
     "Cross-Origin-Opener-Policy": "same-origin",
   };
 }

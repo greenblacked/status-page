@@ -129,10 +129,26 @@ export function recordPath(dir: string, url: URL): string {
 // --issues open an issue against every vendor for a local disk problem.
 export function recordResponses(dir: string): () => void {
   const realFetch = globalThis.fetch;
+  // fetchText follows redirects by hand, so a moved resource is several
+  // fetches: the 3xx answers (no body worth keeping), then the final one.
+  // The file belongs under the path the collector asked for, as it did when
+  // fetch followed redirects itself, so each hop remembers who asked.
+  const askedFor = new Map<string, URL>();
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const response = await realFetch(input, init);
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-    const file = recordPath(dir, url);
+    const requested = askedFor.get(url.href) ?? url;
+    askedFor.delete(url.href);
+    const location = [301, 302, 303, 307, 308].includes(response.status) ? response.headers.get("location") : null;
+    if (location !== null) {
+      try {
+        askedFor.set(new URL(location, url).href, requested);
+      } catch {
+        // An unusable Location is refused by the caller; there is no next hop to file.
+      }
+      return response;
+    }
+    const file = recordPath(dir, requested);
     try {
       const body = new Uint8Array(await response.clone().arrayBuffer());
       mkdirSync(dirname(file), { recursive: true });

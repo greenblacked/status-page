@@ -11,11 +11,12 @@
   "compatibility_flags": ["nodejs_compat"],
   // Workers Logs and traces, kept in Cloudflare (persist) and sampled in
   // full. The top-level switch stays off because logs and traces are each
-  // enabled on their own.
+  // enabled on their own. Query strings are redacted from what is kept: the
+  // board's search box puts what a visitor typed in "?q=".
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,
-    "redact_query_string": false,
+    "redact_query_string": true,
     "logs": {
       "enabled": true,
       "head_sampling_rate": 1,

@@ -1,0 +1,864 @@
+/*
+  The page behind the board, in three settings (Settings, Background):
+
+    Quiet  flat paper. The default, and the only thing the base file
+           (styles.css) knows about. Nothing here applies.
+    Glass  frosted panels over a still glow.
+    Full   adds the slow drift, the glass lenses that bend the aurora's
+           colour, the light that wanders across the cards and the period
+           dial's sweep.
+
+  The choice is `data-background` on <html> (glass or full; Quiet is no
+  attribute), set before paint by APPEARANCE_BOOT_SCRIPT and kept in step by
+  useBackground. The markup for every layer (the aurora, the lens
+  field and its filter) is always rendered, so the server's HTML and the
+  hydrated page never differ; Quiet only hides it.
+
+  Every rule below that draws glass sits behind one of two gates:
+
+    GLASS  :root:is([data-background="glass"], [data-background="full"])
+    FULL   :root[data-background="full"]
+
+  Reduce glass, prefers-reduced-transparency, Increase Contrast and forced
+  colours switch the layers off again and make the panels opaque, whatever
+  is chosen. Those overrides are written after the gates with a higher
+  specificity, so they always win.
+*/
+
+/*
+  Reduce glass. Safari does not report the system's Reduce Transparency to web
+  pages, so the board has its own switch (Settings), which sets
+  data-reduce-transparency on <html>; browsers that do report it get the same
+  result from the media query. The reduce-glass variant writes each rule once
+  for both.
+*/
+@custom-variant reduce-glass {
+  &:where([data-reduce-transparency="true"], [data-reduce-transparency="true"] *) {
+    @slot;
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    @slot;
+  }
+}
+
+:root {
+  /* Rim light: the bevel every glass surface shares. */
+  --rim-top: light-dark(rgb(255 255 255 / 0.9), rgb(255 255 255 / 0.22));
+  --rim-top-strong: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.32));
+  --rim-bottom: light-dark(rgb(16 24 40 / 0.04), rgb(255 255 255 / 0.02));
+  --rim-outline: light-dark(rgb(16 24 40 / 0.11), rgb(255 255 255 / 0.13));
+  --rim-outline-strong: light-dark(rgb(16 24 40 / 0.16), rgb(255 255 255 / 0.22));
+  --drop: light-dark(rgb(38 52 84 / 0.32), rgb(0 0 0 / 0.6));
+  --drop-strong: light-dark(rgb(38 52 84 / 0.34), rgb(0 0 0 / 0.7));
+  --shadow-rim:
+    inset 0 1px 0 var(--rim-top), inset 0 -1px 0 var(--rim-bottom), 0 0 0 1px var(--rim-outline),
+    0 18px 40px -24px var(--drop);
+  --shadow-rim-strong:
+    inset 0 1px 0 var(--rim-top-strong), inset 0 -1px 0 var(--rim-bottom), 0 0 0 1px var(--rim-outline-strong),
+    0 22px 48px -22px var(--drop-strong);
+
+  /*
+    Three materials, from most to least expensive:
+    chrome   the floating bar and the dialog, blurred
+    glass    content panels (.surface), blurred
+    whisper  dense or repeated surfaces (.control), no blur
+    The fills alone keep text at AA; the blur is a bonus on top of them.
+  */
+  --glass-blur: 24px;
+  --glass-filter: blur(var(--glass-blur)) saturate(1.8);
+  --glass-fill: light-dark(rgb(255 255 255 / 0.56), rgb(255 255 255 / 0.04));
+  --glass-tint-top: light-dark(rgb(255 255 255 / 0.72), rgb(255 255 255 / 0.04));
+  --glass-tint-bottom: light-dark(rgb(255 255 255 / 0.14), rgb(255 255 255 / 0.01));
+  --glass-sheen: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.08));
+
+  --chrome-filter: blur(28px) saturate(1.9);
+  --chrome-fill: light-dark(rgb(255 255 255 / 0.8), rgb(18 21 29 / 0.66));
+  --chrome-tint-top: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.08));
+  --chrome-tint-bottom: light-dark(rgb(255 255 255 / 0.1), rgb(255 255 255 / 0));
+
+  /* On light, whisper is visibly the flattest: thinner fill, no highlight, a hairline. */
+  --whisper-fill: light-dark(rgb(255 255 255 / 0.3), rgb(255 255 255 / 0.055));
+  --whisper-fill-hover: light-dark(rgb(255 255 255 / 0.62), rgb(255 255 255 / 0.1));
+  --whisper-rim: light-dark(transparent, rgb(255 255 255 / 0.08));
+  --whisper-edge: light-dark(rgb(16 24 40 / 0.11), rgb(255 255 255 / 0.15));
+
+  --inset-fill: light-dark(rgb(15 20 35 / 0.05), rgb(0 0 0 / 0.26));
+  --inset-rim: light-dark(rgb(15 20 35 / 0.06), rgb(255 255 255 / 0.06));
+
+  /*
+    The card light is on every Full card at once, so in dark it is held to a
+    whisper: at 0.1 it cut --color-subtle to 3.59:1 at its centre. 0.02 keeps
+    4.5:1 (the lenses spec measures it with the light forced on).
+  */
+  --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.02));
+  /* Tilt lighting's glint: stronger than the card light's, since white on the light panels is otherwise unseen. */
+  --tilt-glint: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.08));
+  --tilt-shade: light-dark(rgb(16 24 40 / 0.05), transparent);
+
+  /*
+    The backdrop: four slow currents of light, cool teal, indigo and a
+    breath of violet, with a faint warm-to-blue fourth. OKLCH, so a Display
+    P3 screen shows them with more chroma than sRGB can, from the same
+    declaration. On light they are pale, close to the paper's own
+    brightness, so they add colour without darkening what sits on them.
+    These are Full's; Glass holds them at 60% chroma (below).
+  */
+  --aurora-1: light-dark(oklch(0.96 0.05 165 / 0.55), oklch(0.55 0.14 175 / 0.13));
+  --aurora-2: light-dark(oklch(0.95 0.05 255 / 0.55), oklch(0.5 0.16 265 / 0.14));
+  --aurora-3: light-dark(oklch(0.955 0.04 300 / 0.45), oklch(0.42 0.15 305 / 0.1));
+  --aurora-4: light-dark(oklch(0.96 0.04 40 / 0.35), oklch(0.5 0.07 240 / 0.08));
+  --grain-opacity: 0.025;
+
+  /*
+    The glass lenses over the aurora. Contrast budget: --color-subtle and
+    --color-muted (the two weakest text colours) stay at 4.5:1 or better on
+    every pixel of a lens more than 3px inside its rim, in light and dark,
+    the caustic included. Only the rim hairline itself (the outer 3px, where
+    the bevel, fringe and rim light sit) is exempt: a glyph crosses that edge
+    for a pixel or two. The lenses spec measures this pixel by pixel, on the
+    Full background; when a token below changes, that test is the check. Dark
+    is the tight side, so its alphas stay low.
+  */
+  --lens-caustic: light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.02));
+  /*
+    The aurora's currents as the lens draws them: Full's colours, at about
+    half the alpha in dark, where the copy lands on the original.
+  */
+  --lens-tint-1: light-dark(oklch(0.96 0.05 165 / 0.55), oklch(0.55 0.14 175 / 0.06));
+  --lens-tint-2: light-dark(oklch(0.95 0.05 255 / 0.55), oklch(0.5 0.16 265 / 0.06));
+  --lens-tint-3: light-dark(oklch(0.955 0.04 300 / 0.45), oklch(0.42 0.15 305 / 0.05));
+  --lens-tint-4: light-dark(oklch(0.96 0.04 40 / 0.35), oklch(0.5 0.07 240 / 0.04));
+  --lens-body-hi: light-dark(rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.02));
+  --lens-body-lo: light-dark(rgb(70 90 150 / 0.01), rgb(0 0 0 / 0.22));
+  --lens-rim-hi: light-dark(rgb(255 255 255 / 1), rgb(255 255 255 / 0.2));
+  --lens-rim-mid: light-dark(rgb(255 255 255 / 0.7), rgb(255 255 255 / 0.1));
+  --lens-rim-lo: light-dark(rgb(16 24 40 / 0.07), rgb(255 255 255 / 0.06));
+  --lens-shade: light-dark(rgb(38 52 84 / 0.015), rgb(0 0 0 / 0.5));
+  --lens-fringe-a: light-dark(oklch(0.85 0.09 200 / 0.16), oklch(0.8 0.13 200 / 0.2));
+  --lens-fringe-b: light-dark(oklch(0.82 0.1 340 / 0.16), oklch(0.72 0.17 340 / 0.18));
+  /* Centre (percent of the viewport) and diameter of each lens. */
+  --lens-1-x: 19;
+  --lens-1-y: 30;
+  --lens-1-d: clamp(190px, 46vmin, 520px);
+  --lens-2-x: 86;
+  --lens-2-y: 20;
+  --lens-2-d: clamp(120px, 30vmin, 340px);
+  --lens-3-x: 68;
+  --lens-3-y: 80;
+  --lens-3-d: clamp(170px, 40vmin, 460px);
+  --lens-4-x: 9;
+  --lens-4-y: 88;
+  --lens-4-d: clamp(100px, 24vmin, 270px);
+
+  /* The period dial's own fine strokes and its warm point (Full only). */
+  --dial-tick: light-dark(rgb(10 15 25 / 0.22), rgb(255 255 255 / 0.28));
+  --dial-event: light-dark(oklch(47.9% 0.1124 59.93), oklch(82.38% 0.1408 70.17));
+}
+
+/* Glass shows the same currents, held at 60% of Full's chroma. */
+:root[data-background="glass"] {
+  --aurora-1: light-dark(oklch(0.96 0.03 165 / 0.55), oklch(0.55 0.084 175 / 0.13));
+  --aurora-2: light-dark(oklch(0.95 0.03 255 / 0.55), oklch(0.5 0.096 265 / 0.14));
+  --aurora-3: light-dark(oklch(0.955 0.024 300 / 0.45), oklch(0.42 0.09 305 / 0.1));
+  --aurora-4: light-dark(oklch(0.96 0.024 40 / 0.35), oklch(0.5 0.042 240 / 0.08));
+}
+
+@layer components {
+  /*
+    The layers. Quiet hides them; the markup stays (see the top of this file).
+    Positioned like this in every setting, so a layer that is switched on
+    never moves anything.
+  */
+
+  /*
+    One fixed layer behind everything. The field inside it is larger than
+    the screen, and its own overflow is clipped here rather than widening
+    the page. The panels' saturate() picks up whichever current is behind
+    them. It drifts only in Full, and then only with a mouse or trackpad (a
+    Mac): a moving backdrop makes every blurred panel above it re-render its
+    blur each frame, which on an iPhone or iPad costs battery for a page left
+    open for hours, so there it holds still. Browsers already stop animating a
+    hidden tab.
+  */
+  .aurora {
+    display: none;
+    pointer-events: none;
+    position: fixed;
+    /* The large viewport, as .lenses: an inset: 0 box follows
+       the iOS toolbar, and every collapse would resize it and blur all the glass again. */
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 100lvh;
+    z-index: 0;
+    overflow: hidden;
+    contain: strict;
+  }
+
+  .aurora::before {
+    content: "";
+    position: absolute;
+    inset: -30%;
+    background:
+      radial-gradient(38% 30% at 22% 18%, var(--aurora-1), transparent 70%),
+      radial-gradient(34% 28% at 78% 22%, var(--aurora-2), transparent 70%),
+      radial-gradient(30% 26% at 58% 60%, var(--aurora-3), transparent 72%),
+      radial-gradient(40% 30% at 26% 82%, var(--aurora-4), transparent 70%);
+  }
+
+  /*
+    Grain that breaks up banding in the blur: neutral grey specks with their
+    own alpha, painted normally. A blend mode here would make the whole
+    screen a blended layer.
+  */
+  .aurora::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: var(--grain-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.5 0 0 0 0 0.5 0 0 0 0 0.5 2 0 0 0 -0.8'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /*
+    Four glass lenses that bend the aurora's colour like drops of water.
+    Painted only: no backdrop-filter, nothing above the content. Each lens
+    draws its own copy of the aurora's colour and a soft caustic (.lens-fx)
+    through the lens-refract SVG filter, over the aurora it copies. The
+    geometry is static; the only motion is the rim light turning (transform only),
+    and only where a pointer can hover. Same z-index as the aurora, so the
+    later DOM order puts it on top.
+  */
+  .lenses {
+    display: none;
+    pointer-events: none;
+    position: fixed;
+    /* The large viewport, not the visible one: on iOS a fixed inset:0 box
+       follows the toolbar, and every collapse would move the lenses and
+       repaint their filters. Percent tops and cqh below read this height. */
+    inset: 0 auto auto 0;
+    width: 100%;
+    height: 100lvh;
+    z-index: 0;
+    contain: strict;
+    container-type: size;
+  }
+
+  .lens {
+    position: absolute;
+    left: calc(var(--x) * 1%);
+    top: calc(var(--y) * 1%);
+    width: var(--d);
+    height: var(--d);
+    margin: calc(var(--d) / -2) 0 0 calc(var(--d) / -2);
+    border-radius: 50%;
+    overflow: hidden;
+    isolation: isolate;
+    /* Clear glass: a soft cap of light top left, a little weight at the edge. */
+    background:
+      radial-gradient(70% 60% at 30% 18%, var(--lens-body-hi), transparent 70%),
+      radial-gradient(100% 100% at 50% 50%, transparent 62%, var(--lens-body-lo) 100%);
+    box-shadow:
+      inset 0 0 0 1px var(--lens-rim-lo),
+      inset 2px 3px 5px -1px var(--lens-rim-hi),
+      inset -2px -3px 6px -2px var(--lens-rim-mid),
+      inset 0 0 28px 2px var(--lens-shade);
+  }
+
+  .lens:nth-child(1) {
+    --x: var(--lens-1-x);
+    --y: var(--lens-1-y);
+    --d: var(--lens-1-d);
+  }
+
+  .lens:nth-child(2) {
+    --x: var(--lens-2-x);
+    --y: var(--lens-2-y);
+    --d: var(--lens-2-d);
+  }
+
+  .lens:nth-child(3) {
+    --x: var(--lens-3-x);
+    --y: var(--lens-3-y);
+    --d: var(--lens-3-d);
+  }
+
+  .lens:nth-child(4) {
+    --x: var(--lens-4-x);
+    --y: var(--lens-4-y);
+    --d: var(--lens-4-d);
+  }
+
+  /* The colour fringe: two hairlines nudged apart, never filtered. */
+  .lens::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow:
+      inset 1.5px 1.5px 0 0 var(--lens-fringe-a),
+      inset -1.5px -1.5px 0 0 var(--lens-fringe-b);
+  }
+
+  /* The rim light: a conic ring, masked to 2px. Turns slowly where a pointer can hover, in Full. */
+  .lens::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    padding: 2px;
+    background: conic-gradient(
+      from 210deg,
+      var(--lens-rim-hi),
+      transparent 16%,
+      transparent 48%,
+      var(--lens-rim-mid) 62%,
+      transparent 78%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  /*
+    The bent colour: the aurora's four currents drawn again, aligned to it
+    (a 160% field starting 30% up and left of the viewport, as .aurora::before
+    paints it, at rest) plus a soft caustic highlight and a faint dark pool
+    opposite it, pushed through the refraction filter. Oversized so the
+    filter never shows an edge.
+
+    The alignment: a lens's centre is at (x, y) in the viewport, its box
+    starts half a diameter before that, and .lens-fx starts another 15% of a
+    diameter before its box. So the field's origin, -30cqw - x, is
+    d * 0.65 further along in .lens-fx's own coordinates. The caustic is the
+    lens's own and stays at 0 0.
+  */
+  .lens-fx {
+    position: absolute;
+    inset: -15%;
+    z-index: -1;
+    filter: url(#lens-refract);
+    background-image:
+      radial-gradient(34% 30% at 32% 24%, var(--lens-caustic), transparent 70%),
+      radial-gradient(38% 30% at 22% 18%, var(--lens-tint-1), transparent 70%),
+      radial-gradient(34% 28% at 78% 22%, var(--lens-tint-2), transparent 70%),
+      radial-gradient(30% 26% at 58% 60%, var(--lens-tint-3), transparent 72%),
+      radial-gradient(40% 30% at 26% 82%, var(--lens-tint-4), transparent 70%);
+    background-size:
+      calc(var(--d) * 1.3) calc(var(--d) * 1.3),
+      160cqw 160cqh,
+      160cqw 160cqh,
+      160cqw 160cqh,
+      160cqw 160cqh;
+    background-repeat: no-repeat;
+    background-position:
+      0 0,
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh),
+      calc(var(--d) * 0.65 - 30cqw - var(--x) * 1cqw) calc(var(--d) * 0.65 - 30cqh - var(--y) * 1cqh);
+  }
+
+  @keyframes aurora-drift {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+    }
+    25% {
+      transform: translate3d(4%, -3%, 0) rotate(5deg) scale(1.05);
+    }
+    50% {
+      transform: translate3d(-3%, 4%, 0) rotate(-4deg) scale(1.08);
+    }
+    75% {
+      transform: translate3d(-4%, -2%, 0) rotate(3deg) scale(1.03);
+    }
+  }
+
+  @keyframes lens-orbit {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /*
+    GLASS: the layers that show in Glass and Full. The aurora is still here;
+    it only drifts in Full (below).
+  */
+  :root:is([data-background="glass"], [data-background="full"]) .aurora {
+    display: block;
+  }
+
+  /*
+    Every blurred material names -webkit-backdrop-filter first. The other
+    way round, the build's CSS minifier folded the pair into the prefixed
+    property alone, which Chromium and Firefox ignore, so nothing blurred
+    there. The browser tests check the blur survives (e2e/board.spec.ts).
+  */
+
+  /* Glass: the content panels. A handful per screen. */
+  :root:is([data-background="glass"], [data-background="full"]) :is(.surface) {
+    position: relative;
+    isolation: isolate;
+    background-color: var(--glass-fill);
+    background-image: linear-gradient(180deg, var(--glass-tint-top), var(--glass-tint-bottom));
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
+    /* The rim below draws the edge; the hairline keeps its width so nothing moves between settings. */
+    border-color: transparent;
+    box-shadow: var(--shadow-rim);
+  }
+
+  /* Chrome: the floating bar and the dialog, tinted. One at a time. */
+  :root:is([data-background="glass"], [data-background="full"]) :is(.float, .sheet) {
+    background-image: linear-gradient(180deg, var(--chrome-tint-top), var(--chrome-tint-bottom));
+    border-color: transparent;
+    box-shadow: var(--shadow-rim-strong);
+  }
+
+  /* The dialog is the strongest material: blurred and dense. The bar keeps its own fill and filter. */
+  :root:is([data-background="glass"], [data-background="full"]) .sheet {
+    isolation: isolate;
+    background-color: var(--chrome-fill);
+    -webkit-backdrop-filter: var(--chrome-filter);
+    backdrop-filter: var(--chrome-filter);
+  }
+
+  :root:is([data-background="glass"], [data-background="full"]) :is(.float) {
+    isolation: isolate;
+  }
+
+  /*
+    Tilt lighting's light: --light-x and --light-y, each -1..1, set inline on
+    the panels by use-tilt-lighting.ts, and read by the panels' ::before (the
+    sheen) and ::after (the glint), which inherit them from their panel the
+    ordinary way. Plain custom properties, unset when the light is off; every
+    use falls back to 0 (var(--light-x, 0)), which is the board as it always was.
+
+    They were once registered with @property as non-inherited and handed to the
+    pseudo-elements with `inherit`, to save the restyle of everything inside a
+    card on each write (about 5x cheaper per write in Chromium). WebKit
+    mishandles that: the pseudo-element reports the value, but its gradients are
+    computed as if the variable were unset, so on an iPhone the light did not
+    move. Nothing interpolates these (no transition or animation), so the
+    registration bought only that saving; the cost of the plain form is one
+    card's subtree per write, and writes are frame-capped and skipped inside a
+    small deadband.
+  */
+
+  /* The specular sweep: light entering from the upper left. With Tilt lighting
+     on, --light-x turns the angle by up to 28deg; unset, it is the fixed 125deg
+     it always was. The variable is stepped by script and never transitioned. */
+  :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet)::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+      calc(125deg + var(--light-x, 0) * 28deg),
+      var(--glass-sheen) 0%,
+      transparent 34%,
+      transparent 70%,
+      color-mix(in oklab, var(--glass-sheen) 30%, transparent) 100%
+    );
+    opacity: 0.55;
+  }
+
+  :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet) > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /*
+    Whisper: no backdrop-filter at all, so a row of chips or a search box
+    costs nothing to scroll. The only surface, with .inset, that may sit
+    inside a blurred one: never glass on glass.
+  */
+  :root:is([data-background="glass"], [data-background="full"]) :is(.control) {
+    background-color: var(--whisper-fill);
+    box-shadow:
+      inset 0 1px 0 var(--whisper-rim),
+      0 0 0 1px var(--whisper-edge);
+  }
+
+  @media (hover: hover) {
+    :root:is([data-background="glass"], [data-background="full"]) :is(a, button):is(.control):hover {
+      background-color: var(--whisper-fill-hover);
+    }
+  }
+
+  /* A recess inside a panel: icon chips, rows, <kbd>. */
+  :root:is([data-background="glass"], [data-background="full"]) :is(.inset) {
+    background-color: var(--inset-fill);
+    box-shadow:
+      inset 0 1px 0 var(--inset-rim),
+      inset 0 0 0 1px var(--inset-rim);
+  }
+
+  /*
+    On a touch device there is no pointer to follow, so with Tilt lighting on
+    (data-tilt, set only while the light is being driven) a soft light sits on
+    the card and slides with --light-x/--light-y. Devices with a hover-capable
+    pointer get the wandering light (Full) instead.
+  */
+  @media not ((hover: hover) and (pointer: fine)) {
+    :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {
+      content: "";
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      border-radius: inherit;
+      /* The glint, and in light mode a faint shade on the opposite side: white light on a white panel shows nothing alone. */
+      background:
+        radial-gradient(
+          320px circle at calc(50% + var(--light-x, 0) * 38%) calc(50% + var(--light-y, 0) * 38%),
+          var(--tilt-glint),
+          transparent 65%
+        ),
+        radial-gradient(
+          320px circle at calc(50% - var(--light-x, 0) * 38%) calc(50% - var(--light-y, 0) * 38%),
+          var(--tilt-shade),
+          transparent 65%
+        );
+      opacity: 1;
+      /* Tilt drives the light here; the wander steps aside. */
+      animation: none;
+      transform: none;
+    }
+  }
+
+  /*
+    FULL: the drift, the lenses and the wandering card light.
+  */
+  :root[data-background="full"] .lenses {
+    display: block;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    :root[data-background="full"] .aurora::before {
+      animation: aurora-drift 84s linear infinite;
+    }
+
+    :root[data-background="full"] .lens::after {
+      animation: lens-orbit 120s linear infinite;
+    }
+
+    /*
+      A soft light that wanders across each card and list by itself (see
+      useWanderLight). Neutral, never a status colour. The ::after is the size
+      of its surface and only its transform moves, so the compositor does the
+      work and nothing repaints; the surface clips it. Each surface gets its
+      own path, duration and phase from the page after hydration, and stays
+      dark until then, so the server markup never carries a random value.
+    */
+    :root[data-background="full"] .spotlight {
+      overflow: clip;
+    }
+
+    :root[data-background="full"] .spotlight::after {
+      content: "";
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      border-radius: inherit;
+      background: radial-gradient(300px circle at 50% 50%, var(--spot-color), transparent 65%);
+      opacity: 0;
+      transition: opacity var(--t-reveal) var(--ease-out);
+    }
+
+    :root[data-background="full"] .spotlight[data-wander]::after {
+      opacity: 1;
+      animation: light-wander-a var(--wander-dur, 56s) ease-in-out var(--wander-delay, -20s) infinite alternate;
+    }
+
+    :root[data-background="full"] .spotlight[data-wander="1"]::after {
+      animation-name: light-wander-b;
+    }
+
+    :root[data-background="full"] .spotlight[data-wander="2"]::after {
+      animation-name: light-wander-c;
+    }
+
+    :root[data-background="full"] .spotlight[data-wander="3"]::after {
+      animation-name: light-wander-d;
+    }
+
+    @keyframes light-wander-a {
+      0% { transform: translate3d(-34%, -26%, 0); }
+      27% { transform: translate3d(22%, -34%, 0); }
+      58% { transform: translate3d(38%, 18%, 0); }
+      81% { transform: translate3d(-12%, 30%, 0); }
+      100% { transform: translate3d(-30%, 6%, 0); }
+    }
+
+    @keyframes light-wander-b {
+      0% { transform: translate3d(30%, 28%, 0); }
+      22% { transform: translate3d(-8%, 34%, 0); }
+      49% { transform: translate3d(-36%, -12%, 0); }
+      76% { transform: translate3d(6%, -30%, 0); }
+      100% { transform: translate3d(34%, -8%, 0); }
+    }
+
+    @keyframes light-wander-c {
+      0% { transform: translate3d(-4%, -36%, 0); }
+      31% { transform: translate3d(36%, -6%, 0); }
+      55% { transform: translate3d(14%, 32%, 0); }
+      84% { transform: translate3d(-38%, 20%, 0); }
+      100% { transform: translate3d(-24%, -20%, 0); }
+    }
+
+    @keyframes light-wander-d {
+      0% { transform: translate3d(38%, -22%, 0); }
+      24% { transform: translate3d(4%, 8%, 0); }
+      52% { transform: translate3d(-32%, 30%, 0); }
+      73% { transform: translate3d(-20%, -32%, 0); }
+      100% { transform: translate3d(26%, 24%, 0); }
+    }
+  }
+
+  /*
+    The period dial (period-dial.tsx), Full only: a ring of 120 ticks, one per
+    second between refetches. The lit copy of the ring is masked to the part of
+    the period that has run; --period-progress is registered so it can animate,
+    in 120 steps, which repaints this small element once a second and never
+    more. The hand is a transform, which the compositor turns on its own.
+    Both start at the right moment from a negative delay set by the page.
+  */
+  .period-dial {
+    position: relative;
+    flex-shrink: 0;
+    aspect-ratio: 1;
+    /* Layout only: paint containment would clip the mark's glow at twelve. */
+    contain: layout;
+  }
+
+  .period-ring,
+  .period-motion,
+  .period-sweep,
+  .period-hand {
+    position: absolute;
+    inset: 0;
+  }
+
+  .period-ring {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .period-orbit {
+    stroke: var(--color-hairline);
+    stroke-width: 1;
+  }
+
+  .period-tick {
+    stroke: var(--dial-tick);
+    stroke-width: 1;
+  }
+
+  .period-tick-major {
+    stroke: color-mix(in oklab, var(--color-fg) 38%, transparent);
+    stroke-width: 1;
+  }
+
+  .period-tick-quarter {
+    stroke: color-mix(in oklab, var(--color-fg) 60%, transparent);
+    stroke-width: 1.5;
+  }
+
+  .period-ring[data-lit] .period-orbit {
+    stroke: color-mix(in oklab, var(--color-fg) 45%, transparent);
+  }
+
+  .period-ring[data-lit] :is(.period-tick, .period-tick-major) {
+    stroke: color-mix(in oklab, var(--color-fg) 82%, transparent);
+  }
+
+  .period-ring[data-lit] .period-tick-quarter {
+    stroke: var(--color-fg);
+  }
+
+  .period-sweep {
+    --period-progress: var(--period-at, 0);
+    /* Half a tick past the edge, so the tick for the second under way is lit. */
+    mask-image: conic-gradient(#000 calc(var(--period-progress) * 360deg + 1.5deg), transparent 0);
+  }
+
+  .period-hand {
+    transform: rotate(calc(var(--period-at, 0) * 1turn));
+  }
+
+  /* The warm point: on the orbit, at the moment the period has reached. */
+  .period-mark {
+    position: absolute;
+    top: 14%;
+    left: 50%;
+    width: 6px;
+    height: 6px;
+    margin: -3px 0 0 -3px;
+    border-radius: 9999px;
+    background-color: var(--dial-event);
+    box-shadow:
+      0 0 0 3px oklch(from var(--dial-event) l c h / 0.16),
+      0 0 12px 1px oklch(from var(--dial-event) l c h / 0.45);
+  }
+
+  /* The lens at the centre, holding the board's health point. */
+  .period-lens {
+    position: absolute;
+    inset: 31%;
+    display: grid;
+    place-items: center;
+    border-radius: 9999px;
+    background-image: radial-gradient(circle at 34% 28%, var(--glass-tint-top), transparent 70%);
+    box-shadow:
+      inset 0 1px 0 var(--rim-top),
+      0 0 0 1px var(--color-hairline);
+  }
+
+  .period-motion[data-running] > .period-sweep {
+    animation: period-fill var(--period-length) steps(120, end) var(--period-delay) both;
+  }
+
+  .period-motion[data-running] > .period-hand {
+    animation: period-turn var(--period-length) linear var(--period-delay) both;
+  }
+
+  @keyframes period-fill {
+    from {
+      --period-progress: 0;
+    }
+    to {
+      --period-progress: 1;
+    }
+  }
+
+  @keyframes period-turn {
+    from {
+      transform: rotate(0turn);
+    }
+    to {
+      transform: rotate(1turn);
+    }
+  }
+}
+
+/* Registered so the sweep can animate; it cannot live inside a layer. */
+@property --period-progress {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+/*
+  Reduce glass, Increase Contrast and forced colours: solid panels, nothing
+  blurred, no backdrop. The panels turn solid by their tokens, so the glass
+  rules above stay as they are and simply paint an opaque card; the layers go
+  by selectors that outweigh the gates (one more class than they have).
+*/
+:root {
+  @variant reduce-glass {
+    --glass-filter: none;
+    --chrome-filter: none;
+    --glass-fill: var(--color-card);
+    --glass-tint-top: transparent;
+    --glass-tint-bottom: transparent;
+    --glass-sheen: transparent;
+    --chrome-fill: var(--color-card);
+    --chrome-tint-top: transparent;
+    --chrome-tint-bottom: transparent;
+    --whisper-fill: var(--color-inset);
+    --whisper-fill-hover: var(--color-inset);
+    --inset-fill: var(--color-inset);
+    /* Solid panels have no light to catch: Tilt lighting's glint and shade stand down. */
+    --tilt-glint: transparent;
+    --tilt-shade: transparent;
+  }
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  :root {
+    --glass-filter: none;
+    --chrome-filter: none;
+    --glass-fill: var(--color-card);
+    --glass-tint-top: transparent;
+    --glass-tint-bottom: transparent;
+    --glass-sheen: transparent;
+    --chrome-fill: var(--color-card);
+    --chrome-tint-top: transparent;
+    --chrome-tint-bottom: transparent;
+    --whisper-fill: var(--color-inset);
+    --whisper-fill-hover: var(--color-inset);
+    --inset-fill: var(--color-inset);
+    --tilt-glint: transparent;
+    --tilt-shade: transparent;
+  }
+}
+
+@layer components {
+  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.aurora, .lenses) {
+    display: none;
+  }
+
+  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet, .control, .inset) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+    border-color: var(--color-hairline);
+  }
+
+  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) .float {
+    box-shadow: var(--shadow-float);
+  }
+
+  :root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet)::before,
+  :root[data-reduce-transparency="true"][data-tilt="on"] .spotlight::after,
+  :root[data-reduce-transparency="true"][data-background="full"] .spotlight::after {
+    display: none;
+  }
+
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+    :root:root:is([data-background="glass"], [data-background="full"]) :is(.aurora, .lenses) {
+      display: none;
+    }
+
+    :root:root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet, .control, .inset) {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      box-shadow: none;
+      border-color: var(--color-hairline);
+    }
+
+    :root:root:is([data-background="glass"], [data-background="full"]) .float {
+      box-shadow: var(--shadow-float);
+    }
+
+    :root:root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet)::before,
+    :root:root[data-background="full"] .spotlight::after,
+    :root:root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {
+      display: none;
+    }
+  }
+}
+
+/*
+  Reduced motion: the global rule in styles.css stops every animation (the
+  drift, the lens orbit, the dial's sweep and the card light's wander); the
+  card light would be left standing still, so it is hidden here.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .spotlight::after {
+    /* biome-ignore lint/complexity/noImportantStyles: must outweigh the Full gate that draws it */
+    display: none !important;
+  }
+}

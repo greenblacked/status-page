@@ -44,8 +44,8 @@ export type ShortcutOptions = {
    * Every shortcut that is one printable key: `/`, `?`, R, I, S and 1–6. A
    * speech-input user who dictates types characters, each of which would
    * fire one (WCAG 2.1.4), so they can be switched off together. Esc stays:
-   * it types nothing. The search box and the footer's settings and
-   * shortcuts button, which opens the switch, stay a Tab away.
+   * it types nothing. The search box and the footer's Settings
+   * button, which opens the switch, stay a Tab away.
    */
   singleKey: boolean;
 };
@@ -84,17 +84,17 @@ export function shortcutFor(
  * the keys the single-key switch turns off.
  */
 export const SHORTCUT_HELP: Array<{ keys: string[]; label: string; singleKey: boolean }> = [
-  { keys: ["/"], label: "Search services", singleKey: true },
+  { keys: ["/"], label: "Search", singleKey: true },
   {
     keys: [`1–${NUMBERED.length}`],
-    label: `All, ${CATEGORIES.map((category) => category.label).join(", ")}`,
+    label: "Jump to a category",
     singleKey: true,
   },
   { keys: ["I"], label: "Issues only", singleKey: true },
   { keys: ["S"], label: "Starred only", singleKey: true },
-  { keys: ["R"], label: "Refresh now", singleKey: true },
-  { keys: ["Esc"], label: "Clear search and filters", singleKey: false },
-  { keys: ["?"], label: "Show settings and shortcuts", singleKey: true },
+  { keys: ["R"], label: "Refresh", singleKey: true },
+  { keys: ["Esc"], label: "Clear filters", singleKey: false },
+  { keys: ["?"], label: "Open settings", singleKey: true },
 ];
 
 export const SINGLE_KEY_STORAGE_KEY = "status-bar:single-key-shortcuts";

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
-import { googleImpact } from "./health.ts";
 import { PayloadError, SourceError } from "./http.ts";
 import {
   awsComponents,
   awsEventActive,
+  awsEventSubject,
+  awsIncidentTitle,
+  awsLatestLog,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
@@ -14,6 +16,7 @@ import {
   grokItemActive,
   grokItemHealth,
   grokTitleService,
+  isoTimestamp,
   parseGoogleProducts,
   parseInstatusComponents,
   parseRssItems,
@@ -271,6 +274,87 @@ describe("grok feed html stripping end to end", () => {
     const [item] = parseRssItems(xml);
     assert.equal(grokItemHealth(item.description), "operational");
   });
+
+  it("keeps an unclosed comment opener and stray angle brackets as text, and strips closed ones around them", () => {
+    // The unclosed "<!--" does not swallow the text after it.
+    assert.equal(grokItemHealth("<!-- never closed. Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("a <!-- unclosed, then <!-- closed --> Status: Resolved"), "operational");
+    // "<!-->" is not a closed comment, so a later "-->" is what ends it.
+    assert.equal(grokItemHealth("<!--> major outage --> Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("x < y <b>Status: Resolved</b> z > w"), "operational");
+    assert.equal(grokItemHealth("<> <1> </ > major outage"), "outage");
+  });
+
+  it("keeps malformed markup and finds complete tags inside an unclosed comment", () => {
+    assert.equal(grokItemHealth("abc<!--> Status: Resolved"), "operational");
+    assert.equal(grokItemHealth("<!-- <p>Status:&nbsp;Resolved</p>"), "operational");
+    assert.equal(grokItemHealth("<p <b>Status: Resolved</b>"), "operational");
+    assert.equal(grokItemHealth("Latency < 500ms. Status: Resolved. Errors > 1%"), "operational");
+  });
+});
+
+describe("parseRssItems field scanning", () => {
+  it("reads tags in any case, the first open tag with its first close, and fields past an unclosed one", () => {
+    const [item] = parseRssItems(
+      "<ITEM><Title>One</TITLE><DESCRIPTION>Two</Description><pubdate>d</PUBDATE><LINK> l </link></ITEM>",
+    );
+    assert.deepEqual(item, { title: "One", description: "Two", pubDate: "d", link: "l" });
+    const [nested] = parseRssItems("<item><title>a<title>b</title></item>");
+    assert.equal(nested.title, "a<title>b");
+    const [open] = parseRssItems("<item><title>never closed<link>https://x</link></item>");
+    assert.equal(open.title, "");
+    assert.equal(open.link, "https://x");
+  });
+
+  it("keeps each item's fields to that item, whether or not it is closed", () => {
+    const items = parseRssItems(
+      "<item><title>A</title><item><description>b</description><item attr='1'><title>C</title></item><title>outside</title>",
+    );
+    assert.deepEqual(
+      items.map((item) => [item.title, item.description]),
+      [
+        ["A", ""],
+        ["", "b"],
+        ["C", ""],
+      ],
+    );
+  });
+
+  it("keeps the first complete field pair and the original item delimiters", () => {
+    assert.deepEqual(parseRssItems("<ITEM\t><TITLE> first </TITLE><title>second</title><link>&amp;</link></ITEM>"), [
+      { title: "first", description: "", pubDate: undefined, link: "&" },
+    ]);
+    assert.deepEqual(parseRssItems("<items><title>ignored</title></items><item><title>kept</title></item>"), [
+      { title: "kept", description: "", pubDate: undefined, link: undefined },
+    ]);
+    assert.deepEqual(parseRssItems("İ<item><title>İssue</title><description>İ</description></item>"), [
+      { title: "İssue", description: "İ", pubDate: undefined, link: undefined },
+    ]);
+  });
+
+  it("leaves a field empty after repeated unclosed openers while reading the next field", () => {
+    assert.deepEqual(parseRssItems(`<item>${"<title>".repeat(100)}<description>Working</description></item>`), [
+      { title: "", description: "Working", pubDate: undefined, link: undefined },
+    ]);
+    assert.deepEqual(parseRssItems("<item><title>unclosed<item><title>second</title></item>"), [
+      { title: "", description: "", pubDate: undefined, link: undefined },
+      { title: "second", description: "", pubDate: undefined, link: undefined },
+    ]);
+    assert.deepEqual(parseRssItems(`<item><title>Okay</title>${"<description><pubDate><link>".repeat(20)}</item>`), [
+      { title: "Okay", description: "", pubDate: undefined, link: undefined },
+    ]);
+  });
+});
+
+describe("decodeXmlField scanning", () => {
+  it("handles several CDATA sections and an unterminated one after them", () => {
+    assert.equal(decodeXmlField("&amp;<![CDATA[&amp;]]>&amp;<![CDATA[x]]>&lt;"), "&&amp;&x<");
+    assert.equal(decodeXmlField("&amp;<![CDATA[a]]>&amp;<![CDATA[&amp;"), "&a&&amp;");
+  });
+
+  it("keeps later openers literal when the first CDATA section has no closer", () => {
+    assert.equal(decodeXmlField("&amp; <![CDATA[a <![CDATA[b &lt; c"), "& a <![CDATA[b &lt; c");
+  });
 });
 
 describe("collector failure classification", () => {
@@ -284,16 +368,17 @@ describe("collector failure classification", () => {
     assert.equal(classifyFailure(new SourceError("getaddrinfo ENOTFOUND x")).kind, "network");
   });
 
-  it("reports a vendor payload change as a parser failure with the real error", () => {
+  it("reports a vendor payload change as a parser failure", () => {
     let thrown: unknown;
     try {
       JSON.parse("<html>not json</html>");
     } catch (error) {
       thrown = error;
     }
-    const failure = classifyFailure(thrown);
-    assert.equal(failure.kind, "parser");
-    assert.match(failure.message, /^SyntaxError: /);
+    assert.deepEqual(classifyFailure(thrown), {
+      kind: "parser",
+      message: "SyntaxError: response was not valid JSON",
+    });
     assert.equal(classifyFailure(new TypeError("Cannot read properties of undefined")).kind, "parser");
     // A collector's own "answered, but no usable data" check is a format
     // change too, even though it carries no HTTP status.
@@ -301,6 +386,33 @@ describe("collector failure classification", () => {
       kind: "parser",
       message: "Grok feed returned no readable items.",
     });
+  });
+});
+
+describe("collector failure messages do not echo the response body", () => {
+  it("never carries the start of an unparseable body, whichever way V8 words the error", () => {
+    const secret = "TOP-SECRET-BODY-TEXT";
+    for (const body of [`<html>${secret}</html>`, `{"a":${secret}}`, `${secret}`, `[1,${secret}`, `{${secret}: 1}`]) {
+      let thrown: unknown;
+      try {
+        JSON.parse(body);
+      } catch (error) {
+        thrown = error;
+      }
+      // The raw message does quote the body, which is the leak being closed.
+      assert.ok(thrown instanceof SyntaxError);
+      const { kind, message } = classifyFailure(thrown);
+      assert.equal(kind, "parser");
+      assert.equal(message, "SyntaxError: response was not valid JSON");
+      assert.ok(!message.includes(secret));
+    }
+  });
+
+  it("still names a coding error by its own message, which is ours", () => {
+    assert.equal(
+      classifyFailure(new TypeError("value.filter is not a function")).message,
+      "TypeError: value.filter is not a function",
+    );
   });
 });
 
@@ -327,6 +439,26 @@ describe("epochToIso", () => {
       true,
     ]) {
       assert.equal(epochToIso(value, 1000), undefined, String(value));
+    }
+  });
+});
+
+describe("isoTimestamp", () => {
+  it("passes an ISO string through, normalised", () => {
+    assert.equal(isoTimestamp("2026-09-16T11:32:21Z"), "2026-09-16T11:32:21.000Z");
+    assert.equal(isoTimestamp("2026-09-16T13:32:21.500+02:00"), "2026-09-16T11:32:21.500Z");
+  });
+
+  it("reads a space-separated date and time, which Safari cannot parse, as UTC", () => {
+    assert.equal(isoTimestamp("2026-09-16 11:32"), "2026-09-16T11:32:00.000Z");
+    assert.equal(isoTimestamp("2026-09-16 11:32:05"), "2026-09-16T11:32:05.000Z");
+    assert.equal(isoTimestamp("2026-09-16 11:32 +0200"), "2026-09-16T09:32:00.000Z");
+    assert.equal(isoTimestamp(" 2026-09-16 11:32 Z "), "2026-09-16T11:32:00.000Z");
+  });
+
+  it("returns undefined for anything that is not a usable timestamp", () => {
+    for (const value of [undefined, null, "", "   ", "n/a", "2026-13-45 99:99", 1789558341, {}, true]) {
+      assert.equal(isoTimestamp(value), undefined, String(value));
     }
   });
 });
@@ -376,12 +508,18 @@ describe("googleComponents", () => {
     assert.deepEqual(rows[0], { name: "Cloud Run", health: "outage", detail: "Down" });
   });
 
-  it("reads an information-only notice like the card does: Degraded, with its description", () => {
+  it("leaves a product operational, with no detail, for an information-only notice", () => {
     const rows = googleComponents(products, [
       { id: "n", status_impact: "SERVICE_INFORMATION", external_desc: "FYI", affected_products: [{ id: "run" }] },
     ]);
-    assert.deepEqual(rows[0], { name: "Cloud Run", health: googleImpact("SERVICE_INFORMATION"), detail: "FYI" });
-    assert.equal(rows[0].health, "degraded");
+    assert.deepEqual(rows[0], { name: "Cloud Run", health: "operational" });
+  });
+
+  it("reads an unrecognised impact as unknown, not as a degradation", () => {
+    const rows = googleComponents(products, [
+      { id: "n", status_impact: "SOMETHING_NEW", external_desc: "Odd", affected_products: [{ id: "run" }] },
+    ]);
+    assert.deepEqual(rows[0], { name: "Cloud Run", health: "unknown", detail: "Odd" });
   });
 
   it("falls back to service_name when an incident lists no products", () => {
@@ -395,6 +533,85 @@ describe("googleComponents", () => {
     const rows = googleComponents(products, [{ id: "1", status_impact: "SERVICE_OUTAGE", affected_products: [{}] }]);
     assert.equal(rows.length, 2);
     assert.ok(rows.every((row) => row.health === "operational"));
+  });
+
+  it("matches by id or lower-cased title, the earliest product winning, and finds a product it added", () => {
+    const dup = [
+      { id: "a", title: "Alpha" },
+      { id: "b", title: "Beta" },
+    ];
+    // Id "b" names the second product, title "alpha" the first: the earlier row is the match.
+    const rows = googleComponents(dup, [
+      { id: "1", status_impact: "SERVICE_OUTAGE", affected_products: [{ id: "b", title: " ALPHA " }] },
+    ]);
+    assert.deepEqual(rows, [
+      { name: "Alpha", health: "outage" },
+      { name: "Beta", health: "operational" },
+    ]);
+    // A product the catalogue lacks is added once and then matched by later references.
+    const added = googleComponents(dup, [
+      { id: "1", status_impact: "SERVICE_DISRUPTION", affected_products: [{ id: "z", title: "Zeta" }] },
+      { id: "2", status_impact: "SERVICE_OUTAGE", affected_products: [{ title: "zeta" }, { id: "z" }] },
+    ]);
+    assert.deepEqual(
+      added.map((row) => [row.name, row.health]),
+      [
+        ["Alpha", "operational"],
+        ["Beta", "operational"],
+        ["Zeta", "outage"],
+      ],
+    );
+  });
+
+  it("chooses the earliest matching row across ID and title, including duplicate and empty IDs", () => {
+    const rows = googleComponents(
+      [
+        { id: "", title: "First" },
+        { id: "duplicate", title: "By title" },
+        { id: "duplicate", title: "By ID" },
+      ],
+      [
+        { id: "1", status_impact: "SERVICE_OUTAGE", affected_products: [{ id: "duplicate", title: " first " }] },
+        { id: "2", status_impact: "SERVICE_DISRUPTION", affected_products: [{ id: "duplicate", title: "unknown" }] },
+      ],
+    );
+    assert.deepEqual(
+      rows.map((row) => row.health),
+      ["outage", "degraded", "operational"],
+    );
+  });
+
+  it("does not add an ID alias to a row matched by its title", () => {
+    const rows = googleComponents(
+      [{ id: "catalogue", title: "Cloud Run" }],
+      [
+        { id: "1", status_impact: "SERVICE_DISRUPTION", affected_products: [{ id: "alias", title: "cloud run" }] },
+        { id: "2", status_impact: "SERVICE_OUTAGE", affected_products: [{ id: "alias", title: "New product" }] },
+      ],
+    );
+    assert.deepEqual(
+      rows.map((row) => [row.name, row.health]),
+      [
+        ["Cloud Run", "degraded"],
+        ["New product", "outage"],
+      ],
+    );
+  });
+
+  it("stays fast with thousands of products and references", () => {
+    const many = Array.from({ length: 5000 }, (_, i) => ({ id: `p${i}`, title: `Product ${i}` }));
+    const incident = {
+      id: "1",
+      status_impact: "SERVICE_OUTAGE",
+      affected_products: many.map((product) => ({ id: product.id, title: product.title })),
+    };
+    const started = performance.now();
+    const rows = googleComponents(many, [incident]);
+    const took = performance.now() - started;
+    assert.equal(rows.length, 5000);
+    assert.ok(rows.every((row) => row.health === "outage"));
+    // The scan this replaced took seconds here; a lookup takes a few ms.
+    assert.ok(took < 200, `took ${took}ms`);
   });
 });
 
@@ -546,7 +763,7 @@ describe("awsComponents", () => {
     assert.deepEqual(awsComponents([event({ service_name: undefined }), event({ service_name: "  " })] as never), []);
   });
 
-  it("merges by service: worst health, and the newest event's summary with that event's region", () => {
+  it("merges by service: worst health, every region, and the newest event's summary", () => {
     const rows = awsComponents([
       event({ region_name: "Ireland", summary: "Newer", event_log: [{ timestamp: 200 }] }),
       event({ region_name: "", summary: "Older outage", event_log: [{ timestamp: 100, message: "outage" }] }),
@@ -554,7 +771,7 @@ describe("awsComponents", () => {
       event({ service_name: "Amazon S3", summary: "Errors", region_name: "Ohio" }),
     ] as never);
     assert.deepEqual(rows, [
-      { name: "AWS Lambda", health: "outage", detail: "Ireland · Newer" },
+      { name: "AWS Lambda", health: "outage", detail: "Ireland, N. Virginia · Newer" },
       { name: "Amazon S3", health: "degraded", detail: "Ohio · Errors" },
     ]);
   });
@@ -582,23 +799,43 @@ describe("awsComponents", () => {
     ]);
   });
 
-  it("names the region of the newest event only, whether that event is regional or global", () => {
+  it("unions the regions of every event for a service, whichever event is newest", () => {
     const older = { service_name: "Amazon S3", summary: "Older", event_log: [{ timestamp: 100 }] };
     const newer = { service_name: "Amazon S3", summary: "Newer", event_log: [{ timestamp: 200 }] };
+    // The newest event is global (no region); the older one's region is kept.
     assert.deepEqual(
       awsComponents([
         { ...older, region_name: "Ohio" },
         { ...newer, region_name: "" },
       ] as never),
-      [{ name: "Amazon S3", health: "degraded", detail: "Newer" }],
+      [{ name: "Amazon S3", health: "degraded", detail: "Ohio · Newer" }],
     );
+    // The newest event is regional: both regions are named, in the order met.
     assert.deepEqual(
       awsComponents([
         { ...newer, region_name: "Ohio" },
-        { ...older, region_name: "" },
+        { ...older, region_name: "Ireland" },
       ] as never),
-      [{ name: "Amazon S3", health: "degraded", detail: "Ohio · Newer" }],
+      [{ name: "Amazon S3", health: "degraded", detail: "Ohio, Ireland · Newer" }],
     );
+  });
+
+  it("reads the newest log entry by timestamp, not by position, for the summary", () => {
+    const rows = awsComponents([
+      {
+        service_name: "Amazon S3",
+        region_name: "Ohio",
+        event_log: [
+          { summary: "Newest update", timestamp: 300 },
+          { summary: "Oldest update", timestamp: 100 },
+        ],
+      },
+    ] as never);
+    assert.deepEqual(rows, [{ name: "Amazon S3", health: "degraded", detail: "Ohio · Newest update" }]);
+  });
+
+  it("never lists the umbrella name 'Multiple services' as a row", () => {
+    assert.deepEqual(awsComponents([{ service_name: "Multiple services", summary: "Errors" }] as never), []);
   });
 
   it("does not read a blank or missing `current` as recovered", () => {
@@ -623,19 +860,111 @@ describe("awsComponents", () => {
     assert.ok(rows.every((row) => row.health === "degraded"));
   });
 
-  it("keeps a regional disruption at Degraded, as the card does, and falls back when impacted_services is empty", () => {
+  it("reports a regional disruption as an outage, and falls back to the event when impacted_services is empty", () => {
     const rows = awsComponents([
       {
         service_name: "Multiple services",
         summary: "Elevated errors",
         region_name: "Ohio",
+        status: "3",
         impacted_services: { a: { service_name: "Amazon S3", current: "3" } },
       },
       { service_name: "Amazon EC2", summary: "Slow", region_name: "Ohio", impacted_services: {} },
     ] as never);
     assert.deepEqual(rows, [
-      { name: "Amazon S3", health: "degraded", detail: "Ohio · Elevated errors" },
+      { name: "Amazon S3", health: "outage", detail: "Ohio · Elevated errors" },
       { name: "Amazon EC2", health: "degraded", detail: "Ohio · Slow" },
     ]);
+  });
+});
+
+describe("AWS event severity", () => {
+  const recent = Math.floor(Date.now() / 1000) - 600;
+  const log = [{ summary: "Update", message: "Investigating.", timestamp: recent }];
+
+  it("awsLatestLog takes the maximum timestamp, wherever it sits in the list", () => {
+    const newest = { summary: "newest", timestamp: 300 };
+    assert.deepEqual(
+      awsLatestLog({ event_log: [newest, { summary: "old", timestamp: 100 }, { summary: "mid", timestamp: 200 }] }),
+      newest,
+    );
+    assert.equal(awsLatestLog({ event_log: [{ summary: "a" }, { summary: "b" }] })?.summary, "b");
+    assert.equal(awsLatestLog({}), undefined);
+  });
+
+  it("awsEventActive uses the newest entry, so a fresh update listed first keeps the event live", () => {
+    const now = Date.now();
+    const stale = Math.floor((now - 30 * 24 * 60 * 60 * 1000) / 1000);
+    assert.equal(
+      awsEventActive(
+        {
+          status: "1",
+          event_log: [
+            { timestamp: recent, message: "Still investigating" },
+            { timestamp: stale, message: "First look" },
+          ],
+        },
+        now,
+      ),
+      true,
+    );
+  });
+
+  it("a service disruption (status 3) is an outage even in one region; a performance issue (2) is degraded", () => {
+    const rows = (status: string, summary = "Errors") =>
+      awsComponents([{ service_name: "Amazon S3", summary, region_name: "Ohio", status, event_log: log }] as never)[0]
+        ?.health;
+    assert.equal(rows("3"), "outage");
+    assert.equal(rows("2"), "degraded");
+    // The vendor's status beats the wording: a performance issue that says
+    // "unavailable" is still a performance issue.
+    assert.equal(rows("2", "Bucket unavailable"), "degraded");
+    // Informational or unreported: the wording decides, as before.
+    assert.equal(rows("1"), "degraded");
+    assert.equal(rows("1", "Scheduled maintenance"), "maintenance");
+  });
+
+  it("an impacted service's own level sets its row, and a recovered one has none", () => {
+    const rows = awsComponents([
+      {
+        service_name: "Multiple services",
+        summary: "Errors",
+        region_name: "Ohio",
+        status: "3",
+        impacted_services: {
+          a: { service_name: "Amazon S3", current: "3" },
+          b: { service_name: "AWS Lambda", current: "2" },
+          c: { service_name: "Amazon SQS", current: "0" },
+        },
+      },
+    ] as never);
+    assert.deepEqual(
+      rows.map((row) => [row.name, row.health]),
+      [
+        ["Amazon S3", "outage"],
+        ["AWS Lambda", "degraded"],
+      ],
+    );
+  });
+
+  it("names the region in the incident title, and the services instead of 'Multiple services'", () => {
+    assert.equal(
+      awsIncidentTitle({ service_name: "Amazon S3", summary: "Errors", region_name: "Ohio" }),
+      "Amazon S3 (Ohio) — Errors",
+    );
+    assert.equal(awsIncidentTitle({ service_name: "Amazon S3", summary: "Errors" }), "Amazon S3 — Errors");
+    const multi = (names: string[], region = "Ohio") => ({
+      service_name: "Multiple services",
+      summary: "Errors",
+      region_name: region,
+      impacted_services: Object.fromEntries(names.map((name, i) => [`k${i}`, { service_name: name, current: "2" }])),
+    });
+    assert.equal(awsEventSubject(multi(["Amazon S3"])), "Amazon S3");
+    assert.equal(awsEventSubject(multi(["Amazon S3", "AWS Lambda"])), "Amazon S3 and AWS Lambda");
+    assert.equal(awsEventSubject(multi(["Amazon S3", "AWS Lambda", "Amazon SQS"])), "3 AWS services");
+    assert.equal(awsIncidentTitle(multi(["Amazon S3", "AWS Lambda", "Amazon SQS"])), "3 AWS services (Ohio) — Errors");
+    // Nothing named: still not the bare placeholder.
+    assert.equal(awsEventSubject({ service_name: "Multiple services" }), "Multiple AWS services");
+    assert.equal(awsEventSubject({}), "AWS");
   });
 });

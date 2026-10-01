@@ -1,22 +1,9 @@
-import { CATALOG } from "./catalog.ts";
-import type { BoardSnapshot, Health, ServiceSnapshot } from "./types.ts";
+import { urgencyOf } from "./health.ts";
+import type { BoardSnapshot, Health, Incident, ServiceSnapshot } from "./types.ts";
+import { verdict } from "./verdict.ts";
 
-// Most urgent first: a confirmed outage, then a confirmed degradation, then
-// maintenance, and last a source the board cannot read (it may be hiding
-// anything, but it is not a confirmed problem). The board's headline names
-// confirmed breakage before an unreadable source for the same reason.
-const URGENCY: Record<Health, number> = {
-  outage: 0,
-  degraded: 1,
-  maintenance: 2,
-  unknown: 3,
-  operational: 4,
-};
-
-/** How urgent a state is on the board: 0 (outage) is most urgent, then degraded, maintenance, unknown, operational. */
-export function urgencyOf(health: Health): number {
-  return URGENCY[health];
-}
+// Severity is the one order in health.ts (SEVERITY_ORDER), so the cards, the
+// headline, the overall health and a history day's worst state never disagree.
 
 /** When a service's most recently started incident began, as epoch ms; -Infinity if none has a readable start. */
 function latestIncidentStart(service: ServiceSnapshot): number {
@@ -35,8 +22,8 @@ function newerFirst(a: number, b: number): number {
 }
 
 /**
- * Services by urgency: severity first (outage, degraded, maintenance,
- * unknown, operational), then the most recently started incident. Anything
+ * Services by urgency: severity first (outage, degraded, unknown,
+ * maintenance, operational), then the most recently started incident. Anything
  * still tied keeps the order it came in (a stable sort): catalog order, with
  * starred services first, as the board passes them. A pure sort of a copy,
  * run on every snapshot, so the first entry is always the current most
@@ -44,24 +31,98 @@ function newerFirst(a: number, b: number): number {
  */
 export function sortByUrgency(services: ServiceSnapshot[]): ServiceSnapshot[] {
   return [...services].sort(
-    (a, b) => URGENCY[a.health] - URGENCY[b.health] || newerFirst(latestIncidentStart(a), latestIncidentStart(b)),
+    (a, b) => urgencyOf(a.health) - urgencyOf(b.health) || newerFirst(latestIncidentStart(a), latestIncidentStart(b)),
   );
 }
 
+/** When an incident began (else last changed), as epoch ms; -Infinity if neither is readable. */
+function incidentTime(incident: Incident): number {
+  for (const text of [incident.startedAt, incident.updatedAt]) {
+    const at = text ? Date.parse(text) : Number.NaN;
+    if (Number.isFinite(at)) return at;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * A service's incidents by urgency: real problems before informational
+ * notices, then severity (`SEVERITY_ORDER`), then the most recently started
+ * first. Ties keep the vendor's order (a stable sort). Collectors sort
+ * before they derive a summary or a health, and the card slices the front of
+ * the list, so the first entry is always the worst current incident.
+ */
+export function sortIncidents(incidents: Incident[], limit = Number.POSITIVE_INFINITY): Incident[] {
+  // Each incident's sort key is worked out once, not on every comparison, so
+  // ordering a feed of thousands stays cheap. `limit` keeps only the first
+  // that many, so a cut never drops a worse incident for a milder one.
+  return incidents
+    .map((incident) => ({
+      incident,
+      notice: Number(incident.informational === true),
+      urgency: urgencyOf(incident.health),
+      at: incidentTime(incident),
+    }))
+    .sort((a, b) => a.notice - b.notice || a.urgency - b.urgency || newerFirst(a.at, b.at))
+    .slice(0, limit)
+    .map(({ incident }) => incident);
+}
+
+/** Same page: scheme, host, path (minus a trailing slash) and query match; a fragment does not count. */
+function samePage(a: string, b: string): boolean {
+  try {
+    const first = new URL(a);
+    const second = new URL(b);
+    // Not `replace(/\/+$/, "")`: that rescans a run of slashes from every
+    // position in it, which is quadratic on a hostile path.
+    const path = (url: URL) => {
+      let end = url.pathname.length;
+      while (end > 0 && url.pathname[end - 1] === "/") end -= 1;
+      return url.pathname.slice(0, end);
+    };
+    return first.origin === second.origin && path(first) === path(second) && first.search === second.search;
+  } catch {
+    return a === b;
+  }
+}
+
+/**
+ * The link to the worst incident that has a page of its own, or undefined.
+ * A vendor whose incidents all point at its generic dashboard (AWS's
+ * Health Dashboard, Apple's System Status) has no incident page: that URL is
+ * the card's source link, so it is not offered as "View incident".
+ */
+export function incidentLink(service: ServiceSnapshot): string | undefined {
+  return sortIncidents(service.incidents).find((incident) => incident.url && !samePage(incident.url, service.sourceUrl))
+    ?.url;
+}
+
 export type BoardGroups = {
-  /** Anything not operational, most urgent first (see `sortByUrgency`); its first entry is the board's highlight. */
+  /**
+   * Something a person should open: outage, degraded or maintenance, most
+   * urgent first (see `sortByUrgency`). Its first outage or degraded entry is the board's highlight.
+   */
   attention: ServiceSnapshot[];
+  /**
+   * Sources that could not be read (health unknown). That says nothing about
+   * the vendor, so they never sit among the problems, are never counted as
+   * "issues" and never win the highlight.
+   */
+  unread: ServiceSnapshot[];
   /** Operational status services. */
   operational: ServiceSnapshot[];
-  /** Operational release trackers (the Updates category). */
+  /** Operational release trackers (the Releases category). */
   releases: ServiceSnapshot[];
 };
 
 export function groupServices(services: ServiceSnapshot[]): BoardGroups {
-  const attention = sortByUrgency(services.filter((service) => service.health !== "operational"));
+  const attention = sortByUrgency(
+    services.filter((service) => service.health !== "operational" && service.health !== "unknown"),
+  );
+  const unread = services.filter((service) => service.health === "unknown");
   const healthy = services.filter((service) => service.health === "operational");
   return {
     attention,
+    unread,
     operational: healthy.filter((service) => service.category !== "updates"),
     releases: healthy.filter((service) => service.category === "updates"),
   };
@@ -72,85 +133,25 @@ export function serviceAnchor(id: ServiceSnapshot["id"]): string {
 }
 
 /**
- * A service's two-digit index, "01" to "14", by its place in the catalog:
- * the same number wherever the board sorts or filters the card. A
- * decorative label, never part of a name.
- */
-export function serviceIndex(id: ServiceSnapshot["id"]): string {
-  const at = CATALOG.findIndex((entry) => entry.id === id);
-  return at < 0 ? "" : String(at + 1).padStart(2, "0");
-}
-
-function names(services: ServiceSnapshot[]): string {
-  const list = services.map((service) => service.name);
-  if (list.length <= 1) return list.join("");
-  return `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
-}
-
-/**
- * The one sentence at the top of the board. It names the worst confirmed
- * problem, so a glance answers "is something I use broken?" without reading
- * the cards. Confirmed breakage (outage, then degraded) is named before an
- * unreadable source, so `tone` is the health of what the title names, which
- * can differ from the board's overall health (where unknown outranks
- * degraded). The cards below are ordered by `sortByUrgency` (outage,
- * degraded, maintenance, unknown), so the headline's tone is always that of
- * the first card unless only maintenance and unreadable sources are left.
+ * The one sentence at the top of the board, and the tone of the mark beside it
+ * (`verdict`, which owns the wording). Kept here because the JSON API and the
+ * floating bar read it as a headline.
  */
 export function boardHeadline(board: BoardSnapshot): { tone: Health; title: string } {
-  const by = (health: Health) => board.services.filter((service) => service.health === health);
-  const outage = by("outage");
-  const degraded = by("degraded");
-  const unknown = by("unknown");
-  const maintenance = by("maintenance");
-
-  if (outage.length) {
-    return {
-      tone: "outage",
-      title: outage.length <= 2 ? `Outage: ${names(outage)}` : `${outage.length} services are down`,
-    };
-  }
-  if (degraded.length) {
-    return {
-      tone: "degraded",
-      title: degraded.length <= 2 ? `Degraded: ${names(degraded)}` : `${degraded.length} services degraded`,
-    };
-  }
-  if (unknown.length) {
-    return {
-      tone: "unknown",
-      title:
-        unknown.length === 1 ? `${unknown[0].name} could not be read` : `${unknown.length} sources could not be read`,
-    };
-  }
-  if (maintenance.length) {
-    return {
-      tone: "maintenance",
-      title:
-        maintenance.length <= 2
-          ? `Maintenance: ${names(maintenance)}`
-          : `${maintenance.length} services in maintenance`,
-    };
-  }
-  return { tone: "operational", title: "All systems operational" };
-}
-
-/** Browser tab title: the number of services needing attention, if any. */
-export function documentTitle(board: BoardSnapshot, appName: string): string {
-  const attention = board.services.filter((service) => service.health !== "operational").length;
-  return attention ? `(${attention}) ${appName}` : appName;
+  const { tone, title } = verdict(board);
+  return { tone, title };
 }
 
 /**
- * Whether an observed element has scrolled up out of view, from an
- * IntersectionObserver entry: gone and above the viewport, where
- * `topInset` is how far down a floating bar covers the screen.
+ * Browser tab title: how many services are down or degraded, if any. Only
+ * confirmed trouble counts; a source that could not be read, and planned
+ * maintenance, do not put a number in the tab.
  */
-export function scrolledPast(
-  entry: { isIntersecting: boolean; boundingClientRect: { top: number } },
-  topInset: number,
-): boolean {
-  return !entry.isIntersecting && entry.boundingClientRect.top < topInset;
+export function documentTitle(board: BoardSnapshot, appName: string): string {
+  const trouble = board.services.filter(
+    (service) => service.health === "outage" || service.health === "degraded",
+  ).length;
+  return trouble ? `(${trouble}) ${appName}` : appName;
 }
 
 /**
@@ -168,4 +169,24 @@ export function keyboardFocus(target: unknown): boolean {
   } catch {
     return true;
   }
+}
+
+/**
+ * How far the search field has travelled into the bar, 0 to 1, from the page's
+ * scroll position. It starts to move at `start` and arrives `range` pixels of
+ * scrolling later. Clamped, so an overscroll bounce at either end never moves
+ * it past its two poses.
+ */
+export function dockProgress(scrollY: number, start: number, range: number): number {
+  const linear = Math.min(1, Math.max(0, (scrollY - start) / range));
+  return linear * linear * (3 - 2 * linear);
+}
+
+/**
+ * Whether the floating bar is up at `scrollY`: from `start` on, and once up it
+ * stays until the page is `hysteresis` px above that, so a finger hovering at
+ * the threshold cannot flicker it.
+ */
+export function barShownAt(scrollY: number, start: number, shown: boolean, hysteresis = 8): boolean {
+  return scrollY >= (shown ? start - hysteresis : start);
 }

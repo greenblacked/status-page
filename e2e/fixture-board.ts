@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { toCrossJSONAsync } from "seroval";
 import { CATALOG } from "../src/lib/status/catalog.ts";
 import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/lib/status/types.ts";
@@ -16,6 +16,10 @@ import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/l
 // events and the connection-manager directory.
 
 const minute = 60_000;
+
+/** A long, all-operational component list, the shape a big vendor (Google Cloud lists over two hundred) gives. */
+const longList = (prefix: string, count: number) =>
+  Array.from({ length: count }, (_, index) => ({ name: `${prefix} ${index + 1}`, health: "operational" as const }));
 
 type Override = Partial<Omit<ServiceSnapshot, "id">>;
 
@@ -53,6 +57,7 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         { name: "Cloud Build", health: "degraded" },
         { name: "Google Compute Engine", health: "operational" },
         { name: "BigQuery", health: "operational" },
+        ...longList("Cloud product", 36),
       ],
       incidents: [
         {
@@ -88,6 +93,8 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         { name: "API", health: "operational" },
       ],
     },
+    // A healthy row with a long list: six shown, the rest behind "Show all".
+    spotify: { components: longList("Spotify part", 32) },
     claude: {
       components: [
         { name: "claude.ai", health: "operational" },
@@ -159,20 +166,81 @@ export function fixtureBoard(now: number, { grok = "operational" }: { grok?: Hea
   return { generatedAt: new Date(now).toISOString(), durationMs: 480, services, counts };
 }
 
+/** The same fourteen services with nothing wrong anywhere: every one operational, no incident, no failure. */
+export function calmBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const services = board.services.map((service) => ({
+    ...service,
+    health: "operational" as const,
+    summary: "All systems operational",
+    incidents: [],
+    upcomingMaintenance: [],
+    failure: undefined,
+    components: service.components.map((component) => ({ ...component, health: "operational" as const })),
+  }));
+  return {
+    ...board,
+    services,
+    counts: { operational: services.length, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
+  };
+}
+
+const SERVER_FN = "**/_serverFn/**";
+const served = new WeakMap<Page, (route: Route) => Promise<void>>();
+
 /**
  * Answers the board's server functions (the Refresh POST and the
  * scheduled GET) with `board()` instead of the vendors, in the same
  * serialized form the server sends. The page's first render still comes
  * from the server; press Refresh to bring the fixture in.
+ *
+ * `pressed`, when given, answers the Refresh POST alone, while the scheduled
+ * GET keeps answering with `board()`: a test that needs a change to arrive
+ * with its press, and not with a poll that happens to land first on a slow
+ * machine, serves the change there.
  */
-export async function serveBoard(page: Page, board: () => BoardSnapshot): Promise<void> {
-  await page.route("**/_serverFn/**", async (route) => {
-    const body = await toCrossJSONAsync({ result: board(), error: undefined, context: {} }, { refs: new Map() });
+export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed?: () => BoardSnapshot): Promise<void> {
+  // One answer at a time: the newest replaces the one before, so a test that opens many boards on one page does
+  // not stack a handler for each.
+  const before = served.get(page);
+  if (before) await page.unroute(SERVER_FN, before);
+  const handler = async (route: Route) => {
+    const answer = pressed && route.request().method() === "POST" ? pressed() : board();
+    const body = await toCrossJSONAsync({ result: answer, error: undefined, context: {} }, { refs: new Map() });
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       headers: { "x-tss-serialized": "true" },
       body: JSON.stringify(body),
     });
+  };
+  served.set(page, handler);
+  await page.route(SERVER_FN, handler);
+}
+
+/**
+ * The longest hero the page can have: eleven services need a look, so the headline is "Eleven things need a look."
+ * and the line under it names three of them, "and 8 more", says the other one is running normally, and that two
+ * could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
+ * sits under them.
+ */
+export function longHeroBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const unread = new Set<ServiceId>(["android", "grok"]);
+  const calm = new Set<ServiceId>(["apple-os"]);
+  const services = board.services.map((service, index): ServiceSnapshot => {
+    if (unread.has(service.id)) {
+      return { ...service, health: "unknown", summary: "The official source did not answer in time" };
+    }
+    if (calm.has(service.id)) return service;
+    const health: Health = index % 2 ? "outage" : "degraded";
+    return {
+      ...service,
+      health,
+      summary: service.summary === "All systems operational" ? "Elevated error rates" : service.summary,
+    };
   });
+  const counts: Record<Health, number> = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const service of services) counts[service.health] += 1;
+  return { ...board, services, counts };
 }

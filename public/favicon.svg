@@ -1,8 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <title>Status Page</title>
-  <rect width="32" height="32" rx="8" fill="#0c1018"/>
-  <circle cx="16" cy="16" r="9.5" fill="none" stroke="#e8eef6" stroke-width="2.6"/>
-  <circle cx="16" cy="16" r="2.2" fill="#e8eef6"/>
-  <path d="M16 16 L22.8 10.8" stroke="#e8eef6" stroke-width="2.2" stroke-linecap="round"/>
-  <circle cx="23.2" cy="10.6" r="3.4" fill="#7dcea0"/>
+  <title>Status</title>
+  <style>
+    .paper { fill: #f4f1eb; }
+    .ring, .tick { stroke: #1b7048; }
+    @media (prefers-color-scheme: dark) {
+      .paper { fill: #000000; }
+      .ring, .tick { stroke: #5bc98a; }
+    }
+  </style>
+  <rect class="paper" width="32" height="32" rx="8"/>
+  <g transform="translate(2.4 2.4) scale(1.1)">
+    <circle class="ring" cx="12" cy="12" r="9.4" fill="none" stroke-width="2.3"/>
+    <path class="tick" d="M7.7 12.5l3 2.9 5.7-6.4" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>

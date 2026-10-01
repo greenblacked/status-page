@@ -1,3 +1,4 @@
+import { boundSnapshot, clip, MAX_TEXT_CHARS } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
   formatReleaseAge,
@@ -9,54 +10,81 @@ import {
   parseMikrotikNewest,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
+import { fingerprint } from "./fingerprint.ts";
 import {
-  googleImpact,
+  googleImpactInfo,
   instatusComponent,
   overallSummary,
   statuspageComponent,
+  statuspageComponentDetail,
+  statuspageIncidentImpact,
   statuspageIndicator,
+  urgencyOf,
   worseHealth,
 } from "./health.ts";
-import { fetchJson, fetchText, meterBytes, meteredBytes, PayloadError, SourceError } from "./http.ts";
-import { urgencyOf } from "./layout.ts";
-import type { ComponentHealth, Health, Incident, ServiceId, ServiceSnapshot, SourceFailure } from "./types.ts";
+import { fetchJson, fetchText, meterBytes, meteredBytes, NotJsonError, PayloadError, SourceError } from "./http.ts";
+import { sortIncidents } from "./layout.ts";
+import type {
+  ComponentHealth,
+  Health,
+  Incident,
+  ServiceId,
+  ServiceSnapshot,
+  SourceFailure,
+  UpcomingMaintenance,
+} from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
-// Upper bound on components kept per card. A vendor page can list hundreds;
-// the snapshot is cached and served as JSON, so it must not grow with them.
-const MAX_COMPONENTS = 24;
+// Upper bound on components kept per card. The largest real vendor list is
+// Google Cloud (~215 products); the snapshot is cached and served as JSON, so a
+// runaway page must still not grow it without limit.
+const MAX_COMPONENTS = 300;
+// Upper bound on incidents kept per card. Each is a row in the board, the
+// JSON API and the Atom feed; a feed that lists thousands must not grow them.
+// Applied by sortIncidents after the board's ordering, so the cut drops the
+// mildest, oldest rows and never the outage.
+const MAX_INCIDENTS = 50;
 // Extra, optional fetches (component lists, the Steam connection managers)
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
 const EXTRA_TIMEOUT_MS = 4000;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
 
+// Every field a vendor could omit is optional: a missing one must cost a
+// detail, never the whole card (a TypeError here is a "parser" failure).
+type StatuspageRef = { id?: string; name?: string; group_id?: string | null };
+
 type StatuspageSummary = {
   status?: { indicator?: string; description?: string };
   components?: Array<{
-    id: string;
-    name: string;
-    status: string;
+    id?: string;
+    name?: string;
+    status?: string;
     group?: boolean;
     group_id?: string | null;
   }>;
   incidents?: Array<{
-    id: string;
-    name: string;
-    status: string;
+    id?: string;
+    name?: string;
+    status?: string;
     impact?: string;
     shortlink?: string;
     started_at?: string;
     updated_at?: string;
+    /** The components (and groups) the incident affects. */
+    components?: StatuspageRef[];
   }>;
   scheduled_maintenances?: Array<{
-    id: string;
-    name: string;
-    status: string;
+    id?: string;
+    name?: string;
+    status?: string;
     started_at?: string;
     updated_at?: string;
+    scheduled_for?: string;
+    scheduled_until?: string;
     shortlink?: string;
+    components?: StatuspageRef[];
   }>;
 };
 
@@ -98,6 +126,7 @@ type AppleStatus = {
       message?: string;
       usersAffected?: string;
       epochStartDate?: number;
+      epochEndDate?: number;
       datePosted?: string;
     }>;
   }>;
@@ -134,6 +163,8 @@ function base(
   };
 }
 
+const JSON_SYNTAX_MESSAGE = "SyntaxError: response was not valid JSON";
+
 // SourceError is raised by http.ts for transport problems. Anything else that
 // escapes a collector (SyntaxError from JSON.parse, TypeError from a missing
 // field) means the vendor answered with a shape the collector does not expect.
@@ -144,12 +175,21 @@ export function classifyFailure(error: unknown): SourceFailure {
     if (error.message.startsWith("Timed out")) return { kind: "timeout", message: error.message };
     return { kind: "network", message: error.message };
   }
+  // V8's JSON.parse message quotes the first characters of the body, which
+  // would carry vendor (or attacker) text into hydration data, logs and the
+  // public source-health issue. A fixed sentence says the same thing.
+  if (error instanceof SyntaxError) return { kind: "parser", message: JSON_SYNTAX_MESSAGE };
   const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return { kind: "parser", message };
 }
 
 function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot {
-  const message = error instanceof SourceError ? error.message : "Official source did not respond.";
+  // A SourceError's message is written to be read, except a non-JSON hint: that
+  // is for logs and the failure record, so the card gets the generic sentence.
+  const message =
+    error instanceof SourceError && !(error instanceof NotJsonError)
+      ? error.message
+      : "Official source did not respond.";
   const failure = classifyFailure(error);
   const latencyMs = Date.now() - started;
   // One JSON line per failed collector, so a host's log shows which vendor
@@ -162,7 +202,8 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
       service: id,
       kind: failure.kind,
       status: failure.status,
-      message: failure.message,
+      // Logged before boundSnapshot sees the snapshot, so held to its limit here.
+      message: clip(failure.message, MAX_TEXT_CHARS),
       latencyMs,
       bytes: meteredBytes(),
     }),
@@ -182,29 +223,73 @@ function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }> {
   return fn().then((value) => ({ value, ms: Date.now() - started }));
 }
 
+/** Incidents that are problems: notices with no impact are listed but not counted. */
+function realIncidentCount(incidents: Incident[]): number {
+  return incidents.filter((incident) => !incident.informational).length;
+}
+
+/** The `limit` items due soonest; one with no usable date is last. Dates are parsed once, not per comparison. */
+function soonest(items: UpcomingMaintenance[], limit: number): UpcomingMaintenance[] {
+  return items
+    .map((item) => ({ item, at: Date.parse(item.scheduledFor ?? "") || Number.MAX_SAFE_INTEGER }))
+    .sort((a, b) => a.at - b.at)
+    .slice(0, limit)
+    .map(({ item }) => item);
+}
+
+/**
+ * The incidents to list, in board order and cut to MAX_INCIDENTS, with what
+ * the cut hides: `incidentCount` (everything the source listed) is set only
+ * when some were cut, like `componentCount`, and `problems` counts the real
+ * ones in the whole list, which is what a summary should say.
+ */
+function listIncidents(
+  all: Incident[],
+  limit = MAX_INCIDENTS,
+): {
+  incidents: Incident[];
+  problems: number;
+  incidentCount?: number;
+} {
+  return {
+    incidents: sortIncidents(all, limit),
+    problems: realIncidentCount(all),
+    ...(all.length > limit ? { incidentCount: all.length } : {}),
+  };
+}
+
+/** The title of the worst incident that is a problem (the list is sorted worst first), if any. */
+function firstProblemTitle(incidents: Incident[]): string | undefined {
+  return incidents.find((incident) => !incident.informational)?.title;
+}
+
 function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
   const { sourceUrl } = CATALOG_BY_ID[id];
   const open = incidents.filter((incident) => !incident.end);
   let health: Health = "operational";
   const components: ComponentHealth[] = [];
   const mapped: Incident[] = open.map((incident) => {
-    const itemHealth = googleImpact(incident.status_impact, incident.severity);
+    const { health: itemHealth, informational } = googleImpactInfo(incident.status_impact, incident.severity);
     health = worseHealth(health, itemHealth);
     const locations = (incident.currently_affected_locations ?? [])
       .map((loc) => loc.title)
       .filter(Boolean)
       .join(", ");
-    components.push({
-      name: incident.service_name ?? "Service",
-      health: itemHealth,
-      detail: locations || incident.external_desc,
-    });
+    // A notice names no affected service: it is not a row.
+    if (!informational) {
+      components.push({
+        name: incident.service_name ?? "Service",
+        health: itemHealth,
+        detail: locations || incident.external_desc,
+      });
+    }
     return {
       id: incident.id,
       title: incident.external_desc ?? incident.service_name ?? "Incident",
       health: itemHealth,
-      startedAt: incident.begin,
-      updatedAt: incident.modified,
+      ...(informational ? { informational: true } : {}),
+      startedAt: isoTimestamp(incident.begin),
+      updatedAt: isoTimestamp(incident.modified),
       // Resolved rather than concatenated: the feed's "incidents/<id>" form
       // has no leading slash, and concatenation produced
       // "https://status.cloud.google.comincidents/<id>". vendorUrl keeps it
@@ -212,7 +297,7 @@ function googleIncidents(incidents: GoogleIncident[], id: "gcp" | "android") {
       url: vendorUrl(incident.uri, sourceUrl, [hostOf(sourceUrl)]),
     };
   });
-  return { health, incidents: mapped, components };
+  return { health, ...listIncidents(mapped), components };
 }
 
 /**
@@ -248,12 +333,26 @@ export function parseGoogleProducts(payload: unknown): GoogleProduct[] {
  */
 export function googleComponents(products: GoogleProduct[], openIncidents: GoogleIncident[]): ComponentHealth[] {
   type Row = ComponentHealth & { id?: string };
-  const rows: Row[] = products.map((product) => ({ id: product.id, name: product.title, health: "operational" }));
+  const rows: Row[] = [];
+  // Rows by id and by lower-cased name, so matching a reference is a lookup
+  // rather than a scan of every product. The first row with a key wins, as
+  // the scan it replaces did; `rows` keeps the catalogue's order.
+  const byId = new Map<string, number>();
+  const byName = new Map<string, number>();
+  const add = (row: Row): Row => {
+    const index = rows.push(row) - 1;
+    if (row.id !== undefined && !byId.has(row.id)) byId.set(row.id, index);
+    const key = row.name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, index);
+    return row;
+  };
+  for (const product of products) add({ id: product.id, name: product.title, health: "operational" });
   const find = (ref: { id?: string; title?: string }): Row | undefined => {
     const title = ref.title?.trim().toLowerCase();
-    return rows.find(
-      (row) => (ref.id !== undefined && row.id === ref.id) || (title !== undefined && row.name.toLowerCase() === title),
-    );
+    const viaId = ref.id !== undefined ? byId.get(ref.id) : undefined;
+    const viaName = title !== undefined ? byName.get(title) : undefined;
+    const index = viaId === undefined ? viaName : viaName === undefined ? viaId : Math.min(viaId, viaName);
+    return index === undefined ? undefined : rows[index];
   };
   for (const incident of openIncidents) {
     const refs = incident.affected_products?.length
@@ -261,7 +360,9 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
       : incident.service_name
         ? [{ title: incident.service_name }]
         : [];
-    const itemHealth = googleImpact(incident.status_impact, incident.severity);
+    const { health: itemHealth, informational } = googleImpactInfo(incident.status_impact, incident.severity);
+    // A notice reports no impact, so it changes no product's row.
+    if (informational) continue;
     const locations = (incident.currently_affected_locations ?? [])
       .map((loc) => loc.title)
       .filter(Boolean)
@@ -272,8 +373,7 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
       let row = find(ref);
       if (!row) {
         if (!name) continue;
-        row = { id: ref.id, name, health: "operational" };
-        rows.push(row);
+        row = add({ id: ref.id, name, health: "operational" });
       }
       // The worst incident wins the row; among equals, the first listed.
       const worse = worseHealth(row.health, itemHealth);
@@ -286,9 +386,9 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
   return rows.map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
 }
 
-// Non-operational first, in the board's urgency order (outage, degraded,
-// maintenance, then unknown: not a confirmed problem; equals keep source order), then operational in source order, capped at
-// MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
+// Non-operational first, in the board's urgency order (SEVERITY_ORDER: outage,
+// degraded, unknown, maintenance; equals keep source order), then operational
+// in source order, capped at MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
 // the total the source listed, set only when the cap dropped some, so a card
 // can say how many it is not showing.
 function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
@@ -300,6 +400,13 @@ function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "c
     : { components: ranked };
 }
 
+/** The objects in a vendor array; anything else (a null entry, a non-array) is skipped, not a crash. */
+function records<T extends object>(value: unknown): T[] {
+  return Array.isArray(value) ? value.filter((item): item is T => typeof item === "object" && item !== null) : [];
+}
+
+const MAX_UPCOMING_MAINTENANCE = 3;
+
 function fromStatuspage(
   id: ServiceId,
   data: StatuspageSummary,
@@ -309,30 +416,34 @@ function fromStatuspage(
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
+  const allComponents = records<NonNullable<StatuspageSummary["components"]>[number]>(data.components);
   // Components stay in the vendor's array order, which is the page order.
   // (`position` is per group, so sorting on it would interleave groups.)
   // The name filter (Epic/Fortnite) sees groups too, and each child's group
   // name, so a group row can carry the health of a matching service and
   // plain-named children follow their group; groups are just never listed.
   const groupNames = new Map<string, string>();
-  for (const component of data.components ?? []) {
-    if (component.group) groupNames.set(component.id, component.name);
+  const componentsById = new Map<string, (typeof allComponents)[number]>();
+  for (const component of allComponents) {
+    if (component.id) componentsById.set(component.id, component);
+    if (component.group && component.id) groupNames.set(component.id, component.name ?? "");
   }
-  const matched = (data.components ?? [])
+  const matched = allComponents
     .filter((component) =>
       componentFilter
-        ? componentFilter(component.name, component.group_id ? groupNames.get(component.group_id) : undefined)
+        ? componentFilter(component.name ?? "", component.group_id ? groupNames.get(component.group_id) : undefined)
         : !component.group,
     )
     .map((component) => ({
-      name: component.name,
+      name: component.name ?? "Component",
       group: component.group === true,
       health: statuspageComponent(component.status),
+      detail: statuspageComponentDetail(component.status),
     }));
   // Leaf components only: groups are containers, not services.
   const components: ComponentHealth[] = matched
     .filter((component) => !component.group)
-    .map(({ name, health }) => ({ name, health }));
+    .map(({ name, health, detail }) => (detail ? { name, health, detail } : { name, health }));
 
   // The list is capped only when returned (see rankComponents). Health is
   // worked out from every component first, so a broken one past the cap
@@ -345,44 +456,85 @@ function fromStatuspage(
     health = statuspageIndicator(data.status?.indicator);
   }
 
-  const activeIncidents = (data.incidents ?? []).filter((incident) => {
-    const status = incident.status.toLowerCase();
-    return status !== "resolved" && status !== "postmortem" && status !== "completed";
-  });
+  // Which of the shared page's cards an incident or maintenance belongs to.
+  // The components it lists are the vendor's own word for what it affects, so
+  // they decide when present (an incident called "Login issues" that lists a
+  // Fortnite component is Fortnite's); the name is only a fallback for an
+  // item that lists none.
+  const belongs = (item: { name?: string; components?: StatuspageRef[] }): boolean => {
+    if (!componentFilter) return true;
+    const refs = records<StatuspageRef>(item.components);
+    if (refs.length === 0) return componentFilter(item.name ?? "");
+    return refs.some((ref) => {
+      const known = ref.id ? componentsById.get(ref.id) : undefined;
+      const groupId = ref.group_id ?? known?.group_id;
+      return componentFilter(ref.name ?? known?.name ?? "", groupId ? groupNames.get(groupId) : undefined);
+    });
+  };
 
-  const incidents: Incident[] = activeIncidents
-    .filter((incident) => {
-      if (!componentFilter) return true;
-      return componentFilter(incident.name);
-    })
-    .map((incident) => ({
-      id: incident.id,
-      title: incident.name,
-      health: statuspageIndicator(incident.impact),
-      startedAt: incident.started_at,
-      updatedAt: incident.updated_at,
-      // Statuspage writes incident shortlinks on stspg.io; the vendor's own
-      // status host is allowed too. No shortlink stays no link, as before.
-      url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
-    }));
+  const activeIncidents = records<NonNullable<StatuspageSummary["incidents"]>[number]>(data.incidents).filter(
+    (incident) => {
+      const status = (incident.status ?? "").toLowerCase();
+      return status !== "resolved" && status !== "postmortem" && status !== "completed";
+    },
+  );
 
-  const maintenances = (data.scheduled_maintenances ?? []).filter((item) => {
-    const status = item.status.toLowerCase();
-    return status === "in_progress" || status === "verifying";
-  });
+  const { incidents, problems, incidentCount } = listIncidents(
+    activeIncidents
+      .filter((incident) => belongs(incident))
+      .map((incident) => {
+        const name = incident.name || "Incident";
+        const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
+        return {
+          id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
+          title: name,
+          health: itemHealth,
+          ...(informational ? { informational: true } : {}),
+          startedAt: isoTimestamp(incident.started_at),
+          updatedAt: isoTimestamp(incident.updated_at),
+          // Statuspage writes incident shortlinks on stspg.io; the vendor's own
+          // status host is allowed too. No shortlink stays no link, as before.
+          url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
+        };
+      }),
+  );
+
+  const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
+    data.scheduled_maintenances,
+  ).filter((item) => belongs(item));
+  const statusOf = (item: { status?: string }) => (item.status ?? "").toLowerCase();
+  const maintenances = scheduled.filter((item) => statusOf(item) === "in_progress" || statusOf(item) === "verifying");
 
   if (maintenances.length && health === "operational") health = "maintenance";
+
+  // Announced but not started: shown as upcoming, never as a health.
+  const upcoming: UpcomingMaintenance[] = soonest(
+    scheduled
+      .filter((item) => statusOf(item) === "scheduled")
+      .map((item) => ({
+        id: item.id || `statuspage-${fingerprint(`${item.name ?? ""}|${item.scheduled_for ?? ""}`)}`,
+        title: item.name || "Scheduled maintenance",
+        scheduledFor: isoTimestamp(item.scheduled_for),
+        scheduledUntil: isoTimestamp(item.scheduled_until),
+        url: item.shortlink ? vendorUrl(item.shortlink, sourceUrl, statuspageHosts) : undefined,
+      })),
+    MAX_UPCOMING_MAINTENANCE,
+  );
 
   // During maintenance with no incident, the maintenance itself is what the
   // card should name; the indicator description is only a generic fallback.
   const hint =
-    incidents[0]?.title || (health === "maintenance" ? maintenances[0]?.name : undefined) || data.status?.description;
+    firstProblemTitle(incidents) ||
+    (health === "maintenance" ? maintenances[0]?.name : undefined) ||
+    data.status?.description;
   return {
     ...base(id, checkedAt, latencyMs),
     health,
-    summary: overallSummary(health, incidents.length, hint),
+    summary: overallSummary(health, problems, hint),
     ...rankComponents(components),
     incidents,
+    ...(incidentCount ? { incidentCount } : {}),
+    ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),
   };
 }
 
@@ -408,9 +560,10 @@ async function collectGoogle(id: "gcp" | "android", origin: string): Promise<Ser
     return {
       ...base(id, new Date().toISOString(), ms),
       health: parsed.health,
-      summary: overallSummary(parsed.health, parsed.incidents.length, parsed.incidents[0]?.title),
+      summary: overallSummary(parsed.health, parsed.problems, firstProblemTitle(parsed.incidents)),
       ...rankComponents(components),
       incidents: parsed.incidents,
+      ...(parsed.incidentCount ? { incidentCount: parsed.incidentCount } : {}),
     };
   } catch (error) {
     return failed(id, started, error);
@@ -427,33 +580,71 @@ export function saysResolved(text: string): boolean {
   return /\bresolved\b/.test(t) && !/\bnot\s+(?:yet\s+)?(?:been\s+)?resolved\b/.test(t);
 }
 
+type AwsLogEntry = NonNullable<AwsEvent["event_log"]>[number];
+
+/**
+ * The newest `event_log` entry by timestamp. The log's order is not trusted
+ * (`.at(-1)` read whichever entry the vendor listed last, which is not
+ * always the latest), so this takes the maximum timestamp; an entry without
+ * a readable one loses to any that has one, and among equals the later entry
+ * in the list wins.
+ */
+export function awsLatestLog(event: AwsEvent): AwsLogEntry | undefined {
+  let latest: AwsLogEntry | undefined;
+  let latestAt = Number.NEGATIVE_INFINITY;
+  for (const entry of event.event_log ?? []) {
+    if (!entry || typeof entry !== "object") continue;
+    const at = Number(entry.timestamp ?? Number.NaN);
+    const value = Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+    if (latest === undefined || value >= latestAt) {
+      latest = entry;
+      latestAt = value;
+    }
+  }
+  return latest;
+}
+
+// A reported status or level as a number, or NaN when it is not a reading.
+// null and "" coerce to 0, which would read as resolved, so only a real
+// number or a non-blank numeric string counts.
+function awsLevel(raw: unknown): number {
+  return typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "") ? Number(raw) : Number.NaN;
+}
+
 export function awsEventActive(event: AwsEvent, now: number): boolean {
   if (event.end_time) return false;
   const summary = event.summary ?? "";
   if (/^\[resolved\]/i.test(summary)) return false;
-  const last = event.event_log?.at(-1);
-  const lastTs = (last?.timestamp ?? Number(event.date ?? 0)) * 1000;
+  const last = awsLatestLog(event);
+  const lastTs = (Number(last?.timestamp ?? event.date ?? 0) || 0) * 1000;
   if (!lastTs || now - lastTs > STALE_MS) return false;
   const lastMessage = `${last?.summary ?? ""} ${last?.message ?? ""}`.toLowerCase();
   // `Number(undefined)` is NaN and `NaN !== 0` is true, so an event missing
   // `status` used to count as active. Fall back to the update text instead.
-  // null and "" coerce to 0, which would read as resolved, so only a real
-  // number or a non-blank numeric string counts as a reported status.
-  const raw = event.status as unknown;
-  const status = typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "") ? Number(raw) : Number.NaN;
+  const status = awsLevel(event.status);
   if (!Number.isFinite(status)) return !saysResolved(lastMessage);
   if (saysResolved(lastMessage) && status === 0) return false;
   return status !== 0;
 }
 
+/**
+ * An event's health as a whole. AWS reports `status` as 0 (resolved), 1
+ * (informational), 2 (performance issue) or 3 (service disruption), and the
+ * vendor's own reading comes first: a disruption is an outage even in one
+ * region, and a performance issue is Degraded. Only an informational or
+ * unreported status falls back to the words of the event: maintenance, a
+ * regional Health item (one AZ or region, impact rather than a global
+ * outage) or an outage word.
+ */
 function awsHealthFromEvent(event: AwsEvent): Health {
-  const text = `${event.summary ?? ""} ${event.event_log?.at(-1)?.message ?? ""}`.toLowerCase();
-  const region = (event.region_name ?? "").trim();
+  const last = awsLatestLog(event);
+  const level = awsLevel(event.status);
+  if (level === 3) return "outage";
+  const text = `${event.summary ?? ""} ${last?.message ?? ""}`.toLowerCase();
   if (text.includes("maintenance")) return "maintenance";
-  // Regional Health items (one AZ / one region) are impact, not a global outage.
-  if (region || /region availability/.test(text) || /availability zone/.test(text)) {
-    return "degraded";
-  }
+  if (level === 2) return "degraded";
+  const region = (event.region_name ?? "").trim();
+  if (region || /region availability/.test(text) || /availability zone/.test(text)) return "degraded";
   if (text.includes("outage") || text.includes("unavailable")) return "outage";
   return "degraded";
 }
@@ -474,71 +665,110 @@ export function epochToIso(value: unknown, unitMs: number): string | undefined {
   return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
 }
 
+const LOOSE_TIMESTAMP = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/**
+ * A timestamp string from a vendor payload as an ISO string, or undefined
+ * when it is missing or unreadable. A payload that wrote a time like
+ * "2026-09-16 11:32", with a space and no zone, would be Invalid Date in
+ * Safari where Chrome accepts it; the vendors read today send ISO already,
+ * so this is a guard, and the browser only ever receives ISO 8601. A value
+ * without a zone is read as UTC.
+ */
+export function isoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!text) return undefined;
+  const loose = LOOSE_TIMESTAMP.exec(text);
+  let candidate = text;
+  if (loose) {
+    const zone = loose[3] ?? "Z";
+    const offset = /^[+-]\d{4}$/.test(zone) ? `${zone.slice(0, 3)}:${zone.slice(3)}` : zone.toUpperCase();
+    candidate = `${loose[1]}T${loose[2]}${offset}`;
+  }
+  const date = new Date(candidate);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 // What one impacted service of a multi-service event contributes. AWS
 // reports `current` as 0 (recovered), 1 (informational), 2 (performance
-// issue) or 3 (service disruption). Recovered services contribute no row.
-// A disruption is an outage only where the collector would call the event
-// one: a regional or maintenance event keeps the event's own, milder, health,
-// the same rule the card follows.
+// issue) or 3 (service disruption). Recovered services contribute no row. A
+// disruption is an outage wherever it is (the vendor's word, not the
+// region's); the milder levels are Degraded, or Maintenance during
+// maintenance. A missing reading keeps the event's own health.
 function awsImpactedHealth(current: unknown, eventHealth: Health): Health | null {
-  // "" and other non-numbers are not a reading: Number("") is 0, which would
-  // read as recovered, so only a finite number or a non-blank numeric string counts.
-  const level =
-    typeof current === "number"
-      ? current
-      : typeof current === "string" && current.trim() !== ""
-        ? Number(current)
-        : Number.NaN;
+  const level = awsLevel(current);
   if (level === 0) return null;
-  if (level === 3) return eventHealth;
+  if (level === 3) return "outage";
   if (level === 1 || level === 2) return eventHealth === "maintenance" ? "maintenance" : "degraded";
   return eventHealth;
 }
 
+const AWS_GENERIC_NAME = /^multiple services?$/i;
+
+// The services an event names that are not recovered, each with its health.
+// A multi-service event (`impacted_services`) names each service it affects;
+// any other event names its own `service_name`. "Multiple services" is a
+// placeholder for the first case, never a service.
+function awsEventServices(event: AwsEvent): Array<{ name: string; health: Health }> {
+  const eventHealth = awsHealthFromEvent(event);
+  const impacted = Object.values(event.impacted_services ?? {}).filter(
+    (entry) => typeof entry?.service_name === "string" && entry.service_name.trim() !== "",
+  );
+  if (impacted.length > 0) {
+    const named: Array<{ name: string; health: Health }> = [];
+    for (const entry of impacted) {
+      const health = awsImpactedHealth(entry.current, eventHealth);
+      if (health) named.push({ name: (entry.service_name as string).trim(), health });
+    }
+    return named;
+  }
+  const name = (event.service_name ?? event.service ?? "").trim();
+  return name && !AWS_GENERIC_NAME.test(name) ? [{ name, health: eventHealth }] : [];
+}
+
 /**
- * The AWS services named by active events, one component each. A
- * multi-service event (`impacted_services`) names each service it affects;
- * any other event names its own `service_name`. Several events for a service
- * merge into one row: the worst health wins, the detail is the newest event's
- * summary, prefixed with that event's region ("N. Virginia · Increased API
- * Error Rates"). Only services the events name
- * appear, so a quiet Health Dashboard yields no list; an event that names no
- * service cannot be a row.
+ * An event's health. With per-service readings (`impacted_services`) it is
+ * the worst of the services still affected; otherwise, or when every one has
+ * recovered, it is the event's own (see `awsHealthFromEvent`).
+ */
+function awsEventHealth(event: AwsEvent): Health {
+  const services = awsEventServices(event);
+  if (Object.keys(event.impacted_services ?? {}).length > 0 && services.length > 0) {
+    return services.reduce<Health>((worst, service) => worseHealth(worst, service.health), "operational");
+  }
+  return awsHealthFromEvent(event);
+}
+
+/**
+ * The AWS services named by active events, one component each. Several
+ * events for a service merge into one row: the worst health wins, the
+ * regions are the union of every event's, and the detail is the newest
+ * event's summary, prefixed with those regions ("N. Virginia, Ireland ·
+ * Increased API Error Rates"). Only services the events name appear, so a
+ * quiet Health Dashboard yields no list; an event that names no service
+ * (or only "Multiple services") cannot be a row.
  */
 export function awsComponents(active: AwsEvent[]): ComponentHealth[] {
   type Row = ComponentHealth & { at: number; regions: Set<string> };
   const rows = new Map<string, Row>();
   for (const event of active) {
-    const last = event.event_log?.at(-1);
+    const last = awsLatestLog(event);
     const at = Number(last?.timestamp ?? event.date ?? 0) || 0;
-    const eventHealth = awsHealthFromEvent(event);
     const summary = event.summary || last?.summary || undefined;
     const region = (event.region_name ?? "").trim();
-    const impacted = Object.values(event.impacted_services ?? {}).filter(
-      (entry) => typeof entry?.service_name === "string" && entry.service_name.trim() !== "",
-    );
-    const named: Array<{ name: string; health: Health }> = [];
-    if (impacted.length > 0) {
-      for (const entry of impacted) {
-        const health = awsImpactedHealth(entry.current, eventHealth);
-        if (health) named.push({ name: (entry.service_name as string).trim(), health });
-      }
-    } else {
-      const name = (event.service_name ?? event.service ?? "").trim();
-      if (name) named.push({ name, health: eventHealth });
-    }
-    for (const { name, health } of named) {
+    for (const { name, health } of awsEventServices(event)) {
       const row = rows.get(name);
       if (!row) {
         rows.set(name, { name, health, detail: summary, at, regions: new Set(region ? [region] : []) });
         continue;
       }
       row.health = worseHealth(row.health, health);
-      // The regions belong to the summary shown, so they move with it.
+      // Every event's region counts, whichever summary is shown.
+      if (region) row.regions.add(region);
       if (at >= row.at) {
         row.at = at;
         row.detail = summary ?? row.detail;
-        row.regions = new Set(region ? [region] : []);
       }
     }
   }
@@ -546,6 +776,26 @@ export function awsComponents(active: AwsEvent[]): ComponentHealth[] {
     const text = [regions.size ? [...regions].join(", ") : "", detail ?? ""].filter(Boolean).join(" · ");
     return text ? { name, health, detail: text } : { name, health };
   });
+}
+
+/**
+ * What an incident title names as the affected service. A "Multiple
+ * services" event is named by the services it still affects (one or two by
+ * name, more than that as a count).
+ */
+export function awsEventSubject(event: AwsEvent): string {
+  const own = (event.service_name ?? event.service ?? "").trim();
+  if (own && !AWS_GENERIC_NAME.test(own)) return own;
+  const names = [...new Set(awsEventServices(event).map((service) => service.name))];
+  if (names.length === 0) return own ? "Multiple AWS services" : "AWS";
+  return names.length <= 2 ? names.join(" and ") : `${names.length} AWS services`;
+}
+
+/** "Service (Region) — summary". */
+export function awsIncidentTitle(event: AwsEvent): string {
+  const region = (event.region_name ?? "").trim();
+  const summary = event.summary ?? awsLatestLog(event)?.summary ?? "Event";
+  return `${awsEventSubject(event)}${region ? ` (${region})` : ""} — ${summary}`;
 }
 
 async function collectAws(): Promise<ServiceSnapshot> {
@@ -557,29 +807,44 @@ async function collectAws(): Promise<ServiceSnapshot> {
     const now = Date.now();
     const active = value.filter((event) => awsEventActive(event, now));
     let health: Health = "operational";
-    const incidents: Incident[] = active.map((event) => {
-      const itemHealth = awsHealthFromEvent(event);
-      health = worseHealth(health, itemHealth);
-      const last = event.event_log?.at(-1);
-      return {
-        id: event.arn ?? event.summary ?? crypto.randomUUID(),
-        title: `${event.service_name ?? event.service ?? "AWS"} — ${event.summary ?? last?.summary ?? "Event"}`,
-        health: itemHealth,
-        startedAt: epochToIso(event.date, 1000),
-        updatedAt: epochToIso(last?.timestamp, 1000),
-        url: "https://health.aws.amazon.com/health/status",
-      };
-    });
+    const { incidents, problems, incidentCount } = listIncidents(
+      active.map((event) => {
+        const itemHealth = awsEventHealth(event);
+        health = worseHealth(health, itemHealth);
+        const last = awsLatestLog(event);
+        return {
+          // The ARN is the event's identity. Without one the id is built from
+          // the event's own content, so it is the same on every sweep (a
+          // random UUID would make each sweep look like a new incident).
+          id:
+            event.arn ||
+            `aws-${fingerprint(
+              [
+                event.service_name ?? event.service ?? "",
+                event.region_name ?? "",
+                event.date ?? "",
+                event.summary ?? "",
+              ].join("|"),
+            )}`,
+          title: awsIncidentTitle(event),
+          health: itemHealth,
+          startedAt: epochToIso(event.date, 1000),
+          updatedAt: epochToIso(last?.timestamp, 1000),
+          url: "https://health.aws.amazon.com/health/status",
+        };
+      }),
+    );
     return {
       ...base("aws", new Date().toISOString(), ms),
       health,
       summary: overallSummary(
         health,
-        incidents.length,
+        problems,
         incidents[0]?.title ?? `${value.length} public Health items, none currently active.`,
       ),
       ...rankComponents(awsComponents(active)),
       incidents,
+      ...(incidentCount ? { incidentCount } : {}),
       meta: { publicEvents: value.length, active: active.length },
     };
   } catch (error) {
@@ -810,14 +1075,20 @@ async function collectSpotify(): Promise<ServiceSnapshot> {
   }
 }
 
+// Only events that are happening now have a health. An "upcoming" one has
+// not started, so it must not make the service read Maintenance hours
+// before it begins: it is kept as upcomingMaintenance instead.
 function appleEventHealth(event: { eventStatus?: string; statusType?: string }): Health {
   const status = (event.eventStatus ?? "").toLowerCase();
   const type = (event.statusType ?? "").toLowerCase();
-  if (status === "resolved" || status === "completed") return "operational";
-  if (status !== "ongoing" && status !== "current" && status !== "upcoming") return "operational";
+  if (status !== "ongoing" && status !== "current") return "operational";
   if (type === "outage") return "outage";
   if (type === "maintenance") return "maintenance";
   return "degraded";
+}
+
+function appleEventUpcoming(event: { eventStatus?: string }): boolean {
+  return (event.eventStatus ?? "").toLowerCase() === "upcoming";
 }
 
 async function collectApple(): Promise<ServiceSnapshot> {
@@ -829,11 +1100,19 @@ async function collectApple(): Promise<ServiceSnapshot> {
     let health: Health = "operational";
     const incidents: Incident[] = [];
     const components: ComponentHealth[] = [];
+    const upcoming: UpcomingMaintenance[] = [];
     for (const service of value.services ?? []) {
-      const active = (service.events ?? []).filter((event) => {
-        const itemHealth = appleEventHealth(event);
-        return itemHealth !== "operational";
-      });
+      const events = service.events ?? [];
+      for (const event of events.filter(appleEventUpcoming)) {
+        upcoming.push({
+          id: `${service.serviceName}-${event.epochStartDate ?? event.datePosted ?? event.message}`,
+          title: `${service.serviceName}: ${event.message ?? event.statusType ?? "Scheduled maintenance"}`,
+          scheduledFor: epochToIso(event.epochStartDate, 1),
+          scheduledUntil: epochToIso(event.epochEndDate, 1),
+          url: "https://www.apple.com/support/systemstatus/",
+        });
+      }
+      const active = events.filter((event) => appleEventHealth(event) !== "operational");
       if (!active.length) {
         // The payload lists every service, quiet or not, so a healthy one is a
         // real operational component rather than an invented row.
@@ -853,12 +1132,15 @@ async function collectApple(): Promise<ServiceSnapshot> {
         });
       }
     }
+    const { incidents: sorted, problems, incidentCount } = listIncidents(incidents);
     return {
       ...base("apple", new Date().toISOString(), ms),
       health,
-      summary: overallSummary(health, incidents.length, incidents[0]?.title),
+      summary: overallSummary(health, problems, sorted[0]?.title),
       ...rankComponents(components),
-      incidents,
+      incidents: sorted,
+      ...(incidentCount ? { incidentCount } : {}),
+      ...(upcoming.length ? { upcomingMaintenance: soonest(upcoming, MAX_UPCOMING_MAINTENANCE) } : {}),
       meta: { services: value.services?.length ?? 0 },
     };
   } catch (error) {
@@ -870,9 +1152,53 @@ async function collectApple(): Promise<ServiceSnapshot> {
 // a letter). A blanket `<[^>]+>` also ate a decoded "Latency < 500ms", which
 // erased "Status: Resolved" from an otherwise operational item. Plain text
 // such as "a<b ... c>d" still reads as a tag; regex stripping cannot tell.
+//
+// A single pass over the `<` positions rather than a regex: `<!--[\s\S]*?-->`
+// rescans to the end of the text from every unclosed `<!--`, which is
+// quadratic on a body of repeated openers. Here a missing "-->" is looked
+// for once, and a tag body stops at the next `<` or `>`, so nothing is
+// scanned twice.
+function stripMarkup(value: string): string {
+  let out = "";
+  let from = 0;
+  let commentsClose = true;
+  for (;;) {
+    const lt = value.indexOf("<", from);
+    if (lt === -1) return out + value.slice(from);
+    out += value.slice(from, lt);
+    from = lt + 1;
+    if (value.startsWith("<!--", lt)) {
+      const end = commentsClose ? value.indexOf("-->", lt + 4) : -1;
+      if (end !== -1) {
+        out += " ";
+        from = end + 3;
+        continue;
+      }
+      commentsClose = false;
+      out += "<";
+      continue;
+    }
+    let at = lt + 1;
+    if (value[at] === "/") at += 1;
+    if (isAsciiLetter(value.charCodeAt(at))) {
+      at += 1;
+      while (at < value.length && value[at] !== "<" && value[at] !== ">") at += 1;
+      if (value[at] === ">") {
+        out += " ";
+        from = at + 1;
+        continue;
+      }
+    }
+    out += "<";
+  }
+}
+
+function isAsciiLetter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
 function stripHtml(value: string): string {
-  return value
-    .replace(/<!--[\s\S]*?-->|<\/?[a-zA-Z][^<>]*>/g, " ")
+  return stripMarkup(value)
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -923,50 +1249,97 @@ export function decodeXmlEntities(text: string): string {
 
 // CDATA content is already literal text, so it must never be re-decoded
 // (`<![CDATA[a &amp; b]]>` should stay `a &amp; b`). Split on CDATA sections
-// and decode only the parts outside them.
-const CDATA_RE = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
-
+// and decode only the parts outside them. Found with indexOf rather than a
+// lazy regex, which rescans to the end from every unclosed opener.
 const CDATA_START = "<![CDATA[";
+const CDATA_END = "]]>";
 
 export function decodeXmlField(raw: string): string {
   let result = "";
-  let lastIndex = 0;
-  for (const match of raw.matchAll(CDATA_RE)) {
-    result += decodeXmlEntities(raw.slice(lastIndex, match.index));
-    result += match[1];
-    lastIndex = match.index + match[0].length;
+  let from = 0;
+  for (;;) {
+    const start = raw.indexOf(CDATA_START, from);
+    if (start === -1) return result + decodeXmlEntities(raw.slice(from));
+    result += decodeXmlEntities(raw.slice(from, start));
+    const end = raw.indexOf(CDATA_END, start + CDATA_START.length);
+    // An opener with no closing `]]>` anywhere later: treat everything from
+    // that marker onward as literal CDATA content (strip the marker, leave
+    // the rest undecoded), rather than decoding text the feed meant to be
+    // taken as-is.
+    if (end === -1) return result + raw.slice(start + CDATA_START.length);
+    result += raw.slice(start + CDATA_START.length, end);
+    from = end + CDATA_END.length;
   }
-  // Any `<![CDATA[` left in the tail has no closing `]]>` anywhere later in
-  // the string, or the loop above would already have consumed it. Treat
-  // everything from that marker onward as literal CDATA content: strip the
-  // marker and leave the rest undecoded, rather than decoding text the feed
-  // meant to be taken as-is.
-  const tail = raw.slice(lastIndex);
-  const unterminated = tail.indexOf(CDATA_START);
-  if (unterminated === -1) {
-    result += decodeXmlEntities(tail);
-  } else {
-    result += decodeXmlEntities(tail.slice(0, unterminated));
-    result += tail.slice(unterminated + CDATA_START.length);
+}
+
+/** Most `<item>`s kept from a feed: the newest by pubDate. Real feeds carry tens. */
+export const MAX_RSS_ITEMS = 200;
+/**
+ * Most `<item>`s looked at in one feed, in document order. status.x.ai serves
+ * its whole history and nothing says which end is newest, so every item up to
+ * this bound is dated before the newest MAX_RSS_ITEMS are chosen. The bound
+ * is for memory: a feed with more items than this is not a feed.
+ */
+export const MAX_RSS_SCANNED = 5000;
+
+const ITEM_CLOSE = /<\/item>/i;
+
+const FIELD_TAGS = new Map<string, [RegExp, RegExp]>();
+
+// The text between the first `<tag>` and the first `</tag>` after it, or
+// undefined. Two literal searches, so a field is read in one pass over its
+// item whatever the item holds; `<tag>([\s\S]*?)</tag>` rescanned the whole
+// item from every repeated, unclosed `<tag>`.
+function xmlField(chunk: string, tag: string): string | undefined {
+  let tags = FIELD_TAGS.get(tag);
+  if (!tags) {
+    tags = [new RegExp(`<${tag}>`, "i"), new RegExp(`</${tag}>`, "i")];
+    FIELD_TAGS.set(tag, tags);
   }
-  return result;
+  const open = chunk.search(tags[0]);
+  if (open === -1) return undefined;
+  const from = open + tag.length + 2;
+  const close = chunk.slice(from).search(tags[1]);
+  return close === -1 ? undefined : chunk.slice(from, from + close);
 }
 
 export function parseRssItems(
   xml: string,
 ): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
-  const items: Array<{ title: string; description: string; pubDate?: string; link?: string }> = [];
-  const blocks = xml.split(/<item[\s>]/i).slice(1);
-  for (const block of blocks) {
-    const chunk = block.split(/<\/item>/i)[0] ?? "";
-    const title = decodeXmlField(chunk.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim();
-    const description = decodeXmlField(chunk.match(/<description>([\s\S]*?)<\/description>/i)?.[1] ?? "").trim();
-    const pubDate = chunk.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1]?.trim();
-    const rawLink = chunk.match(/<link>([\s\S]*?)<\/link>/i)?.[1];
-    const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
-    items.push({ title, description, pubDate, link });
+  // Each item runs from its `<item>` to the next one, cut at its own
+  // `</item>`; every search below stays inside that slice, so the whole feed
+  // is read once. Only the date is read from all of the items scanned; the
+  // newest MAX_RSS_ITEMS are then read in full, before anything downstream
+  // maps or sorts them. An item with no readable date ranks last, and ties
+  // keep the feed's order. The items kept stay in the feed's order.
+  const scanned: Array<{ chunk: string; at: number; index: number }> = [];
+  const itemOpen = /<item[\s>]/gi;
+  let open = itemOpen.exec(xml);
+  while (open && scanned.length < MAX_RSS_SCANNED) {
+    const bodyStart = open.index + open[0].length;
+    const next = itemOpen.exec(xml);
+    const block = xml.slice(bodyStart, next ? next.index : xml.length);
+    const closed = block.search(ITEM_CLOSE);
+    const chunk = closed === -1 ? block : block.slice(0, closed);
+    const date = Date.parse(xmlField(chunk, "pubDate")?.trim() ?? "");
+    scanned.push({ chunk, at: Number.isFinite(date) ? date : Number.NEGATIVE_INFINITY, index: scanned.length });
+    open = next;
   }
-  return items;
+  const kept =
+    scanned.length > MAX_RSS_ITEMS
+      ? scanned
+          .sort((a, b) => (a.at === b.at ? a.index - b.index : a.at > b.at ? -1 : 1))
+          .slice(0, MAX_RSS_ITEMS)
+          .sort((a, b) => a.index - b.index)
+      : scanned;
+  return kept.map(({ chunk }) => {
+    const title = decodeXmlField(xmlField(chunk, "title") ?? "").trim();
+    const description = decodeXmlField(xmlField(chunk, "description") ?? "").trim();
+    const pubDate = xmlField(chunk, "pubDate")?.trim();
+    const rawLink = xmlField(chunk, "link");
+    const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
+    return { title, description, pubDate, link };
+  });
 }
 
 export function grokItemHealth(description: string): Health {
@@ -1022,7 +1395,9 @@ export function parseInstatusComponents(payload: unknown): ComponentHealth[] {
  * service. A title without that lead names no service, and none is guessed.
  */
 export function grokTitleService(title: string): { name: string; detail: string } | null {
-  const match = title.match(/^\[([^\]]{1,64})\]\s*(.+)$/);
+  // `(\S.*)`, not `\s*(.+)`: with both able to match spaces, a title holding a
+  // line break after a long run of them backtracked quadratically.
+  const match = title.match(/^\[([^\]]{1,64})\]\s*(\S.*)$/);
   const name = match?.[1]?.trim();
   const detail = match?.[2]?.trim();
   return name && detail ? { name, detail } : null;
@@ -1079,24 +1454,28 @@ async function collectGrok(): Promise<ServiceSnapshot> {
       (worst, item) => worseHealth(worst, grokItemHealth(item.description)),
       "operational",
     );
-    const incidents: Incident[] = active.slice(0, 8).map((item, index) => {
-      return {
+    // Sorted worst first before the first 8 are kept, so the cut never drops
+    // the most urgent item.
+    const { incidents, problems, incidentCount } = listIncidents(
+      active.map((item, index) => ({
         id: item.link ?? `${item.title}-${index}`,
         title: item.title,
         health: grokItemHealth(item.description),
-        startedAt: item.pubDate ? new Date(item.pubDate).toISOString() : undefined,
+        startedAt: isoTimestamp(item.pubDate),
         url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
-      };
-    });
+      })),
+      8,
+    );
     return {
       ...base("grok", new Date().toISOString(), ms),
       health,
-      summary: overallSummary(health, incidents.length, incidents[0]?.title),
+      summary: overallSummary(health, problems, incidents[0]?.title),
       // The vendor's own list when it is readable; otherwise only the
       // services the current feed's titles name. Health above is the feed's
       // alone: components add detail and never move it.
       ...rankComponents(listed.length ? listed : grokFeedComponents(active)),
       incidents,
+      ...(incidentCount ? { incidentCount } : {}),
     };
   } catch (error) {
     return failed("grok", started, error);
@@ -1250,7 +1629,9 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
 // source's latency and download size per sweep, not only the broken ones.
 function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
   return meterBytes(async (meter) => {
-    const snapshot = await collect();
+    // Every string a vendor sent is held to its limit here, once, whichever
+    // collector built the snapshot.
+    const snapshot = boundSnapshot(await collect());
     if (!snapshot.failure) {
       console.log(
         JSON.stringify({

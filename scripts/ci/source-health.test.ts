@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -88,7 +88,7 @@ const broken: Result = {
   ok: false,
   latencyMs: 90,
   attempts: 3,
-  failure: { kind: "parser", message: "SyntaxError: Unexpected token '<'" },
+  failure: { kind: "parser", message: "SyntaxError: response was not valid JSON" },
 };
 const healthy: Result = { ...broken, ok: true, failure: undefined };
 
@@ -241,6 +241,30 @@ describe("source-health --record", () => {
       vi.unstubAllGlobals();
     }
     expect(new Uint8Array(readFileSync(join(dir, "health.aws.amazon.com", "public", "currentevents")))).toEqual(body);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("files the final body of a redirected request under the path that was asked for", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "record-"));
+    vi.stubGlobal("fetch", async (input: string) => {
+      if (input === "https://upgrade.mikrotik.com/routeros/NEWESTa7.stable") {
+        return new Response(null, { status: 302, headers: { location: "https://download.mikrotik.com/routeros/N" } });
+      }
+      return new Response("7.16 1700000000", { status: 200 });
+    });
+    const stop = recordResponses(dir);
+    try {
+      const hop = await fetch("https://upgrade.mikrotik.com/routeros/NEWESTa7.stable", { redirect: "manual" });
+      expect(hop.status).toBe(302);
+      await fetch("https://download.mikrotik.com/routeros/N", { redirect: "manual" });
+    } finally {
+      stop();
+      vi.unstubAllGlobals();
+    }
+    expect(readFileSync(join(dir, "upgrade.mikrotik.com", "routeros", "NEWESTa7.stable"), "utf8")).toBe(
+      "7.16 1700000000",
+    );
+    expect(existsSync(join(dir, "download.mikrotik.com"))).toBe(false);
     rmSync(dir, { recursive: true, force: true });
   });
 

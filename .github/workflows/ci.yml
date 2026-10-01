@@ -46,12 +46,20 @@ jobs:
       - name: Repository hygiene
         run: ./scripts/ci/hygiene.sh
 
+      # The design tokens are the only source of type, radius, material and colour.
+      - name: Design tokens
+        run: ./scripts/ci/tokens.sh
+
       - name: Documentation links
         run: ./scripts/ci/links.sh
 
       # release.yml refuses a tag with no notes; catch that here, not at tag time.
       - name: Changelog covers package.json version
         run: ./scripts/ci/release-notes.sh >/dev/null
+
+      # packageManager, tools/npm/package.json and its lockfile pin one npm.
+      - name: npm pin in sync
+        run: ./scripts/ci/npm-pin.sh check
 
       - name: Shell scripts
         run: shellcheck scripts/ci/*.sh scripts/release/*.sh
@@ -158,11 +166,38 @@ jobs:
           retention-days: 1
 
   e2e:
-    name: browser tests
+    # One shard per engine family and device. Every project but one runs the
+    # same 174 tests (890 in all; the Chromium tablet runs the 20 of the search
+    # dock), but WebKit is several times slower than Chromium in CI, so the
+    # three Chromium projects share a shard and each WebKit project gets its own.
+    # Together the shards run every project exactly once.
+    name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Five projects, two engines, and WebKit's system libraries to install.
-    timeout-minutes: 20
+    # Per shard: at most 368 tests on one engine (Chromium) or 174 on WebKit,
+    # which take 3 to 5 minutes, plus the browser and its system libraries to
+    # install. WebKit's libraries are about 125 MB from apt, and on a slow
+    # runner that fetch has taken over 20 minutes. apt is not retried: a
+    # killed apt keeps the dpkg lock, so a retry in the same job would fail.
+    # The install step's 30-minute limit only catches a real hang.
+    timeout-minutes: 40
+    strategy:
+      # A slow or failing shard must not hide the results of the others.
+      fail-fast: false
+      matrix:
+        include:
+          - shard: chromium
+            browser: chromium
+            projects: desktop,mobile,tablet
+          - shard: desktop-safari
+            browser: webkit
+            projects: Desktop Safari
+          - shard: iphone
+            browser: webkit
+            projects: iPhone 17 Pro
+          - shard: ipad
+            browser: webkit
+            projects: iPad Pro 11
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -174,18 +209,36 @@ jobs:
           name: node-build
           path: dist/
 
-      # The browsers matching the @playwright/test version in the lockfile:
-      # Chromium, and WebKit for the Safari, iPhone and iPad projects.
-      - name: Install Playwright's Chromium and WebKit
-        run: npx --no-install playwright install --with-deps chromium webkit
+      # The browser matching the @playwright/test version in the lockfile,
+      # and only the one this shard runs. The install is split in two so the
+      # log shows which phase is slow: the apt libraries or the download.
+      - name: Install Playwright's browser
+        timeout-minutes: 30
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          npx --no-install playwright install-deps "$BROWSER"
+          npx --no-install playwright install "$BROWSER"
 
       - name: Browser tests (Playwright)
-        run: npm run test:e2e
+        # Runs take 3 to 4.3 minutes; this stops a hung suite long before
+        # the job limit does.
+        timeout-minutes: 10
+        env:
+          # Comma-separated project names from playwright.config.ts.
+          PROJECTS: ${{ matrix.projects }}
+        run: |
+          args=()
+          IFS=, read -ra names <<<"$PROJECTS"
+          for name in "${names[@]}"; do
+            args+=(--project="$name")
+          done
+          npm run test:e2e -- "${args[@]}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: |
             playwright-report/
             test-results/
@@ -194,7 +247,8 @@ jobs:
   history:
     name: browser tests (history build)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Headroom for a slow apt: Chromium's libraries are about 32 MB.
+    timeout-minutes: 20
     permissions:
       contents: read
     env:
@@ -318,8 +372,15 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<<"$RESULTS"
+          # `e2e` is a matrix: its result is `failure` or `cancelled` if any
+          # shard failed, was cancelled or timed out.
           # `skipped` is fine: commit and branch checks run on pull requests only.
           if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<<"$RESULTS" >/dev/null; then
             echo "::error::a required job failed or was cancelled"
+            exit 1
+          fi
+          # The browser shards must have run: never let them be skipped.
+          if ! jq -e '.e2e.result == "success"' <<<"$RESULTS" >/dev/null; then
+            echo "::error::the browser tests did not pass"
             exit 1
           fi

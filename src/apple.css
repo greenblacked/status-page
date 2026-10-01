@@ -1,0 +1,34 @@
+/*
+  Rules that exist for Safari and iOS. Loaded after styles.css, so on equal
+  specificity these win.
+*/
+
+/* In the base layer, so a Tailwind utility on an element can still override these. */
+@layer base {
+  /* No double-tap zoom delay on anything tappable. */
+  a,
+  button,
+  [role="button"],
+  [role="switch"],
+  label,
+  input,
+  summary {
+    touch-action: manipulation;
+  }
+
+  /* A long press on a control should not start a text selection or callout. */
+  :is(button, [role="switch"]) {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/*
+  Lock the page behind an open dialog: iOS scrolls it through the backdrop.
+  The stable gutter keeps a desktop with classic scrollbars from shifting
+  sideways when the scrollbar goes.
+*/
+html:has(dialog[open]) {
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
