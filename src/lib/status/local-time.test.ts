@@ -61,6 +61,49 @@ describe("formatLocalDate", () => {
   });
 });
 
+// The whole site is English, so no browser language may change a date or a time: not the words, the
+// punctuation, the digits, the 12/24-hour clock, nor the zone's name.
+describe("in any browser language", () => {
+  const locales = ["ru-RU", "de-DE", "ar-EG", "en-US", "ja-JP", "fa-IR"];
+  const moscow = (locale: string) => ({ timeZone: "Europe/Moscow", locale });
+  const afternoon = Date.parse("2026-09-30T14:04:00Z");
+
+  it.each(locales)("prints the date in English for %s", (locale) => {
+    expect(formatLocalDate(Date.parse("2026-09-30T23:30:00Z"), { timeZone: "Europe/Moscow", locale })).toBe(
+      "Thursday 1 October",
+    );
+    expect(formatLocalDate(at, { timeZone: "Europe/Berlin", locale })).toBe(formatUtcDate(at));
+  });
+
+  it.each(locales)("prints a 24-hour clock with an English zone for %s", (locale) => {
+    expect(formatLocalTime(afternoon, afternoon, { timeZone: "Europe/Berlin", locale })).toBe("16:04\u202fCEST");
+    expect(formatLocalTime(afternoon, afternoon, moscow(locale))).toBe("17:04\u202fGMT+3");
+    expect(formatLocalTime(afternoon, afternoon, { timeZone: "UTC", locale })).toBe("14:04\u202fUTC");
+    // Midnight is 00:00, never 24:00 or 12:00 AM.
+    expect(formatLocalTime(Date.parse("2026-09-30T22:05:00Z"), undefined, { timeZone: "Europe/Berlin", locale })).toBe(
+      "00:05\u202fCEST",
+    );
+  });
+
+  it.each(locales)("prints the cross-day form in English for %s", (locale) => {
+    const reference = Date.parse("2026-09-30T10:04:00Z");
+    const options = { timeZone: "Europe/Berlin", locale };
+    expect(formatLocalTime(Date.parse("2026-09-26T10:04:00Z"), reference, options)).toBe("26 Sep 12:04\u202fCEST");
+    expect(formatLocalTime(Date.parse("2025-12-31T10:04:00Z"), reference, options)).toBe("31 Dec 2025 11:04\u202fCET");
+  });
+
+  it.each(locales)("uses only ASCII digits and letters for %s", (locale) => {
+    const options = { timeZone: "Asia/Kolkata", locale };
+    const text = [
+      formatLocalDate(afternoon, options),
+      formatLocalTime(afternoon, afternoon, options),
+      formatLocalTime(Date.parse("2025-12-31T10:04:00Z"), afternoon, options),
+    ].join(" ");
+    expect(text).toMatch(/^[ -~\u202f]+$/);
+    expect(text).toContain("19:34\u202fGMT+5:30");
+  });
+});
+
 describe("before and after hydration", () => {
   it("shows UTC first, in the text the server printed", () => {
     expect(formatBeforeHydration(at, at, "clock")).toBe("10:04\u202fUTC");
