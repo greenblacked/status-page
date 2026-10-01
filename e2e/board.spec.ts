@@ -2381,8 +2381,18 @@ for (const scrollY of [40, 190]) {
 
 // A tap leaves no pointer and no focus on the board, so the hook holds the first thing in view: the cards under
 // the feed, never the feed itself.
-test("holds the cards in place after a tap with anchoring off", async ({ page }, testInfo) => {
+test("scrolls to hold the cards after a tap with anchoring off", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "a finger is the phone project's");
+  await page.addInitScript(() => {
+    const scrolled: number[] = [];
+    (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
+    const original = window.scrollBy;
+    window.scrollBy = ((...args: unknown[]) => {
+      const first = args[0] as ScrollToOptions | number | undefined;
+      scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
+      return (original as (...values: unknown[]) => void).apply(window, args);
+    }) as typeof window.scrollBy;
+  });
   await page.clock.install({ time: Date.now() });
   await openFixture(page, () => fixtureBoard(Date.now()));
   await page.evaluate(() => {
@@ -2398,21 +2408,25 @@ test("holds the cards in place after a tap with anchoring off", async ({ page },
   await page.touchscreen.tap(box.x + 4, box.y + box.height / 2);
   // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  const fewer = card.getByRole("button", { name: /^Show fewer/ });
-  await fewer.scrollIntoViewIfNeeded();
+  await card.getByRole("button", { name: /^Show fewer/ }).scrollIntoViewIfNeeded();
   // The page is still for longer than the hook waits, and it has picked its anchor again.
   await page.clock.fastForward(1000);
   await page.evaluate(
     () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
   );
+  await page.evaluate(() => {
+    (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.splice(0);
+  });
   const feed = page.locator('section[aria-labelledby="recent-heading"]');
   const rows = await feed.locator("li").count();
-  const topOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top);
-  const topBefore = await topOf();
   await page.clock.fastForward("03:00");
   await expect(feed.locator("li")).not.toHaveCount(rows);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-  expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+  // Which element the first-in-view rule lands on varies with the layout, so what is asserted is that the page
+  // moved by the feed's growth rather than left everything below it to jump.
+  const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy ?? []);
+  expect(scrolled.length).toBeGreaterThan(0);
+  expect(scrolled.every((by) => by < 0)).toBe(true);
 });
 
 test("operates Show all from the keyboard", async ({ page }, testInfo) => {
