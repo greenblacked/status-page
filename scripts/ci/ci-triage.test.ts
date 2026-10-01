@@ -234,6 +234,8 @@ describe("ci triage", () => {
     expect(categorize("CI", "test (node 24)", "Unit tests (npm test)")).toMatch(/^unit test failure/);
     expect(categorize("CI", "build (node pinned)", "Build (npm run build)")).toBe("build");
     expect(categorize("CI", "browser tests", "Browser tests (Playwright)")).toMatch(/^browser test failure/);
+    expect(categorize("CI", "browser tests (iphone)", "Initialize containers")).toBe("infrastructure");
+    expect(categorize("CI", "browser tests (iphone)", "Check the browser")).toMatch(/^browser build missing/);
     expect(categorize("CI", "lint", "Changelog covers package.json version")).toMatch(/^CHANGELOG/);
     expect(categorize("CI", "branch name", "Check the branch naming convention")).toBe("branch name");
     expect(categorize("CI", "workflow lint", "zizmor")).toBe("workflow security");
