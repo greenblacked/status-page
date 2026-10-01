@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { toCrossJSONAsync } from "seroval";
 import { CATALOG } from "../src/lib/status/catalog.ts";
 import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/lib/status/types.ts";
@@ -185,6 +185,9 @@ export function calmBoard(now: number): BoardSnapshot {
   };
 }
 
+const SERVER_FN = "**/_serverFn/**";
+const served = new WeakMap<Page, (route: Route) => Promise<void>>();
+
 /**
  * Answers the board's server functions (the Refresh POST and the
  * scheduled GET) with `board()` instead of the vendors, in the same
@@ -197,7 +200,11 @@ export function calmBoard(now: number): BoardSnapshot {
  * machine, serves the change there.
  */
 export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed?: () => BoardSnapshot): Promise<void> {
-  await page.route("**/_serverFn/**", async (route) => {
+  // One answer at a time: the newest replaces the one before, so a test that opens many boards on one page does
+  // not stack a handler for each.
+  const before = served.get(page);
+  if (before) await page.unroute(SERVER_FN, before);
+  const handler = async (route: Route) => {
     const answer = pressed && route.request().method() === "POST" ? pressed() : board();
     const body = await toCrossJSONAsync({ result: answer, error: undefined, context: {} }, { refs: new Map() });
     await route.fulfill({
@@ -206,7 +213,9 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
       headers: { "x-tss-serialized": "true" },
       body: JSON.stringify(body),
     });
-  });
+  };
+  served.set(page, handler);
+  await page.route(SERVER_FN, handler);
 }
 
 /**
