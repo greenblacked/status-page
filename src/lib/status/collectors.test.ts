@@ -1018,6 +1018,13 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(snapshot.failure?.kind).toBe("parser");
   });
 
+  it("a body that is not JSON is a parser failure whose message does not quote the body", async () => {
+    stubFetch({ [URLS.gcp]: text("<html>Attention Required: SECRET-CHALLENGE-TEXT</html>") });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "gcp")!;
+    expect(snapshot.failure).toEqual({ kind: "parser", message: "SyntaxError: response was not valid JSON" });
+    expect(JSON.stringify(snapshot)).not.toContain("SECRET-CHALLENGE-TEXT");
+  });
+
   // Whole payloads shaped like each vendor's real response, trimmed to a few
   // items, rather than the one-field objects above. __fixtures__/README.md
   // says where each comes from and how to refresh it.

@@ -137,3 +137,108 @@ describe("unwrapJsonp", () => {
     }
   });
 });
+
+describe("fetchText redirects", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const redirect = (location: string | null, status = 302) =>
+    new Response(null, { status, headers: location === null ? {} : { location } });
+
+  // Answers each URL from `routes` and records every request made.
+  function routed(routes: Record<string, () => Response>) {
+    const calls: Array<{ url: string; redirect: RequestRedirect | undefined }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, redirect: init.redirect });
+        const route = routes[url];
+        return route ? route() : new Response("not found", { status: 404, statusText: "Not Found" });
+      }),
+    );
+    return calls;
+  }
+
+  it("asks for redirects by hand, so none is followed without being checked", async () => {
+    const calls = routed({ "https://status.example.com/a": () => new Response("ok") });
+    await fetchText("https://status.example.com/a");
+    expect(calls).toEqual([{ url: "https://status.example.com/a", redirect: "manual" }]);
+  });
+
+  it("follows a redirect on the same host, relative or absolute, and reads the final body", async () => {
+    const calls = routed({
+      "https://status.example.com/a": () => redirect("/b", 301),
+      "https://status.example.com/b": () => redirect("https://status.example.com/c", 307),
+      "https://status.example.com/c": () => new Response("final"),
+    });
+    const { body } = await fetchText("https://status.example.com/a");
+    expect(body).toBe("final");
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://status.example.com/a",
+      "https://status.example.com/b",
+      "https://status.example.com/c",
+    ]);
+  });
+
+  it("follows a redirect to another host of the vendor's own domain", async () => {
+    routed({
+      "https://status.claude.com/api": () => redirect("https://www.claude.com/status/api"),
+      "https://www.claude.com/status/api": () => new Response("moved"),
+    });
+    expect((await fetchText("https://status.claude.com/api")).body).toBe("moved");
+  });
+
+  it.each([
+    ["another site", "https://evil.example.net/steal"],
+    ["a lookalike domain", "https://status.example.com.evil.net/"],
+    ["a domain that only ends the same way", "https://notexample.com/"],
+    ["a plain http URL on the same host", "http://status.example.com/b"],
+    ["a URL with credentials", "https://user:pass@status.example.com/b"],
+    ["a non-http scheme", "javascript:alert(1)"],
+    ["a location that is not a URL", "https://"],
+  ])("refuses a redirect to %s, without requesting it", async (_name, location) => {
+    const calls = routed({
+      "https://status.example.com/a": () => redirect(location),
+      [location]: () => new Response("should never be fetched"),
+    });
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as SourceError).message).toBe("Request to status.example.com redirected off the vendor's host");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not follow a redirect from one Statuspage tenant to another", async () => {
+    const calls = routed({
+      "https://spotify.statuspage.io/api": () => redirect("https://other.statuspage.io/api"),
+      "https://other.statuspage.io/api": () => new Response("x"),
+    });
+    await expect(fetchText("https://spotify.statuspage.io/api")).rejects.toThrow("redirected off the vendor's host");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("follows at most three redirects", async () => {
+    const hop = (n: number) => `https://status.example.com/${n}`;
+    const calls = routed({
+      [hop(0)]: () => redirect(hop(1)),
+      [hop(1)]: () => redirect(hop(2)),
+      [hop(2)]: () => redirect(hop(3)),
+      [hop(3)]: () => new Response("third hop"),
+    });
+    expect((await fetchText(hop(0))).body).toBe("third hop");
+    expect(calls).toHaveLength(4);
+
+    const loop = routed({ [hop(0)]: () => redirect(hop(0)) });
+    const error = await fetchText(hop(0)).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as SourceError).message).toBe("Too many redirects from status.example.com");
+    expect(loop).toHaveLength(4);
+  });
+
+  it("reports a redirect with no Location as the HTTP status, like any other non-2xx", async () => {
+    routed({ "https://status.example.com/a": () => new Response(null, { status: 302, statusText: "Found" }) });
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect((error as SourceError).status).toBe(302);
+    expect((error as SourceError).message).toBe("302 Found from status.example.com");
+  });
+});

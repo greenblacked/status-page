@@ -111,6 +111,58 @@ export async function readBodyCapped(
   return body.buffer;
 }
 
+const MAX_REDIRECTS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+// Hosts that serve unrelated tenants from one registrable domain: a
+// redirect from one tenant to another is a different party, not the vendor.
+const SHARED_DOMAINS = new Set(["statuspage.io", "stspg.io"]);
+
+// The last two labels, which is the registrable domain for every host the
+// collectors request (none of them sits under a multi-part public suffix).
+function registrableDomain(hostname: string): string {
+  return hostname.split(".").slice(-2).join(".");
+}
+
+/**
+ * Whether a redirect to `target` stays with the vendor that was asked: https,
+ * no credentials, and the requested host itself or another host of its
+ * registrable domain (`status.claude.com` to `claude.com`). A redirect to
+ * anything else is not followed, so a hijacked or misconfigured vendor
+ * endpoint cannot send the Worker to an arbitrary host.
+ */
+function staysWithVendor(requested: URL, target: URL): boolean {
+  if (target.protocol !== "https:" || target.username || target.password) return false;
+  if (target.hostname === requested.hostname) return true;
+  const domain = registrableDomain(requested.hostname);
+  return !SHARED_DOMAINS.has(domain) && domain.includes(".") && registrableDomain(target.hostname) === domain;
+}
+
+// fetch with redirects followed by hand, at most MAX_REDIRECTS and only
+// within staysWithVendor. `redirect: "manual"` hands back the 3xx response
+// and its Location header both on Workers and in Node.
+async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
+  const requested = new URL(url);
+  let current = requested;
+  for (let hops = 0; ; hops += 1) {
+    const response = await fetch(current.href, { ...init, redirect: "manual" });
+    const location = REDIRECT_STATUSES.has(response.status) ? response.headers.get("location") : null;
+    if (location === null) return response;
+    await response.body?.cancel().catch(() => {});
+    let target: URL | undefined;
+    try {
+      target = new URL(location, current);
+    } catch {
+      target = undefined;
+    }
+    if (!target || !staysWithVendor(requested, target)) {
+      throw new SourceError(`Request to ${sourceHost(url)} redirected off the vendor's host`);
+    }
+    if (hops >= MAX_REDIRECTS) throw new SourceError(`Too many redirects from ${sourceHost(url)}`);
+    current = target;
+  }
+}
+
 export async function fetchText(
   url: string,
   init: RequestInit & { timeoutMs?: number; binary?: boolean } = {},
@@ -119,7 +171,7 @@ export async function fetchText(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
+    const response = await fetchVendor(url, {
       ...rest,
       signal: controller.signal,
       headers: {

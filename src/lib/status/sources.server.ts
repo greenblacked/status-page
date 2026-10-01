@@ -162,6 +162,8 @@ function base(
   };
 }
 
+const JSON_SYNTAX_MESSAGE = "SyntaxError: response was not valid JSON";
+
 // SourceError is raised by http.ts for transport problems. Anything else that
 // escapes a collector (SyntaxError from JSON.parse, TypeError from a missing
 // field) means the vendor answered with a shape the collector does not expect.
@@ -172,6 +174,10 @@ export function classifyFailure(error: unknown): SourceFailure {
     if (error.message.startsWith("Timed out")) return { kind: "timeout", message: error.message };
     return { kind: "network", message: error.message };
   }
+  // V8's JSON.parse message quotes the first characters of the body, which
+  // would carry vendor (or attacker) text into hydration data, logs and the
+  // public source-health issue. A fixed sentence says the same thing.
+  if (error instanceof SyntaxError) return { kind: "parser", message: JSON_SYNTAX_MESSAGE };
   const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return { kind: "parser", message };
 }

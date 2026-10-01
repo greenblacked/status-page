@@ -332,16 +332,17 @@ describe("collector failure classification", () => {
     assert.equal(classifyFailure(new SourceError("getaddrinfo ENOTFOUND x")).kind, "network");
   });
 
-  it("reports a vendor payload change as a parser failure with the real error", () => {
+  it("reports a vendor payload change as a parser failure", () => {
     let thrown: unknown;
     try {
       JSON.parse("<html>not json</html>");
     } catch (error) {
       thrown = error;
     }
-    const failure = classifyFailure(thrown);
-    assert.equal(failure.kind, "parser");
-    assert.match(failure.message, /^SyntaxError: /);
+    assert.deepEqual(classifyFailure(thrown), {
+      kind: "parser",
+      message: "SyntaxError: response was not valid JSON",
+    });
     assert.equal(classifyFailure(new TypeError("Cannot read properties of undefined")).kind, "parser");
     // A collector's own "answered, but no usable data" check is a format
     // change too, even though it carries no HTTP status.
@@ -349,6 +350,33 @@ describe("collector failure classification", () => {
       kind: "parser",
       message: "Grok feed returned no readable items.",
     });
+  });
+});
+
+describe("collector failure messages do not echo the response body", () => {
+  it("never carries the start of an unparseable body, whichever way V8 words the error", () => {
+    const secret = "TOP-SECRET-BODY-TEXT";
+    for (const body of [`<html>${secret}</html>`, `{"a":${secret}}`, `${secret}`, `[1,${secret}`, `{${secret}: 1}`]) {
+      let thrown: unknown;
+      try {
+        JSON.parse(body);
+      } catch (error) {
+        thrown = error;
+      }
+      // The raw message does quote the body, which is the leak being closed.
+      assert.ok(thrown instanceof SyntaxError);
+      const { kind, message } = classifyFailure(thrown);
+      assert.equal(kind, "parser");
+      assert.equal(message, "SyntaxError: response was not valid JSON");
+      assert.ok(!message.includes(secret));
+    }
+  });
+
+  it("still names a coding error by its own message, which is ours", () => {
+    assert.equal(
+      classifyFailure(new TypeError("value.filter is not a function")).message,
+      "TypeError: value.filter is not a function",
+    );
   });
 });
 

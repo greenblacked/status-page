@@ -88,7 +88,7 @@ const broken: Result = {
   ok: false,
   latencyMs: 90,
   attempts: 3,
-  failure: { kind: "parser", message: "SyntaxError: Unexpected token '<'" },
+  failure: { kind: "parser", message: "SyntaxError: response was not valid JSON" },
 };
 const healthy: Result = { ...broken, ok: true, failure: undefined };
 
