@@ -2290,7 +2290,9 @@ for (const anchoring of ["none", "default"] as const) {
         return (original as (...values: unknown[]) => void).apply(window, args);
       }) as typeof window.scrollBy;
     });
-    await page.clock.install({ time: Date.now() });
+    // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row early, and
+    // the 3:00 jump would then cross a boundary that changes no row count.
+    await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
     const board = fixtureBoard(Date.now());
     await openFixture(page, () => board);
     if (anchoring !== "default") {
@@ -2350,7 +2352,9 @@ for (const scrollY of [40, 190]) {
         return (original as (...values: unknown[]) => void).apply(window, args);
       }) as typeof window.scrollBy;
     });
-    await page.clock.install({ time: Date.now() });
+    // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row early, and
+    // the 3:00 jump would then change nothing, so the test would pass without checking anything.
+    await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
     await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
     await page.evaluate(() => {
       document.documentElement.style.overflowAnchor = "none";
