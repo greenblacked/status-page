@@ -2408,7 +2408,8 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   await page.touchscreen.tap(box.x + 4, box.y + box.height / 2);
   // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await card.getByRole("button", { name: /^Show fewer/ }).scrollIntoViewIfNeeded();
+  const fewer = card.getByRole("button", { name: /^Show fewer/ });
+  await fewer.scrollIntoViewIfNeeded();
   // The page is still for longer than the hook waits, and it has picked its anchor again.
   await page.clock.fastForward(1000);
   await page.evaluate(
@@ -2419,14 +2420,18 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   });
   const feed = page.locator('section[aria-labelledby="recent-heading"]');
   const rows = await feed.locator("li").count();
+  const topOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top);
+  const topBefore = await topOf();
   await page.clock.fastForward("03:00");
   await expect(feed.locator("li")).not.toHaveCount(rows);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-  // Which element the first-in-view rule lands on varies with the layout, so what is asserted is that the page
-  // moved by the feed's growth rather than left everything below it to jump.
+  // The check adds a row to the feed (the cards drop) and clears the "Changed" tags (the cards above rise by
+  // less), so the cards net drop, and holding them means scrolling down: every step is positive, and the
+  // button the page was scrolled to is where it was in the window.
   const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy ?? []);
   expect(scrolled.length).toBeGreaterThan(0);
-  expect(scrolled.every((by) => by < 0)).toBe(true);
+  expect(scrolled.every((by) => by > 0)).toBe(true);
+  expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
 });
 
 test("operates Show all from the keyboard", async ({ page }, testInfo) => {
