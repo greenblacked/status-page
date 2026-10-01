@@ -1,5 +1,5 @@
-import { ANDROID_FEED_URL, ANDROID_NAME, androidReleases } from "./android-release.ts";
-import { boundSnapshot, clip, MAX_TEXT_CHARS, MAX_TITLE_CHARS } from "./bounds.ts";
+import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
+import { boundSnapshot, clip, MAX_TEXT_CHARS } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
   formatReleaseAge,
@@ -1344,65 +1344,6 @@ export function parseRssItems(
   });
 }
 
-/** Most `<entry>`s looked at in one Atom feed, in document order. The blog's feed carries about twenty. */
-export const MAX_ATOM_ENTRIES = 500;
-
-const ATOM_ENTRY_OPEN = /<entry[\s>]/gi;
-const ATOM_ENTRY_CLOSE = /<\/entry>/i;
-
-const ATOM_TAGS = new Map<string, [RegExp, RegExp]>();
-
-// The text between the first `<tag ...>` and the first `</tag>` after it, or
-// undefined (also for a self-closing tag). Like xmlField, two literal
-// searches inside one entry, but the opening tag may carry attributes, as
-// Atom's `<title type="html">` does. Cut to `max` characters before any
-// decoding, since the field is vendor text of any length.
-function atomField(chunk: string, tag: string, max: number): string | undefined {
-  let tags = ATOM_TAGS.get(tag);
-  if (!tags) {
-    tags = [new RegExp(`<${tag}[\\s>/]`, "i"), new RegExp(`</${tag}>`, "i")];
-    ATOM_TAGS.set(tag, tags);
-  }
-  const open = chunk.search(tags[0]);
-  if (open === -1) return undefined;
-  const end = chunk.indexOf(">", open);
-  if (end === -1 || chunk[end - 1] === "/") return undefined;
-  const rest = chunk.slice(end + 1);
-  const close = rest.search(tags[1]);
-  return close === -1 ? undefined : rest.slice(0, Math.min(close, max));
-}
-
-/**
- * The posts of an Atom feed (`<entry>`): the title as text, and the
- * publication time (the entry's `published`, else its `updated`, which
- * moves whenever a post is edited). Each entry runs from its `<entry>` to the
- * next one, cut at its own `</entry>`, so the feed is read once. Not an XML
- * parser: an entry with no title is skipped, and a body with no `<entry>` in
- * it gives an empty list.
- */
-export function parseAtomEntries(xml: string): Array<{ title: string; publishedAt?: string }> {
-  const posts: Array<{ title: string; publishedAt?: string }> = [];
-  const entryOpen = new RegExp(ATOM_ENTRY_OPEN);
-  let open = entryOpen.exec(xml);
-  let scanned = 0;
-  while (open && scanned < MAX_ATOM_ENTRIES) {
-    const bodyStart = open.index + open[0].length;
-    const next = entryOpen.exec(xml);
-    const block = xml.slice(bodyStart, next ? next.index : xml.length);
-    const closed = block.search(ATOM_ENTRY_CLOSE);
-    const chunk = closed === -1 ? block : block.slice(0, closed);
-    scanned += 1;
-    const rawTitle = atomField(chunk, "title", MAX_TITLE_CHARS * 4);
-    if (rawTitle !== undefined) {
-      const title = clip(decodeXmlField(rawTitle).trim(), MAX_TITLE_CHARS);
-      const at = atomField(chunk, "published", 64) ?? atomField(chunk, "updated", 64);
-      if (title) posts.push({ title, publishedAt: at?.trim() || undefined });
-    }
-    open = next;
-  }
-  return posts;
-}
-
 export function grokItemHealth(description: string): Health {
   const text = stripHtml(description).toLowerCase();
   if (text.includes("status: resolved") || text.includes("severity: available")) return "operational";
@@ -1731,48 +1672,30 @@ async function collectAndroidOs(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const { value, ms } = await timed(() =>
-      fetchText(ANDROID_FEED_URL, { headers: { Accept: "application/atom+xml, application/xml, text/xml, */*" } }),
+      fetchText(CATALOG_BY_ID["android-os"].sourceUrl, { headers: { Accept: "text/html, */*" } }),
     );
-    const posts = parseAtomEntries(value.body);
-    if (!posts.length) throw new PayloadError("Android Developers Blog feed had no posts.");
-    const releases = androidReleases(posts);
+    const releases = androidReleases(readAndroidVersionLinks(value.body));
+    if (!releases.length) throw new PayloadError("Android releases page had no readable version list.");
 
-    // The feed holds only the blog's latest posts, so most of the time it has
-    // no release post at all. That is a quiet tracker, not a broken one: it
-    // says how far back it looked.
-    if (!releases.length) {
-      const times = posts.map((post) => Date.parse(post.publishedAt ?? "")).filter(Number.isFinite);
-      const since = times.length ? formatReleaseAge(new Date(Math.min(...times)).toISOString()) : "";
-      return {
-        ...base("android-os", new Date().toISOString(), ms),
-        health: "operational",
-        summary: `No ${ANDROID_NAME} release in the blog's latest ${posts.length} posts${since ? `, back to ${since}` : ""}`,
-        components: [],
-        incidents: [],
-      };
-    }
-
+    // The page gives no dates, so a version is never marked fresh here: a
+    // version that appears on the page is announced as a release in the
+    // change feed, by the version map below, instead.
     const components: ComponentHealth[] = releases.map((release) => ({
       name: release.name,
-      health: isFreshRelease(release.publishedAt) ? "maintenance" : "operational",
-      // A post with no readable date still shows (the release row hides a component with no detail).
-      detail: formatReleaseAge(release.publishedAt) || "announced",
+      health: "operational",
+      detail: "released",
     }));
+
     const headline = releases[0];
     return {
       ...base("android-os", new Date().toISOString(), ms),
       health: "operational",
-      summary: `Latest: ${headline.name}${headline.publishedAt ? ` · ${formatReleaseAge(headline.publishedAt)}` : ""}`,
+      summary: `Latest: ${headline.name}`,
       components,
       incidents: [],
       meta: {
         latest: headline.name,
-        versions: formatVersionMap(
-          releases.map((release) => ({
-            name: release.name,
-            version: formatReleaseAge(release.publishedAt) || "announced",
-          })),
-        ),
+        versions: formatVersionMap(releases.map((release) => ({ name: release.name, version: "released" }))),
       },
     };
   } catch (error) {

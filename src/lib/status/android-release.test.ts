@@ -1,171 +1,110 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { androidReleases, parseAndroidReleaseTitle } from "./android-release.ts";
-import { parseAtomEntries } from "./sources.server.ts";
+import {
+  ANDROID_VERSIONS_URL,
+  androidReleases,
+  MAX_ANDROID_LINKS,
+  readAndroidVersionLinks,
+} from "./android-release.ts";
 
-describe("parseAndroidReleaseTitle", () => {
-  it.each([
-    ["Android 17 is here", "17"],
-    ["The Android 17 is here", "17"],
-    ["Android 17 is released to AOSP", "17"],
-    ["Android 17 QPR1 is rolling out", "17 QPR1"],
-    ["android 17 qpr2 is now available", "17 QPR2"],
-    ["Android 16.1 is live", "16.1"],
-    ["Android 16 QPR3 is available for Pixel", "16 QPR3"],
-    ["Android 17 is Here", "17"],
-    ["Android 16 QPR2 is Released", "16 QPR2"],
-    ["Android 16 QPR 2 is released", "16 QPR2"],
-    ["Android 17 are now available", "17"],
-    ["  Android 17 is out  ", "17"],
-  ])("reads %j as version %j", (title, version) => {
-    expect(parseAndroidReleaseTitle(title)).toBe(version);
+const page = readFileSync(new URL("./__fixtures__/android-os/versions.html", import.meta.url), "utf8");
+
+const link = (href: string, text: string, attributes = "") => `<a ${attributes}href="${href}">${text}</a>`;
+
+describe("readAndroidVersionLinks", () => {
+  it("reads the versions of the recorded page, once each, newest first as the menu gives them", () => {
+    // The menu lists 17 to 10 (with the codenames after), the footer repeats 17 to 11.
+    expect(readAndroidVersionLinks(page)).toEqual(["17", "16", "15", "14", "13", "12", "11", "10"]);
   });
 
-  it.each([
-    // Not out yet.
-    "Android 17 Beta 3 is here",
-    "Android 17 QPR1 Beta 2 is rolling out",
-    "Android 17 Developer Preview 1 is here",
-    "Android 17 RC1 is available",
-    "Android 17 is coming soon",
-    // Not about a version, or no word that says it is out.
-    "Android Bench 2.0: Pushing the frontier with challenging long-horizon tasks",
-    "Android 17: what's new for developers",
-    "Android 17: check out what's new",
-    "Android 17 privacy changes now available",
-    "Android 17 security patch is live",
-    "Android 14 for TV is here",
-    "Android 16 QPR is released",
-    "Android 16 QPRx is released",
-    "Android 16 QPR 2x is released",
-    "Android 17 QPR1",
-    "Android 17",
-    "Android",
-    "",
-    // Starts somewhere else, or the number is not a version.
-    "Bring your Android game to the car screen today",
-    "Introducing Android 17 for cars, available now",
-    "Android 1234 is here",
-    "Android 17x is here",
-    "Android 17.5.3 is here",
-    "Android Studio Quail 4 is available",
-  ])("does not read %j as a release", (title) => {
-    expect(parseAndroidReleaseTitle(title)).toBeNull();
+  it("does not read the page body's cards, which lag behind the menu, as versions", () => {
+    // The body's heading links wrap an image, so they have no text of their own.
+    expect(readAndroidVersionLinks(link("/about/versions/16", '<img alt="Android 16">'))).toEqual([]);
+    expect(readAndroidVersionLinks(link("/about/versions/16", "Home"))).toEqual([]);
   });
 
-  it("reads only the start of a very long title", () => {
-    expect(parseAndroidReleaseTitle(`Android 17 is here ${"x ".repeat(50_000)}`)).toBe("17");
-    // Only the first 300 characters are read, so a word after them says nothing.
-    expect(parseAndroidReleaseTitle(`Android 17 ${"x ".repeat(50_000)}is here`)).toBeNull();
+  it("reads the link text through nested tags and across lines", () => {
+    const html = link("/about/versions/17", '\n  <span class="t" tooltip>Android\n 17</span>\n');
+    expect(readAndroidVersionLinks(html)).toEqual(["17"]);
+  });
+
+  it("accepts the page's own path and the full vendor URL, with a slash, query or fragment", () => {
+    for (const href of [
+      "/about/versions/17",
+      "/about/versions/17/",
+      "/about/versions/17?hl=en",
+      "/about/versions/17#top",
+      "https://developer.android.com/about/versions/17",
+    ]) {
+      expect(readAndroidVersionLinks(link(href, "Android 17"))).toEqual(["17"]);
+    }
+    expect(readAndroidVersionLinks("<a href='/about/versions/17'>Android 17</a>")).toEqual(["17"]);
+  });
+
+  it("refuses a link to another host or page, a codename, a version of the wrong shape, or text that disagrees", () => {
+    for (const [href, text] of [
+      ["https://example.com/about/versions/17", "Android 17"],
+      ["https://developer.android.com.example.com/about/versions/17", "Android 17"],
+      ["//developer.android.com/about/versions/17", "Android 17"],
+      ["/about/versions/17/qpr1", "Android 17"],
+      ["/about/versions/17/qpr1", "Android 17 QPR1"],
+      ["/about/versions/pie", "Android 9"],
+      ["/about/versions/123", "Android 123"],
+      ["/about/versions/", "Android 17"],
+      ["/about/versions/17x", "Android 17"],
+      ["/about/versions/17", "Android 16"],
+      ["/about/versions/17", "Android 17 Beta"],
+      ["/about/versions/17", "android 17"],
+      ["/about/versions/17", "Android Beta"],
+    ]) {
+      expect(readAndroidVersionLinks(link(href, text))).toEqual([]);
+    }
+    expect(readAndroidVersionLinks("<a href=/about/versions/17>Android 17</a>")).toEqual([]);
+    expect(readAndroidVersionLinks('<abbr href="/about/versions/17">Android 17</abbr>')).toEqual([]);
+  });
+
+  it("gives nothing for a page with no links, an unclosed link or a tag that never ends", () => {
+    expect(readAndroidVersionLinks("")).toEqual([]);
+    expect(readAndroidVersionLinks("<html><body>Android 17</body></html>")).toEqual([]);
+    expect(readAndroidVersionLinks('<a href="/about/versions/17">Android 17')).toEqual([]);
+    expect(readAndroidVersionLinks('<a href="/about/versions/17"')).toEqual([]);
+  });
+
+  it("skips a tag or link text longer than the ceilings", () => {
+    expect(readAndroidVersionLinks(`<a href="/about/versions/17" ${'x="y" '.repeat(1000)}>Android 17</a>`)).toEqual([]);
+    expect(readAndroidVersionLinks(link("/about/versions/17", `Android 17${" ".repeat(1000)}`))).toEqual([]);
+  });
+
+  it("looks at no more than MAX_ANDROID_LINKS links", () => {
+    const filler = '<a href="/x">x</a>'.repeat(MAX_ANDROID_LINKS);
+    expect(readAndroidVersionLinks(filler + link("/about/versions/17", "Android 17"))).toEqual([]);
+    expect(readAndroidVersionLinks(link("/about/versions/17", "Android 17") + filler)).toEqual(["17"]);
   });
 });
 
 describe("androidReleases", () => {
-  const post = (title: string, publishedAt?: string) => ({ title, publishedAt });
-
-  it("keeps the earliest post per version, newest version first, and drops everything else", () => {
-    const releases = androidReleases([
-      post("Android 17 QPR1 is rolling out", "2026-09-24T00:00:00.000Z"),
-      post("Android 17 QPR2 Beta 1 is here", "2026-09-30T00:00:00.000Z"),
-      post("Jetpack Compose September release", "2026-09-29T00:00:00.000Z"),
-      post("Android 17 is released to AOSP", "2026-08-20T00:00:00.000Z"),
-      post("Android 17 is here", "2026-08-25T00:00:00.000Z"),
-    ]);
-    expect(releases).toEqual([
-      { version: "17 QPR1", name: "Android 17 QPR1", publishedAt: "2026-09-24T00:00:00.000Z" },
-      { version: "17", name: "Android 17", publishedAt: "2026-08-20T00:00:00.000Z" },
+  it("sorts by number, not by text, drops repeats and keeps the newest four", () => {
+    expect(androidReleases(["9", "17", "16", "17", "10", "15"])).toEqual([
+      { version: "17", name: "Android 17" },
+      { version: "16", name: "Android 16" },
+      { version: "15", name: "Android 15" },
+      { version: "10", name: "Android 10" },
     ]);
   });
 
-  it("does not let a later post about a version move its date, whatever order the feed lists them in", () => {
-    const early = post("Android 17 is here", "2026-06-16T00:00:00.000Z");
-    const late = post("Android 17 is now available on more devices", "2026-08-20T00:00:00.000Z");
-    for (const posts of [
-      [late, early],
-      [early, late],
-    ]) {
-      expect(androidReleases(posts)).toEqual([
-        { version: "17", name: "Android 17", publishedAt: "2026-06-16T00:00:00.000Z" },
-      ]);
-    }
-    // A post with a date is the better record than one without.
-    expect(androidReleases([post("Android 17 is here"), early])[0].publishedAt).toBe("2026-06-16T00:00:00.000Z");
-  });
-
-  it("breaks a tie on the date by comparing version numbers, not text", () => {
-    const releases = androidReleases([
-      post("Android 9 is here", "2026-06-10T00:00:00.000Z"),
-      post("Android 17 is here", "2026-06-10T00:00:00.000Z"),
-    ]);
-    expect(releases.map((release) => release.name)).toEqual(["Android 17", "Android 9"]);
-  });
-
-  it("orders by date whatever order the feed lists them in", () => {
-    const releases = androidReleases([
-      post("Android 16 is here", "2025-06-10T00:00:00.000Z"),
-      post("Android 17 is here", "2026-06-10T00:00:00.000Z"),
-    ]);
-    expect(releases.map((release) => release.name)).toEqual(["Android 17", "Android 16"]);
-  });
-
-  it("ranks a post with no readable date last, and keeps it", () => {
-    const releases = androidReleases([
-      post("Android 16 is here", "not a date"),
-      post("Android 17 is here", "2026-06-10"),
-    ]);
-    expect(releases.map((release) => [release.name, release.publishedAt])).toEqual([
-      ["Android 17", "2026-06-10T00:00:00.000Z"],
-      ["Android 16", undefined],
-    ]);
-  });
-
-  it("keeps at most four releases", () => {
-    const posts = [13, 14, 15, 16, 17, 18].map((n) => post(`Android ${n} is here`, `20${n + 9}-06-10T00:00:00.000Z`));
-    expect(androidReleases(posts).map((release) => release.name)).toEqual([
+  it("puts a new major first without knowing it", () => {
+    expect(androidReleases(["16", "17", "18"]).map((release) => release.name)).toEqual([
       "Android 18",
       "Android 17",
       "Android 16",
-      "Android 15",
     ]);
   });
 
-  it("is empty for a feed with no release post", () => {
-    expect(androidReleases([post("Media3 1.11 - What's new?")])).toEqual([]);
+  it("is empty for no versions", () => {
     expect(androidReleases([])).toEqual([]);
   });
-});
 
-describe("parseAtomEntries", () => {
-  it("reads the title and the publication time of each entry", () => {
-    const xml = `<feed xmlns="http://www.w3.org/2005/Atom"><title>Blog</title>
-      <entry><title type="html"><![CDATA[Android 17 is here & more]]></title><updated>2026-09-25T10:00:00Z</updated><published>2026-09-24T00:00:00Z</published></entry>
-      <entry><title>A &amp; B &lt;3</title><updated>2026-09-20T10:00:00Z</updated></entry>
-      <entry><link href="https://example.com/"/><published>2026-09-19T00:00:00Z</published></entry>
-    </feed>`;
-    expect(parseAtomEntries(xml)).toEqual([
-      { title: "Android 17 is here & more", publishedAt: "2026-09-24T00:00:00Z" },
-      { title: "A & B <3", publishedAt: "2026-09-20T10:00:00Z" },
-    ]);
-  });
-
-  it("skips the feed's own title and anything outside an entry", () => {
-    expect(parseAtomEntries("<feed><title>Only the feed</title></feed>")).toEqual([]);
-    expect(parseAtomEntries("<rss><channel><item><title>RSS</title></item></channel></rss>")).toEqual([]);
-    expect(parseAtomEntries("")).toEqual([]);
-  });
-
-  it("does not read a self-closing or empty title", () => {
-    expect(
-      parseAtomEntries("<entry><title/></entry><entry><title></title><published>2026-01-01</published></entry>"),
-    ).toEqual([]);
-  });
-
-  it("cuts a very long title before it is decoded", () => {
-    const [post] = parseAtomEntries(`<entry><title>${"a".repeat(100_000)}</title></entry>`);
-    expect(post.title.length).toBeLessThanOrEqual(300);
-  });
-
-  it("reads an entry that never closes up to the next one", () => {
-    const posts = parseAtomEntries("<entry><title>One</title><entry><title>Two</title></entry>");
-    expect(posts.map((entry) => entry.title)).toEqual(["One", "Two"]);
+  it("names the page it reads", () => {
+    expect(ANDROID_VERSIONS_URL).toBe("https://developer.android.com/about/versions");
   });
 });

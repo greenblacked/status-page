@@ -29,7 +29,7 @@ const URLS = {
   mikrotikDownload: "https://download.mikrotik.com/routeros/",
   appleOs: "https://developer.apple.com/news/releases/rss/releases.rss",
   windows: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
-  androidOs: "https://developer.android.com/static/blog/atom.xml",
+  androidOs: "https://developer.android.com/about/versions",
 };
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url);
@@ -1346,93 +1346,80 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       });
     });
 
-    it("Android Developers Blog: a feed with no release post is a quiet tracker, not an unreadable one", async () => {
-      // A real capture of the feed (2026-10-01), trimmed to six posts. None
-      // announces an Android version ("Android Bench 2.0" starts with the name
-      // but is not one), which is what the live feed holds most of the time.
-      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
-      stubFetch({ [URLS.androidOs]: text(fixture("android-os/blog-atom.xml")) });
+    it("Android releases page: the newest versions, headed by the newest one, with no date to mark one fresh", async () => {
+      // A trimmed real capture of https://developer.android.com/about/versions
+      // (2026-10-01). The page gives versions and no dates, so nothing is ever
+      // "New release" here; a version that joins the list reaches the change
+      // feed through the version map instead (see diff.test.ts).
+      stubFetch({ [URLS.androidOs]: text(fixture("android-os/versions.html")) });
       const android = await collect("android-os");
       expect(android.failure).toBeUndefined();
       expect(android.health).toBe("operational");
-      expect(android.summary).toBe("No Android release in the blog's latest 6 posts, back to Aug 11");
-      expect(android.components).toEqual([]);
-      expect(android.incidents).toEqual([]);
-      expect(android.meta).toBeUndefined();
-    });
-
-    it("Android Developers Blog: the earliest post per version, a fresh one marked, betas and other posts skipped", async () => {
-      // Hand-built in the layout of the recording (see the fixtures README).
-      // The clock puts only the Sep 24 post inside the 14-day window. The Sep
-      // 22 post is a beta; two posts announce Android 17 and the earlier one
-      // (Jun 16) is the one that counts, so the Aug 20 follow-up does not move it.
-      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
-      stubFetch({ [URLS.androidOs]: text(fixture("android-os/blog-atom-releases.xml")) });
-      const android = await collect("android-os");
-      expect(android.failure).toBeUndefined();
-      expect(android.health).toBe("operational");
-      expect(android.summary).toBe("Latest: Android 17 QPR1 · Sep 24");
+      expect(android.summary).toBe("Latest: Android 17");
       expect(android.components).toEqual([
-        { name: "Android 17 QPR1", health: "maintenance", detail: "Sep 24" },
-        { name: "Android 17", health: "operational", detail: "Jun 16" },
-        { name: "Android 16 QPR2", health: "operational", detail: "Dec 2" },
+        { name: "Android 17", health: "operational", detail: "released" },
+        { name: "Android 16", health: "operational", detail: "released" },
+        { name: "Android 15", health: "operational", detail: "released" },
+        { name: "Android 14", health: "operational", detail: "released" },
       ]);
       expect(android.incidents).toEqual([]);
       expect(android.meta).toEqual({
-        latest: "Android 17 QPR1",
-        versions: "Android 17 QPR1=Sep 24|Android 17=Jun 16|Android 16 QPR2=Dec 2",
+        latest: "Android 17",
+        versions: "Android 17=released|Android 16=released|Android 15=released|Android 14=released",
       });
     });
 
-    it("Android Developers Blog: a release the blog announces later becomes the headline and a fresh release", async () => {
-      vi.setSystemTime(new Date("2027-06-12T12:00:00.000Z"));
-      const feed = fixture("android-os/blog-atom.xml").replace(
-        "    <entry>",
-        `    <entry>
-        <title type="html"><![CDATA[Android 18 is here]]></title>
-        <updated>2027-06-10T16:00:00.000Z</updated>
-        <published>2027-06-10T00:00:00.000Z</published>
-    </entry>
-    <entry>`,
+    it("Android releases page: a major version the page adds later becomes the headline on its own", async () => {
+      const page = fixture("android-os/versions.html").replace(
+        '<li class="devsite-nav-item"><a href="/about/versions/17"',
+        '<li class="devsite-nav-item"><a href="/about/versions/18"\n        class="devsite-nav-title"\n      ><span class="devsite-nav-text" tooltip>Android 18</span></a></li>\n\n  <li class="devsite-nav-item"><a href="/about/versions/17"',
       );
-      stubFetch({ [URLS.androidOs]: text(feed) });
+      stubFetch({ [URLS.androidOs]: text(page) });
       const android = await collect("android-os");
       expect(android.failure).toBeUndefined();
-      expect(android.summary).toBe("Latest: Android 18 · Jun 10");
-      expect(android.components).toEqual([{ name: "Android 18", health: "maintenance", detail: "Jun 10" }]);
+      expect(android.summary).toBe("Latest: Android 18");
+      expect(android.components.map((component) => component.name)).toEqual([
+        "Android 18",
+        "Android 17",
+        "Android 16",
+        "Android 15",
+      ]);
+      expect(String(android.meta?.versions).startsWith("Android 18=released|Android 17=released|")).toBe(true);
     });
 
-    it("Android Developers Blog: a post edited today is not a new release, its publication date decides", async () => {
-      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
-      const feed = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title type="html">Android 17 is here</title><updated>2026-10-01T09:00:00.000Z</updated><published>2026-06-10T00:00:00.000Z</published></entry></feed>`;
-      stubFetch({ [URLS.androidOs]: text(feed) });
+    it("Android releases page: the footer alone is enough, and a repeated link counts once", async () => {
+      const link = (n: number) => `<a href="/about/versions/${n}" class="x">\n  Android ${n}\n</a>`;
+      stubFetch({ [URLS.androidOs]: text(`<ul>${link(16)}${link(16)}${link(17)}</ul>`) });
       const android = await collect("android-os");
-      expect(android.components).toEqual([{ name: "Android 17", health: "operational", detail: "Jun 10" }]);
+      expect(android.components.map((component) => component.name)).toEqual(["Android 17", "Android 16"]);
     });
 
-    it("Android Developers Blog: a release post with no date is listed, never fresh", async () => {
-      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
-      stubFetch({ [URLS.androidOs]: text("<feed><entry><title>Android 17 is here</title></entry></feed>") });
-      const android = await collect("android-os");
-      expect(android.summary).toBe("Latest: Android 17");
-      expect(android.components).toEqual([{ name: "Android 17", health: "operational", detail: "announced" }]);
-      expect(android.meta).toEqual({ latest: "Android 17", versions: "Android 17=announced" });
-    });
-
-    it("Android Developers Blog: a body that is not a feed is unknown with a parser failure", async () => {
-      stubFetch({
-        [URLS.androidOs]: text("<!DOCTYPE html><html><body><h1>We'll be right back</h1></body></html>"),
-      });
+    it("Android releases page: a page without the version links is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.androidOs]: text("<!DOCTYPE html><html><body><h1>We'll be right back</h1></body></html>") });
       const android = await collect("android-os");
       expect(android.health).toBe("unknown");
-      expect(android.failure).toEqual({ kind: "parser", message: "Android Developers Blog feed had no posts." });
+      expect(android.failure).toEqual({
+        kind: "parser",
+        message: "Android releases page had no readable version list.",
+      });
       expect(android.components).toEqual([]);
       expect(android.meta).toBeUndefined();
     });
 
-    it("Android Developers Blog: a feed over the size limit is unknown, not parsed", async () => {
+    it("Android releases page: links to other pages or with other text are not versions", async () => {
+      const page =
+        '<a href="/about/versions/17/qpr1">Android 17</a><a href="/about/versions/17">Android Beta</a>' +
+        '<a href="https://example.com/about/versions/17">Android 17</a><a href="/about/versions/pie">Android 9</a>' +
+        '<a href="/about/versions/16"><img alt="Android 16"></a><a href="/about/versions/123">Android 123</a>';
+      stubFetch({ [URLS.androidOs]: text(page) });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure?.kind).toBe("parser");
+    });
+
+    it("Android releases page: a page over the size limit is unknown, not parsed", async () => {
       stubFetch({
-        [URLS.androidOs]: text(`<feed>${"<entry><title>Android 17 is here</title></entry>".repeat(120_000)}</feed>`),
+        [URLS.androidOs]: text(`<ul>${'<a href="/about/versions/17">Android 17</a>'.repeat(120_000)}</ul>`),
       });
       const android = await collect("android-os");
       expect(android.health).toBe("unknown");
@@ -1442,15 +1429,26 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       });
     });
 
-    it("Android Developers Blog: a redirect off the vendor's host is refused", async () => {
+    it("Android releases page: a redirect off the vendor's host is refused", async () => {
       stubFetch({
         [URLS.androidOs]: () =>
-          new Response(null, { status: 302, headers: { location: "https://example.com/atom.xml" } }),
+          new Response(null, { status: 302, headers: { location: "https://example.com/about/versions" } }),
       });
       const android = await collect("android-os");
       expect(android.health).toBe("unknown");
       expect(android.failure?.kind).toBe("network");
       expect(android.failure?.message).toContain("off the vendor's host");
+    });
+
+    it("Android releases page: a redirect within the vendor's host is followed", async () => {
+      stubFetch({
+        [URLS.androidOs]: () =>
+          new Response(null, { status: 301, headers: { location: "https://developer.android.com/about/versions/" } }),
+        "https://developer.android.com/about/versions/": text(fixture("android-os/versions.html")),
+      });
+      const android = await collect("android-os");
+      expect(android.failure).toBeUndefined();
+      expect(android.summary).toBe("Latest: Android 17");
     });
   });
 
@@ -2136,18 +2134,17 @@ describe("collectors bound vendor text and counts", () => {
     expect(String(appleOs.meta?.versions)).toMatch(/^iOS=9{63}…\|/);
   });
 
-  it("Android Developers Blog: a runaway post title cannot reach the summary, names or meta at length", async () => {
-    const entry = (title: string) =>
-      `<entry><title type="html"><![CDATA[${title}]]></title><published>2026-09-30T00:00:00.000Z</published></entry>`;
-    const feed = `<feed>${entry(`Android 17 is here ${"x".repeat(20_000)}`)}${entry("Android 16 QPR3 is available")}</feed>`;
-    stubFetch({ [URLS.androidOs]: text(feed) });
+  it("Android releases page: runaway link text or a runaway tag cannot reach the summary, names or meta", async () => {
+    const page =
+      `<a href="/about/versions/17">Android 17${" ".repeat(20_000)}</a>` +
+      `<a href="/about/versions/15" ${'data-x="y" '.repeat(5_000)}>Android 15</a>` +
+      `<a href="/about/versions/16">Android 16</a>`;
+    stubFetch({ [URLS.androidOs]: text(page) });
     const android = await collect("android-os");
     expect(android.failure).toBeUndefined();
-    expect(android.summary.length).toBeLessThanOrEqual(500);
-    expect(String(android.meta?.latest).length).toBeLessThanOrEqual(300);
+    expect(android.summary).toBe("Latest: Android 16");
+    expect(android.components.map((component) => component.name)).toEqual(["Android 16"]);
     expect(String(android.meta?.versions).length).toBeLessThanOrEqual(500);
-    // The name is the version read out of the title, never the title itself.
-    expect(android.components.map((component) => component.name)).toEqual(["Android 17", "Android 16 QPR3"]);
   });
 
   it("Apple: an event id built from a long message stays short, and the same on every sweep", async () => {

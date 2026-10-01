@@ -73,7 +73,7 @@ Sixteen services, each read from one official source. This table is the contract
 | Releases | MikroTik RouterOS | [MikroTik changelogs](https://mikrotik.com/download/changelogs) |
 | Releases | Apple OS | [Apple Developer Releases](https://developer.apple.com/news/releases/) |
 | Releases | Windows 11 | [Windows release health](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) (the table of versions, read as HTML: Microsoft publishes no feed for it) |
-| Releases | Android releases | [Android Developers Blog](https://developer.android.com/blog) (its Atom feed) |
+| Releases | Android releases | [Android Developers releases](https://developer.android.com/about/versions) (the releases page) |
 
 Missing a service? [Request it](https://github.com/greenblacked/status-page/issues/new?template=new-service.yml). It needs an official, machine-readable source.
 
@@ -91,7 +91,7 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 
 The headline at the top of the page is one sentence about the board: **Everything is up.** when all sixteen are Operational, "Two things need a look." when an outage, a degradation or maintenance is under way (each service named and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
 
-The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS, Windows version or Android release was released in the last 14 days. A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
+The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days (the Android page gives no dates, so that card never carries the tag; see below). A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
 <details>
 <summary><strong>The rule behind every card</strong></summary>
@@ -113,7 +113,7 @@ The four Releases services track releases, not incidents. Their rows carry no st
 | MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus the newest version's `CHANGELOG` |
 | Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS |
 | Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. A page without that table reads Unknown. This is the one source read as HTML, an exception recorded in `CONTRIBUTING.md` |
-| Android releases | The Android Developers Blog's Atom feed (`static/blog/atom.xml`). A post whose title announces a stable Android version ("Android 17 is here", "Android 17 QPR1 is rolling out") is a release; betas and previews are skipped. The four newest versions are listed with the date of the first post that announced them, and one announced in the last 14 days is flagged **New release**. The feed carries only the blog's latest posts (about twenty), so a release drops out of it as newer posts arrive, and a feed with no release post reads as quiet, not Unknown. A body that is not a feed reads Unknown. The monthly security and Pixel updates are not covered |
+| Android releases | The releases page on developer.android.com: the four newest Android versions it links as "Android 17", "Android 16" and so on, newest first, read from the site menu and the footer. A new major version (Android 18) appears as a new link with no code change, and the oldest drops off. The page gives no release dates, so the card never carries **New release**; a version joining the list shows in **Recent changes** as "Android 18 released" instead. The quarterly platform releases (QPRs) are not listed: the page links only betas for them, so none is read as a release. A page with no such links reads Unknown. This is the second source read as HTML, an exception recorded in `CONTRIBUTING.md` |
 
 </details>
 

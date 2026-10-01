@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAndroidReleaseTitle } from "./android-release.ts";
+import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { parseAppleOsTitle } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
@@ -7,10 +7,8 @@ import {
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
-  MAX_ATOM_ENTRIES,
   MAX_RSS_ITEMS,
   MAX_RSS_SCANNED,
-  parseAtomEntries,
   parseRssItems,
 } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
@@ -116,36 +114,28 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(parsed).toBeNull();
   });
 
-  it.each(["title", "published", "updated"])("parseAtomEntries: a repeated unclosed <%s>", (tag) => {
-    const xml = `<entry>${`<${tag} type="html">`.repeat(SIZE / 16)}`;
-    let posts: ReturnType<typeof parseAtomEntries> = [];
-    expect(elapsed(() => (posts = parseAtomEntries(xml)))).toBeLessThan(BUDGET_MS);
-    expect(posts.length).toBeLessThanOrEqual(1);
-  });
-
-  it("parseAtomEntries: a feed of unclosed <entry> openers, of empty entries and of long runs", () => {
-    expect(elapsed(() => parseAtomEntries("<entry>".repeat(SIZE / 7)))).toBeLessThan(BUDGET_MS);
-    expect(elapsed(() => parseAtomEntries("<entry></entry>".repeat(SIZE / 15)))).toBeLessThan(BUDGET_MS);
-    expect(elapsed(() => parseAtomEntries(`<entry>${" ".repeat(SIZE)}`.repeat(4)))).toBeLessThan(BUDGET_MS);
-    expect(elapsed(() => parseAtomEntries(`<entry><title>${"<![CDATA[".repeat(SIZE / 9)}`))).toBeLessThan(BUDGET_MS);
-    expect(elapsed(() => parseAtomEntries(`<entry><title type="${"<".repeat(SIZE)}`))).toBeLessThan(BUDGET_MS);
-  });
-
-  it("parseAtomEntries: looks at no more than MAX_ATOM_ENTRIES entries", () => {
-    const xml = Array.from({ length: MAX_ATOM_ENTRIES * 2 }, (_, i) => `<entry><title>t${i}</title></entry>`).join("");
-    expect(parseAtomEntries(xml)).toHaveLength(MAX_ATOM_ENTRIES);
-  });
-
   it.each([
-    ["a long run of spaces", `Android 17${" ".repeat(SIZE)}x is here`],
-    ["a long run of digits", `Android ${"1".repeat(SIZE)} is here`],
-    ["a long run of separators", `Android 17 ${"- ".repeat(SIZE / 2)}`],
-    ["repeated QPR markers", `Android 17 ${"QPR1 ".repeat(SIZE / 5)}`],
-    ["repeated dots", `Android 17${".".repeat(SIZE)}`],
-    ["repeated spaced QPR markers", `Android 17 ${"QPR 1 ".repeat(SIZE / 6)}`],
-    ["a long run of release words", `Android 17 is ${"now ".repeat(SIZE / 4)}`],
-  ])("parseAndroidReleaseTitle: %s", (_label, title) => {
-    expect(elapsed(() => parseAndroidReleaseTitle(title))).toBeLessThan(BUDGET_MS);
+    ["unclosed tag openers", "<a".repeat(SIZE / 2)],
+    ["tag openers with a space", "<a ".repeat(SIZE / 3)],
+    ["bare angle brackets", "<".repeat(SIZE)],
+    ["a tag that never ends", `<a href="/about/versions/17"${"x".repeat(SIZE)}`],
+    ["a link that never closes", `<a href="/about/versions/17">${"Android 17".repeat(SIZE / 10)}`],
+    ["many version links that never close", '<a href="/about/versions/17">Android 17'.repeat(SIZE / 38)],
+    ["many version links closed far away", `${'<a href="/about/versions/17">x'.repeat(SIZE / 27)}</a>`],
+    ["tags with long runs of attributes", `<a ${'href="/about/versions/17" '.repeat(SIZE / 26)}>Android 17</a>`],
+    ["an unclosed quote in the href", `<a href="${"/about/versions/17".repeat(SIZE / 17)}`],
+    ["long link text of tag openers", `<a href="/about/versions/17">${"<".repeat(SIZE)}</a>`],
+    ["a long link text of spaces", `<a href="/about/versions/17">${" ".repeat(SIZE)}Android 17</a>`],
+    ["a long run of digits", `<a href="/about/versions/${"1".repeat(SIZE)}">Android 17</a>`],
+    ["many valid links", '<a href="/about/versions/17">Android 17</a>'.repeat(SIZE / 41)],
+    ["many empty links", "<a ></a>".repeat(SIZE / 8)],
+  ])("readAndroidVersionLinks: %s", (_label, html) => {
+    expect(elapsed(() => readAndroidVersionLinks(html))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("androidReleases: a long list of versions", () => {
+    const versions = Array.from({ length: SIZE }, (_, i) => String(i % 100));
+    expect(elapsed(() => androidReleases(versions))).toBeLessThan(BUDGET_MS);
   });
 
   it.each([

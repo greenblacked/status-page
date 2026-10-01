@@ -151,8 +151,8 @@ export const CATALOG: CatalogEntry[] = [
     name: "Android releases",
     shortName: "Android OS",
     category: "updates",
-    sourceName: "Android Developers Blog",
-    sourceUrl: "https://developer.android.com/blog",
+    sourceName: "Android Developers releases",
+    sourceUrl: "https://developer.android.com/about/versions",
   },
 ];
 

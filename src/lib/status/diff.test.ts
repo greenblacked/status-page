@@ -68,17 +68,42 @@ describe("diffBoards", () => {
     const previous = board([
       service("android-os", {
         health: "operational",
-        meta: { latest: "Android 17 QPR1", versions: "Android 17 QPR1=Sep 3|Android 17=Jun 16" },
+        meta: { latest: "Android 17", versions: "Android 17=released|Android 16=released" },
       }),
     ]);
     const next = board([
       service("android-os", {
         health: "operational",
-        summary: "Latest: Android 17 QPR1 · Sep 3",
-        meta: { latest: "Android 17 QPR1", versions: "Android 17 QPR1=Sep 3" },
+        summary: "Latest: Android 17",
+        meta: { latest: "Android 17", versions: "Android 17=released" },
       }),
     ]);
     assert.deepEqual(diffBoards(previous, next), []);
+  });
+
+  it("reports a major version the Android page adds as a release, and the one that drops off as nothing more", () => {
+    const previous = board([
+      service("android-os", {
+        health: "operational",
+        meta: { latest: "Android 17", versions: "Android 17=released|Android 16=released|Android 15=released" },
+      }),
+    ]);
+    const next = board([
+      service("android-os", {
+        health: "operational",
+        summary: "Latest: Android 18",
+        meta: { latest: "Android 18", versions: "Android 18=released|Android 17=released|Android 16=released" },
+      }),
+    ]);
+    assert.deepEqual(diffBoards(previous, next), [
+      {
+        id: "android-os",
+        name: "android-os",
+        from: "operational",
+        to: "operational",
+        summary: "Android 18 released",
+      },
+    ]);
   });
 
   it("still reports a health change when a version leaves the list", () => {
