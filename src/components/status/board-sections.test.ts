@@ -17,7 +17,12 @@ function all(health: Partial<Record<ServiceId, Health>> = {}): ServiceSnapshot[]
 
 function render(
   services: ServiceSnapshot[],
-  { mostUrgentId, changed = [], feed }: { mostUrgentId?: ServiceId; changed?: ServiceId[]; feed?: ReactNode } = {},
+  {
+    mostUrgentId,
+    changed = [],
+    feed,
+    placeholder,
+  }: { mostUrgentId?: ServiceId; changed?: ServiceId[]; feed?: ReactNode; placeholder?: ReactNode } = {},
 ): string {
   return renderToStaticMarkup(
     createElement(BoardSections, {
@@ -28,6 +33,7 @@ function render(
       onToggleStar: noop,
       now: NOW,
       feed,
+      placeholder,
     }),
   );
 }
@@ -153,14 +159,16 @@ describe("BoardSections", () => {
     expect(sections(html).map(([group]) => group)).not.toContain("attention");
     expect(html.startsWith('<div class="flex flex-col gap-8"><section data-feed="">')).toBe(true);
     expect(html.indexOf("data-feed")).toBeLessThan(html.indexOf('data-group="unread"'));
-    expect(render(all(), { feed }).indexOf("data-feed")).toBeLessThan(
-      render(all(), { feed }).indexOf('data-group="up"'),
-    );
+    const calm = render(all(), { feed });
+    expect(calm.indexOf("data-feed")).toBeLessThan(calm.indexOf('data-group="up"'));
   });
 
-  it("draws the feed alone for a board with no groups", () => {
-    const feed = createElement("p", null, "Recent changes");
-    expect(render([], { feed })).toBe('<div class="flex flex-col gap-8"><p>Recent changes</p></div>');
+  it("draws the placeholder, then the feed, when there are no groups", () => {
+    const feed = createElement("section", { "data-feed": "" }, "Recent changes");
+    const placeholder = createElement("p", { "data-placeholder": "" }, "Nothing matches");
+    expect(render([], { feed, placeholder })).toBe(
+      '<div class="flex flex-col gap-8"><p data-placeholder="">Nothing matches</p><section data-feed="">Recent changes</section></div>',
+    );
   });
 
   it("draws nothing for an empty board", () => {

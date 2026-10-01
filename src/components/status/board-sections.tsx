@@ -95,7 +95,10 @@ function RowList({
  * <article id="service-x"> wherever it sits.
  *
  * `feed` is a slot: it follows Needs a look, or leads the board when nothing
- * needs a look. It is drawn even when no group is.
+ * needs a look. It is drawn even when no group is, and always at the same
+ * place in the tree, so it is never remounted as the groups come and go.
+ * `placeholder` stands where the groups would be while there are none (the
+ * loading skeleton, or the message for filters that match nothing).
  *
  * `mostUrgentId` is the board's most urgent service; it carries
  * `data-highlight` only while it leads the attention list.
@@ -108,6 +111,7 @@ export function BoardSections({
   onToggleStar,
   now,
   feed,
+  placeholder,
 }: {
   groups: BoardGroups;
   mostUrgentId?: ServiceId;
@@ -116,6 +120,7 @@ export function BoardSections({
   onToggleStar: (id: ServiceId) => void;
   now: number;
   feed?: ReactNode;
+  placeholder?: ReactNode;
 }) {
   const { attention, unread } = groups;
   const up = upByCategory(groups.operational);
@@ -123,6 +128,8 @@ export function BoardSections({
 
   return (
     <div className="flex flex-col gap-8">
+      {placeholder}
+
       {attention.length > 0 ? (
         <Section group="attention" id="attention" title="Needs a look" count={attention.length} flush>
           {/* A size container: the grid inside lays out by the width of the column, not the window. */}

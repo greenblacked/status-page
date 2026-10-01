@@ -1988,6 +1988,54 @@ test("puts Recent changes right after Needs a look and before the first category
   expect(rest).not.toContain("attention-heading");
 });
 
+test("puts Recent changes first when nothing needs a look", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await expect(cards(page)).toHaveCount(SERVICES);
+  // Steam is operational, so the search leaves no Needs a look section.
+  await page.getByRole("searchbox").first().fill("steam");
+  await expect(cards(page)).toHaveCount(1);
+  await expect(page.locator('[data-group="attention"]')).toHaveCount(0);
+  const headings = await page
+    .locator("main section[aria-labelledby]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-labelledby")));
+  expect(headings[0]).toBe("recent-heading");
+  expect(headings).toHaveLength(2);
+});
+
+test("keeps one Recent changes region, in place, through an empty search", async ({ page }) => {
+  await openFixture(page, () => fixtureBoard(Date.now()));
+  await expect(cards(page)).toHaveCount(SERVICES);
+  const recent = page.getByRole("region", { name: "Recent changes" });
+  await expect(recent).toHaveCount(1);
+  // A JS property survives only on the same DOM node, so a remount would drop it.
+  await recent.evaluate((node) => {
+    (node as HTMLElement & { __kept?: boolean }).__kept = true;
+  });
+  const search = page.getByRole("searchbox").first();
+  await search.fill("zzzz-no-such-service");
+  await expect(cards(page)).toHaveCount(0);
+  await expect(recent).toHaveCount(1);
+  // After the empty message, with the same gap as between the sections.
+  const order = await page.evaluate(() => {
+    // The empty message is the one panel in the board that is in no section.
+    const message = [...document.querySelectorAll("main p.surface")].find((node) => !node.closest("section"));
+    const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
+    if (!message || !feed) return null;
+    return {
+      after: Boolean(message.compareDocumentPosition(feed) & Node.DOCUMENT_POSITION_FOLLOWING),
+      gap: Math.round(feed.getBoundingClientRect().top - message.getBoundingClientRect().bottom),
+      rem: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+    };
+  });
+  expect(order).not.toBeNull();
+  expect(order?.after).toBe(true);
+  expect(order?.gap).toBe(2 * (order?.rem ?? 16));
+  await search.fill("");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await expect(recent).toHaveCount(1);
+  expect(await recent.evaluate((node) => (node as HTMLElement & { __kept?: boolean }).__kept)).toBe(true);
+});
+
 test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
   await page.addInitScript(() => {

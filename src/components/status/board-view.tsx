@@ -264,6 +264,20 @@ export function BoardView({
   // hydration, and "Checking official sources" then replaced the server's
   // "Live" in the first client render, a hydration mismatch.
   const fetching = now > 0 && (boardQuery.isFetching || refreshing);
+  // What stands where the groups would be while there are none; Recent changes follows it either way.
+  const placeholder =
+    fetching && !board.services.length ? (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {Array.from({ length: 6 }).map((_, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
+          <Skeleton key={index} className="h-56 rounded-lg" />
+        ))}
+      </div>
+    ) : visible.length === 0 && !(starredOnly && !starsReady) ? (
+      // Stars load after hydration; until then an empty Starred view proves nothing.
+      // Not a live region: the results announcement already says this.
+      <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
+    ) : null;
   const freshness = useFreshness(board.generatedAt, fetching, now);
 
   useShortcuts(
@@ -407,37 +421,17 @@ export function BoardView({
               </p>
             ) : null}
 
-            <div className="flex min-w-0 flex-col gap-12">
-              {fetching && !board.services.length ? (
-                <>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    {Array.from({ length: 6 }).map((_, index) => (
-                      // biome-ignore lint/suspicious/noArrayIndexKey: six identical placeholders that never reorder.
-                      <Skeleton key={index} className="h-56 rounded-lg" />
-                    ))}
-                  </div>
-                  {feed}
-                </>
-              ) : visible.length === 0 ? (
-                <>
-                  {/* Stars load after hydration; until then an empty Starred view proves nothing.
-                      Not a live region: the results announcement already says this. */}
-                  {starredOnly && !starsReady ? null : (
-                    <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
-                  )}
-                  {feed}
-                </>
-              ) : (
-                <BoardSections
-                  groups={groups}
-                  mostUrgentId={mostUrgentId}
-                  changedIds={changedIds}
-                  starred={starred}
-                  onToggleStar={onToggleStar}
-                  now={now}
-                  feed={feed}
-                />
-              )}
+            <div className="min-w-0">
+              <BoardSections
+                groups={groups}
+                mostUrgentId={mostUrgentId}
+                changedIds={changedIds}
+                starred={starred}
+                onToggleStar={onToggleStar}
+                now={now}
+                feed={feed}
+                placeholder={placeholder}
+              />
             </div>
           </main>
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
