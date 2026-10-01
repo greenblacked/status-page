@@ -152,8 +152,12 @@ export function parsePulseStore(value: unknown): PulseStore {
     .filter((pulse): pulse is Pulse => pulse !== null)
     .sort((a, b) => b.slot - a.slot)
     .slice(0, MAX_PULSES);
+  // The last slot says "the newest pulse is this one"; when that pulse was
+  // dropped (or is not the newest), the claim is false and the next sync must
+  // open a new pulse instead of merging into the wrong one.
+  const lastSlot = typeof value.lastSlot === "number" && value.lastSlot === pulses[0]?.slot ? value.lastSlot : null;
   return {
-    lastSlot: typeof value.lastSlot === "number" && Number.isFinite(value.lastSlot) ? value.lastSlot : null,
+    lastSlot,
     lastBoard: parseLastBoard(value.lastBoard),
     pulses,
   };

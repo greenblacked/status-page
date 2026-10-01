@@ -201,6 +201,18 @@ describe("loading the pulse store from storage", () => {
     assert.deepEqual(store.pulses[0]?.changes, [change]);
   });
 
+  it("forgets a last slot that no longer names the newest pulse", () => {
+    // The newest pulse is unreadable, so slot 3 is not the head of the list any more.
+    const store = parsePulseStore({ lastSlot: 3, lastBoard: null, pulses: [pulse(3, { overall: "fine" }), pulse(2)] });
+    assert.equal(store.lastSlot, null);
+    assert.deepEqual(
+      store.pulses.map((item) => item.slot),
+      [2],
+    );
+    assert.equal(parsePulseStore({ lastSlot: 2, lastBoard: null, pulses: [pulse(3), pulse(2)] }).lastSlot, null);
+    assert.equal(parsePulseStore({ lastSlot: 3, lastBoard: null, pulses: [pulse(3), pulse(2)] }).lastSlot, 3);
+  });
+
   it("reads a last slot that is not a number as none, and caps the pulses at what the feed keeps", () => {
     assert.equal(parsePulseStore({ lastSlot: "5", pulses: [] }).lastSlot, null);
     assert.equal(parsePulseStore({ lastSlot: null, pulses: [] }).lastSlot, null);
