@@ -1503,6 +1503,43 @@ test("opens a page that is already scrolled past the dock with the field docked,
   expect(boxes.chromeTransform).toBe("none");
 });
 
+test("keeps a docked field in its slot when the bar's text moves the slot, without sliding it", async ({ page }) => {
+  test.slow();
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const { wide, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
+  await scrollAndSettle(page, Math.ceil(moveEnd) + 80);
+  await dockMoved(page);
+  expect(await dockValue(page)).toBe(1);
+  // From here on, every transition the dock starts. Refreshing changes the bar's lead text ("Checking..."),
+  // which from 40rem sits in the flow before the slot: the slot moves and resizes under a docked field.
+  await page.evaluate(() => {
+    const runs: string[] = [];
+    (window as Window & { __runs?: string[] }).__runs = runs;
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        const element = event.target as Element;
+        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
+      },
+      true,
+    );
+  });
+  const refresh = controlBar(page).getByRole("button", { name: "Refresh status now" });
+  await pressRefresh(page, refresh);
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  const runs = await page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
+  expect(
+    runs.filter((run) => run.includes("transform")),
+    "the docked field slid when its slot changed",
+  ).toEqual([]);
+  const boxes = await dockBoxes(page);
+  expect(Math.abs(boxes.field.left - boxes.slot.left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
+});
+
 test("takes the pose a scroll gives it before the page has loaded without playing a move", async ({ page }) => {
   test.slow();
   // WebKit restores a reloaded page's scroll position as late as the end of the load, after the dock's hook has

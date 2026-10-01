@@ -165,8 +165,15 @@ export function useSearchDock({
       });
       const slot = slotRef.current;
       if (!slot) return;
-      dock.style.setProperty("--dock-x", `${pageLeft(slot) - pageLeft(dock)}px`);
-      dock.style.setProperty("--dock-w", `${slot.offsetWidth}px`);
+      const x = `${pageLeft(slot) - pageLeft(dock)}px`;
+      const w = `${slot.offsetWidth}px`;
+      // A docked field whose slot has moved or resized (the bar's lead text changed, from 40rem where it sits
+      // in the flow before the slot) follows it at once. Left to the transition it would slide sideways, and
+      // its width, which is not timed, would snap in the middle of that. A move already under way retargets.
+      const moved = dock.style.getPropertyValue("--dock-x") !== x || dock.style.getPropertyValue("--dock-w") !== w;
+      if (moved && !wide.matches && dock.hasAttribute("data-docked") && !settling) holdInstant();
+      dock.style.setProperty("--dock-x", x);
+      dock.style.setProperty("--dock-w", w);
     };
     /** Holds the field's, the fill's and the verdict's transitions off (data-instant) for two frames from now. */
     const holdInstant = () => {
