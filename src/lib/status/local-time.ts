@@ -56,6 +56,22 @@ export function formatUtcDate(at: number): string {
 type Moment = { year: number; month: number; day: number; hour: number; minute: number; zone: string };
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
+const zoneNames = new Map<string, Intl.DateTimeFormat>();
+
+const isOffset = (name: string) => /^GMT[+-]/.test(name);
+
+/** en-GB names Europe's zones (CET, BST) and en-US the Americas' (EDT, PST); an offset when neither has one. */
+function zoneName(at: number, timeZone: string | undefined, fromGb: string): string {
+  if (!isOffset(fromGb)) return fromGb;
+  const key = timeZone ?? "";
+  let us = zoneNames.get(key);
+  if (!us) {
+    us = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" });
+    zoneNames.set(key, us);
+  }
+  const fromUs = us.formatToParts(at).find((part) => part.type === "timeZoneName")?.value ?? "";
+  return fromUs && !isOffset(fromUs) ? fromUs : fromGb;
+}
 
 /**
  * The moment's parts in a zone. The language is pinned to English on purpose:
@@ -86,7 +102,7 @@ function momentIn(at: number, timeZone: string | undefined): Moment {
     day: Number(value.day),
     hour: Number(value.hour) % 24,
     minute: Number(value.minute),
-    zone: value.timeZoneName ?? "",
+    zone: zoneName(at, timeZone, value.timeZoneName ?? ""),
   };
 }
 

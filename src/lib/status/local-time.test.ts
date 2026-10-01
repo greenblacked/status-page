@@ -85,6 +85,14 @@ describe("in any browser language", () => {
     );
   });
 
+  it.each(locales)("names American zones the English way for %s", (locale) => {
+    const newYork = { timeZone: "America/New_York", locale };
+    expect(formatLocalTime(afternoon, afternoon, newYork)).toBe("10:04\u202fEDT");
+    const january = Date.parse("2027-01-15T14:04:00Z");
+    expect(formatLocalTime(january, january, newYork)).toBe("09:04\u202fEST");
+    expect(formatLocalTime(afternoon, afternoon, { timeZone: "America/Los_Angeles", locale })).toBe("07:04\u202fPDT");
+  });
+
   it.each(locales)("prints the cross-day form in English for %s", (locale) => {
     const reference = Date.parse("2026-09-30T10:04:00Z");
     const options = { timeZone: "Europe/Berlin", locale };
