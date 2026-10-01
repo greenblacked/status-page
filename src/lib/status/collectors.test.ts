@@ -659,19 +659,19 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     ]);
   });
 
-  it("Statuspage: a huge page is capped at 24 components, and a broken one past the cap still leads", async () => {
-    const components = Array.from({ length: 60 }, (_, i) => ({
+  it("Statuspage: a huge page is capped at 300 components, and a broken one past the cap still leads", async () => {
+    const components = Array.from({ length: 320 }, (_, i) => ({
       id: String(i),
       name: `Component ${i}`,
-      status: i === 55 ? "partial_outage" : "operational",
+      status: i === 315 ? "partial_outage" : "operational",
     }));
     stubFetch({ [URLS.spotify]: json(statuspageSummary({ indicator: "minor", components })) });
     const spotify = (await collectAllServices()).find((s) => s.id === "spotify")!;
-    expect(spotify.components).toHaveLength(24);
-    expect(spotify.componentCount).toBe(60);
-    expect(spotify.components[0]).toEqual({ name: "Component 55", health: "degraded", detail: "Partial outage" });
+    expect(spotify.components).toHaveLength(300);
+    expect(spotify.componentCount).toBe(320);
+    expect(spotify.components[0]).toEqual({ name: "Component 315", health: "degraded", detail: "Partial outage" });
     expect(spotify.components.slice(1).map((c) => c.name)).toEqual(
-      Array.from({ length: 23 }, (_, i) => `Component ${i}`),
+      Array.from({ length: 299 }, (_, i) => `Component ${i}`),
     );
   });
 
@@ -949,23 +949,23 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
   });
 
-  it("Apple: every service is a component, active ones first, capped at 24", async () => {
-    const services = Array.from({ length: 30 }, (_, i) => ({
+  it("Apple: every service is a component, active ones first, capped at 300", async () => {
+    const services = Array.from({ length: 310 }, (_, i) => ({
       serviceName: `Service ${i}`,
       events:
-        i === 28
+        i === 308
           ? [{ eventStatus: "ongoing", statusType: "issue", message: "Slow", epochStartDate: 1693440600000 }]
           : [{ eventStatus: "resolved", statusType: "outage", message: "Back", epochStartDate: 1693440600000 }],
     }));
     stubFetch({ [URLS.apple]: json({ services }) });
     const apple = (await collectAllServices()).find((s) => s.id === "apple")!;
     expect(apple.health).toBe("degraded");
-    expect(apple.components).toHaveLength(24);
-    expect(apple.componentCount).toBe(30);
-    expect(apple.components[0]).toMatchObject({ name: "Service 28", health: "degraded" });
+    expect(apple.components).toHaveLength(300);
+    expect(apple.componentCount).toBe(310);
+    expect(apple.components[0]).toMatchObject({ name: "Service 308", health: "degraded" });
     expect(apple.components.slice(1).every((c) => c.health === "operational")).toBe(true);
     expect(apple.components[1].name).toBe("Service 0");
-    expect(apple.meta).toEqual({ services: 30 });
+    expect(apple.meta).toEqual({ services: 310 });
   });
 
   it("a vendor returning HTTP 403 marks the service unknown with an http failure naming the vendor host", async () => {
@@ -1333,20 +1333,28 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         }
       });
 
-      it("caps a long catalogue at 24 with the broken product first and reports the total", async () => {
+      it("keeps a full 215-product catalogue whole, with no reported total", async () => {
+        stubFetch({ [URLS.gcp]: json([]), [URLS.gcpProducts]: json(googleProducts(215)) });
+        const gcp = await collect("gcp");
+        expect(gcp.components).toHaveLength(215);
+        expect(gcp.componentCount).toBeUndefined();
+        expect(gcp.components.every((c) => c.health === "operational")).toBe(true);
+      });
+
+      it("caps a long catalogue at 300 with the broken product first and reports the total", async () => {
         stubFetch({
           [URLS.gcp]: json([
             googleIncident({
               status_impact: "SERVICE_OUTAGE",
-              affected_products: [{ title: "Product 40", id: "p40" }],
+              affected_products: [{ title: "Product 310", id: "p310" }],
             }),
           ]),
-          [URLS.gcpProducts]: json(googleProducts(45)),
+          [URLS.gcpProducts]: json(googleProducts(320)),
         });
         const gcp = await collect("gcp");
-        expect(gcp.components).toHaveLength(24);
-        expect(gcp.componentCount).toBe(45);
-        expect(gcp.components[0]).toEqual({ name: "Product 40", health: "outage", detail: "Elevated errors" });
+        expect(gcp.components).toHaveLength(300);
+        expect(gcp.componentCount).toBe(320);
+        expect(gcp.components[0]).toEqual({ name: "Product 310", health: "outage", detail: "Elevated errors" });
         expect(gcp.components[1].name).toBe("Product 0");
       });
 
@@ -1557,17 +1565,17 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         expect(grok.componentCount).toBeUndefined();
       });
 
-      it("caps a long component list at 24 and reports the total", async () => {
-        const components = Array.from({ length: 30 }, (_, i) => ({
+      it("caps a long component list at 300 and reports the total", async () => {
+        const components = Array.from({ length: 310 }, (_, i) => ({
           id: String(i),
           name: `Part ${i}`,
-          status: i === 29 ? "MAJOROUTAGE" : "OPERATIONAL",
+          status: i === 309 ? "MAJOROUTAGE" : "OPERATIONAL",
         }));
         stubFetch({ [URLS.grok]: feed(), [URLS.grokComponents]: json({ components }) });
         const grok = await collect("grok");
-        expect(grok.components).toHaveLength(24);
-        expect(grok.componentCount).toBe(30);
-        expect(grok.components[0]).toEqual({ name: "Part 29", health: "outage" });
+        expect(grok.components).toHaveLength(300);
+        expect(grok.componentCount).toBe(310);
+        expect(grok.components[0]).toEqual({ name: "Part 309", health: "outage" });
       });
 
       it("ignores a component list whose statuses are all unreadable and uses the feed's [Service] titles", async () => {
@@ -1681,18 +1689,18 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         expect(aws.components).toEqual([]);
       });
 
-      it("caps at 24 services, keeping the worst, and reports the total", async () => {
+      it("caps at 300 services, keeping the worst, and reports the total", async () => {
         serve(
-          Array.from({ length: 30 }, (_, i) =>
+          Array.from({ length: 310 }, (_, i) =>
             awsEvent({
               service_name: `Service ${i}`,
               service: `svc-${i}`,
               region_name: "",
-              summary: i === 27 ? "Outage" : "Elevated latency",
+              summary: i === 307 ? "Outage" : "Elevated latency",
               event_log: [
                 {
-                  summary: i === 27 ? "Outage" : "Elevated latency",
-                  message: i === 27 ? "The service is unavailable." : "Slow.",
+                  summary: i === 307 ? "Outage" : "Elevated latency",
+                  message: i === 307 ? "The service is unavailable." : "Slow.",
                   status: 1,
                   timestamp: at,
                 },
@@ -1701,12 +1709,12 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           ),
         );
         const aws = await collect("aws");
-        expect(aws.components).toHaveLength(24);
-        expect(aws.componentCount).toBe(30);
-        // The outage sits past the 24th event, and still leads the list.
-        expect(aws.components[0]).toEqual({ name: "Service 27", health: "outage", detail: "Outage" });
+        expect(aws.components).toHaveLength(300);
+        expect(aws.componentCount).toBe(310);
+        // The outage sits past the 300th event, and still leads the list.
+        expect(aws.components[0]).toEqual({ name: "Service 307", health: "outage", detail: "Outage" });
         expect(aws.components.slice(1).map((c) => c.name)).toEqual(
-          Array.from({ length: 23 }, (_, i) => `Service ${i}`),
+          Array.from({ length: 299 }, (_, i) => `Service ${i}`),
         );
       });
     });
