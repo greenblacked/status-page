@@ -24,6 +24,8 @@ describe("parseMikrotikNewest", () => {
   });
 
   it("refuses a version that could reshape the changelog URL or the card", () => {
+    assert.equal(parseMikrotikNewest(`7.${"1".repeat(40)} 1789558341`), null);
+    assert.equal(parseMikrotikNewest(`7.${"1".repeat(30)} 1789558341`)?.version, `7.${"1".repeat(30)}`);
     for (const body of ["../../evil 1789558341", "7.1/../../x", "7.1?x=1", "<b>7</b>", "v7.1", "7..1", "%2e%2e"]) {
       assert.equal(parseMikrotikNewest(body), null, body);
     }
@@ -66,6 +68,13 @@ describe("apple os releases", () => {
     });
     assert.deepEqual(parseAppleOsTitle("MACOS\t26.1"), { family: "macOS", version: "26.1", beta: false });
     assert.deepEqual(parseAppleOsTitle("iPadOS\n26"), { family: "iPadOS", version: "26", beta: false });
+  });
+
+  it("caps a version at 64 characters", () => {
+    const parsed = parseAppleOsTitle(`iOS ${"9".repeat(500)}`);
+    assert.equal(parsed?.version.length, 64);
+    assert.ok(parsed?.version.endsWith("…"));
+    assert.equal(parseAppleOsTitle("iOS 26.1 beta 3 (23B5045g)")?.version, "26.1 beta 3 (23B5045g)");
   });
 
   it("needs a separator and a single-line version after the family", () => {

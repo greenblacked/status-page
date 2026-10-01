@@ -1,3 +1,4 @@
+import { fingerprint } from "./fingerprint.ts";
 import type { ServiceSnapshot } from "./types.ts";
 
 /**
@@ -10,6 +11,12 @@ import type { ServiceSnapshot } from "./types.ts";
 export const MAX_NAME_CHARS = 120;
 export const MAX_TITLE_CHARS = 300;
 export const MAX_TEXT_CHARS = 500;
+export const MAX_ID_CHARS = 200;
+export const MAX_URL_CHARS = 2000;
+
+// Meta values that hold a title (the newest release's headline); the rest of
+// meta (version maps, counters) gets the general text limit.
+const TITLE_LIKE_META = new Set(["latest"]);
 
 /**
  * `text` cut to at most `max` characters (UTF-16 units, the unit of
@@ -25,10 +32,44 @@ export function clip(text: string, max: number): string {
   return `${text.slice(0, end).trimEnd()}…`;
 }
 
+/**
+ * An id within MAX_ID_CHARS. A longer one keeps its start and ends in a
+ * fingerprint of the whole, so two long ids that share a start stay different
+ * and the same one is the same on every sweep (the feed's entry ids and the
+ * board's diffing key on it).
+ */
+export function boundId(id: string): string {
+  if (id.length <= MAX_ID_CHARS) return id;
+  const suffix = `~${fingerprint(id)}`;
+  let end = MAX_ID_CHARS - suffix.length;
+  const last = id.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${id.slice(0, end)}${suffix}`;
+}
+
+// A link that is too long is dropped, not cut: half a URL points nowhere.
+function boundUrl(url: string | undefined): string | undefined {
+  return typeof url === "string" && url.length > MAX_URL_CHARS ? undefined : url;
+}
+
 // Vendor payloads are not validated, so a field the types say is text can
 // be some other type; only strings are cut.
 function bound<T>(value: T, max: number): T {
   return typeof value === "string" ? (clip(value, max) as T) : value;
+}
+
+// Ids are built from vendor text, so they may not be text at all.
+function boundIdOf<T>(id: T): T {
+  return typeof id === "string" ? (boundId(id) as T) : id;
+}
+
+function boundMeta(meta: Record<string, string | number>): Record<string, string | number> {
+  return Object.fromEntries(
+    Object.entries(meta).map(([key, value]) => [
+      key,
+      bound(value, TITLE_LIKE_META.has(key) ? MAX_TITLE_CHARS : MAX_TEXT_CHARS),
+    ]),
+  );
 }
 
 /** The snapshot with every vendor-sourced string held to its limit. */
@@ -41,15 +82,21 @@ export function boundSnapshot(snapshot: ServiceSnapshot): ServiceSnapshot {
       if (component.detail !== undefined) next.detail = bound(component.detail, MAX_TEXT_CHARS);
       return next;
     }),
-    incidents: snapshot.incidents.map((incident) => ({ ...incident, title: bound(incident.title, MAX_TITLE_CHARS) })),
+    incidents: snapshot.incidents.map((incident) => {
+      const next = { ...incident, id: boundIdOf(incident.id), title: bound(incident.title, MAX_TITLE_CHARS) };
+      if (incident.url !== undefined) next.url = boundUrl(incident.url);
+      return next;
+    }),
     ...(snapshot.upcomingMaintenance
       ? {
-          upcomingMaintenance: snapshot.upcomingMaintenance.map((item) => ({
-            ...item,
-            title: bound(item.title, MAX_TITLE_CHARS),
-          })),
+          upcomingMaintenance: snapshot.upcomingMaintenance.map((item) => {
+            const next = { ...item, id: boundIdOf(item.id), title: bound(item.title, MAX_TITLE_CHARS) };
+            if (item.url !== undefined) next.url = boundUrl(item.url);
+            return next;
+          }),
         }
       : {}),
+    ...(snapshot.meta ? { meta: boundMeta(snapshot.meta) } : {}),
     ...(snapshot.failure
       ? { failure: { ...snapshot.failure, message: bound(snapshot.failure.message, MAX_TEXT_CHARS) } }
       : {}),

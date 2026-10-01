@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { boundSnapshot, clip, MAX_NAME_CHARS, MAX_TEXT_CHARS, MAX_TITLE_CHARS } from "./bounds.ts";
+import {
+  boundId,
+  boundSnapshot,
+  clip,
+  MAX_ID_CHARS,
+  MAX_NAME_CHARS,
+  MAX_TEXT_CHARS,
+  MAX_TITLE_CHARS,
+  MAX_URL_CHARS,
+} from "./bounds.ts";
 import type { ServiceSnapshot } from "./types.ts";
 
 describe("clip", () => {
@@ -95,5 +104,70 @@ describe("boundSnapshot", () => {
       components: [{ name: "A", health: "outage", detail: 42 }],
     } as unknown as ServiceSnapshot;
     expect(boundSnapshot(snapshot).components[0].detail).toBe(42);
+  });
+});
+
+describe("boundId", () => {
+  it("leaves an id within the limit alone", () => {
+    expect(boundId("statuspage-1a2b3c4d")).toBe("statuspage-1a2b3c4d");
+    expect(boundId("x".repeat(MAX_ID_CHARS))).toBe("x".repeat(MAX_ID_CHARS));
+  });
+
+  it("shortens a longer one deterministically, keeping two long ids with one start apart", () => {
+    const start = "iCloud-".repeat(100);
+    const first = boundId(`${start}one`);
+    const second = boundId(`${start}two`);
+    expect(first).toHaveLength(MAX_ID_CHARS);
+    expect(second).toHaveLength(MAX_ID_CHARS);
+    expect(first).not.toBe(second);
+    expect(boundId(`${start}one`)).toBe(first);
+    expect(first.startsWith("iCloud-")).toBe(true);
+  });
+
+  it("does not end its kept start inside a surrogate pair", () => {
+    for (let pad = 0; pad < 4; pad += 1) {
+      const out = boundId(`${"a".repeat(pad)}${"😀".repeat(200)}`);
+      expect(out.length).toBeLessThanOrEqual(MAX_ID_CHARS);
+      expect(() => encodeURIComponent(out)).not.toThrow();
+    }
+  });
+});
+
+describe("boundSnapshot ids, links and meta", () => {
+  const long = "z".repeat(5000);
+
+  it("bounds incident and maintenance ids and drops links too long to keep", () => {
+    const bounded = boundSnapshot({
+      ...base,
+      incidents: [
+        { id: long, title: "T", health: "outage", url: `https://status.example.com/${long}` },
+        { id: "ok", title: "T", health: "outage", url: "https://status.example.com/ok" },
+      ],
+      upcomingMaintenance: [{ id: long, title: "M", url: `https://status.example.com/${long}` }],
+    });
+    expect(bounded.incidents[0].id).toHaveLength(MAX_ID_CHARS);
+    expect(bounded.incidents[0].url).toBeUndefined();
+    expect(bounded.incidents[1]).toEqual({
+      id: "ok",
+      title: "T",
+      health: "outage",
+      url: "https://status.example.com/ok",
+    });
+    expect(bounded.upcomingMaintenance?.[0].id).toHaveLength(MAX_ID_CHARS);
+    expect(bounded.upcomingMaintenance?.[0].url).toBeUndefined();
+    const edge = `https://status.example.com/${"p".repeat(MAX_URL_CHARS - 27)}`;
+    expect(edge).toHaveLength(MAX_URL_CHARS);
+    expect(
+      boundSnapshot({ ...base, incidents: [{ id: "a", title: "T", health: "outage", url: edge }] }).incidents[0].url,
+    ).toBe(edge);
+  });
+
+  it("clips meta text, a title-like value shorter than the rest, and leaves numbers alone", () => {
+    const bounded = boundSnapshot({ ...base, meta: { latest: long, versions: long, players: 12, euPops: 0 } });
+    expect(bounded.meta?.latest).toHaveLength(MAX_TITLE_CHARS);
+    expect(bounded.meta?.versions).toHaveLength(MAX_TEXT_CHARS);
+    expect(bounded.meta?.players).toBe(12);
+    expect(bounded.meta?.euPops).toBe(0);
+    expect("meta" in boundSnapshot(base)).toBe(false);
   });
 });

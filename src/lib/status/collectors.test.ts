@@ -1911,6 +1911,38 @@ describe("collectors bound vendor text and counts", () => {
     expect(apple.components[0].detail).toHaveLength(500);
   });
 
+  it("Apple OS: a runaway release title cannot reach the summary, meta or version map at length", async () => {
+    const item = (title: string) =>
+      `<item><title>${title}</title><link>https://developer.apple.com/news/?id=1</link><pubDate>Mon, 15 Sep 2026 17:00:00 GMT</pubDate></item>`;
+    const feed = `<rss version="2.0"><channel>${item(`iOS ${"9".repeat(20_000)}`)}${item("macOS 26.1")}</channel></rss>`;
+    stubFetch({ [URLS.appleOs]: text(feed) });
+    const appleOs = await collect("apple-os");
+    expect(appleOs.failure).toBeUndefined();
+    expect(appleOs.summary.length).toBeLessThanOrEqual(500);
+    expect(String(appleOs.meta?.latest).length).toBeLessThanOrEqual(300);
+    expect(String(appleOs.meta?.versions).length).toBeLessThanOrEqual(500);
+    expect(appleOs.components[0].detail?.length).toBeLessThanOrEqual(500);
+    // The version map keeps one clipped version per family.
+    expect(String(appleOs.meta?.versions)).toContain("macOS=26.1");
+    expect(String(appleOs.meta?.versions)).toMatch(/^iOS=9{63}…\|/);
+  });
+
+  it("Apple: an event id built from a long message stays short, and the same on every sweep", async () => {
+    const payload = {
+      services: [
+        {
+          serviceName: "iCloud",
+          events: [{ eventStatus: "ongoing", statusType: "Outage", message: "m".repeat(5000), epochStartDate: 1 }],
+        },
+      ],
+    };
+    stubFetch({ [URLS.apple]: text(`jsonCallback(${JSON.stringify(payload)});`) });
+    const first = (await collect("apple")).incidents[0].id;
+    const second = (await collect("apple")).incidents[0].id;
+    expect(first.length).toBeLessThanOrEqual(200);
+    expect(first).toBe(second);
+  });
+
   it("Grok: an active item past the 200th in document order is still found", async () => {
     const item = (title: string, pubDate: string, status: string) =>
       `<item><title>${title}</title><link>https://status.x.ai/incidents/${encodeURIComponent(title)}</link>
