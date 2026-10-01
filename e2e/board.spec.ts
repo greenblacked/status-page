@@ -1185,6 +1185,12 @@ test("does not move the dock when only the viewport's height changes, as iOS's t
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  // The page's own refetch (the one on mount of a snapshot past its TTL, or the wall-clock one every two minutes)
+  // changes the live line's height, and with it the hero's: the dock measures again, rightly, and the count below
+  // would take that for a resize. Start only when the countdown has room for the whole test, which also waits out
+  // a refetch already under way. Live vendors make the timing differ from run to run and, in a slower WebKit, the
+  // refetch land inside the window.
+  await awayFromRefetch(page);
   const { wide, moveStart, moveEnd } = await dockOffsets(page);
   const frames = (count: number) =>
     page.evaluate(
