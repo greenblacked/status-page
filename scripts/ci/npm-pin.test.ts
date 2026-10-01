@@ -238,6 +238,14 @@ describe("the scanner exception for the pinned npm's bundled dependencies", () =
       expect(body).not.toMatch(/PackageOverrides|GoVersionOverride/);
     });
 
+    it("is the only osv-scanner.toml in the repository", () => {
+      // OSV-Scanner applies the file to every lockfile in its directory, so a copy beside the app's
+      // package-lock.json (or anywhere else) would hide advisories in the app's own dependencies.
+      const tracked = spawnSync("git", ["ls-files", "--", "*osv-scanner.toml"], { cwd: ROOT, encoding: "utf8" });
+      expect(tracked.status, tracked.stderr).toBe(0);
+      expect(tracked.stdout.split("\n").filter(Boolean)).toEqual(["tools/npm/osv-scanner.toml"]);
+    });
+
     it("names only packages the pinned npm bundles, none of which the app lockfile resolves", () => {
       const tools = JSON.parse(read("tools/npm/package-lock.json")).packages as Record<
         string,
@@ -252,9 +260,12 @@ describe("the scanner exception for the pinned npm's bundled dependencies", () =
         const bundled = tools[`node_modules/npm/node_modules/${name}`];
         expect(bundled?.inBundle, `${name} must be bundled in npm`).toBe(true);
         expect(bundled?.version).toBe(version);
-        expect(app[`node_modules/${name}`]?.version, `${name} must not be the vulnerable version in the app`).not.toBe(
-          version,
-        );
+        // Any depth: a copy nested under another package counts too.
+        for (const [key, entry] of Object.entries(app)) {
+          if (key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`)) {
+            expect(entry.version, `${key} must not be the vulnerable version in the app`).not.toBe(version);
+          }
+        }
       }
     });
   });
