@@ -315,7 +315,7 @@ describe("changelog", () => {
     );
   });
 
-  it("version maps: any raw value parses to a plain object, and a diff names only what changed", () => {
+  it("version maps with any raw value parses to a plain object, and a diff names only what changed", () => {
     const raw = fc.oneof(anyText, fc.integer(), fc.constant(undefined));
     fc.assert(
       fc.property(raw, raw, (before, after) => {
@@ -328,7 +328,7 @@ describe("changelog", () => {
     );
   });
 
-  it("release ages: any date text, or none, reads as a string or a boolean without throwing", () => {
+  it("release ages with any date text, or none, reads as a string or a boolean without throwing", () => {
     fc.assert(
       fc.property(fc.option(anyText, { nil: undefined }), fc.integer({ min: 0, max: 8.64e15 }), (iso, now) => {
         expect(typeof formatReleaseAge(iso)).toBe("string");
@@ -404,7 +404,7 @@ const markup = fc
   .map((parts) => parts.join(""));
 
 describe("windows release page", () => {
-  it("readHtmlTables: any markup yields tables inside the ceilings", () => {
+  it("readHtmlTables with any markup yields tables inside the ceilings", () => {
     fc.assert(
       fc.property(markup, (html) => {
         const tables = readHtmlTables(html);
@@ -468,7 +468,7 @@ describe("windows release page", () => {
     );
   });
 
-  it("windowsReleases: any tables give at most four versions, newest first", () => {
+  it("windowsReleases with any tables give at most four versions, newest first", () => {
     const cell = fc.oneof(
       anyText,
       fc.constantFrom(
@@ -538,7 +538,7 @@ describe("windows release page", () => {
 });
 
 describe("feeds and payloads", () => {
-  it("parseRssItems: any markup gives at most MAX_RSS_ITEMS items, all text", () => {
+  it("parseRssItems with any markup gives at most MAX_RSS_ITEMS items, all text", () => {
     fc.assert(
       fc.property(markup, (xml) => {
         const items = parseRssItems(xml);
@@ -620,7 +620,7 @@ describe("feeds and payloads", () => {
     );
   });
 
-  it("grok feed: any title and description read as a service and a health", () => {
+  it("grok feed with any title and description read as a service and a health", () => {
     const item = fc.record({
       title: fc.oneof(anyText, fc.constantFrom("[Grok (iOS)] Models outage", "[API] x"), markup),
       description: fc.oneof(anyText, markup),
@@ -654,7 +654,7 @@ describe("feeds and payloads", () => {
     );
   });
 
-  it("parseGoogleProducts: any JSON gives distinct, trimmed, non-empty titles", () => {
+  it("parseGoogleProducts with any JSON gives distinct, trimmed, non-empty titles", () => {
     fc.assert(
       fc.property(
         fc.oneof(fc.jsonValue(), fc.array(fc.jsonValue()), fc.record({ products: fc.array(fc.jsonValue()) })),
@@ -671,7 +671,7 @@ describe("feeds and payloads", () => {
     );
   });
 
-  it("parseInstatusComponents: any JSON gives named components with a known health", () => {
+  it("parseInstatusComponents with any JSON gives named components with a known health", () => {
     const row = fc.oneof(
       fc.jsonValue(),
       fc.record({
