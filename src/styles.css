@@ -259,7 +259,8 @@
 .liquid-stage {
   position: relative;
   isolation: isolate;
-  min-height: 100dvh;
+  /* lvh, not dvh: dvh follows Safari's toolbar, and each time it slid away or back the page was laid out again mid-scroll. The board body below is taller than the largest viewport anyway. */
+  min-height: 100lvh;
   background-color: var(--color-bg);
   /* clip, not hidden: hidden makes this a scroll container, and the
      compact header would then stick to it instead of to the viewport. */
