@@ -29,9 +29,11 @@ export const FEED_ROW_CLASSES = {
  * they are laid out at the real width, font and root size, reads their
  * height and removes them again in the same task, so nothing of it paints.
  * The height goes to the surface as `--feed-reserve`, which its empty state
- * reads (update-feed.tsx). It measures once at once and again when the fonts
- * the page is loading are in, since the text is laid out in a stand-in
- * face until then, and stops if the rows have been drawn meanwhile.
+ * reads (update-feed.tsx). It measures at once, and again before the first
+ * frame, after a tenth and four tenths of a second, and when the fonts the
+ * page is loading are in: the text is laid out in a stand-in face until then
+ * (the page's faces load on first use, even the local() ones, and the
+ * browser does not always say when). It stops once the rows are drawn.
  *
  * Measuring in place replaces an estimate from the window width and a table of
  * character widths, which fell short at a larger default font size and on
@@ -107,6 +109,8 @@ if(h>0)f.style.setProperty(${JSON.stringify(FEED_RESERVE_PROPERTY)},h+"px");
 }catch(e){}
 };
 W();
+if(typeof requestAnimationFrame==="function")requestAnimationFrame(W);
+if(typeof setTimeout==="function"){setTimeout(W,100);setTimeout(W,400)}
 var F=document.fonts;
 if(F){
 if(F.addEventListener)F.addEventListener("loadingdone",W);

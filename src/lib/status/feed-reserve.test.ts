@@ -255,10 +255,23 @@ describe("FEED_RESERVE_SCRIPT", () => {
       },
       createElement: (tag: string) => new FakeElement(tag, () => heights.shift() ?? 0),
     };
-    new Function("document", "localStorage", FEED_RESERVE_SCRIPT)(document, { getItem: () => store([pulse(0)]) });
+    const frames: Array<() => void> = [];
+    new Function("document", "localStorage", "requestAnimationFrame", FEED_RESERVE_SCRIPT)(
+      document,
+      { getItem: () => store([pulse(0)]) },
+      (frame: () => void) => void frames.push(frame),
+    );
     expect(surface.props.get(FEED_RESERVE_PROPERTY)).toBe("100px");
-    loaded[0]();
+    // Before the first frame, the page's faces are in, and layout has moved on.
+    frames[0]();
     expect(surface.props.get(FEED_RESERVE_PROPERTY)).toBe("140px");
+    heights.unshift(150);
+    loaded[0]();
+    expect(surface.props.get(FEED_RESERVE_PROPERTY)).toBe("150px");
+    // And on timers, which the fake clock here runs on demand.
+    heights.unshift(160);
+    vi.advanceTimersByTime(100);
+    expect(surface.props.get(FEED_RESERVE_PROPERTY)).toBe("160px");
     ready();
     await document.fonts.ready;
     await Promise.resolve();
@@ -266,6 +279,7 @@ describe("FEED_RESERVE_SCRIPT", () => {
     surface.drawn = true;
     heights.push(999);
     loaded[0]();
+    frames[0]();
     expect(surface.props.get(FEED_RESERVE_PROPERTY)).toBe("180px");
     expect(parent.children).toEqual([surface, script]);
   });
