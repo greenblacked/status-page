@@ -3327,8 +3327,12 @@ test("keeps one Recent changes region, in place, through an empty search", async
  * lines: changes to several services at once, summaries a sentence long, and
  * a run of quiet checks that is one row. The load adds a quiet ninth in place
  * of the oldest. The board is the one the page itself saved on a first visit,
- * so the check the load makes finds nothing changed, as it does for a real
- * visitor.
+ * with its services taken out: the check the load makes compares only the
+ * services both boards list, so it finds nothing changed whatever the vendors
+ * say. With the services in, a vendor that flips between the first visit and
+ * a later load (a timeout reads as Unknown) makes the load's check a change
+ * with a caption of its own, a few lines taller than the quiet row the
+ * reserve counts on, which the page cannot know before it has the board.
  */
 async function savedChecks(page: Page): Promise<{ key: string; store: string }> {
   await page.goto("/");
@@ -3380,7 +3384,7 @@ async function savedChecks(page: Page): Promise<{ key: string; store: string }> 
   }));
   return {
     key: PULSE_STORAGE_KEY,
-    store: JSON.stringify({ lastSlot: slot - 120_000, lastBoard: first.lastBoard, pulses }),
+    store: JSON.stringify({ lastSlot: slot - 120_000, lastBoard: { ...first.lastBoard, services: [] }, pulses }),
   };
 }
 
