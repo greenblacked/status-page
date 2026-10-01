@@ -9,10 +9,12 @@ export type PulseChange = {
   to: Health;
   summary: string;
   /**
-   * Set (to true) when the service's newest versions changed: a new release,
-   * which a release tracker shows with the neutral Changed bar. Left out for a
-   * health-only change, so a recovery keeps the green one. When a check sees
-   * both, it counts as a release.
+   * Set (to true) when the service's newest versions moved from known
+   * versions: a new release, which a release tracker shows with the neutral
+   * Changed bar. Left out for a health-only change, so a recovery keeps the
+   * green one. A source coming back from unread has no earlier versions to
+   * compare with, so it counts as a recovery, including a recovery that also
+   * brought a new version (that cannot be detected).
    */
   release?: true;
 };
@@ -40,8 +42,9 @@ export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseC
   for (const service of next.services) {
     const before = previousById.get(service.id);
     if (!before) continue;
+    const previousVersions = versionFingerprint(before.meta);
     const nextVersions = versionFingerprint(service.meta);
-    const latestChanged = Boolean(nextVersions && versionFingerprint(before.meta) !== nextVersions);
+    const latestChanged = Boolean(nextVersions && previousVersions !== nextVersions);
     if (before.health === service.health && !latestChanged) continue;
     const releaseSummary = releaseChange(before, service);
     changes.push({
@@ -50,7 +53,7 @@ export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseC
       from: before.health,
       to: service.health,
       summary: releaseSummary || service.summary,
-      ...(latestChanged ? { release: true as const } : {}),
+      ...(latestChanged && previousVersions ? { release: true as const } : {}),
     });
   }
   return changes;

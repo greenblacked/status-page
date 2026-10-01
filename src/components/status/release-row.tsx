@@ -37,9 +37,10 @@ export function releaseLine(service: ServiceSnapshot): string {
  * its line is the newest versions, and a release from the last two weeks says
  * "New release" in a tag with an accent dot. Unreadable or in-maintenance
  * trackers are never rows here (they are unread rows and attention cards).
- * Its Changed bar says what changed: a new release (`released`, also when a
- * recovery came with it) is not a recovery, so it keeps the neutral accent;
- * a source that came back with the same versions gets the green of its state.
+ * Its Changed bar says what changed: a new release (`released`: versions that
+ * moved from known versions) is not a recovery, so it keeps the neutral accent;
+ * a source that came back from unread, or with the same versions, gets the
+ * green of its state.
  */
 export function ReleaseRow({ service, emphasized, released, starred, onToggleStar }: ServiceCardProps) {
   const fresh = hasFreshRelease(service);
