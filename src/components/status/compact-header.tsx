@@ -307,7 +307,11 @@ export function useSearchDock({
       if (!alive) return;
       measure();
       clearMarks();
-      schedule();
+      // Now, not on the next frame: a hero that has just grown (the board's answer names more services, the live
+      // line wraps to another line) has moved its last line under a bar that is already up. This runs after the
+      // layout and before the paint, so the bar leaves in the frame that shows the new hero, not one frame later.
+      if (raf) cancelAnimationFrame(raf);
+      frame();
     };
     const onResize = () => {
       if (!alive) return;
