@@ -1,0 +1,123 @@
+{
+  "page": {
+    "id": "cf9",
+    "name": "Confluence",
+    "url": "https://confluence.status.atlassian.com",
+    "time_zone": "Etc/UTC",
+    "updated_at": "2026-09-20T11:55:00.000Z"
+  },
+  "status": {
+    "indicator": "major",
+    "description": "Partial System Outage"
+  },
+  "components": [
+    {
+      "id": "c1",
+      "name": "Confluence Cloud",
+      "status": "operational",
+      "created_at": "2020-01-01T00:00:00.000Z",
+      "updated_at": "2026-09-20T10:00:00.000Z",
+      "position": 1,
+      "description": null,
+      "showcase": false,
+      "start_date": null,
+      "group_id": null,
+      "page_id": "pg",
+      "group": true,
+      "only_show_if_degraded": false
+    },
+    {
+      "id": "c2",
+      "name": "Editor",
+      "status": "major_outage",
+      "created_at": "2020-01-01T00:00:00.000Z",
+      "updated_at": "2026-09-20T10:00:00.000Z",
+      "position": 2,
+      "description": null,
+      "showcase": false,
+      "start_date": null,
+      "group_id": "c1",
+      "page_id": "pg",
+      "group": false,
+      "only_show_if_degraded": false
+    },
+    {
+      "id": "c3",
+      "name": "Search",
+      "status": "operational",
+      "created_at": "2020-01-01T00:00:00.000Z",
+      "updated_at": "2026-09-20T10:00:00.000Z",
+      "position": 3,
+      "description": null,
+      "showcase": false,
+      "start_date": null,
+      "group_id": "c1",
+      "page_id": "pg",
+      "group": false,
+      "only_show_if_degraded": false
+    },
+    {
+      "id": "c4",
+      "name": "Notifications",
+      "status": "degraded_performance",
+      "created_at": "2020-01-01T00:00:00.000Z",
+      "updated_at": "2026-09-20T10:00:00.000Z",
+      "position": 4,
+      "description": null,
+      "showcase": false,
+      "start_date": null,
+      "group_id": "c1",
+      "page_id": "pg",
+      "group": false,
+      "only_show_if_degraded": false
+    },
+    {
+      "id": "c5",
+      "name": "Marketplace Apps",
+      "status": "operational",
+      "created_at": "2020-01-01T00:00:00.000Z",
+      "updated_at": "2026-09-20T10:00:00.000Z",
+      "position": 5,
+      "description": null,
+      "showcase": false,
+      "start_date": null,
+      "group_id": "c1",
+      "page_id": "pg",
+      "group": false,
+      "only_show_if_degraded": false
+    }
+  ],
+  "incidents": [
+    {
+      "id": "ci1",
+      "name": "Users cannot edit pages in Confluence Cloud",
+      "status": "identified",
+      "created_at": "2026-09-20T10:15:00.000Z",
+      "updated_at": "2026-09-20T11:40:00.000Z",
+      "monitoring_at": null,
+      "resolved_at": null,
+      "impact": "major",
+      "shortlink": "https://stspg.io/ci1",
+      "started_at": "2026-09-20T10:15:00.000Z",
+      "page_id": "cf9",
+      "incident_updates": [],
+      "components": []
+    },
+    {
+      "id": "ci2",
+      "name": "Delayed email notifications",
+      "status": "monitoring",
+      "created_at": "2026-09-20T08:00:00.000Z",
+      "updated_at": "2026-09-20T09:00:00.000Z",
+      "monitoring_at": "2026-09-20T09:00:00.000Z",
+      "resolved_at": null,
+      "impact": "minor",
+      "shortlink": "https://stspg.io/ci2",
+      "started_at": "2026-09-20T08:00:00.000Z",
+      "page_id": "cf9",
+      "incident_updates": [],
+      "components": []
+    }
+  ],
+  "scheduled_maintenances": []
+}

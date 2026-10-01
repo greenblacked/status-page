@@ -3886,7 +3886,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   await expect(page.locator("#service-aws svg.pen-loop")).toHaveCount(1);
 });
 
-test("writes all quiet by hand, and says so in words, when all sixteen are up", async ({ page }) => {
+test("writes all quiet by hand, and says so in words, when all twenty are up", async ({ page }) => {
   await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Everything is up.");
   await expect(page.locator("h1 svg.pen-underline")).toHaveCount(0);
@@ -3894,7 +3894,7 @@ test("writes all quiet by hand, and says so in words, when all sixteen are up", 
   await expect(note).toBeVisible();
   await expect(note).toHaveAttribute("aria-hidden", "true");
   expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
-  await expect(page.getByText("All sixteen services are running normally.")).toHaveClass(/sr-only/);
+  await expect(page.getByText("All twenty services are running normally.")).toHaveClass(/sr-only/);
   // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
   await expect(page).toHaveTitle("Status");
   await expect(group(page, "attention")).toHaveCount(0);

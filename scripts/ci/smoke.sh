@@ -8,7 +8,7 @@
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --ready-wait 300
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
-# (16 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
+# (20 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
 # unless --require-ready: CI and sandboxes cannot always reach the vendors,
 # and an all-Unknown board is a correct answer there, not a broken build.
 #
@@ -28,7 +28,7 @@
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
 
-SERVICES=16
+SERVICES=20
 TITLE='<title>Status</title>'
 FOOTER='Not affiliated with any of these vendors. I only read their public status pages.'
 usage() {

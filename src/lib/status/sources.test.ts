@@ -7,6 +7,8 @@ import {
   awsEventSubject,
   awsIncidentTitle,
   awsLatestLog,
+  azureItemActive,
+  azureItemHealth,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
@@ -966,5 +968,41 @@ describe("AWS event severity", () => {
     // Nothing named: still not the bare placeholder.
     assert.equal(awsEventSubject({ service_name: "Multiple services" }), "Multiple AWS services");
     assert.equal(awsEventSubject({}), "AWS");
+  });
+});
+
+describe("azure feed", () => {
+  it("reads an item's health from the words of its title and description", () => {
+    assert.equal(azureItemHealth("Storage - East US - Increased latency", "<p>We are investigating.</p>"), "degraded");
+    assert.equal(azureItemHealth("Virtual Machines - Service unavailable", ""), "outage");
+    assert.equal(azureItemHealth("Networking", "<p>Services are <b>down</b> in West US.</p>"), "outage");
+    assert.equal(azureItemHealth("Regional OUTAGE", ""), "outage");
+    assert.equal(azureItemHealth("Planned maintenance - Key Vault", ""), "maintenance");
+    // An outage word beats maintenance: the service is down while it is worked on.
+    assert.equal(azureItemHealth("Maintenance overran: service unavailable", ""), "outage");
+  });
+
+  it("calls an item over only when it says so, and not when it says it is not", () => {
+    assert.equal(azureItemHealth("RESOLVED - Storage", ""), "operational");
+    assert.equal(azureItemHealth("SQL", "The issue was mitigated at 10:00."), "operational");
+    assert.equal(azureItemHealth("SQL", "Service restored."), "operational");
+    assert.equal(azureItemHealth("Post Incident Review (PIR) - Networking", "degraded networking"), "operational");
+    assert.equal(azureItemHealth("Post-incident review - Networking", ""), "operational");
+    assert.equal(azureItemHealth("SQL", "The issue is not resolved."), "degraded");
+    assert.equal(azureItemHealth("SQL", "Not yet mitigated."), "degraded");
+    assert.equal(azureItemHealth("SQL", "Still unresolved."), "degraded");
+  });
+
+  it("counts an item as active when it is unresolved and dated within 14 days", () => {
+    const item = (pubDate?: string, title = "App Service - Degraded performance") => ({
+      title,
+      description: "",
+      pubDate,
+    });
+    assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString()), NOW), true);
+    assert.equal(azureItemActive(item(new Date(NOW - 15 * DAY).toUTCString()), NOW), false);
+    assert.equal(azureItemActive(item(undefined), NOW), false);
+    assert.equal(azureItemActive(item("not a date"), NOW), false);
+    assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString(), "RESOLVED - App Service"), NOW), false);
   });
 });

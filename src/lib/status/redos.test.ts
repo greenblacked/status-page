@@ -4,6 +4,7 @@ import { parseAppleOsTitle } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
+  azureItemHealth,
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
@@ -40,6 +41,19 @@ describe("parsers stay linear on crafted vendor input", () => {
   it("unwrapJsonp: many unclosed parentheses and a long identifier", () => {
     expect(elapsed(() => unwrapJsonp(`f${"(".repeat(SIZE)}`))).toBeLessThan(BUDGET_MS);
     expect(elapsed(() => unwrapJsonp(`${"a".repeat(SIZE)}(1)${" ".repeat(10)}x`))).toBeLessThan(BUDGET_MS);
+  });
+
+  it('azureItemHealth: long runs of the words it looks for, and of spaces and "not"', () => {
+    const cases = [
+      `${"not ".repeat(SIZE / 4)}resolved`,
+      `${"not yet ".repeat(SIZE / 8)}x`,
+      `${"resolve ".repeat(SIZE / 8)}`,
+      `${" ".repeat(SIZE)}resolved`,
+      `${"post incident ".repeat(SIZE / 14)}`,
+      `${"d".repeat(SIZE)}own`,
+    ];
+    for (const body of cases) expect(elapsed(() => azureItemHealth("t", body))).toBeLessThan(BUDGET_MS);
+    expect(azureItemHealth("t", `${"not ".repeat(10)}resolved`)).toBe("degraded");
   });
 
   it.each(["title", "description", "pubDate", "link"])("parseRssItems: a repeated unclosed <%s>", (tag) => {

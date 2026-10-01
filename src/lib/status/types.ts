@@ -1,6 +1,7 @@
 export type ServiceId =
   | "gcp"
   | "aws"
+  | "azure"
   | "steam"
   | "cs2-europe"
   | "epic"
@@ -8,6 +9,9 @@ export type ServiceId =
   | "spotify"
   | "apple"
   | "android"
+  | "github"
+  | "gitlab"
+  | "confluence"
   | "grok"
   | "chatgpt"
   | "claude"

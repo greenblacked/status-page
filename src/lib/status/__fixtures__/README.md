@@ -5,6 +5,9 @@ Vendor payloads for the collector tests in `../collectors.test.ts`. Each file st
 | File | Stands in for | Collector | Origin |
 | --- | --- | --- | --- |
 | `aws/currentevents.json` | `https://health.aws.amazon.com/public/currentevents` | `collectAws` | Hand-built |
+| `github/summary.json`, `gitlab/summary.json`, `confluence/summary.json` | `https://www.githubstatus.com/api/v2/summary.json`, `https://status.gitlab.com/api/v2/summary.json`, `https://confluence.status.atlassian.com/api/v2/summary.json` | `collectStatuspage` | Hand-built (2026-10-01) from Atlassian's documented Statuspage v2 summary schema (`page`, `status`, `components`, `incidents`, `scheduled_maintenances`, with the documented fields of each). The vendors' hosts were not reachable where it was written, so these are not recordings: the component names, ids and incidents are illustrative |
+| `github/summary-malformed.json`, `gitlab/summary-malformed.json`, `confluence/summary-malformed.json` | the same three endpoints | `collectStatuspage` | Hand-built: valid JSON that is not a summary (a notice with no `status`), which must read Unknown |
+| `azure/feed.xml` | `https://azure.status.microsoft/en-us/status/feed/` | `collectAzure` | Hand-built (2026-10-01) in RSS 2.0, the format Microsoft documents for its Azure status feed. Not a recording: the host was not reachable where it was written, so the item titles, descriptions and guids, and the words the collector reads from them, are a guess until the feed is recorded (`npm run source-health -- --record <dir>`) |
 | `grok/feed.xml` | `https://status.x.ai/feed.xml` | `collectGrok` | Hand-built |
 | `mikrotik/NEWESTa*.*` | `https://upgrade.mikrotik.com/routeros/<file>`, one per channel | `collectMikrotik` | Hand-built |
 | `mikrotik/<version>/CHANGELOG` | `https://download.mikrotik.com/routeros/<version>/CHANGELOG` | `collectMikrotik` | Hand-built |

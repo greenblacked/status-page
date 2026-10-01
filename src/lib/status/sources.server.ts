@@ -424,6 +424,12 @@ function fromStatuspage(
   latencyMs: number,
   componentFilter?: (name: string, groupName?: string) => boolean,
 ): ServiceSnapshot {
+  // A summary always carries `status`. A body without it is not a summary
+  // (a rate-limit or maintenance notice that happens to be JSON), and reading
+  // it as "none" would be an all-clear built on no data.
+  if (typeof data?.status !== "object" || data.status === null) {
+    throw new PayloadError("Statuspage summary has no status.");
+  }
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
@@ -1515,6 +1521,96 @@ async function collectGrok(): Promise<ServiceSnapshot> {
   }
 }
 
+// GitHub, GitLab and Confluence each publish a Statuspage of their own, so
+// they are the Spotify collector with a different address. Each fetches the
+// vendor's own host only (http.ts refuses a redirect off it).
+const STATUSPAGE_SUMMARIES = {
+  github: "https://www.githubstatus.com/api/v2/summary.json",
+  gitlab: "https://status.gitlab.com/api/v2/summary.json",
+  confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+} as const;
+
+async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() => fetchJson<StatuspageSummary>(STATUSPAGE_SUMMARIES[id]));
+    return fromStatuspage(id, value, ms);
+  } catch (error) {
+    return failed(id, started, error);
+  }
+}
+
+// "resolved", "mitigated" or "restored" as a word of its own (not "unresolved"),
+// unless "not", "not yet" or "not been" leads it; or a post incident review.
+// The lookbehinds look back at most nine characters, so the test stays linear.
+const AZURE_OVER =
+  /(?<!\bnot (?:yet |been )?)\b(?:resolved|mitigated|restored)\b|post[ -]incident review|root cause analysis/;
+
+/**
+ * What an Azure status feed item says about its incident. The feed is RSS 2.0
+ * with no status field, so the reading is from the words of the title and
+ * description, case-folded: a resolution, a mitigation or a post incident
+ * review means it is over ("operational"), an outage word means "outage",
+ * maintenance means "maintenance", and anything else the feed still lists is
+ * "degraded". Substring tests and one bounded-lookbehind regex, so the cost is linear in the text.
+ */
+export function azureItemHealth(title: string, description: string): Health {
+  const text = `${title} ${stripHtml(description)}`.toLowerCase();
+  if (AZURE_OVER.test(text)) return "operational";
+  if (text.includes("outage") || text.includes("unavailable") || /\bdown\b/.test(text)) return "outage";
+  if (text.includes("maintenance")) return "maintenance";
+  return "degraded";
+}
+
+// Like Grok's feed, an item is evidence about right now only when it is
+// unresolved and recent; one with no readable date cannot be shown to be.
+export function azureItemActive(item: { title: string; description: string; pubDate?: string }, now: number): boolean {
+  if (azureItemHealth(item.title, item.description) === "operational") return false;
+  const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
+  return Number.isFinite(at) && now - at <= STALE_MS;
+}
+
+async function collectAzure(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() => fetchText("https://azure.status.microsoft/en-us/status/feed/"));
+    // A healthy Azure feed may hold no items at all, so "no items" is not a
+    // failure here. A body that is not an RSS channel (an HTML error page, an
+    // Atom feed) is: reading it as "operational" would be a confident
+    // all-clear built on no data.
+    if (!/<rss[\s>]/i.test(value.body) || !/<channel[\s>]/i.test(value.body)) {
+      throw new PayloadError("Azure feed was not an RSS channel.");
+    }
+    const items = parseRssItems(value.body);
+    const now = Date.now();
+    const active = items.filter((item) => azureItemActive(item, now));
+    const health = active.reduce<Health>(
+      (worst, item) => worseHealth(worst, azureItemHealth(item.title, item.description)),
+      "operational",
+    );
+    const { sourceUrl } = CATALOG_BY_ID.azure;
+    const { incidents, problems, incidentCount } = listIncidents(
+      active.map((item, index) => ({
+        id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
+        title: item.title || "Azure incident",
+        health: azureItemHealth(item.title, item.description),
+        startedAt: isoTimestamp(item.pubDate),
+        url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
+      })),
+    );
+    return {
+      ...base("azure", new Date().toISOString(), ms),
+      health,
+      summary: overallSummary(health, problems, incidents[0]?.title),
+      components: [],
+      incidents,
+      ...(incidentCount ? { incidentCount } : {}),
+    };
+  } catch (error) {
+    return failed("azure", started, error);
+  }
+}
+
 async function collectChatGpt(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -1763,6 +1859,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
     [
       collectGcp,
       collectAws,
+      collectAzure,
       collectSteam,
       collectCs2Europe,
       () => collectEpic(sweep),
@@ -1770,6 +1867,9 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectSpotify,
       collectApple,
       collectAndroid,
+      () => collectStatuspage("github"),
+      () => collectStatuspage("gitlab"),
+      () => collectStatuspage("confluence"),
       collectGrok,
       collectChatGpt,
       collectClaude,

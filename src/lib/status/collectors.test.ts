@@ -19,6 +19,10 @@ const URLS = {
   cs2Players: "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=730",
   epicFortnite: "https://status.epicgames.com/api/v2/summary.json",
   spotify: "https://spotify.statuspage.io/api/v2/summary.json",
+  github: "https://www.githubstatus.com/api/v2/summary.json",
+  gitlab: "https://status.gitlab.com/api/v2/summary.json",
+  confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+  azure: "https://azure.status.microsoft/en-us/status/feed/",
   apple: "https://www.apple.com/support/systemstatus/data/system_status_en_US.js",
   android: "https://status.play.google.com/incidents.json",
   chatgpt: "https://status.openai.com/api/v2/summary.json",
@@ -1422,6 +1426,220 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(grok.failure).toEqual({ kind: "parser", message: "Grok feed returned no readable items." });
       expect(grok.summary).toBe("Grok feed returned no readable items.");
       expect(grok.incidents).toEqual([]);
+    });
+
+    it("GitHub summary.json: a degraded and a partly-out component, an active incident and upcoming maintenance", async () => {
+      stubFetch({ [URLS.github]: json(JSON.parse(fixture("github/summary.json"))) });
+      const github = await collect("github");
+      expect(github.failure).toBeUndefined();
+      // Minor indicator, a partial outage on Actions and a minor incident: degraded.
+      expect(github.health).toBe("degraded");
+      expect(github.summary).toBe("Disruption with some GitHub services");
+      expect(github.components.map((c) => [c.name, c.health, c.detail])).toEqual([
+        ["Pull Requests", "degraded", undefined],
+        ["Actions", "degraded", "Partial outage"],
+        ["Git Operations", "operational", undefined],
+        ["API Requests", "operational", undefined],
+        ["Webhooks", "operational", undefined],
+        ["Issues", "operational", undefined],
+        ["Packages", "operational", undefined],
+        ["Pages", "operational", undefined],
+        ["Codespaces", "operational", undefined],
+        ["Copilot", "operational", undefined],
+      ]);
+      // The resolved webhook incident is not listed.
+      expect(github.incidents).toEqual([
+        {
+          id: "q2zmv0t6k8x1",
+          title: "Disruption with some GitHub services",
+          health: "degraded",
+          startedAt: "2026-09-20T09:41:00.000Z",
+          updatedAt: "2026-09-20T11:30:00.000Z",
+          url: "https://stspg.io/q2zmv0t6k8x1",
+        },
+      ]);
+      expect(github.upcomingMaintenance).toEqual([
+        {
+          id: "m4w9t2x7b1qa",
+          title: "Scheduled maintenance for Codespaces",
+          scheduledFor: "2026-09-24T02:00:00.000Z",
+          scheduledUntil: "2026-09-24T04:00:00.000Z",
+          url: "https://stspg.io/m4w9t2x7b1qa",
+        },
+      ]);
+      expect(github.sourceUrl).toBe("https://www.githubstatus.com/");
+    });
+
+    it("GitLab summary.json: maintenance in progress is maintenance, and the next window is only upcoming", async () => {
+      stubFetch({ [URLS.gitlab]: json(JSON.parse(fixture("gitlab/summary.json"))) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.failure).toBeUndefined();
+      expect(gitlab.health).toBe("maintenance");
+      expect(gitlab.summary).toBe("Container Registry maintenance");
+      expect(gitlab.components[0]).toEqual({ name: "Container Registry", health: "maintenance" });
+      expect(gitlab.components.slice(1).every((c) => c.health === "operational")).toBe(true);
+      expect(gitlab.incidents).toEqual([]);
+      expect(gitlab.upcomingMaintenance).toEqual([
+        {
+          id: "gm2",
+          title: "Database upgrade",
+          scheduledFor: "2026-09-27T01:00:00.000Z",
+          scheduledUntil: "2026-09-27T03:00:00.000Z",
+          url: "https://stspg.io/gm2",
+        },
+      ]);
+    });
+
+    it("Confluence summary.json: a major outage leads, with its incidents worst first; groups are not rows", async () => {
+      stubFetch({ [URLS.confluence]: json(JSON.parse(fixture("confluence/summary.json"))) });
+      const confluence = await collect("confluence");
+      expect(confluence.failure).toBeUndefined();
+      expect(confluence.health).toBe("outage");
+      expect(confluence.summary).toBe("Users cannot edit pages in Confluence Cloud");
+      expect(confluence.components.map((c) => [c.name, c.health])).toEqual([
+        ["Editor", "outage"],
+        ["Notifications", "degraded"],
+        ["Search", "operational"],
+        ["Marketplace Apps", "operational"],
+      ]);
+      expect(confluence.incidents.map((i) => [i.title, i.health])).toEqual([
+        ["Users cannot edit pages in Confluence Cloud", "outage"],
+        ["Delayed email notifications", "degraded"],
+      ]);
+      expect(confluence.upcomingMaintenance).toBeUndefined();
+    });
+
+    it.each(["github", "gitlab", "confluence"] as const)(
+      "%s: a JSON body that is not a Statuspage summary is unknown with a parser failure",
+      async (id) => {
+        stubFetch({ [URLS[id]]: json(JSON.parse(fixture(`${id}/summary-malformed.json`))) });
+        const snapshot = await collect(id);
+        expect(snapshot.health).toBe("unknown");
+        expect(snapshot.failure).toEqual({ kind: "parser", message: "Statuspage summary has no status." });
+        expect(snapshot.incidents).toEqual([]);
+        expect(snapshot.components).toEqual([]);
+      },
+    );
+
+    it.each(["github", "gitlab", "confluence"] as const)(
+      "%s: a body that is not JSON, and a null body, are parser failures",
+      async (id) => {
+        stubFetch({ [URLS[id]]: text("<html>Attention Required</html>") });
+        expect((await collect(id)).failure?.kind).toBe("parser");
+        stubFetch({ [URLS[id]]: json(null) });
+        expect((await collect(id)).failure?.kind).toBe("parser");
+      },
+    );
+
+    it.each(["github", "gitlab", "confluence"] as const)("%s: a 503 is unknown with an http failure", async (id) => {
+      stubFetch({ [URLS[id]]: text("down", { status: 503 }) });
+      const snapshot = await collect(id);
+      expect(snapshot.health).toBe("unknown");
+      expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+    });
+
+    it("GitHub: an incident link off Statuspage's and the vendor's hosts falls back to the card's page", async () => {
+      const summary = JSON.parse(fixture("github/summary.json"));
+      summary.incidents[0].shortlink = "https://evil.example/q2zmv0t6k8x1";
+      stubFetch({ [URLS.github]: json(summary) });
+      expect((await collect("github")).incidents[0].url).toBe("https://www.githubstatus.com/");
+    });
+
+    it("Azure feed.xml: unresolved recent items are incidents, worst first; resolved, review and stale items are not", async () => {
+      stubFetch({ [URLS.azure]: text(fixture("azure/feed.xml")) });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("outage");
+      expect(azure.summary).toBe("Virtual Machines - UK South - Service unavailable");
+      expect(azure.components).toEqual([]);
+      expect(azure.incidents).toEqual([
+        {
+          id: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-vm-uk-south",
+          title: "Virtual Machines - UK South - Service unavailable",
+          health: "outage",
+          startedAt: "2026-09-20T07:05:00.000Z",
+          url: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-vm-uk-south",
+        },
+        {
+          id: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-sql-west-europe",
+          title: "Azure SQL Database - West Europe - Investigating degraded connectivity",
+          health: "degraded",
+          startedAt: "2026-09-20T10:20:00.000Z",
+          url: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-sql-west-europe",
+        },
+      ]);
+      expect(azure.sourceUrl).toBe("https://azure.status.microsoft/en-us/status/");
+    });
+
+    it("Azure feed.xml: a channel with no items is operational, not a failure", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<?xml version="1.0"?><rss version="2.0"><channel><title>Azure Status</title></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: only resolved items leave the card operational", async () => {
+      const feed = fixture("azure/feed.xml");
+      const resolvedOnly =
+        feed.slice(0, feed.indexOf("<item>")) +
+        feed.slice(feed.indexOf("<item>", feed.indexOf("azure-2026-09-19-storage-resolved") - 80));
+      stubFetch({ [URLS.azure]: text(resolvedOnly) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: maintenance is maintenance, and an item without a date or with a foreign link is handled", async () => {
+      const item = (title: string, extra: string) =>
+        `<item><title>${title}</title>${extra}<description>Impact.</description></item>`;
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel>' +
+            item(
+              "Planned maintenance - Key Vault",
+              "<pubDate>Sun, 20 Sep 2026 08:00:00 GMT</pubDate><link>https://evil.example/x</link>",
+            ) +
+            item("Undated incident", "") +
+            "</channel></rss>",
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("maintenance");
+      // The undated item cannot be shown to be current; the foreign link is replaced by the card's page.
+      expect(azure.incidents).toHaveLength(1);
+      expect(azure.incidents[0]).toMatchObject({
+        title: "Planned maintenance - Key Vault",
+        health: "maintenance",
+        url: "https://azure.status.microsoft/en-us/status/",
+      });
+    });
+
+    it.each([
+      [
+        "an Atom feed",
+        '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>x</title></entry></feed>',
+      ],
+      ["an HTML page", "<html><body>Service Unavailable</body></html>"],
+      ["an empty body", ""],
+    ])("Azure feed: %s is unknown with a parser failure", async (_name, body) => {
+      stubFetch({ [URLS.azure]: text(body) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed was not an RSS channel." });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed: a 403 is unknown with an http failure naming the vendor host", async () => {
+      stubFetch({ [URLS.azure]: text("Forbidden", { status: 403 }) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toMatchObject({ kind: "http", status: 403 });
+      expect(azure.summary).toContain("azure.status.microsoft");
     });
 
     it("MikroTik: every channel becomes a component, and the newest release's CHANGELOG is the summary", async () => {

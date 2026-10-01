@@ -166,7 +166,7 @@ export function fixtureBoard(now: number, { grok = "operational" }: { grok?: Hea
   return { generatedAt: new Date(now).toISOString(), durationMs: 480, services, counts };
 }
 
-/** The same sixteen services with nothing wrong anywhere: every one operational, no incident, no failure. */
+/** The same twenty services with nothing wrong anywhere: every one operational, no incident, no failure. */
 export function calmBoard(now: number): BoardSnapshot {
   const board = fixtureBoard(now);
   const services = board.services.map((service) => ({
