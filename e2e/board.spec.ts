@@ -2320,15 +2320,10 @@ for (const fontPx of [16, 20]) {
             .querySelector<HTMLElement>('section[aria-labelledby="recent-heading"] .surface')
             ?.style.getPropertyValue("--feed-reserve") !== "",
       );
-      await page.evaluate(
-        () =>
-          new Promise<void>((resolve) => {
-            const settle = () => requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-            if (document.fonts.status === "loaded") return settle();
-            document.fonts.addEventListener("loadingdone", settle);
-            window.setTimeout(settle, 5000);
-          }),
-      );
+      await page.evaluate(async () => {
+        await document.fonts.load("400 15px Inter").catch(() => []);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      });
       const root = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize));
       expect(root, "the default font size").toBe(fontPx);
       const before = (await surface.boundingBox())?.height ?? 0;
