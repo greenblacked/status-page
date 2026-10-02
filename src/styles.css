@@ -164,10 +164,16 @@
 
   /* A hairline is a device pixel: 0.5px on a 2x screen. */
   --hair: 1px;
-  /* Four durations: hover, press and the chevron; a reveal; the search field merging into the bar on a phone (DOCK_MS in dock.ts says the same); a pen stroke drawn once. */
+  /* Four durations: hover, press and the chevron; a reveal; the search field merging into the bar on a phone (DOCK_MS in dock.ts says the same, and --t-dock-lead below is the wait before it starts); a pen stroke drawn once. */
   --t-quick: 150ms;
   --t-reveal: 250ms;
   --t-dock: 180ms;
+  /*
+    The pause before the field's merge starts to move (DOCK_LEAD_MS in dock.ts says the same): three frames at 60Hz.
+    A transition shows its start value for its delay, so a first frame drawn late is meant to still be the rest
+    box, not part way in. The jump was seen on an iPhone; that this absorbs it is not yet confirmed on a device.
+  */
+  --t-dock-lead: 50ms;
   --t-draw: 400ms;
 
   /* The one translucent layer in Quiet: the floating bar, over whatever scrolls under it. */
@@ -598,12 +604,12 @@
 
 /*
   On a phone the short verdict sits where the field docks; it gives way as the field merges in. Opacity
-  only, over the same time as the field's move (--t-dock, from the moment it docks), so it is on the
-  compositor with it and nothing is redrawn.
+  only, over the same time as the field's move (--t-dock, after the same --t-dock-lead, from the moment it
+  docks), so it is on the compositor with it and nothing is redrawn.
 */
 @media (width < 40rem) {
   [data-bar-verdict] {
-    transition: opacity var(--t-dock) var(--ease-out);
+    transition: opacity var(--t-dock) var(--ease-out) var(--t-dock-lead);
   }
 
   .compact-header[data-docked] [data-bar-verdict] {
@@ -717,7 +723,8 @@
 /*
   Below 64rem the bar is fixed and z 40, and the field does not follow the scroll: it docks, in one step, when
   the page reaches it (data-docked, written by useSearchDock), and moves into the bar's slot over --t-dock,
-  with transform and opacity only, which the compositor plays whatever the page's own thread is doing.
+  after --t-dock-lead, with transform and opacity only, which the compositor plays whatever the page's own
+  thread is doing.
   The input takes its docked width at once, under the fill's transition, so nothing is laid out as it moves.
   The field is over the bar (z 41) all the time. With motion that is safe: an undocked field is always below
   the bar's bottom edge, by the page's own geometry (dockGeometry), and a field that a flick carried into the
@@ -735,7 +742,7 @@
 
   .search-field,
   .search-chrome {
-    transition: transform var(--t-dock) var(--ease-out);
+    transition: transform var(--t-dock) var(--ease-out) var(--t-dock-lead);
   }
 
   /*

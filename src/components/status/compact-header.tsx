@@ -2,6 +2,7 @@ import { type ReactNode, type RefObject, useEffect, useState, useSyncExternalSto
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
+  DOCK_LEAD_MS,
   DOCK_MS,
   DOCK_REST,
   type DockGeometry,
@@ -15,19 +16,28 @@ import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
 
-/** An element's left edge in the page, from layout alone, so the bar's hidden-pose transform cannot skew it. */
-function pageLeft(element: HTMLElement): number {
-  let x = 0;
-  let node: HTMLElement | null = element;
-  while (node) {
-    x += node.offsetLeft;
-    node = node.offsetParent as HTMLElement | null;
-  }
-  return x;
+/**
+ * A length in px for a custom property, to 1/64 px (the layout unit): the slot's real, fractional box, so a
+ * field placed by it is on the slot, where a rounded offset would leave it up to a pixel off.
+ */
+function px(value: number): string {
+  return `${Math.round(value * 64) / 64}px`;
 }
 
-export function useDockState(store: DockStore): DockState {
-  return useSyncExternalStore(store.subscribe, store.get, () => DOCK_REST);
+/**
+ * One part of the dock's state. A component renders only when its own part changes, not on every change of the
+ * state: the bar and the hero's buttons (barShown) are not rendered again when the field docks, so the frame
+ * that starts the field's move renders the input alone, for its placeholder.
+ */
+export function useDockSelect<T extends boolean | number | string>(
+  store: DockStore,
+  select: (state: DockState) => T,
+): T {
+  return useSyncExternalStore(
+    store.subscribe,
+    () => select(store.get()),
+    () => select(DOCK_REST),
+  );
 }
 
 /** The width from which the search field shares a row with the filter chips (Tailwind's lg). */
@@ -65,7 +75,9 @@ function flipFill(chrome: HTMLElement, change: () => void): void {
  * three behind the scrolling, so one flick crosses the whole of a merge between two of its frames. Nothing
  * visible is therefore tied to the scroll position on a phone. This hook only compares it with thresholds
  * (dockFrame), and the merge is a transition in time that CSS plays on the compositor, of transform and
- * opacity only, from the moment the threshold is crossed (data-docked on the dock and on the bar).
+ * opacity only, from the moment the threshold is crossed (data-docked on the dock and on the bar). The merge
+ * waits DOCK_LEAD_MS first, drawing its start (the rest box) meanwhile, so that a start the browser draws late
+ * (seen on an iPhone, not yet confirmed fixed there) comes out of that wait and not out of the motion.
  *
  * Progress comes from window.scrollY against offsets measured when the layout changes, never from a rect
  * read on every frame. Every offset is worked out from `end`, the scroll position at which the field reaches
@@ -171,8 +183,13 @@ export function useSearchDock({
       });
       const slot = slotRef.current;
       if (!slot) return;
-      const x = `${pageLeft(slot) - pageLeft(dock)}px`;
-      const w = `${slot.offsetWidth}px`;
+      // The slot's box in the viewport less the dock's, both read now, so the same scroll and the same page
+      // offset are in both and cancel. The bar's hidden pose (translateY, vertical only) and its fade cannot
+      // skew a left edge or a width, and offsetLeft, which rounds every offset in the chain, would be off by up to
+      // a pixel. The reads are here, on a measure, never on a scroll.
+      const slotBox = slot.getBoundingClientRect();
+      const x = px(slotBox.left - dock.getBoundingClientRect().left);
+      const w = px(slotBox.width);
       // A docked field whose slot has moved or resized (the bar's lead text changed, from 40rem where it sits
       // in the flow before the slot) follows it at once. Left to the transition it would slide sideways, and
       // its width, which is not timed, would snap in the middle of that. A move already under way retargets.
@@ -299,7 +316,7 @@ export function useSearchDock({
         if (moves) {
           // The field's own controls (Clear) are at their docked place at once; they wait out the move.
           dock.setAttribute("data-moving", "");
-          settling = window.setTimeout(() => settle(next.docked), DOCK_MS + 100);
+          settling = window.setTimeout(() => settle(next.docked), DOCK_LEAD_MS + DOCK_MS + 100);
         }
       } else {
         state = { ...state, barShown: next.barShown };
@@ -413,7 +430,7 @@ export function CompactHeader({
   /** The controls, rendered by the board so they share its state and handlers. */
   children: ReactNode;
 }) {
-  const { barShown } = useDockState(store);
+  const barShown = useDockSelect(store, (state) => state.barShown);
   const [heldByKeyboard, setKeyboardFocus] = useState(false);
   const visible = barShown || heldByKeyboard;
   const when = checkedAt === null ? null : <LocalTime at={checkedAt} />;

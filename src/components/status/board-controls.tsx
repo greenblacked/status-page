@@ -1,6 +1,6 @@
 import { Bell, BellOff, BellRing, RefreshCw, Search, Star, TriangleAlert, X } from "lucide-react";
 import { type ComponentProps, type ReactNode, type RefObject, useEffect, useId, useState } from "react";
-import { useDockState } from "@/components/status/compact-header";
+import { useDockSelect } from "@/components/status/compact-header";
 import type { AlertsState } from "@/components/status/use-alerts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,7 @@ const ALERT_TITLE: Record<AlertsState, string> = {
  * hero that renders when that changes, so the board does not.
  */
 export function WhileBarUp({ store, children }: { store: DockStore; children: (barUp: boolean) => ReactNode }) {
-  return children(useDockState(store).barShown);
+  return children(useDockSelect(store, (state) => state.barShown));
 }
 
 /**
@@ -154,9 +154,9 @@ export function SearchInput({
   dockRef,
   ...props
 }: { store: DockStore; dockRef: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
-  const { docked, settled } = useDockState(store);
+  const short = useDockSelect(store, (state) => state.docked || state.settled);
   const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
-  return <Input placeholder={docked || settled || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
+  return <Input placeholder={short || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
 }
 
 /** The magnifier, the field, the `/` hint and our own Clear button, inside the dock. */
