@@ -63,6 +63,9 @@ export const WIDE = "(min-width: 64rem)";
  *     field has focus or a dialog is open, and until the page has armed, and the baseline is re-set after
  *     anything that moves the page without the reader (a re-measure, a focus leaving, a quietScroll).
  *   - A search written in the field keeps it showing while `heroAway` (`keepRevealed`).
+ *   - A bar field with focus is never let go of by the layout: when a filter shortens the board and the page ends
+ *     up above `revealFrom` without the reader scrolling, `heroAway` stays on (`hold`, see revealFrame) until the
+ *     reader moves the page or the field loses focus on its own.
  *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
@@ -286,6 +289,14 @@ export function useSearchDock({
         store.set({ barShown: next.barShown, docked: next.docked, heroAway: false, revealed: false });
         return;
       }
+      // The page got longer or shorter since it was last measured (a filter removed cards): the position it now has
+      // is the layout's doing, and the browser's scroll anchoring may have taken it a long way (to the top, even)
+      // when the card it was holding moved up. That is no direction, whatever the resize observer says next.
+      const limit = scrollLimit();
+      if (Math.abs(limit - maxScroll) >= 1) {
+        maxScroll = limit;
+        rebase(y);
+      }
       const keep = keepRef.current;
       // A search written, or cleared, is no scroll: the field that was showing is let go of from here.
       if (keep !== seenKeep) {
@@ -310,7 +321,11 @@ export function useSearchDock({
         (focused instanceof Element && focused.hasAttribute("data-search-input")) ||
         document.querySelector("dialog[open]") !== null;
       const wasAway = memo.heroAway;
-      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep });
+      // The bar's field with focus is let go of by the reader's scroll (the page is somewhere else than the last
+      // frame left it, after every rebase above), not by the layout: see `hold` in revealFrame.
+      const holding =
+        focused instanceof HTMLElement && focused.dataset.searchInput === "bar" && Math.abs(y - memo.lastY) < 1;
+      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep, hold: holding });
       // The page is back above the bar and the hero's field is in view: the bar's copy, which still had focus, is
       // let go of (it is inert from here) so that the bar does not stay up over the hero for a focus it holds, and
       // blur tells the bar's own focus tracking (CompactHeader).

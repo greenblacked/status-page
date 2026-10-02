@@ -858,6 +858,24 @@ async function revealBoard(page: Page): Promise<DockOffsets & { limit: number }>
 }
 
 /**
+ * revealBoard on a served board instead of the live one, whose cards (and so what a search leaves of the page) depend
+ * on what the vendors say that day. Pinned to a slot like steadyBoard, so the bar's lead is steady too.
+ */
+async function revealServedBoard(
+  page: Page,
+  board: (now: number) => BoardSnapshot,
+  ready?: { id: string; label: string },
+): Promise<DockOffsets & { limit: number }> {
+  await pinToSlot(page);
+  await openFixture(page, () => board(Date.now()), ready);
+  await leadSteady(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  const offsets = await dockOffsets(page);
+  test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
+  return { ...offsets, limit: await maxScroll(page) };
+}
+
+/**
  * Takes the page down past the point where the hero's field is behind the bar, with the bar's field hidden: the
  * way a reader arrives. Returns the position: 200px past it, and at least 160px short of the end of the page, so a
  * test has room to scroll further down from there.
@@ -2019,11 +2037,13 @@ test("never clips the search placeholder, at any width", async ({ page }, testIn
   }
 });
 
+// A served board, not the live one: what "ab" leaves of the page depends on what the vendors say that day, and on
+// CI (with the network) it was the page's end, or the browser's scroll anchoring, that decided whether this passed.
 test("search reveal: mirrors the query in both fields and keeps focus, text and caret in the one being typed in", async ({
   page,
 }) => {
   test.slow();
-  const offsets = await revealBoard(page);
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
   const y0 = await scrollDeep(page, offsets);
   await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
   await expectRevealed(page, true);
@@ -2068,6 +2088,43 @@ test("search reveal: mirrors the query in both fields and keeps focus, text and 
   });
   // The filter is applied once, from the one value.
   await expect(page).toHaveURL(/q=acb/);
+});
+
+test("search reveal: a field being typed in is not let go of when the layout alone puts the hero's field back in view", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  // A board that gives the page nothing to stand on once the filter has taken its cards away: the page ends up
+  // above the line where the hero's field is behind the bar, however the browser then moves it (it clamps it
+  // to the new end; Chromium's scroll anchoring may take it further). The reader did not scroll.
+  await page.addStyleTag({ content: ".board-body { min-height: 0 !important; } .board-body footer { display: none !important; }" });
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await page.keyboard.type("ab");
+  await expect(bar).toHaveValue("ab");
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY), "the filter took the page above the hero's field")
+    .toBeLessThan(offsets.revealFrom);
+  // Every frame since has had the chance to let go of the field; it is still the one with focus, and typing goes in.
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  await expect(bar).toBeFocused();
+  await page.keyboard.type("c");
+  await expect(bar).toHaveValue("abc");
+  await expect(heroSearch(page)).toHaveValue("abc");
+  await expectRevealed(page, true);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  await expect(bar).toBeFocused();
+  // The reader's own scroll lets it go, as it always did: give the page room, and scroll.
+  await page.addStyleTag({ content: ".board-body { min-height: 3000px !important; }" });
+  await scrollAndSettle(page, 0);
+  await expect(bar).toBeFocused();
+  await scrollAndSettle(page, 40);
+  await expect(bar).not.toBeFocused();
 });
 
 test("search reveal: a query typed in the hero's field shows in the bar's, which then stays revealed", async ({

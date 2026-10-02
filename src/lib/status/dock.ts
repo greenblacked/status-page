@@ -232,6 +232,10 @@ export const REVEAL_REST: RevealMemo = { heroAway: false, revealed: false, dir: 
  *    HIDE_DOWN_PX of travel down from there hides it. A reversal starts the count again, and jitter under a
  *    threshold changes nothing.
  *
+ * `hold` (the bar's field has focus and the page was not moved by the reader since the last frame) keeps `heroAway`
+ * on when the position alone says it is off: a field with focus is released by the reader's own scroll, never by
+ * the layout changing under it (a filter that shortens the board, whatever the browser's scroll anchoring then does).
+ *
  * `keep` (a search is written) holds the field showing for as long as `heroAway`: the field a filter was
  * typed into must not slip away on the next scroll down. The memory restarts from `y` meanwhile, so a field
  * that is then cleared goes through the same HIDE_DOWN_PX as one that was just left.
@@ -241,11 +245,17 @@ export function revealFrame(
   maxScroll: number,
   geometry: DockGeometry,
   prev: RevealMemo,
-  context: { barShown: boolean; latched: boolean; keep?: boolean },
+  context: { barShown: boolean; latched: boolean; keep?: boolean; hold?: boolean },
 ): RevealMemo {
   const y = clampScroll(scrollY, maxScroll);
   const heroAway =
     context.barShown && y >= (prev.heroAway ? geometry.revealFrom : geometry.revealFrom + DOCK_HYSTERESIS);
+  // A field being typed in is not let go of by the page: when it is the layout that has put the hero's field back in
+  // view (a filter removed the cards above the reader's place and the browser's scroll anchoring followed them up),
+  // and not the reader's scroll, the bar's copy stays usable where it is until the reader moves the page.
+  if (context.hold && prev.heroAway && !heroAway) {
+    return prev.lastY === y && prev.pivot === y ? prev : { ...prev, lastY: y, pivot: y };
+  }
   // A latch keeps the state, but not past the hero's field coming back into view: the bar's copy and the hero's
   // are never on screen together, whoever has focus.
   if (context.latched && !(prev.heroAway && !heroAway)) {

@@ -553,6 +553,30 @@ describe("revealFrame", () => {
     expect(revealFrame(1200, LIMIT, geometry, REVEAL_REST, latched)).toMatchObject({ heroAway: false });
   });
 
+  it("does not let go of a field with focus when only the layout put the hero's field back in view", () => {
+    const hold = { barShown: true, latched: true, keep: true, hold: true };
+    const shown = behind(900, true);
+    // A filter shortened the board and the browser's scroll anchoring took the page to the top: still away, revealed.
+    expect(revealFrame(0, LIMIT, geometry, shown, hold)).toEqual({ ...shown, lastY: 0, pivot: 0 });
+    // The bar going down with the page (it is at the top) changes nothing either.
+    expect(revealFrame(0, LIMIT, geometry, shown, { ...hold, barShown: false })).toEqual({
+      ...shown,
+      lastY: 0,
+      pivot: 0,
+    });
+    // And frame after frame, as long as the reader does not move the page.
+    const first = revealFrame(0, LIMIT, geometry, shown, hold);
+    expect(revealFrame(0, LIMIT, geometry, first, hold)).toBe(first);
+    expect(revealFrame(120, LIMIT, geometry, first, hold)).toMatchObject({ heroAway: true, revealed: true });
+    // The reader's own scroll (no hold) ends it, as it always did.
+    expect(revealFrame(0, LIMIT, geometry, first, { barShown: true, latched: true, keep: true })).toMatchObject({
+      heroAway: false,
+      revealed: false,
+    });
+    // A hold never turns anything on: with the hero's field in view and nothing away there is nothing to keep.
+    expect(revealFrame(0, LIMIT, geometry, REVEAL_REST, hold)).toMatchObject({ heroAway: false });
+  });
+
   it("returns the same object for an unchanged frame", () => {
     const hidden = behind(1000, false);
     expect(revealFrame(1000, LIMIT, geometry, hidden, up)).toBe(hidden);
