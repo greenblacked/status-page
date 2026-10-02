@@ -61,8 +61,9 @@ const MAX_COMPONENTS = 300;
 // mildest, oldest rows and never the outage.
 const MAX_INCIDENTS = 50;
 /**
- * Most entries read from any one array of a vendor payload (components,
- * incidents, maintenance), in document order; the rest are not looked at. The
+ * Most entries read from any one array of a Statuspage or Status.io payload
+ * (components, incidents, maintenance), in document order; the rest are not
+ * looked at. The other JSON readers are bounded by the body cap alone. The
  * 4 MiB body cap alone allows a million `{}` entries, and mapping them
  * allocated hundreds of MiB before the caps above applied. This is the bound
  * for the work and memory a payload can cost, in the way MAX_RSS_SCANNED is
@@ -290,9 +291,12 @@ function soonest(items: UpcomingMaintenance[], limit: number): UpcomingMaintenan
 
 /**
  * The incidents to list, in board order and cut to MAX_INCIDENTS, with what
- * the cut hides: `incidentCount` (the count read, at most MAX_SCANNED_ROWS) is set only
- * when some were cut, like `componentCount`, and `problems` counts the real
- * ones in the whole list, which is what a summary should say.
+ * the cut hides: `incidentCount` (the count read) is set only when some were
+ * cut, like `componentCount`, and `problems` counts the real
+ * ones in the whole list, which is what a summary should say. The count is at
+ * most MAX_SCANNED_ROWS only where the reader cuts its arrays first (the
+ * Statuspage and Status.io readers); the others are bounded by the 4 MiB body
+ * cap, and the RSS readers also by MAX_RSS_SCANNED and the 200 newest items.
  */
 function listIncidents(
   all: Incident[],
@@ -440,7 +444,8 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
 // Non-operational first, in the board's urgency order (SEVERITY_ORDER: outage,
 // degraded, unknown, maintenance; equals keep source order), then operational
 // in source order, capped at MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
-// the count read (at most MAX_SCANNED_ROWS), set only when the cap dropped some, so a card
+// the count read (at most MAX_SCANNED_ROWS where the reader cuts its arrays first, as the
+// Statuspage and Status.io readers do), set only when the cap dropped some, so a card
 // can say how many it is not showing.
 function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
   const isUp = (component: ComponentHealth) => component.health === "operational";
