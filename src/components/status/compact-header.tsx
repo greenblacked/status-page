@@ -377,7 +377,7 @@ export function useSearchDock({
 }
 
 /**
- * The floating control bar: the verdict in short ("2 need a look") with when
+ * The floating control bar: the verdict in short ("1 down · 1 degraded") with when
  * the board was last checked, the search field once it has docked, and the same
  * Alerts and Refresh controls as the hero. It is shown once the hero has
  * scrolled away, and it is the only translucent element on a Quiet page.
@@ -403,8 +403,8 @@ export function CompactHeader({
   store: DockStore;
   barRef: RefObject<HTMLElement | null>;
   slotRef: RefObject<HTMLDivElement | null>;
-  /** The verdict's tone and its short form. */
-  verdict: { tone: Health; short: string };
+  /** The verdict's tone, its short form and its compact form (for the room under 1024px). */
+  verdict: { tone: Health; short: string; compact: string };
   live: LiveState;
   /** When the snapshot was collected (epoch ms), if it says. */
   checkedAt: number | null;
@@ -441,7 +441,20 @@ export function CompactHeader({
           data-bar-verdict
           className="max-sm:pointer-events-none max-sm:absolute max-sm:top-1/2 max-sm:right-[6.75rem] max-sm:left-11 max-sm:-translate-y-1/2 max-sm:overflow-hidden max-sm:text-ellipsis max-sm:whitespace-nowrap"
         >
-          <span className="block text-row leading-[18px]">{verdict.short}</span>
+          {/*
+            Under 1024px the lead cannot give the long form the room (a phone's slot is 134px at 320; from 640px
+            the lead would squeeze the docked field), so the compact form is drawn and the short one is read by
+            screen readers. Either ends in an ellipsis if it still does not fit.
+          */}
+          <span
+            aria-hidden
+            className="block overflow-hidden text-ellipsis whitespace-nowrap text-row leading-[18px] lg:hidden"
+          >
+            {verdict.compact}
+          </span>
+          <span className="block overflow-hidden text-ellipsis whitespace-nowrap text-row leading-[18px] max-lg:sr-only">
+            {verdict.short}
+          </span>
           <span className="block text-footnote tabular-nums text-subtle max-sm:sr-only">
             {live === "checking" ? (
               "Checking…"

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
-import { parseAppleOsTitle } from "./changelog.ts";
+import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
@@ -172,6 +172,24 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(elapsed(() => (tables = readHtmlTables(html)))).toBeLessThan(BUDGET_MS);
     expect(tables.length).toBeLessThanOrEqual(40);
     expect(elapsed(() => windowsReleases(tables))).toBeLessThan(BUDGET_MS);
+  });
+
+  it.each([
+    ["one line with no newline", `What's new in 7.2:\n*) ${"a".repeat(SIZE)}`],
+    ["a long run of blank lines", `${"\n".repeat(SIZE)}What's new in 7.2:\n*) a;`],
+    ["a long run of spaces and carriage returns", `What's new in 7.2:\n${" \r".repeat(SIZE / 2)}*) a;`],
+    ["headings and no bullets", "What's new in 7.2:\n".repeat(SIZE / 20)],
+    ["bullets with nothing in them", `What's new in 7.2:\n${"*)\n".repeat(SIZE / 3)}`],
+    ["text with no heading at all", "*) a;\n".repeat(SIZE / 6)],
+    ["a heading marker that never ends", `What's new in ${" ".repeat(SIZE)}`],
+  ])("mikrotikChangelogNotes: %s", (_label, text) => {
+    expect(elapsed(() => mikrotikChangelogNotes(text))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("splitAppleBuild: a version made of parentheses and of spaces", () => {
+    expect(elapsed(() => splitAppleBuild(`${"(".repeat(SIZE)})`))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => splitAppleBuild(`${" ".repeat(SIZE)}(24B5089g)`))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => splitAppleBuild(`1 (${" ".repeat(SIZE)})`))).toBeLessThan(BUDGET_MS);
   });
 
   it("incidentLink: an incident URL whose path is a long run of slashes", () => {

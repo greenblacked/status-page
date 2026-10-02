@@ -14,6 +14,7 @@ Vendor payloads for the collector tests in `../collectors.test.ts`. Each file st
 | `grok/feed.xml` | `https://status.x.ai/feed.xml` | `collectGrok` | Hand-built |
 | `mikrotik/NEWESTa*.*` | `https://upgrade.mikrotik.com/routeros/<file>`, one per channel | `collectMikrotik` | Hand-built |
 | `mikrotik/<version>/CHANGELOG` | `https://download.mikrotik.com/routeros/<version>/CHANGELOG` | `collectMikrotik` | Hand-built |
+| `mikrotik/7.20.2/CHANGELOG` | `https://download.mikrotik.com/routeros/7.20.2/CHANGELOG`: a second version's notes, with an important (`!)`) bullet first and more bullets than a card keeps | `collectMikrotik` | Hand-built |
 | `aws/currentevents-multiple.json` | `https://health.aws.amazon.com/public/currentevents`, with a "Multiple services" event carrying `impacted_services` | `collectAws` | Hand-built |
 | `gcp/incidents.json`, `gcp/products.json` | `https://status.cloud.google.com/incidents.json`, `.../products.json` | `collectGcp` | Hand-built |
 | `play/incidents.json`, `play/products.json` | `https://status.play.google.com/incidents.json`, `.../products.json` | `collectAndroid` | Hand-built |

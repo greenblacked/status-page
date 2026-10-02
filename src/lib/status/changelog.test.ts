@@ -6,9 +6,12 @@ import {
   formatVersionMap,
   isFreshRelease,
   latestAppleOsByFamily,
+  mikrotikChangelogIsFor,
+  mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   parseAppleOsTitle,
   parseMikrotikNewest,
+  splitAppleBuild,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
 
@@ -73,6 +76,77 @@ describe("summarizeMikrotikChangelog", () => {
     );
     assert.match(summary, /7\.24\.4/);
     assert.match(summary, /lte/);
+  });
+});
+
+describe("mikrotikChangelogNotes", () => {
+  const changelog = [
+    "What's new in 7.21beta4 (2026-Sep-19 12:00):",
+    "",
+    "!) lte - fixed a crash;",
+    "*) bgp - fixed route refresh handling when the peer restarts;",
+    "*) bridge - improved MAC learning;",
+    "continuation text that is not a bullet",
+    "*) console - added export verbose;",
+    "*) wifi - fixed roaming;",
+    "*) one bullet too many;",
+    "",
+    "What's new in 7.21beta3 (2026-Sep-17 12:00):",
+    "*) dhcpv6-server - an older release's note;",
+  ].join("\n");
+
+  it("keeps the first four bullets of the newest section, without markers or the trailing semicolon", () => {
+    assert.deepEqual(mikrotikChangelogNotes(changelog), [
+      "lte - fixed a crash",
+      "bgp - fixed route refresh handling when the peer restarts",
+      "bridge - improved MAC learning",
+      "console - added export verbose",
+    ]);
+    assert.deepEqual(mikrotikChangelogNotes(changelog, 2), [
+      "lte - fixed a crash",
+      "bgp - fixed route refresh handling when the peer restarts",
+    ]);
+  });
+
+  it("stops at the next heading, so an older release's notes are never shown for this one", () => {
+    const short = "What's new in 7.2:\n*) one;\n\nWhat's new in 7.1:\n*) two;\n";
+    assert.deepEqual(mikrotikChangelogNotes(short), ["one"]);
+  });
+
+  it("reads CRLF files and cuts a long note", () => {
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\r\n*) a - b;\r\n"), ["a - b"]);
+    const [note] = mikrotikChangelogNotes(`What's new in 7.2:\n*) ${"x".repeat(1000)};\n`);
+    assert.equal(note.length, 200);
+    assert.ok(note.endsWith("…"));
+  });
+
+  it("gives nothing for text that is not a changelog, or a section with no bullets", () => {
+    assert.deepEqual(mikrotikChangelogNotes(""), []);
+    assert.deepEqual(mikrotikChangelogNotes("<html>Not found</html>"), []);
+    assert.deepEqual(mikrotikChangelogNotes("*) a bullet before any heading;\n"), []);
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\n\n"), []);
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\n*)\n*) ;\n"), []);
+  });
+
+  it("returns plain text: markup in a note stays text for the card to print as text", () => {
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\n*) <img src=x onerror=alert(1)>;\n"), [
+      "<img src=x onerror=alert(1)>",
+    ]);
+  });
+});
+
+describe("splitAppleBuild", () => {
+  it("splits a trailing build number from the version", () => {
+    assert.deepEqual(splitAppleBuild("27.2 beta 2 (24B5089g)"), { version: "27.2 beta 2", build: "24B5089g" });
+    assert.deepEqual(splitAppleBuild("27.0 (24M362)"), { version: "27.0", build: "24M362" });
+  });
+
+  it("leaves a version without a build whole", () => {
+    assert.deepEqual(splitAppleBuild("27.1"), { version: "27.1" });
+    assert.deepEqual(splitAppleBuild("27.1 beta (see notes)"), { version: "27.1 beta (see notes)" });
+    assert.deepEqual(splitAppleBuild("(24B5089g)"), { version: "(24B5089g)" });
+    assert.deepEqual(splitAppleBuild("27.1 (1)"), { version: "27.1 (1)" });
+    assert.deepEqual(splitAppleBuild("27.1 )"), { version: "27.1 )" });
   });
 });
 
@@ -141,5 +215,23 @@ describe("version maps", () => {
       { name: "macOS", version: "27.2 beta 2 (26B5091g)" },
     ]);
     assert.equal(describeVersionChanges(previous, next), "iOS 27.2 beta 3 (24B5090a)");
+  });
+});
+
+describe("mikrotikChangelogIsFor", () => {
+  it("accepts the heading of exactly this version, case-insensitively", () => {
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2 (2026-Sep-19 12:00):\n*) a;", "7.2"), true);
+    assert.equal(mikrotikChangelogIsFor("\n  WHAT'S NEW IN 7.21BETA4:\r\n*) a;", "7.21beta4"), true);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2", "7.2"), true);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2 ", "7.2"), true);
+  });
+
+  it("refuses another version, a longer one, or no heading first", () => {
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.21 (2026-Sep-19):\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2.1:\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.21beta4:\n*) a;", "7.20.2"), false);
+    assert.equal(mikrotikChangelogIsFor("Changelog\nWhat's new in 7.2:\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("<html>Not found</html>", "7.2"), false);
   });
 });

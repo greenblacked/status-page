@@ -134,7 +134,9 @@ run_checks() {
     grep -aqF "$TITLE" "$work/body" || fail "/: no $TITLE"
     # React's server renderer separates adjacent text nodes with <!-- -->; the
     # sentence is still one sentence to a reader, so match it without them.
-    sed 's/<!-- -->//g' "$work/body" | grep -aqF "$FOOTER" || fail "/: no footer line \"$FOOTER\""
+    # No -q: grep -q exits at the footer and sed, still writing the rest of the
+    # page, dies of SIGPIPE; under pipefail that fails the check on a good page.
+    sed 's/<!-- -->//g' "$work/body" | grep -aF "$FOOTER" >/dev/null || fail "/: no footer line \"$FOOTER\""
     [ -n "$(header Content-Security-Policy)" ] || fail "/: no Content-Security-Policy header"
     [ -n "$(header X-Frame-Options)" ] || fail "/: no X-Frame-Options header"
   fi
