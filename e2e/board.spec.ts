@@ -1666,7 +1666,7 @@ test("starts the field's fill where it was and ends it in the slot, never at the
 
 /**
  * What `sampleDockMove` read on one animation frame. `y`: the scroll position. `moving`: how many transitions the
- * dock has running. `clipped`: the placeholder shown is wider than the input.
+ * dock has running. `clipped`: the placeholder shown is wider than the input. `keycap`: the "/" hint in the field.
  */
 type DockFrame = {
   at: number;
@@ -1676,6 +1676,8 @@ type DockFrame = {
   docked: boolean;
   moving: number;
   clipped: boolean;
+  /** The "/" keycap: how opaque it is and where its right edge is. Null where it is not drawn (below 40rem, or with a query). */
+  keycap: { opacity: number; right: number } | null;
 };
 
 /**
@@ -1702,6 +1704,7 @@ async function sampleDockMove(
         const dock = document.querySelector(".search-dock") as HTMLElement;
         const chrome = dock.querySelector(".search-chrome") as HTMLElement;
         const input = dock.querySelector("input") as HTMLInputElement;
+        const keycap = dock.querySelector("kbd");
         const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
         const measure = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
         const frames: DockFrame[] = [];
@@ -1763,6 +1766,13 @@ async function sampleDockMove(
             moving: dock.getAnimations({ subtree: true }).filter((animation) => animation instanceof CSSTransition)
               .length,
             clipped: measure.measureText(input.placeholder).width > room + 1,
+            keycap:
+              keycap && getComputedStyle(keycap).display !== "none"
+                ? {
+                    opacity: Number.parseFloat(getComputedStyle(keycap).opacity),
+                    right: keycap.getBoundingClientRect().right,
+                  }
+                : null,
           });
           if (poseAt > 0 && diag.length < 8) note(`f${diag.length - 1}`, now);
           if (frameTime - start < ms) requestAnimationFrame(read);
@@ -1921,6 +1931,46 @@ test("moves the field's fill into the dock in small steps from its rest box, eve
     }
   }
   await cdp?.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+});
+
+test("hides the / keycap while the field docks and leaves, so it never moves alone outside the fill", async ({
+  page,
+}) => {
+  test.slow();
+  await steadyBoard(page);
+  const { wide, moveStart, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll, and the keycap with it");
+  test.skip((page.viewportSize()?.width ?? 0) < 640, "the keycap shows from 40rem");
+  const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
+  const past = Math.ceil(moveEnd) + 60;
+  const moves = [
+    { kind: "jump", from: before, to: past, name: "one jump in" },
+    { kind: "jump", from: past, to: before, name: "one jump out" },
+    { kind: "drag", from: before, to: past, name: "a drag in" },
+    { kind: "drag", from: past, to: before, name: "a drag out" },
+  ] as const;
+  for (const lost of [0, 33]) {
+    for (const move of moves) {
+      const name = `${move.name}, first frame ${lost} ms in`;
+      const { frames } = await sampleDockMove(page, { ...move, lost });
+      let hidden = 0;
+      for (const [index, frame] of frames.entries()) {
+        const label = `${name}, frame ${index}`;
+        expect(frame.keycap, `${label}: the keycap is in the field`).not.toBeNull();
+        const { opacity, right } = frame.keycap as { opacity: number; right: number };
+        // The input has its new width at once, while the fill waits out the lead and then moves: the keycap, at the
+        // input's edge, is either not drawn or inside the fill, on every frame.
+        if (opacity === 0) hidden++;
+        else {
+          expect(right, `${label}: not left of the fill`).toBeGreaterThanOrEqual(frame.left - 0.5);
+          expect(right, `${label}: not right of the fill`).toBeLessThanOrEqual(frame.left + frame.width + 0.5);
+        }
+      }
+      expect(hidden, `${name}: it is hidden for the move`).toBeGreaterThan(0);
+      const last = (frames.at(-1) as DockFrame).keycap;
+      expect(last?.opacity, `${name}: and back once the field has stopped`).toBe(1);
+    }
+  }
 });
 
 test("never puts the field under the bar, so a flick's late frame cannot hide it", async ({ page }) => {
