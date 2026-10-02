@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { service } from "../../test/fixtures.ts";
 import { stubFetch, text } from "../../test/stub-fetch.ts";
 import { MAX_FEED_ENTRIES, MAX_NOTE_CHARS, MAX_NOTE_LINES } from "./bounds.ts";
+import { runWithCloudflareContext } from "./cloudflare-context.ts";
 import { collectBoard } from "./collect-board.ts";
 import { MAX_BODY_BYTES, PayloadError } from "./http.ts";
 import {
@@ -17,6 +18,7 @@ import {
   RELEASE_SOURCES,
   readReleaseFeed,
   releaseFeedsForBoard,
+  startReleaseFeeds,
   steamNoteLines,
   withReleaseFeeds,
 } from "./release-feeds.server.ts";
@@ -761,6 +763,78 @@ describe("the advisory rule", () => {
       expect(gitlab?.releaseFeed).toBeUndefined();
       expect(gitlab?.failure).toBeUndefined();
       expect(gitlab?.health).not.toBe("unknown");
+    });
+
+    // A release feed that has not answered when the health sweep ends, and a way to answer it later.
+    function heldFeed(id: ServiceId) {
+      let answer: () => void = () => {};
+      const held = new Promise<Response>((resolve) => {
+        answer = () => resolve(allFeedsUp()[source(id).url]?.() ?? new Response("", { status: 500 }));
+      });
+      return { handler: () => held, answer };
+    }
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    it("never waits for a slow feed: the board ends with the health sweep, without that card's line", async () => {
+      const gitlab = heldFeed("gitlab");
+      stubFetch({ ...allFeedsUp(), [URLS.gitlab]: gitlab.handler });
+      // This resolves while the GitLab feed is still unanswered: awaiting it would hang the test.
+      const board = await collectBoard();
+      expect(board.durationMs).toBe(0);
+      expect(board.services.find((card) => card.id === "gitlab")?.releaseFeed).toBeUndefined();
+      // The feeds that were quick are on it.
+      expect(board.services.find((card) => card.id === "github")?.releaseFeed).toBeDefined();
+      expect(board.services.find((card) => card.id === "gitlab")?.failure?.message).not.toMatch(/release/i);
+      gitlab.answer();
+    });
+
+    it("finishes a slow feed in the background, keeps the request alive for it, and puts it on the next board", async () => {
+      const gitlab = heldFeed("gitlab");
+      const calls: string[] = [];
+      const routes = { ...allFeedsUp(), [URLS.gitlab]: gitlab.handler };
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        calls.push(String(input));
+        const handler = routes[String(input)];
+        return handler ? handler() : new Response("nope", { status: 404 });
+      });
+      const waiting: Promise<unknown>[] = [];
+      const first = await runWithCloudflareContext({ env: {}, waitUntil: (promise) => waiting.push(promise) }, () =>
+        collectBoard(),
+      );
+      expect(first.services.find((card) => card.id === "gitlab")?.releaseFeed).toBeUndefined();
+      // The Worker was asked to keep the request alive until the feeds in flight are done...
+      expect(waiting).toHaveLength(1);
+      let done = false;
+      void Promise.resolve(waiting[0]).then(() => {
+        done = true;
+      });
+      await settle();
+      expect(done).toBe(false);
+      gitlab.answer();
+      await waiting[0];
+      expect(done).toBe(true);
+      // ...and the next board has the feed from the cache, without asking GitLab again.
+      calls.length = 0;
+      const second = await collectBoard();
+      expect(second.services.find((card) => card.id === "gitlab")?.releaseFeed?.entries[0]?.release.version).toBe(
+        "18.4.1",
+      );
+      expect(calls.filter((url) => url === URLS.gitlab)).toHaveLength(0);
+    });
+
+    it("startReleaseFeeds: what is in hand is fresh in the cache or already read, never a read in flight", async () => {
+      const aws = heldFeed("aws");
+      stubFetch({ ...allFeedsUp(), [URLS.aws]: aws.handler });
+      const reading = startReleaseFeeds();
+      await settle();
+      expect(reading.ready().has("gitlab")).toBe(true);
+      expect(reading.ready().has("aws")).toBe(false);
+      aws.answer();
+      await reading.settled;
+      expect(reading.ready().has("aws")).toBe(true);
+      // Nothing to read the second time: all of it is in hand at once.
+      const again = startReleaseFeeds();
+      expect(again.ready().size).toBe(RELEASE_SOURCES.length);
     });
 
     it("costs the board no extra requests inside the half hour", async () => {

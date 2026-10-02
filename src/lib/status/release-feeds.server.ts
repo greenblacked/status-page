@@ -25,8 +25,10 @@ import { vendorUrl } from "./vendor-url.ts";
 // What a vendor's own release or changelog feed adds to a status card: the
 // newest entry on the card's second line, a few more behind its Details. It is
 // advisory. Nothing here touches a card's health: the feeds are read beside the
-// health collectors, a feed that cannot be read is logged (`release_feed_failed`),
-// reported by `npm run source-health`, and leaves the card exactly as it was.
+// health collectors and never waited for (a board takes the feeds that are in
+// hand when its health sweep ends, and a slower one joins the next board), a
+// feed that cannot be read is logged (`release_feed_failed`), reported by
+// `npm run source-health`, and leaves the card exactly as it was.
 //
 // Release feeds change slowly, so they are not part of every sweep. Each one is
 // read at most once per RELEASE_FEED_TTL_MS in an isolate (RELEASE_FEED_RETRY_MS
@@ -37,7 +39,7 @@ import { vendorUrl } from "./vendor-url.ts";
 export const RELEASE_FEED_TTL_MS = 30 * 60_000;
 /** How long an isolate leaves a feed that failed alone before trying it again. */
 export const RELEASE_FEED_RETRY_MS = 5 * 60_000;
-/** The deadline of one feed read: short, like every side request, so a slow vendor never holds a sweep. */
+/** The deadline of one feed read: short, like every side request. The board never waits on it (collect-board.ts). */
 const RELEASE_TIMEOUT_MS = 4000;
 /** Most of one entry's text looked at: only its first lines are ever shown. */
 const MAX_ENTRY_CHARS = 100_000;
@@ -615,28 +617,58 @@ export function clearReleaseFeedCache(): void {
   readings.clear();
 }
 
+/** The release feeds a board build is waiting on, as they come in. */
+export type ReleaseFeedReading = {
+  /** The feeds in hand at this moment: fresh in the cache, or already read. A read still running is not in it. */
+  ready: () => Map<ServiceId, ReleaseFeed>;
+  /** Settles once every read has finished and been cached for the next board. It never rejects. */
+  settled: Promise<void>;
+};
+
 /**
- * The release feed of each service that has one, from the cache while it is
- * fresh and otherwise read now (in parallel, each on its own short deadline).
- * A feed that failed is absent and not asked again for RELEASE_FEED_RETRY_MS.
+ * Starts the release feeds of every service that has one and returns at once:
+ * a feed fresh in the cache is ready now, any other is read (in parallel, each
+ * on its own short deadline) and joins `ready()` when it arrives. The caller
+ * decides how long to wait, so a slow vendor can never hold a board back; a
+ * feed that misses the board is cached when it arrives and is on the next
+ * one. A feed that failed is absent and not asked again for
+ * RELEASE_FEED_RETRY_MS.
+ */
+export function startReleaseFeeds(): ReleaseFeedReading {
+  const feeds = new Map<ServiceId, ReleaseFeed>();
+  const reads: Promise<void>[] = [];
+  for (const source of RELEASE_SOURCES) {
+    const seen = readings.get(source.id);
+    if (seen && Date.now() - seen.at < (seen.feed ? RELEASE_FEED_TTL_MS : RELEASE_FEED_RETRY_MS)) {
+      if (seen.feed) feeds.set(source.id, seen.feed);
+      continue;
+    }
+    reads.push(
+      readReleaseFeed(source).then(
+        ({ feed }) => {
+          readings.set(source.id, { at: Date.now(), feed });
+          if (feed) feeds.set(source.id, feed);
+        },
+        // readReleaseFeed does not throw; if it ever did, the feed is simply absent for a retry period.
+        () => {
+          readings.set(source.id, { at: Date.now(), feed: undefined });
+        },
+      ),
+    );
+  }
+  return { ready: () => new Map(feeds), settled: Promise.all(reads).then(() => undefined) };
+}
+
+/**
+ * Every release feed of the board, waiting for the reads that are running.
+ * What a board build does not do (it takes `startReleaseFeeds().ready()` once
+ * the health sweep is in); here for tests and for anything that wants them all.
  * It never rejects.
  */
 export async function releaseFeedsForBoard(): Promise<Map<ServiceId, ReleaseFeed>> {
-  const feeds = new Map<ServiceId, ReleaseFeed>();
-  await Promise.all(
-    RELEASE_SOURCES.map(async (source) => {
-      const seen = readings.get(source.id);
-      let feed: ReleaseFeed | undefined;
-      if (seen && Date.now() - seen.at < (seen.feed ? RELEASE_FEED_TTL_MS : RELEASE_FEED_RETRY_MS)) {
-        feed = seen.feed;
-      } else {
-        feed = (await readReleaseFeed(source)).feed;
-        readings.set(source.id, { at: Date.now(), feed });
-      }
-      if (feed) feeds.set(source.id, feed);
-    }),
-  );
-  return feeds;
+  const reading = startReleaseFeeds();
+  await reading.settled;
+  return reading.ready();
 }
 
 /**

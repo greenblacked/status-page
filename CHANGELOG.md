@@ -8,7 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- A quiet **release line** under the health line of the cards whose vendors publish an official release or changelog feed: **AWS** (What's New), **Google Cloud** (release notes), **Microsoft Azure** (Azure Updates), **GitHub** (Changelog), **GitLab** (the newest version, such as "GitLab 18.4 · Sep 18") and **CS2 Europe** (the latest update post on Steam). **Details** opens the vendor's recent entries with a few notes and a link to the vendor's own post. It never changes a card's health or anything derived from it, and a feed that cannot be read just leaves the line out. Each feed is read at most every 30 minutes.
+- A quiet **release line** under the health line of the cards whose vendors publish an official release or changelog feed: **AWS** (What's New), **Google Cloud** (release notes), **Microsoft Azure** (Azure Updates), **GitHub** (Changelog), **GitLab** (the newest version, such as "GitLab 18.4 · Sep 18") and **CS2 Europe** (the latest update post on Steam). **Details** opens the vendor's recent entries with a few notes and a link to the vendor's own post. It never changes a card's health or anything derived from it, and a feed that cannot be read just leaves the line out. Each feed is read at most every 30 minutes, beside the health checks, and the board never waits for one.
 - The **source-health** check also probes each release feed and reports it apart ("GitLab releases").
 
 - Cards for **Microsoft Azure** (under Cloud), and **GitHub**, **GitLab** and **Atlassian Confluence** (under Platforms), each read from the vendor's own status page or feed (GitLab's page runs on Status.io, so it is read from there). The board now has twenty services.
