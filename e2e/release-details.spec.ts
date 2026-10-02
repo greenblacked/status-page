@@ -11,6 +11,24 @@ const SERVICES = 20;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const dialog = (page: Page) => page.locator("dialog[data-release-details]");
 
+/**
+ * Waits until the dialog's entrance is over: the sheet has risen from the bottom edge, or the panel has eased in. It
+ * is asked of the dialog's own transform, which is none once it has landed (@starting-style gives it a translate and
+ * a scale to start from), as well as of document.getAnimations(). On an iPhone in CI a sheet was measured 52px below
+ * the viewport after the animations alone had been waited out; whether the list was missing the entrance is not
+ * established, so the transform is the direct check and the animations are a second condition.
+ */
+async function entered(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const open = document.querySelector("dialog[data-release-details]");
+    return (
+      open !== null &&
+      getComputedStyle(open).transform === "none" &&
+      document.getAnimations().every((animation) => animation.playState !== "running")
+    );
+  });
+}
+
 /** The fixture board on the page, after hydration and one Refresh, which is how the fixture reaches the cards. */
 async function openBoard(
   page: Page,
@@ -298,7 +316,7 @@ test("keeps its title and close button in view while a long list scrolls", async
   );
   await trigger(page, "mikrotik").click();
   await expect(dialog(page)).toBeVisible();
-  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+  await entered(page);
   const list = dialog(page).getByRole("list", { name: "Releases" });
   expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
   await list.evaluate((element) => {
@@ -319,7 +337,7 @@ test("is a small centred panel on a desktop and a sheet from the bottom edge on 
   await trigger(page, "mikrotik").click();
   await expect(dialog(page)).toBeVisible();
   // Let the entrance settle before measuring.
-  await page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
+  await entered(page);
   const geometry = await dialog(page).evaluate((element) => {
     const box = element.getBoundingClientRect();
     return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width };
@@ -370,9 +388,7 @@ for (const scheme of ["light", "dark"] as const) {
     for (const id of ["mikrotik", "apple-os", "windows", "android-os"]) {
       await trigger(page, id).click();
       await expect(dialog(page)).toBeVisible();
-      await page.waitForFunction(() =>
-        document.getAnimations().every((animation) => animation.playState !== "running"),
-      );
+      await entered(page);
       const results = await new AxeBuilder({ page }).include("dialog[data-release-details]").analyze();
       expect(
         results.violations.map((violation) => `${violation.id}: ${violation.nodes.map((n) => n.target).join(", ")}`),

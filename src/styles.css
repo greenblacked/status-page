@@ -769,6 +769,17 @@
     opacity: 0;
     transition-property: none;
   }
+
+  /*
+    The "/" keycap (from 40rem) is the same: it sits at the input's right edge, which takes its docked (or rest)
+    width at once, while the field's translate and the fill wait out --t-dock-lead and then move. Left to show,
+    it would jump alone for the lead's frames, outside the fill. It is hidden from the moment the pose is
+    written (data-moving, which covers the lead and the move, both ways) and is back when the field has stopped.
+  */
+  .search-dock[data-moving] .search-field kbd {
+    opacity: 0;
+    transition-property: none;
+  }
 }
 
 @media (min-width: 64rem) {
