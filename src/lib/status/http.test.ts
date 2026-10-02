@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchJson,
   fetchText,
+  HEAD_BYTES,
   isRefusal,
   MAX_BODY_BYTES,
   meterBytes,
@@ -86,6 +87,35 @@ describe("readBodyCapped / fetchText size cap", () => {
     expect(error).not.toBeInstanceOf(PayloadError);
     expect((error as SourceError).status).toBe(503);
     expect(state.cancelled).toBe(true);
+  });
+
+  it("a head read keeps exactly HEAD_BYTES of a larger body, cancels it, and counts only what it kept", async () => {
+    const { stream, state } = streamOf(MAX_BODY_BYTES * 4);
+    stubFetch(() => new Response(stream, { headers: { "content-length": String(MAX_BODY_BYTES * 4) } }));
+
+    const metered = await meterBytes(async (meter) => {
+      const { bytes } = await fetchText("https://status.example.com/feed.xml", { head: true });
+      return { length: bytes.byteLength, counted: meter.bytes };
+    });
+
+    expect(metered).toEqual({ length: HEAD_BYTES, counted: HEAD_BYTES });
+    expect(state.cancelled).toBe(true);
+    expect(state.pulled).toBeLessThanOrEqual(HEAD_BYTES + CHUNK);
+  });
+
+  it("a head read of a body shorter than HEAD_BYTES returns it whole", async () => {
+    const { stream, state } = streamOf(HEAD_BYTES - 3);
+    stubFetch(() => new Response(stream));
+    const { bytes } = await fetchText("https://status.example.com/feed.xml", { head: true });
+    expect(bytes.byteLength).toBe(HEAD_BYTES - 3);
+    expect(state.cancelled).toBe(false);
+  });
+
+  it("a head read ends cleanly when the body is exactly HEAD_BYTES", async () => {
+    const { stream } = streamOf(HEAD_BYTES);
+    stubFetch(() => new Response(stream));
+    const { bytes } = await fetchText("https://status.example.com/feed.xml", { head: true });
+    expect(bytes.byteLength).toBe(HEAD_BYTES);
   });
 
   it("still times out a body that trickles in", async () => {

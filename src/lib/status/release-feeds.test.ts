@@ -5,7 +5,7 @@ import { stubFetch, text } from "../../test/stub-fetch.ts";
 import { MAX_FEED_ENTRIES, MAX_NOTE_CHARS, MAX_NOTE_LINES } from "./bounds.ts";
 import { runWithCloudflareContext } from "./cloudflare-context.ts";
 import { collectBoard } from "./collect-board.ts";
-import { MAX_BODY_BYTES, PayloadError } from "./http.ts";
+import { HEAD_BYTES, MAX_BODY_BYTES, PayloadError } from "./http.ts";
 import {
   clearReleaseFeedCache,
   decodeHtmlNames,
@@ -708,6 +708,112 @@ describe("reading one feed", () => {
       "GitLab 19.0.9",
       "GitLab 19.4",
     ]);
+  });
+
+  describe("a server that ignores Range and sends everything", () => {
+    // The response as a stream in uneven chunks, with how much of it was pulled and whether the reader gave up.
+    function streamed(data: Uint8Array, chunk = 10_007) {
+      const state = { pulled: 0, cancelled: false };
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (state.pulled >= data.byteLength) return controller.close();
+          const next = data.subarray(state.pulled, state.pulled + chunk);
+          state.pulled += next.byteLength;
+          controller.enqueue(next);
+        },
+        cancel() {
+          state.cancelled = true;
+        },
+      });
+      return { body, state };
+    }
+    const encoder = new TextEncoder();
+    const gitlabFixture = fixture("gitlab/releases.xml");
+    // The fixture's first three entries, whole.
+    const leading = gitlabFixture.slice(
+      0,
+      gitlabFixture.indexOf("<entry>", gitlabFixture.indexOf("GitLab 19.4 release notes")),
+    );
+    const LEADING_TITLES = ["GitLab 19.4.1", "GitLab 19.0.9"];
+    const serve = (data: Uint8Array, headers: Record<string, string> = {}) => {
+      const { body, state } = streamed(data);
+      stubFetch({ [URLS.gitlab]: () => new Response(body, { status: 200, headers }) });
+      return state;
+    };
+    // `leading`, `opening`, filler and `tail`, then more filler: the 512 KiB limit falls right after `tail`, or
+    // `overhang` bytes into it.
+    function bodyCutAfter(opening: string, tail: string, filler: string, overhang = 0): Uint8Array {
+      const start = encoder.encode(leading + opening);
+      const fill = HEAD_BYTES - start.byteLength - (encoder.encode(tail).byteLength - overhang);
+      if (fill < 0) throw new Error("fixture is bigger than the head");
+      return encoder.encode(`${leading}${opening}${filler.repeat(fill)}${tail}${filler.repeat(200_000)}`);
+    }
+
+    beforeEach(() => {
+      vi.spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    it("stops reading at 512 KiB and parses the entries before the cut, with the bytes actually read reported", async () => {
+      const state = serve(bodyCutAfter("<entry><title>Cut entry</title><content><![CDATA[", "", "x"));
+      const result = await readReleaseFeed(source("gitlab"));
+      expect(result.ok).toBe(true);
+      expect(result.bytes).toBe(HEAD_BYTES);
+      expect(state.cancelled).toBe(true);
+      // Chunk-sized overshoot at most, not the 700 KiB on offer.
+      expect(state.pulled).toBeLessThanOrEqual(HEAD_BYTES + 3 * 10_007);
+      // The entry cut off has no date yet and is left out; the three before it are whole.
+      expect(result.feed?.entries.map((entry) => entry.title)).toEqual([...LEADING_TITLES, "GitLab 19.4"]);
+    });
+
+    it("a body past the 4 MiB cap is read, not refused, when it is cut at 512 KiB", async () => {
+      const data = encoder.encode(`${leading}${"x".repeat(MAX_BODY_BYTES + 1)}`);
+      const state = serve(data, { "content-length": String(data.byteLength) });
+      const result = await readReleaseFeed(source("gitlab"));
+      expect(result.ok).toBe(true);
+      expect(result.bytes).toBe(HEAD_BYTES);
+      expect(state.cancelled).toBe(true);
+      expect(state.pulled).toBeLessThanOrEqual(HEAD_BYTES + 3 * 10_007);
+    });
+
+    it("a cut inside a multi-byte character costs only that character", async () => {
+      // "é" is two bytes and the limit falls between them; the entry before it is whole.
+      const body = bodyCutAfter("<entry><title>Cut caf", "\u00e9", "x", 1);
+      const cutAt = body.subarray(0, HEAD_BYTES);
+      expect(cutAt.at(-1)).toBe(0xc3);
+      serve(body);
+      const result = await readReleaseFeed(source("gitlab"));
+      expect(result.ok).toBe(true);
+      const titles = result.feed?.entries.map((entry) => entry.title) ?? [];
+      expect(titles.slice(0, 3)).toEqual([...LEADING_TITLES, "GitLab 19.4"]);
+      expect(titles.join("")).not.toContain("\ufffd");
+    });
+
+    it("a cut inside CDATA keeps the entries before it and the title of the one cut", async () => {
+      serve(
+        bodyCutAfter(
+          '<entry><title>Cut entry</title><link href="https://docs.gitlab.com/releases/x/"/><content type="html"><![CDATA[<p>',
+          "",
+          "y",
+        ),
+      );
+      const result = await readReleaseFeed(source("gitlab"));
+      expect(result.ok).toBe(true);
+      const titles = result.feed?.entries.map((entry) => entry.title) ?? [];
+      expect(titles.slice(0, 3)).toEqual([...LEADING_TITLES, "GitLab 19.4"]);
+      expect(titles.every((title) => title.length < 200)).toBe(true);
+    });
+
+    it("Google's feed is cut the same way, and a feed that is not a head source is still refused over the cap", async () => {
+      const gcp = fixture("gcp/release-notes.xml");
+      const data = encoder.encode(`${gcp.slice(0, gcp.lastIndexOf("</feed>"))}${"z".repeat(MAX_BODY_BYTES)}`);
+      const { body, state } = streamed(data);
+      stubFetch({ [URLS.gcp]: () => new Response(body) });
+      const result = await readReleaseFeed(source("gcp"));
+      expect(result.ok).toBe(true);
+      expect(result.bytes).toBe(HEAD_BYTES);
+      expect(state.cancelled).toBe(true);
+      expect(source("aws").head).toBeUndefined();
+    });
   });
 
   it("probeReleaseFeeds reads every feed now and reports each one's own result", async () => {

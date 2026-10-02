@@ -8,7 +8,7 @@ import {
   MAX_TEXT_CHARS,
   MAX_TITLE_CHARS,
 } from "./bounds.ts";
-import { fetchText, meterBytes, PayloadError } from "./http.ts";
+import { fetchText, HEAD_BYTES, meterBytes, PayloadError } from "./http.ts";
 import {
   classifyFailure,
   decodeXmlEntities,
@@ -49,10 +49,11 @@ const MAX_ENTRIES_READ = 12;
 const MAX_BLOCKS = 60;
 const MAX_BLOCK_SCAN = 500;
 /**
- * The part of a feed asked for when a vendor's whole history would pass the body cap (Range; a server that ignores
- * it sends all). Both feeds that need it list newest first, so the start of the body is the newest entries.
+ * The part of a feed asked for when a vendor's whole history would pass the body cap. Range is only a hint (GitLab
+ * and Google both ignore it and send everything): the body is cut at HEAD_BYTES as it is read, so the cut does
+ * not depend on the server. Both feeds that need it list newest first, so the start of the body is the newest entries.
  */
-const HEAD_RANGE = "bytes=0-524287";
+const HEAD_RANGE = `bytes=0-${HEAD_BYTES - 1}`;
 
 // ------------------------------------------------------------ XML entries ---
 
@@ -480,6 +481,8 @@ export type ReleaseSource = {
   /** What an entry's link is called in the Details. */
   linkLabel: string;
   headers?: Record<string, string>;
+  /** Read only the first HEAD_BYTES of the body (cut as it streams in) instead of refusing one over the body cap. */
+  head?: boolean;
   /** Reads the response body into entries, newest first; throws PayloadError for a body that is not this feed. */
   read: (source: ReleaseSource, body: string) => ReleaseFeedEntry[];
   /** How an RSS or Atom entry becomes a title, a version and notes; plain text by default. */
@@ -573,6 +576,7 @@ export const RELEASE_SOURCES: readonly ReleaseSource[] = [
     hosts: ["cloud.google.com"],
     linkLabel: "Release notes",
     headers: { Range: HEAD_RANGE },
+    head: true,
     shape: gcpShape,
     read: xmlEntries,
   },
@@ -608,6 +612,7 @@ export const RELEASE_SOURCES: readonly ReleaseSource[] = [
     linkLabel: "Release post",
     // All releases since 2023 with their full text (3.6 MB in October 2026, newest first): only the start is read.
     headers: { Range: HEAD_RANGE },
+    head: true,
     shape: gitlabShape,
     read: xmlEntries,
   },
@@ -645,7 +650,11 @@ export function readReleaseFeed(source: ReleaseSource): Promise<ReleaseFeedResul
   return meterBytes(async (meter) => {
     const started = Date.now();
     try {
-      const init = { timeoutMs: RELEASE_TIMEOUT_MS, ...(source.headers ? { headers: source.headers } : {}) };
+      const init = {
+        timeoutMs: RELEASE_TIMEOUT_MS,
+        ...(source.headers ? { headers: source.headers } : {}),
+        ...(source.head ? { head: true } : {}),
+      };
       const { body } = await fetchText(source.url, init);
       const feed = boundReleaseFeed({
         sourceName: source.name,
