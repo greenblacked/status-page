@@ -495,3 +495,68 @@ for (const [name, from, to] of [
     await expect(page.locator("#service-cs2-europe").getByText("Frankfurt")).toBeVisible();
   });
 }
+
+// The list is as much part of the row as the <details>: a feed joining or leaving must not replace it, or the
+// focus in it falls to the page and a list shown in full ("Show all 9 components") shuts back to six.
+for (const [name, from, to] of [
+  ["gains", fixtureBoard, feedBoard],
+  ["loses", feedBoard, fixtureBoard],
+] as const) {
+  test(`keeps the focus and the full list of an open row when the row ${name} its release feed`, async ({ page }) => {
+    const long = (board: BoardSnapshot): BoardSnapshot => ({
+      ...board,
+      services: board.services.map((service) =>
+        service.id === "cs2-europe"
+          ? {
+              ...service,
+              components: Array.from({ length: 9 }, (_, index) => ({
+                name: `Relay ${index + 1}`,
+                health: "operational" as const,
+              })),
+            }
+          : service,
+      ),
+    });
+    let current = long(from(Date.now()));
+    await serveBoard(page, () => current);
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
+    const press = async () => {
+      const answered = page.waitForResponse(
+        (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
+      );
+      // A script click, so the focus stays where the test put it.
+      await refresh.evaluate((button) => (button as HTMLButtonElement).click());
+      await answered;
+      await expect(refresh).toHaveAttribute("aria-busy", "false");
+    };
+    await press();
+    const hasFeed = from === feedBoard;
+    await expect(line(page, "cs2-europe")).toHaveCount(hasFeed ? 1 : 0);
+
+    const row = page.locator("#service-cs2-europe");
+    const list = row.locator("[data-row-components]");
+    const items = list.getByText(/^Relay \d$/);
+    await row.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    await expect(items).toHaveCount(6);
+    const toggle = list.getByRole("button", { name: /^Show all/ });
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(items).toHaveCount(9);
+    const fewer = list.getByRole("button", { name: "Show fewer components" });
+    await expect(fewer).toBeFocused();
+    await list.evaluate((element) => {
+      (window as unknown as { __kept: Element }).__kept = element;
+    });
+
+    current = long(to(Date.now()));
+    await press();
+    await expect(line(page, "cs2-europe")).toHaveCount(hasFeed ? 0 : 1);
+    expect(await list.evaluate((element) => element === (window as unknown as { __kept: Element }).__kept)).toBe(true);
+    await expect(items).toHaveCount(9);
+    await expect(fewer).toBeFocused();
+  });
+}

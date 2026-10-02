@@ -153,12 +153,17 @@ describe("the release line of a status card", () => {
     );
   });
 
-  it("leaves a row with a list and no feed exactly as it was", () => {
+  it("gives a row with a list and no feed the same structure, without the line", () => {
     const components: ComponentHealth[] = [{ name: "Git operations", health: "operational" }];
     const html = render("gitlab", { components });
     expect(html).not.toContain("row-details-feed");
-    expect(html).not.toContain("[details:not([open])");
-    expect(html).not.toContain("data-row-components");
+    expect(html).not.toContain("data-release-line");
+    // The list is in the same place as on a row with a feed, after the <details>, so a feed joining or leaving
+    // does not replace it (and the focus and the "Show all" state inside it).
+    expect(html.slice(html.indexOf("<details"), html.indexOf("</details>"))).not.toContain("Git operations");
+    expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("data-row-components"));
+    expect(html.indexOf("data-row-components")).toBeLessThan(html.indexOf("Git operations"));
+    expect(html).toContain("[details:not([open])~&amp;:not([data-until-found])]:hidden");
     expect(html).toContain("after:top-[calc(50%-0.25rem)]");
     expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).toContain(
       "min-h-(--row-h)",
