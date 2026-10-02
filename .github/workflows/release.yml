@@ -423,8 +423,9 @@ jobs:
           # before signing or by hand): never --clobber here, which deletes a
           # public asset before replacing it. An asset already there is
           # checked, not trusted by its name: a different archive under the
-          # expected name (a renamed source tarball, say) would leave users
-          # with a bundle for other bytes. Any mismatch fails the run and
+          # expected name (a renamed source tarball, or another version's
+          # signed pair) would leave users with the wrong source. Any
+          # mismatch fails the run and
           # changes nothing; only the asset that is absent is uploaded.
           if [ "${found##* }" = false ]; then
             have="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
@@ -440,6 +441,19 @@ jobs:
                 --certificate-identity-regexp "^https://github\.com/${repo_re}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$" \
                 "$2"
             }
+            # A valid signature only says some release run signed these
+            # bytes, and the identity matches every version. Tie the archive
+            # to this tag too: the same bytes as the fresh archive, or else
+            # the commit id git archive records in the tar header is this
+            # tag's commit and every entry sits under this version's prefix.
+            # The second route does not depend on gzip producing the same
+            # bytes, so releases signed on older runner images still pass.
+            is_this_source() { # is_this_source <archive>
+              [ "$(sha256sum <"$1" | cut -d' ' -f1)" = "$(sha256sum <"$archive" | cut -d' ' -f1)" ] && return 0
+              [ "$(gzip -dc "$1" | git get-tar-commit-id)" = "$(git rev-parse HEAD)" ] || return 1
+              entries="$(tar -tzf "$1")" || return 1
+              printf '%s\n' "$entries" | awk -v p="status-page-${TAG#v}/" 'index($0, p) != 1 { bad = 1 } END { exit (NR == 0 || bad) }'
+            }
             existing="$RUNNER_TEMP/existing"
             rm -rf "$existing"
             mkdir -p "$existing"
@@ -449,9 +463,15 @@ jobs:
                 echo "::error::$TAG is public, but its archive and signature bundle do not verify; not replacing public assets"
                 exit 1
               fi
+              if ! is_this_source "$existing/$(basename "$archive")"; then
+                echo "::error::$TAG is public with a signed archive that is not this tag's source; not replacing public assets"
+                exit 1
+              fi
               echo "::notice::$TAG is already public with its signed assets, which verify"
             elif [ "$has_archive" = true ]; then
               gh release download "$TAG" --dir "$existing" --pattern "$(basename "$archive")"
+              # The bundle uploaded below signs the fresh archive, so only
+              # the same bytes will do here.
               if [ "$(sha256sum <"$existing/$(basename "$archive")" | cut -d' ' -f1)" != "$(sha256sum <"$archive" | cut -d' ' -f1)" ]; then
                 echo "::error::$TAG is public with an archive that is not this tag's source; not signing it"
                 exit 1
