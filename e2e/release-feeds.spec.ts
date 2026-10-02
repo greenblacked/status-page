@@ -333,7 +333,7 @@ test("the browser's own find opens a shut row that lists the component", async (
   const row = page.locator("#service-cs2-europe details.row-details");
   await expect(row).not.toHaveAttribute("open", "");
   // The browser's find (window.find runs the same search as Ctrl+F) reveals what is hidden until found.
-  await page.evaluate(() => window.find("Frankfurt"));
+  await page.evaluate(() => (window as Window & { find: (text: string) => boolean }).find("Frankfurt"));
   await expect(row).toHaveAttribute("open", "");
 });
 
