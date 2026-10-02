@@ -221,6 +221,39 @@ async function pinToSlot(page: Page): Promise<void> {
   }, offset);
 }
 
+/**
+ * Waits until the bar's lead line has settled to its live words ("Checked 14:05 UTC · next in 1:30"), which it
+ * shows only once the page has hydrated and read its clock. A refetch flips the line to "Checking…" and back, and
+ * from 40rem the line sits in the flow before the field's slot, so the slot's left edge and width move with it: a
+ * docked field follows, a frame or more later. Anything that compares the field or its fill with the slot, or that
+ * counts what the dock does, has to start after this and before the next refetch (see steadyBoard).
+ *
+ * The waits are long on purpose. The page loader serves a snapshot up to two minutes old and starts a vendor sweep
+ * behind it; when the page's clock calls that snapshot stale, the refetch on mount is a plain GET that waits for
+ * the same sweep, and vendor calls time out at 9 s, so the line can read "Checking…" for well over the default 5 s.
+ * pinToSlot moving the clock forward makes that more likely, not less. awayFromRefetch had the same 90 s.
+ */
+async function leadSteady(page: Page): Promise<void> {
+  const lead = page.locator("[data-bar-lead]");
+  await expect(lead).toHaveAttribute("data-state", "live", { timeout: 90_000 });
+  await expect(lead).toContainText(/next in \d+:\d{2}/, { timeout: 90_000 });
+}
+
+/**
+ * Opens the board with its bar steady: the page's Date is 30 s into a slot (pinToSlot), so the next scheduled
+ * refetch and the turn of the slot are 90 s or more away, and the refetch on mount of a snapshot past its
+ * staleTime, if there is one, has landed (leadSteady). A test that reads where the field or its fill is against the
+ * slot, or counts the dock's work, starts from this instead of a bare goto, so that no change of the bar's lead
+ * line moves the slot under it. Tests that install page.clock and fast-forward it do not need it.
+ */
+async function steadyBoard(page: Page): Promise<void> {
+  await pinToSlot(page);
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await leadSteady(page);
+}
+
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
 function watchConsole(page: Page): string[] {
   const problems: string[] = [];
@@ -1208,15 +1241,10 @@ test("regression guard: keeps the dock docked through a rubber band below the en
 
 test("does not move the dock when only the viewport's height changes, as iOS's toolbar does", async ({ page }) => {
   test.slow();
-  // Well inside a slot (see pinToSlot), and with the page's frames its own: the counts below wait for those.
-  await pinToSlot(page);
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  // The refetch on mount of a snapshot past its TTL changes the live line's height, and with it the hero's: the dock
-  // measures again, rightly, and the count below would take that for a resize. Start only when that refetch is done,
-  // which the countdown having room for the whole test shows. Live vendors make its timing differ from run to run.
-  await awayFromRefetch(page);
+  // Well inside a slot, with the page's frames its own, and past the refetch on mount of a snapshot past its TTL
+  // (see steadyBoard): that refetch changes the live line, and with it the hero and the slot, so the dock measures
+  // again, rightly, and the count below would take that for a resize.
+  await steadyBoard(page);
   const { wide, moveStart, moveEnd } = await dockOffsets(page);
   const frames = (count: number) =>
     page.evaluate(
@@ -1554,9 +1582,7 @@ test("starts the field's fill where it was and ends it in the slot, never at the
   page,
 }) => {
   test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
+  await steadyBoard(page);
   const { wide, moveStart } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll, with no fill to play");
   const rest = await dockBoxes(page);
@@ -1637,9 +1663,7 @@ test("opens a page that is already scrolled past the dock with the field docked,
       true,
     );
   });
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
+  await steadyBoard(page);
   const { wide, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
   await scrollAndSettle(page, Math.ceil(moveEnd) + 80);
@@ -1648,6 +1672,7 @@ test("opens a page that is already scrolled past the dock with the field docked,
   // Back to the same place the way a reload or a return to the tab does: the browser restores the scroll.
   await page.reload();
   await hydrated(page);
+  await leadSteady(page);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(moveEnd);
   await expect.poll(() => dockValue(page)).toBe(1);
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
@@ -1664,9 +1689,7 @@ test("opens a page that is already scrolled past the dock with the field docked,
 
 test("keeps a docked field in its slot when the bar's text moves the slot, without sliding it", async ({ page }) => {
   test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
+  await steadyBoard(page);
   const { wide, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
   await scrollAndSettle(page, Math.ceil(moveEnd) + 80);
@@ -1724,9 +1747,12 @@ test("takes the pose a scroll gives it before the page has loaded without playin
     );
     new Image().src = "/__held.png";
   });
+  // Well inside a slot, as steadyBoard has it; the load is held open here, so the page is not waited for.
+  await pinToSlot(page);
   await page.goto("/", { waitUntil: "commit" });
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await leadSteady(page);
   expect(await page.evaluate(() => document.readyState), "the load is still open").not.toBe("complete");
   const { wide, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
@@ -1975,9 +2001,8 @@ for (const [name, board, ready] of [
 }
 
 test("docks the search field inside the bar, between its dot and its buttons", async ({ page }) => {
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
+  test.slow();
+  await steadyBoard(page);
   const bar = controlBar(page);
   const field = page.locator(".search-field");
   await expect(bar).toHaveAttribute("data-shown", "false");
@@ -2101,9 +2126,7 @@ test.describe("with reduced motion", () => {
 
   test("steps the search field into the bar and out again, with no transition", async ({ page }) => {
     test.slow();
-    await page.goto("/");
-    await expect(cards(page)).toHaveCount(SERVICES);
-    await hydrated(page);
+    await steadyBoard(page);
     const { wide, moveEnd } = await dockOffsets(page);
     test.skip(wide, "from 64rem the field snaps through --dock, which the test below reads");
     // Nothing in the dock is timed, and nothing is left running.
