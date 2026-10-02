@@ -1,5 +1,5 @@
 import { fingerprint } from "./fingerprint.ts";
-import type { ServiceSnapshot } from "./types.ts";
+import type { ReleaseInfo, ServiceSnapshot } from "./types.ts";
 
 /**
  * Longest text a snapshot may carry, per kind. A vendor payload is bounded
@@ -13,6 +13,10 @@ export const MAX_TITLE_CHARS = 300;
 export const MAX_TEXT_CHARS = 500;
 export const MAX_ID_CHARS = 200;
 export const MAX_URL_CHARS = 2000;
+/** A release's version, build and dates are a few words each; its notes a few short lines. */
+export const MAX_RELEASE_FIELD_CHARS = 64;
+export const MAX_NOTE_LINES = 5;
+export const MAX_NOTE_CHARS = 200;
 
 // Meta values that hold a title (the newest release's headline); the rest of
 // meta (version maps, counters) gets the general text limit.
@@ -90,6 +94,28 @@ function boundSummary(snapshot: ServiceSnapshot): string {
   return clip(summary, MAX_TEXT_CHARS);
 }
 
+// A release's strings come from vendor text too. Dates and the build are cut like any field; a notes list keeps
+// its first MAX_NOTE_LINES text lines, each cut, and is dropped when none is left.
+function boundRelease(release: ReleaseInfo): ReleaseInfo {
+  const next: ReleaseInfo = { ...release, version: bound(release.version, MAX_RELEASE_FIELD_CHARS) };
+  for (const key of ["build", "releasedAt", "updatedAt"] as const) {
+    if (release[key] !== undefined) next[key] = bound(release[key], MAX_RELEASE_FIELD_CHARS);
+  }
+  if (release.url !== undefined) next.url = boundUrl(release.url);
+  if (release.linkLabel !== undefined) next.linkLabel = bound(release.linkLabel, MAX_RELEASE_FIELD_CHARS);
+  if (release.notes !== undefined) {
+    const lines = Array.isArray(release.notes)
+      ? release.notes
+          .filter((line): line is string => typeof line === "string" && line.trim() !== "")
+          .slice(0, MAX_NOTE_LINES)
+          .map((line) => clip(line, MAX_NOTE_CHARS))
+      : [];
+    if (lines.length > 0) next.notes = lines;
+    else delete next.notes;
+  }
+  return next;
+}
+
 /** The snapshot with every vendor-sourced string held to its limit. */
 export function boundSnapshot(snapshot: ServiceSnapshot): ServiceSnapshot {
   return {
@@ -98,6 +124,7 @@ export function boundSnapshot(snapshot: ServiceSnapshot): ServiceSnapshot {
     components: snapshot.components.map((component) => {
       const next = { ...component, name: bound(component.name, MAX_NAME_CHARS) };
       if (component.detail !== undefined) next.detail = bound(component.detail, MAX_TEXT_CHARS);
+      if (component.release !== undefined) next.release = boundRelease(component.release);
       return next;
     }),
     incidents: snapshot.incidents.map((incident) => {

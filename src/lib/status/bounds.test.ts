@@ -5,6 +5,9 @@ import {
   clip,
   MAX_ID_CHARS,
   MAX_NAME_CHARS,
+  MAX_NOTE_CHARS,
+  MAX_NOTE_LINES,
+  MAX_RELEASE_FIELD_CHARS,
   MAX_TEXT_CHARS,
   MAX_TITLE_CHARS,
   MAX_URL_CHARS,
@@ -214,5 +217,58 @@ describe("boundSnapshot ids, links and meta", () => {
     expect(bounded.meta?.players).toBe(12);
     expect(bounded.meta?.euPops).toBe(0);
     expect("meta" in boundSnapshot(base)).toBe(false);
+  });
+});
+
+describe("boundSnapshot: a release's Details", () => {
+  const long = "x".repeat(10_000);
+
+  it("holds a release's version, build and dates to a few words, its link to the URL limit and its notes to a few short lines", () => {
+    const bounded = boundSnapshot({
+      ...base,
+      category: "updates",
+      components: [
+        {
+          name: "n",
+          health: "operational",
+          release: {
+            version: long,
+            build: long,
+            releasedAt: long,
+            updatedAt: long,
+            url: `https://example.com/${long}`,
+            linkLabel: long,
+            notes: [long, "", "  ", ...Array.from({ length: 20 }, (_, i) => `note ${i}`)],
+          },
+        },
+      ],
+    });
+    const release = bounded.components[0].release;
+    expect(release?.version).toHaveLength(MAX_RELEASE_FIELD_CHARS);
+    expect(release?.build).toHaveLength(MAX_RELEASE_FIELD_CHARS);
+    expect(release?.releasedAt).toHaveLength(MAX_RELEASE_FIELD_CHARS);
+    expect(release?.updatedAt).toHaveLength(MAX_RELEASE_FIELD_CHARS);
+    expect(release?.url).toBeUndefined();
+    expect(release?.linkLabel).toHaveLength(MAX_RELEASE_FIELD_CHARS);
+    expect(release?.notes).toHaveLength(MAX_NOTE_LINES);
+    expect(release?.notes?.[0]).toHaveLength(MAX_NOTE_CHARS);
+    expect(release?.notes?.slice(1)).toEqual(["note 0", "note 1", "note 2", "note 3"]);
+  });
+
+  it("leaves a short release as it is, drops a notes list with no text and a notes value that is not a list", () => {
+    const release = { version: "7.20.2", releasedAt: "2026-09-15T12:00:00.000Z", url: "https://example.com/n" };
+    const only = (notes: unknown) =>
+      boundSnapshot({
+        ...base,
+        components: [{ name: "n", health: "operational", release: { ...release, notes } as never }],
+      }).components[0].release;
+    expect(only(["a - b"])).toEqual({ ...release, notes: ["a - b"] });
+    expect(only([])).toEqual(release);
+    expect(only(["", 3, null])).toEqual(release);
+    expect(only("not a list")).toEqual(release);
+    expect(boundSnapshot({ ...base, components: [{ name: "n", health: "operational" }] }).components[0]).toEqual({
+      name: "n",
+      health: "operational",
+    });
   });
 });

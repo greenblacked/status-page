@@ -7,8 +7,11 @@ import {
   isFreshRelease,
   latestAppleOsByFamily,
   MIKROTIK_CHANNELS,
+  mikrotikChangelogIsFor,
+  mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   parseMikrotikNewest,
+  splitAppleBuild,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
 import { fingerprint } from "./fingerprint.ts";
@@ -60,6 +63,9 @@ const MAX_INCIDENTS = 50;
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
 const EXTRA_TIMEOUT_MS = 4000;
+// RouterOS changelogs run to hundreds of kilobytes, and the newest release's notes are the first lines: ask for
+// this much of the start.
+const CHANGELOG_RANGE_BYTES = 65_536;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
 
 // Every field a vendor could omit is optional: a missing one must cost a
@@ -1539,6 +1545,26 @@ async function collectClaude(): Promise<ServiceSnapshot> {
   }
 }
 
+// What the Details and the summary take from one version's changelog.
+type MikrotikNotes = { summary: string; notes: string[] };
+const MIKROTIK_NOTES_REMEMBERED = 16;
+const mikrotikNotesCache = new Map<string, MikrotikNotes>();
+
+function rememberMikrotikNotes(version: string, read: MikrotikNotes): void {
+  // Oldest first out: a Map iterates in insertion order. The channels list five versions at most.
+  while (mikrotikNotesCache.size >= MIKROTIK_NOTES_REMEMBERED) {
+    const oldest = mikrotikNotesCache.keys().next();
+    if (oldest.done) break;
+    mikrotikNotesCache.delete(oldest.value);
+  }
+  mikrotikNotesCache.set(version, read);
+}
+
+/** Forgets the changelogs read so far; for tests, which serve different files under the same version. */
+export function clearMikrotikNotesCache(): void {
+  mikrotikNotesCache.clear();
+}
+
 async function collectMikrotik(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -1574,27 +1600,67 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
         const nextTime = Date.parse(channel.releasedAt ?? "") || 0;
         return nextTime > currentTime ? channel : current;
       }, channels[0]);
-      let notes = "";
+      // The changelog of every version the channels list (often fewer than five: stable and testing can share
+      // one): the newest one's first note is the summary, and each version's first few notes are on its Details.
+      // A released version's changelog does not change, so each is read once per isolate and remembered
+      // (failures and bodies that do not parse are not): a sweep asks only for versions it has not read,
+      // which is none on most sweeps.
+      // The newest section is at the top of the file, so a short ranged read is enough; a server that ignores
+      // the range sends the whole file, which fetchText caps. A changelog that fails costs that version its
+      // notes, and nothing else.
       const notesVersion = newest?.version ?? stable?.version;
-      // parseMikrotikNewest already refuses a malformed version; building
-      // the URL through the same check keeps it that way if that changes.
-      const notesUrl = notesVersion ? mikrotikChangelogUrl(notesVersion) : null;
-      if (notesUrl) {
-        try {
-          const changelog = await fetchText(notesUrl);
-          notes = summarizeMikrotikChangelog(changelog.body);
-        } catch {
-          notes = "";
-        }
-      }
-      return { channels, notes, stable, newest };
+      const changelogs = new Map<string, MikrotikNotes>();
+      await Promise.all(
+        [...new Set(channels.map((channel) => channel.version))].map(async (version) => {
+          const known = mikrotikNotesCache.get(version);
+          if (known) {
+            changelogs.set(version, known);
+            return;
+          }
+          // parseMikrotikNewest already refuses a malformed version; building
+          // the URL through the same check keeps it that way if that changes.
+          const url = mikrotikChangelogUrl(version);
+          if (!url) return;
+          try {
+            // The summary's changelog keeps the default deadline; the others are side requests.
+            const { body } = await fetchText(url, {
+              headers: { Range: `bytes=0-${CHANGELOG_RANGE_BYTES - 1}` },
+              ...(version === notesVersion ? {} : { timeoutMs: EXTRA_TIMEOUT_MS }),
+            });
+            // A body with no "What's new in" section and a bullet under it (empty, truncated, an HTML
+            // error page served with a 200), or one whose section is for another version, is a failed read,
+            // not this version's changelog: it neither gives the summary nor is remembered, so the next
+            // sweep asks again instead of keeping a generic card or another version's notes.
+            if (!mikrotikChangelogIsFor(body, version)) return;
+            const notes = mikrotikChangelogNotes(body);
+            if (notes.length === 0) return;
+            const read = { summary: summarizeMikrotikChangelog(body), notes };
+            rememberMikrotikNotes(version, read);
+            changelogs.set(version, read);
+          } catch {
+            // No notes for this version, and nothing remembered: the next sweep tries again.
+          }
+        }),
+      );
+      const notes = (notesVersion ? changelogs.get(notesVersion)?.summary : undefined) ?? "";
+      return { channels, notes, stable, newest, changelogs };
     });
 
-    const components: ComponentHealth[] = value.channels.map((channel) => ({
-      name: channel.name,
-      health: isFreshRelease(channel.releasedAt) ? "maintenance" : "operational",
-      detail: [channel.version, formatReleaseAge(channel.releasedAt)].filter(Boolean).join(" · "),
-    }));
+    const components: ComponentHealth[] = value.channels.map((channel) => {
+      const notes = value.changelogs.get(channel.version)?.notes ?? [];
+      const url = mikrotikChangelogUrl(channel.version);
+      return {
+        name: channel.name,
+        health: isFreshRelease(channel.releasedAt) ? "maintenance" : "operational",
+        detail: [channel.version, formatReleaseAge(channel.releasedAt)].filter(Boolean).join(" · "),
+        release: {
+          version: channel.version,
+          ...(channel.releasedAt ? { releasedAt: channel.releasedAt } : {}),
+          ...(url ? { url, linkLabel: "Release notes" } : {}),
+          ...(notes.length > 0 ? { notes } : {}),
+        },
+      };
+    });
 
     const latest = value.stable?.version ?? value.newest?.version ?? value.channels[0]?.version ?? "";
     const latestDate = formatReleaseAge(value.newest?.releasedAt ?? value.stable?.releasedAt);
@@ -1626,11 +1692,25 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
     const latest = latestAppleOsByFamily(items);
     if (!latest.length) throw new PayloadError("Apple OS release feed had no OS items.");
 
-    const components: ComponentHealth[] = latest.map((release) => ({
-      name: release.family,
-      health: isFreshRelease(release.publishedAt) ? "maintenance" : "operational",
-      detail: [release.version, formatReleaseAge(release.publishedAt)].filter(Boolean).join(" · "),
-    }));
+    // Apple's feed names a release and links its page, and has no notes text of its own: the Details say so
+    // rather than make some up. The link must stay on apple.com.
+    const sourceUrl = CATALOG_BY_ID["apple-os"].sourceUrl;
+    const components: ComponentHealth[] = latest.map((release) => {
+      const { version, build } = splitAppleBuild(release.version);
+      return {
+        name: release.family,
+        health: isFreshRelease(release.publishedAt) ? "maintenance" : "operational",
+        detail: [release.version, formatReleaseAge(release.publishedAt)].filter(Boolean).join(" · "),
+        release: {
+          version,
+          ...(build ? { build } : {}),
+          ...(release.publishedAt ? { releasedAt: release.publishedAt } : {}),
+          url: vendorUrl(release.link, sourceUrl, ["apple.com"]),
+          // The post links the downloads and the notes; it is not the notes.
+          linkLabel: "Apple Developer post",
+        },
+      };
+    });
 
     const headline = [...latest].sort((a, b) => {
       const aTime = Date.parse(a.publishedAt ?? "") || 0;
@@ -1669,10 +1749,21 @@ async function collectWindows(): Promise<ServiceSnapshot> {
     // Only a new feature update counts as a new release: every serviced
     // version gets a monthly update, so its revision date would flag the card
     // nearly all the time. The latest revision stays in the detail line.
+    // The table gives a day, not a moment, so the dates stay bare days (UTC) and the Details read them as such.
+    // It has no notes text: the Details link the page itself.
     const components: ComponentHealth[] = releases.map((release) => ({
       name: release.version,
       health: isFreshRelease(release.availableAt) ? "maintenance" : "operational",
       detail: [release.build, formatReleaseAge(windowsShippedAt(release))].filter(Boolean).join(" · "),
+      release: {
+        version: release.version,
+        ...(release.build ? { build: release.build } : {}),
+        releasedAt: release.availableAt.slice(0, 10),
+        ...(release.updatedAt && release.updatedAt > release.availableAt
+          ? { updatedAt: release.updatedAt.slice(0, 10) }
+          : {}),
+        url: CATALOG_BY_ID.windows.sourceUrl,
+      },
     }));
 
     const headline = releases[0];
@@ -1715,6 +1806,13 @@ async function collectAndroidOs(): Promise<ServiceSnapshot> {
       name: release.name,
       health: "operational",
       detail: "released",
+      // The page gives no date and no notes, so the Details have only the version's own page: nothing is made up.
+      // `version` is digits only (the parser checks), so the link cannot leave developer.android.com.
+      release: {
+        version: release.name,
+        url: `https://developer.android.com/about/versions/${release.version}`,
+        linkLabel: `${release.name} page`,
+      },
     }));
 
     const headline = releases[0];
