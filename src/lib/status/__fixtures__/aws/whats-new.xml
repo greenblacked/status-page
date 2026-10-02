@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>What's New with AWS</title>
+    <link>https://aws.amazon.com/new/</link>
+    <description>Announcements of new AWS services and features.</description>
+    <language>en-US</language>
+    <lastBuildDate>Thu, 01 Oct 2026 17:05:00 +0000</lastBuildDate>
+    <item>
+      <title>Amazon EC2 R9i instances are now generally available in additional regions</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/10/amazon-ec2-r9i-additional-regions/</link>
+      <description><![CDATA[<p>Starting today, Amazon EC2 R9i instances are available in the Europe (Stockholm) and Asia Pacific (Seoul) Regions.</p><p>R9i instances deliver up to 20% better price performance than R8i. <a href="https://aws.amazon.com/ec2/instance-types/r9i/">Learn more</a></p>]]></description>
+      <pubDate>Thu, 01 Oct 2026 16:00:00 +0000</pubDate>
+      <guid isPermaLink="false">whats-new-2026-10-amazon-ec2-r9i-additional-regions</guid>
+    </item>
+    <item>
+      <title>AWS Lambda adds support for Node.js 26 &amp; Python 3.15</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/aws-lambda-nodejs-26-python-3-15/</link>
+      <description><![CDATA[<p>AWS Lambda now supports creating functions with the Node.js 26 and Python 3.15 runtimes.</p>]]></description>
+      <pubDate>Wed, 30 Sep 2026 18:30:00 +0000</pubDate>
+      <guid isPermaLink="false">whats-new-2026-09-aws-lambda-nodejs-26-python-3-15</guid>
+    </item>
+    <item>
+      <title>Amazon S3 Tables adds cross-region replication</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-s3-tables-replication/</link>
+      <description><![CDATA[<p>You can now replicate S3 Tables across AWS Regions and accounts.</p><ul><li>Replicas stay in sync within minutes</li><li>Works with Apache Iceberg catalogs</li></ul>]]></description>
+      <pubDate>Tue, 29 Sep 2026 15:10:00 +0000</pubDate>
+      <guid isPermaLink="false">whats-new-2026-09-amazon-s3-tables-replication</guid>
+    </item>
+    <item>
+      <title>Amazon CloudWatch now supports cross-account log anomaly detection</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-cloudwatch-cross-account-anomaly/</link>
+      <description><![CDATA[<p>CloudWatch Logs anomaly detection can now run across the accounts of an AWS Organization.</p>]]></description>
+      <pubDate>Mon, 28 Sep 2026 12:00:00 +0000</pubDate>
+      <guid isPermaLink="false">whats-new-2026-09-amazon-cloudwatch-cross-account-anomaly</guid>
+    </item>
+    <item>
+      <title>AWS Backup adds support for Amazon FSx for OpenZFS</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/aws-backup-fsx-openzfs/</link>
+      <description><![CDATA[<p>AWS Backup now protects Amazon FSx for OpenZFS file systems.</p>]]></description>
+      <pubDate>Fri, 25 Sep 2026 09:45:00 +0000</pubDate>
+      <guid isPermaLink="false">whats-new-2026-09-aws-backup-fsx-openzfs</guid>
+    </item>
+    <item>
+      <title>Amazon RDS for PostgreSQL supports minor versions 17.7 and 16.11</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-rds-postgresql-minor-versions/</link>
+      <description><![CDATA[<p>Amazon RDS for PostgreSQL now supports the latest minor versions.</p>]]></description>
+      <pubDate>Thu, 24 Sep 2026 20:20:00 +0000</pubDate>
+      <guid isPermaLink="false">whats-new-2026-09-amazon-rds-postgresql-minor-versions</guid>
+    </item>
+    <item>
+      <title>Amazon Bedrock adds batch inference for more models</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/amazon-bedrock-batch-inference/</link>
+      <description><![CDATA[<p>Batch inference is now available for additional models in Amazon Bedrock.</p>]]></description>
+      <pubDate>Wed, 23 Sep 2026 14:00:00 +0000</pubDate>
+      <guid isPermaLink="false">whats-new-2026-09-amazon-bedrock-batch-inference</guid>
+    </item>
+  </channel>
+</rss>

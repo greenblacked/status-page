@@ -10,6 +10,7 @@ import {
   type Result,
   recordPath,
   recordResponses,
+  releaseFeedResult,
   syncDeployHealth,
   syncIssues,
 } from "./source-health.ts";
@@ -116,6 +117,46 @@ describe("source-health issue sync", () => {
     await syncIssues([healthy]);
     expect(issues).toHaveLength(0);
     expect(comments).toHaveLength(0);
+  });
+});
+
+describe("release feeds in the report", () => {
+  it("are rows of their own, named for the feed and keyed apart from their card", () => {
+    expect(
+      releaseFeedResult({ id: "gitlab", label: "GitLab releases", ok: true, latencyMs: 240, bytes: 10 }, 2),
+    ).toEqual({
+      id: "gitlab-releases",
+      name: "GitLab releases",
+      ok: true,
+      latencyMs: 240,
+      attempts: 2,
+      failure: undefined,
+    });
+    const failure = { kind: "parser" as const, message: "GitLab releases had no readable entries." };
+    expect(
+      releaseFeedResult({ id: "cs2-europe", label: "CS2 releases", ok: false, latencyMs: 12, bytes: 0, failure }, 3),
+    ).toMatchObject({ id: "cs2-europe-releases", name: "CS2 releases", ok: false, failure });
+  });
+
+  it("open an issue of their own that names the release feed reader and says the card keeps its health", async () => {
+    const result = releaseFeedResult(
+      {
+        id: "gitlab",
+        label: "GitLab releases",
+        ok: false,
+        latencyMs: 12,
+        bytes: 0,
+        failure: { kind: "parser", message: "GitLab releases was not an RSS or Atom feed." },
+      },
+      3,
+    );
+    await syncIssues([result, { ...healthy, id: "gitlab", name: "GitLab" }]);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].title).toBe("Collector failure: GitLab releases");
+    expect(issues[0].labels).toEqual(["source-health", "source:gitlab-releases"]);
+    expect(issues[0].body).toContain("release feed");
+    expect(issues[0].body).toContain("release-feeds.server.ts");
+    expect(issues[0].body).toContain("keeps its health");
   });
 });
 

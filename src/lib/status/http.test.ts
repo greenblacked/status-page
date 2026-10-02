@@ -250,6 +250,24 @@ describe("fetchText redirects", () => {
     expect((await fetchText("https://upgrade.mikrotik.com/routeros/NEWESTa7.stable")).body).toBe("7.16");
   });
 
+  it("follows Google's release-notes feed to docs.cloud.google.com, and only that one move", async () => {
+    const calls = routed({
+      "https://cloud.google.com/feeds/gcp-release-notes.xml": () =>
+        redirect("https://docs.cloud.google.com/feeds/gcp-release-notes.xml", 301),
+      "https://docs.cloud.google.com/feeds/gcp-release-notes.xml": () => new Response("<feed/>"),
+    });
+    expect((await fetchText("https://cloud.google.com/feeds/gcp-release-notes.xml")).body).toBe("<feed/>");
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://cloud.google.com/feeds/gcp-release-notes.xml",
+      "https://docs.cloud.google.com/feeds/gcp-release-notes.xml",
+    ]);
+    // The allowance is one way and one host: nothing else on google.com, and not back again.
+    routed({ "https://cloud.google.com/feeds/x.xml": () => redirect("https://sites.google.com/x") });
+    await expect(fetchText("https://cloud.google.com/feeds/x.xml")).rejects.toThrow("off the vendor's host");
+    routed({ "https://docs.cloud.google.com/a": () => redirect("https://cloud.google.com/a") });
+    await expect(fetchText("https://docs.cloud.google.com/a")).rejects.toThrow("off the vendor's host");
+  });
+
   it.each([
     ["another site", "https://evil.example.net/steal", "evil.example.net"],
     ["a lookalike domain", "https://status.example.com.evil.net/", "status.example.com.evil.net"],

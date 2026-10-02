@@ -179,6 +179,8 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
  * port); add an entry only for a redirect a collector's real URL has been seen to make.
  */
 const REDIRECT_ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  // Google moved its documentation, release-notes feed included, to docs.cloud.google.com.
+  "cloud.google.com": ["docs.cloud.google.com"],
   "upgrade.mikrotik.com": ["download.mikrotik.com"],
   "download.mikrotik.com": ["upgrade.mikrotik.com"],
 };

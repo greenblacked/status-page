@@ -461,7 +461,7 @@ function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "c
  * null entry, a non-array) is skipped, not a crash. The cut comes before the
  * filter, so a payload of millions of entries costs `limit` of work and memory.
  */
-function records<T extends object>(value: unknown, limit = MAX_SCANNED_ROWS): T[] {
+export function records<T extends object>(value: unknown, limit = MAX_SCANNED_ROWS): T[] {
   return Array.isArray(value)
     ? value.slice(0, limit).filter((item): item is T => typeof item === "object" && item !== null)
     : [];
@@ -1287,7 +1287,7 @@ function isAsciiLetter(code: number): boolean {
   return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
 
-function stripHtml(value: string): string {
+export function stripHtml(value: string): string {
   return stripMarkup(value)
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/\s+/g, " ")

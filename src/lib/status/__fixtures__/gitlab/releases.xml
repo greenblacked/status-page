@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>GitLab Releases</title>
+  <id>https://about.gitlab.com/releases.xml</id>
+  <link href="https://about.gitlab.com/releases.xml" rel="self"/>
+  <link href="https://about.gitlab.com/releases/" rel="alternate"/>
+  <updated>2026-09-24T00:00:00+00:00</updated>
+  <entry>
+    <title>GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7</title>
+    <link href="https://about.gitlab.com/releases/2026/09/24/patch-release-gitlab-18-4-1-released/" rel="alternate" type="text/html"/>
+    <id>https://about.gitlab.com/releases/2026/09/24/patch-release-gitlab-18-4-1-released/</id>
+    <published>2026-09-24T00:00:00+00:00</published>
+    <updated>2026-09-24T00:00:00+00:00</updated>
+    <content type="html"><![CDATA[<p>Today we are releasing versions 18.4.1, 18.3.3, and 18.2.7 for GitLab Community Edition (CE) and Enterprise Edition (EE).</p><p>These versions contain important bug and security fixes, and we strongly recommend that all self-managed GitLab installations be upgraded to one of these versions immediately.</p>]]></content>
+  </entry>
+  <entry>
+    <title>GitLab 18.4 released with Duo Agent Platform improvements and a faster merge train</title>
+    <link href="https://about.gitlab.com/releases/2026/09/18/gitlab-18-4-released/" rel="alternate" type="text/html"/>
+    <id>https://about.gitlab.com/releases/2026/09/18/gitlab-18-4-released/</id>
+    <published>2026-09-18T00:00:00+00:00</published>
+    <updated>2026-09-18T00:00:00+00:00</updated>
+    <content type="html"><![CDATA[<p>Today, we are excited to announce the release of GitLab 18.4 with improvements to merge trains, a new pipeline inputs editor, and Duo Agent Platform updates.</p>]]></content>
+  </entry>
+  <entry>
+    <title>GitLab Patch Release: 18.3.2, 18.2.6, 18.1.8</title>
+    <link href="https://about.gitlab.com/releases/2026/09/10/patch-release-gitlab-18-3-2-released/" rel="alternate" type="text/html"/>
+    <id>https://about.gitlab.com/releases/2026/09/10/patch-release-gitlab-18-3-2-released/</id>
+    <published>2026-09-10T00:00:00+00:00</published>
+    <updated>2026-09-10T00:00:00+00:00</updated>
+    <content type="html"><![CDATA[<p>Today we are releasing versions 18.3.2, 18.2.6, and 18.1.8 for GitLab CE and EE.</p>]]></content>
+  </entry>
+  <entry>
+    <title>GitLab Critical Patch Release: 18.3.1, 18.2.5, 18.1.7</title>
+    <link href="https://about.gitlab.com/releases/2026/09/03/critical-patch-release-gitlab-18-3-1-released/" rel="alternate" type="text/html"/>
+    <id>https://about.gitlab.com/releases/2026/09/03/critical-patch-release-gitlab-18-3-1-released/</id>
+    <published>2026-09-03T00:00:00+00:00</published>
+    <updated>2026-09-03T00:00:00+00:00</updated>
+    <content type="html"><![CDATA[<p>Critical fixes for GitLab CE and EE.</p>]]></content>
+  </entry>
+</feed>
