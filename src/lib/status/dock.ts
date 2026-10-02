@@ -20,7 +20,7 @@ export type DockState = {
 
 /**
  * Where the dock keeps those two discrete states. A store outside React, read
- * with useDockState, so that the board (which holds every card) does not
+ * with useDockSelect, so that the board (which holds every card) does not
  * render when the bar comes up: only the bar, the hero's two buttons and the
  * field's placeholder do. Every change is a step, never a progress, so a scroll
  * costs React nothing between them.

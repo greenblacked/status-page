@@ -1387,9 +1387,11 @@ test("keeps the dock steady through a fast scroll, down and back up", async ({ p
 });
 
 /**
- * Scrolls to `y` and, the moment the page has docked or released the field (data-docked changes), stops the
+ * Scrolls to `y` and, in the frame after the page has docked or released the field (data-docked changes), stops the
  * transitions that start with it, before a frame is drawn, so a test can look at the field at the start of its
- * move whatever the speed of the browser. `release` lets them finish. Phone only.
+ * move whatever the speed of the browser. `release` lets them finish. Phone only. The page draws the pose the
+ * move starts from in the frame that writes data-docked and starts the move in the next one (useSearchDock), so
+ * this waits for that frame's callbacks, which run after the page's own.
  */
 async function dockHeld(page: Page, y: number): Promise<{ clearOpacity: number | null }> {
   // Moves are armed two frames after the load; a scroll before that is a snap, not a move.
@@ -1408,13 +1410,15 @@ async function dockHeld(page: Page, y: number): Promise<{ clearOpacity: number |
           if (dock.hasAttribute("data-docked") === was) return;
           observer.disconnect();
           window.clearTimeout(timer);
-          // Reading the animations lets the browser start the ones this change calls for, in this very frame.
-          for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
-            animation.pause();
-          }
-          // Read in this task: the dock's own timer ends the wait for the move whether or not it is held.
-          const clear = dock.querySelector('button[aria-label="Clear search"]');
-          resolve({ clearOpacity: clear ? Number.parseFloat(getComputedStyle(clear).opacity) : null });
+          requestAnimationFrame(() => {
+            // Reading the animations lets the browser start the ones the page has just called for, in this very frame.
+            for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
+              animation.pause();
+            }
+            // Read in this frame: the dock's own timer ends the wait for the move whether or not it is held.
+            const clear = dock.querySelector('button[aria-label="Clear search"]');
+            resolve({ clearOpacity: clear ? Number.parseFloat(getComputedStyle(clear).opacity) : null });
+          });
         });
         observer.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
         window.scrollTo(0, top);
@@ -1619,6 +1623,148 @@ test("starts the field's fill where it was and ends it in the slot, never at the
   expect(back.chrome.width).toBeCloseTo(back.dock.width, 0);
   expect(back.chrome.left).toBeCloseTo(back.dock.left, 0);
   expect(back.chromeTransform).toBe("none");
+});
+
+/** What `sampleDockMove` read on one animation frame. `longPlaceholder`: the placeholder the field started with. */
+type DockFrame = { at: number; left: number; width: number; docked: boolean; longPlaceholder: boolean };
+
+/**
+ * Scrolls the way `kind` says and reads the search field's fill (left, width), the dock's pose and whether the
+ * placeholder is the long one, on every animation frame, for `ms`. The reading runs first in each frame, so it is
+ * what the frame before drew. `stall` burns that many ms of the main thread in the task that writes data-docked,
+ * the frame that starts the move, which is what a busy phone does there (a render, a layout, a paint).
+ *   drag  - a finger's pace, 14px a frame, to `to`
+ *   flick - momentum, 40px a frame
+ *   jump  - one scroll event that crosses the whole threshold
+ */
+async function sampleDockMove(
+  page: Page,
+  move: { kind: "drag" | "flick" | "jump"; from: number; to: number; stall?: number; ms?: number },
+): Promise<DockFrame[]> {
+  await scrollAndSettle(page, move.from);
+  await dockMoved(page);
+  return page.evaluate(
+    ({ kind, from, to, stall = 0, ms = 900 }) =>
+      new Promise<DockFrame[]>((resolve) => {
+        const dock = document.querySelector(".search-dock") as HTMLElement;
+        const chrome = dock.querySelector(".search-chrome") as HTMLElement;
+        const input = dock.querySelector("input") as HTMLInputElement;
+        const initial = input.placeholder;
+        const frames: DockFrame[] = [];
+        const was = dock.hasAttribute("data-docked");
+        if (stall > 0) {
+          const burn = new MutationObserver(() => {
+            if (dock.hasAttribute("data-docked") === was) return;
+            burn.disconnect();
+            for (const end = performance.now() + stall; performance.now() < end; );
+          });
+          burn.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
+        }
+        const start = performance.now();
+        const read = (now: number) => {
+          const box = chrome.getBoundingClientRect();
+          frames.push({
+            at: now,
+            left: box.left,
+            width: box.width,
+            docked: dock.hasAttribute("data-docked"),
+            longPlaceholder: input.placeholder === initial,
+          });
+          if (now - start < ms) requestAnimationFrame(read);
+          else resolve(frames);
+        };
+        requestAnimationFrame(read);
+        const step = kind === "flick" ? 40 : 14;
+        let y = from;
+        const scroll = () => {
+          y = kind === "jump" ? to : Math.abs(to - y) <= step ? to : y + Math.sign(to - y) * step;
+          window.scrollTo(0, y);
+          if (y !== to) requestAnimationFrame(scroll);
+        };
+        // After a few frames at rest, so the first reading is of the pose before the move.
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(scroll)));
+      }),
+    move,
+  );
+}
+
+test("moves the field's fill into the dock in small steps from its rest box, from its first frame, however the scroll arrives", async ({
+  page,
+  browserName,
+}) => {
+  test.slow();
+  await steadyBoard(page);
+  const { wide, moveStart, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll, with no move in time");
+  const rest = await dockBoxes(page);
+  // The most of the way a frame at 60Hz may cover (a frame that arrives later may cover its share of more). The
+  // field takes DOCK_MS, but an ease-out that starts steeply covers well over a third of the way in its first
+  // frame, and a first frame that a busy phone draws late (WebKit counts a transition from the frame that starts
+  // it) then shows most of it at once: the field seems to jump.
+  const STEP = 0.25;
+  const FRAME = 1000 / 60;
+  const cdp = browserName === "chromium" ? await page.context().newCDPSession(page) : null;
+  const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
+  const past = Math.ceil(moveEnd) + 60;
+  const across = Math.ceil(moveStart) + 3;
+  const moves = [
+    { kind: "drag", from: before, to: past, name: "a drag in" },
+    { kind: "jump", from: past, to: before, name: "one jump out" },
+    { kind: "jump", from: before, to: across, name: "one jump in" },
+    { kind: "drag", from: past, to: before, name: "a drag out" },
+    { kind: "flick", from: before, to: past + 200, name: "a flick in" },
+    { kind: "flick", from: past + 200, to: before, name: "a flick out" },
+    { kind: "jump", from: before, to: across, stall: 80, name: "one jump in, the first frame busy" },
+    { kind: "jump", from: past, to: before, stall: 80, name: "one jump out, the first frame busy" },
+  ] as const;
+  for (const rate of cdp ? [1, 4] : [1]) {
+    await cdp?.send("Emulation.setCPUThrottlingRate", { rate });
+    for (const move of moves) {
+      const name = `${move.name}${rate > 1 ? ` at ${rate}x CPU` : ""}`;
+      const frames = await sampleDockMove(page, move);
+      const going = move.to > move.from;
+      const first = frames.findIndex((frame) => frame.docked === going);
+      expect(first, `${name}: the dock reacted`).toBeGreaterThanOrEqual(0);
+      await dockMoved(page);
+      const box = await dockBoxes(page);
+      // The box the fill leaves and the one it settles in: the field's own at rest, and the slot (within a couple of
+      // pixels: the slot's offsets are whole pixels, and a tablet's bar can leave a sub-pixel more).
+      const from = going
+        ? { left: rest.dock.left, width: rest.dock.width }
+        : { left: box.slot.left, width: box.slot.width };
+      const to = going ? box.chrome : box.dock;
+      const target = going ? box.slot : box.dock;
+      expect(Math.abs(to.left - target.left), `${name}: settles at its left edge`).toBeLessThanOrEqual(2);
+      expect(Math.abs(to.width - target.width), `${name}: settles at its width`).toBeLessThanOrEqual(2);
+      expect(Math.abs(to.width - from.width), `${name}: the fill has somewhere to go`).toBeGreaterThan(20);
+      const last = frames.at(-1) as DockFrame;
+      expect(Math.abs(last.left - to.left), `${name}: ends where it settles`).toBeLessThanOrEqual(1);
+      expect(Math.abs(last.width - to.width), `${name}: ends at the width it settles at`).toBeLessThanOrEqual(1);
+      // How far along the way from `from` to `to` each of its edges is: 0 at the start, 1 at the end.
+      const along = (value: number, key: "left" | "width") => (value - from[key]) / (to[key] - from[key]);
+      let previous = 0;
+      let previousAt = frames[first].at;
+      for (const [index, frame] of frames.slice(first).entries()) {
+        const edge = along(frame.left, "left");
+        const size = along(frame.width, "width");
+        const label = `${name}, frame ${index} after the dock changed`;
+        // Never the wrong width for its place: the two edges go together, and the fill stays between the boxes.
+        expect(Math.abs(edge - size), `${label}: left and width move together`).toBeLessThanOrEqual(0.04);
+        expect(size, `${label}: not past the slot`).toBeLessThanOrEqual(1.02);
+        expect(size, `${label}: not back past where it started`).toBeGreaterThanOrEqual(-0.02);
+        expect(size, `${label}: never turns back`).toBeGreaterThanOrEqual(previous - 0.02);
+        // In small steps, the first included: no frame covers more than its share of the way.
+        const room = STEP * Math.max(1, (frame.at - previousAt) / FRAME);
+        expect(size - previous, `${label}: the step`).toBeLessThanOrEqual(Math.min(room, 1));
+        if (index === 0) expect(size, `${label}: starts where it was`).toBeLessThanOrEqual(0.02);
+        // The long placeholder is still there in the frame that shows the dock changed: it shortens with the move,
+        // which starts in the frame after, not with the pose.
+        if (going && index === 0) expect(frame.longPlaceholder, `${label}: the placeholder`).toBe(true);
+        previous = size;
+        previousAt = frame.at;
+      }
+    }
+  }
 });
 
 test("never puts the field under the bar, so a flick's late frame cannot hide it", async ({ page }) => {

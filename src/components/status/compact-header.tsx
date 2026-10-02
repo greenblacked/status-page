@@ -26,34 +26,60 @@ function pageLeft(element: HTMLElement): number {
   return x;
 }
 
-export function useDockState(store: DockStore): DockState {
-  return useSyncExternalStore(store.subscribe, store.get, () => DOCK_REST);
+/**
+ * One part of the dock's state. A component renders only when its own part changes, not on every change of the
+ * state: the bar and the hero's buttons (barShown) are not rendered again when the field docks, which keeps what
+ * the page does in the frame that starts the field's move down to the one input whose placeholder shortens.
+ */
+export function useDockSelect<T extends boolean | number | string>(
+  store: DockStore,
+  select: (state: DockState) => T,
+): T {
+  return useSyncExternalStore(
+    store.subscribe,
+    () => select(store.get()),
+    () => select(DOCK_REST),
+  );
 }
 
 /** The width from which the search field shares a row with the filter chips (Tailwind's lg). */
 const WIDE = "(min-width: 64rem)";
 
 /**
- * Runs `change`, which flips the field's pose (data-docked) and so changes the width of `chrome`, the field's
- * fill, and has the fill move from where it was drawn to its new box with a transition of its own. The box
- * takes its new width at once, so the fill never goes through a layout while it moves, and what is drawn
- * is held to the old width with a scaleX for the one style recalculation in between (FLIP: first, last, invert,
- * play). Read from where the fill is now, not from where it was at rest, so a move that is turned round part
- * way carries on from the shape it has.
+ * The first half of the field's move, in the frame that docks it or lets it go. `change` flips the field's pose
+ * (data-docked), which gives the input its new width at once and the field a new place to move to. What is drawn
+ * is held where it was, with the transitions off: the field at its old x (inline transform) and the fill, which is
+ * the size of the field and so has its new width too, held to the old width with a scaleX (FLIP: first, last,
+ * invert). Read from where the fill is now, not from where it was at rest, so a move that is turned round part
+ * way carries on from the shape it has. The style is flushed here, so this frame draws that pose, and
+ * `playMove` starts the move in the frame after it.
  */
-function flipFill(chrome: HTMLElement, change: () => void): void {
+function holdMove(field: HTMLElement, chrome: HTMLElement, change: () => void): void {
   const first = chrome.getBoundingClientRect().width;
+  const x = getComputedStyle(field).transform;
+  field.style.transition = "none";
   chrome.style.transition = "none";
+  field.style.transform = x;
   chrome.style.transform = "";
   change();
   const last = chrome.offsetWidth;
-  if (first > 0 && last > 0 && Math.abs(first - last) > 0.5) {
-    chrome.style.transform = `scaleX(${first / last})`;
-    // The style as it is held, so the move below starts from it.
-    void chrome.getBoundingClientRect();
+  if (first > 0 && last > 0 && Math.abs(first - last) > 0.5) chrome.style.transform = `scaleX(${first / last})`;
+  // The held pose is the style the move starts from, whatever the engine's idea of when to recalculate.
+  void chrome.getBoundingClientRect();
+}
+
+/**
+ * The second half: lets go of the pose `holdMove` drew, and CSS plays the move from it to the field's new box.
+ * It runs in the next frame, never the one that wrote the pose. A browser counts a transition's time from the
+ * frame that starts it, and what else that frame does (the layout and paint of the new pose, the page's own
+ * script) is time the move has played before its first frame is drawn; on an iPhone, where that is tens of ms,
+ * the fill was most of the way in at once. The frame after has next to nothing left to do.
+ */
+function playMove(field: HTMLElement, chrome: HTMLElement): void {
+  for (const element of [field, chrome]) {
+    element.style.removeProperty("transition");
+    element.style.removeProperty("transform");
   }
-  chrome.style.transition = "";
-  chrome.style.transform = "";
 }
 
 /**
@@ -66,6 +92,13 @@ function flipFill(chrome: HTMLElement, change: () => void): void {
  * visible is therefore tied to the scroll position on a phone. This hook only compares it with thresholds
  * (dockFrame), and the merge is a transition in time that CSS plays on the compositor, of transform and
  * opacity only, from the moment the threshold is crossed (data-docked on the dock and on the bar).
+ *
+ * That moment is two frames. The first (holdMove) writes the new pose and draws the field exactly as it was, so
+ * the fill starts from its rest box; the second (playMove) lets the transitions go. A browser counts a
+ * transition's time from the frame that starts it, so whatever else the first frame costs (the layout and paint
+ * of the new pose, React) must not be in it: on an iPhone it was, and the fill was most of the way in when its
+ * first frame was drawn. React hears of the new pose (the placeholder shortens) in the second frame, with the
+ * move, and renders only the input then.
  *
  * Progress comes from window.scrollY against offsets measured when the layout changes, never from a rect
  * read on every frame. Every offset is worked out from `end`, the scroll position at which the field reaches
@@ -126,6 +159,11 @@ export function useSearchDock({
     let lastBottom: number | undefined;
     let grew = false;
     let settling = 0;
+    // The publish of the dock's state to React that is held back (see publish()), and the latest one asked for.
+    let publishing = 0;
+    let publishTurn = 0;
+    // The frame that starts the move holdMove has drawn the start of (a rAF id), and the pose the bar takes then.
+    let playing = 0;
     let insets = { pin: 0, barTop: 0 };
     let state: DockState = DOCK_REST;
     let geometry: DockGeometry = {
@@ -220,14 +258,23 @@ export function useSearchDock({
         }
       }
     };
+    /** Drops a move that has been held for its first frame, and the pose it was held in. */
+    const releaseMove = () => {
+      if (!playing) return;
+      cancelAnimationFrame(playing);
+      playing = 0;
+      const field = dock.querySelector<HTMLElement>(".search-field");
+      const chrome = dock.querySelector<HTMLElement>(".search-chrome");
+      if (field && chrome) playMove(field, chrome);
+    };
     /**
      * Phone: the pose the field and the bar are in, which CSS moves them to over DOCK_MS. Returns whether it
      * was written as a move (the CSS transition may play) rather than as the pose the page opened in.
      */
     const writeDocked = (docked: boolean): boolean => {
-      const set = () => {
-        for (const element of [dock, bar]) element.toggleAttribute("data-docked", docked);
-      };
+      const set = () => dock.toggleAttribute("data-docked", docked);
+      const setBar = () => bar.toggleAttribute("data-docked", docked);
+      const field = dock.querySelector<HTMLElement>(".search-field");
       const chrome = dock.querySelector<HTMLElement>(".search-chrome");
       // The first pose is not a move: the page opened part way down, or came back to a scroll position, which a
       // browser may restore after this hook has run (WebKit does, up to the end of the load). Until the page has
@@ -236,13 +283,27 @@ export function useSearchDock({
       // which holds in every engine, where a style flush between two inline writes is only as good as the
       // engine's idea of when to recalculate.
       if (!painted || !armed) {
+        releaseMove();
         holdInstant();
         set();
+        setBar();
         painted = true;
         return false;
       }
-      if (chrome && !reduce.matches) flipFill(chrome, set);
-      else set();
+      if (field && chrome && !reduce.matches) {
+        // This frame draws the pose the move starts from; the next one plays it (see playMove).
+        cancelAnimationFrame(playing);
+        holdMove(field, chrome, set);
+        playing = requestAnimationFrame(() => {
+          playing = 0;
+          playMove(field, chrome);
+          setBar();
+        });
+      } else {
+        releaseMove();
+        set();
+        setBar();
+      }
       painted = true;
       return true;
     };
@@ -250,6 +311,7 @@ export function useSearchDock({
     const clearMarks = () => {
       if (laidOutWide === wide.matches) return;
       laidOutWide = wide.matches;
+      releaseMove();
       if (wide.matches) {
         dock.removeAttribute("data-docked");
         bar.removeAttribute("data-docked");
@@ -269,9 +331,33 @@ export function useSearchDock({
       state = { ...state, settled: docked };
       store.set(state);
     };
+    /**
+     * Tells React what the dock has reached (store.set). When the frame has started a move that waits for the
+     * frame that plays it (playMove), and happens in that frame, after it: the placeholder shortens as the field
+     * starts to move, not in the frame before it, where the field is still where it was. What is rendered then is
+     * the input alone (useDockSelect). A publish that is waiting carries the latest state.
+     */
+    const publish = (hold: boolean) => {
+      if (!hold) {
+        if (!publishing) store.set(state);
+        return;
+      }
+      publishTurn += 1;
+      const turn = publishTurn;
+      publishing = turn;
+      requestAnimationFrame(() => {
+        if (!alive || turn !== publishing) return;
+        publishing = 0;
+        store.set(state);
+      });
+    };
     const frame = () => {
       raf = 0;
       let instant = false;
+      let moved = false;
+      // Whether the field has a move in time to play. Read before the pose is written: that holds the field's
+      // transitions off (inline) for the frame that draws it.
+      let animates = false;
       // The 8px hysteresis keeps a bar up that the page has scrolled back a little from its place. It is not for
       // a hero that has grown: the new last line may sit under the bar, which is slowly sliding in, so the bar
       // goes by the threshold itself (it waits for the line to be out from under the bar's highest point).
@@ -284,19 +370,21 @@ export function useSearchDock({
           writeProgress(next.p);
         }
       } else if (next.docked !== state.docked || !painted) {
+        const field = dock.querySelector<HTMLElement>(".search-field");
+        animates = field !== null && (playing !== 0 || transitionMs(getComputedStyle(field).transitionDuration) > 0);
         instant = !writeDocked(next.docked);
       }
       if (next.docked !== state.docked) {
         window.clearTimeout(settling);
         settling = 0;
         dock.removeAttribute("data-moving");
-        const field = dock.querySelector<HTMLElement>(".search-field");
         // What is written in the field waits for the move when there is one, and follows at once when there
         // is none (Reduce Motion, a wide screen).
-        const moves = !instant && field !== null && transitionMs(getComputedStyle(field).transitionDuration) > 0;
+        const moves = !instant && animates;
         state = { barShown: next.barShown, docked: next.docked, settled: moves ? state.settled : next.docked };
         // transitionend usually ends the wait; the timer is for a move that never reports (a hidden tab).
         if (moves) {
+          moved = true;
           // The field's own controls (Clear) are at their docked place at once; they wait out the move.
           dock.setAttribute("data-moving", "");
           settling = window.setTimeout(() => settle(next.docked), DOCK_MS + 100);
@@ -304,7 +392,7 @@ export function useSearchDock({
       } else {
         state = { ...state, barShown: next.barShown };
       }
-      store.set(state);
+      publish(moved);
     };
     const onTransitionEnd = (event: TransitionEvent) => {
       if (settling && event.propertyName === "transform" && event.target === dock.querySelector(".search-field")) {
@@ -371,6 +459,8 @@ export function useSearchDock({
       ro.disconnect();
       window.clearTimeout(settling);
       dock.removeAttribute("data-moving");
+      publishing = 0;
+      releaseMove();
       if (raf) cancelAnimationFrame(raf);
     };
   }, [hostRef, dockRef, barRef, slotRef, chipsRef, store]);
@@ -413,7 +503,7 @@ export function CompactHeader({
   /** The controls, rendered by the board so they share its state and handlers. */
   children: ReactNode;
 }) {
-  const { barShown } = useDockState(store);
+  const barShown = useDockSelect(store, (state) => state.barShown);
   const [heldByKeyboard, setKeyboardFocus] = useState(false);
   const visible = barShown || heldByKeyboard;
   const when = checkedAt === null ? null : <LocalTime at={checkedAt} />;
