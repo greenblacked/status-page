@@ -10,7 +10,8 @@
 // hour now and then, and an issue that opens and closes itself is noise. The
 // first failing run is remembered in a closed `source-health-state` issue
 // (see findStateIssue / parseState / saveState), so no new permission or
-// infrastructure is needed.
+// infrastructure is needed. The issue's label is created on first use and its
+// body marker is the fallback lookup, so the streak survives a missing label.
 //
 // Local:  node --experimental-strip-types scripts/ci/source-health.ts
 //         (exits 1 when any source fails)
@@ -208,6 +209,7 @@ export function recordResponses(dir: string): () => void {
 type Issue = {
   number: number;
   state?: string;
+  labels?: ({ name?: string } | string)[];
   created_at: string;
   body?: string | null;
   pull_request?: unknown;
@@ -328,9 +330,13 @@ export function planRun(
 // so it never shows among the open ones. Its body carries the entries as JSON
 // in a code block. Issues are the one thing this job may already write, so
 // the workflow needs no new permission and nothing else to run or store.
+// The label is created through the API before it is first used, and the issue
+// can also be found by the marker in its body (STATE_MARKER), so a label that
+// is missing or was dropped can never lose the streak.
 const STATE_LABEL = "source-health-state";
+const STATE_MARKER = `<!-- ${STATE_LABEL} -->`;
 const STATE_TITLE = "Source health: failures awaiting a second run";
-const STATE_INTRO = `<!-- ${STATE_LABEL} -->
+const STATE_INTRO = `${STATE_MARKER}
 Bookkeeping for \`.github/workflows/source-health.yml\`, kept closed on purpose: a source that fails once is noted here, and gets its own issue only if the next run fails too. Do not edit by hand.`;
 
 export function renderState(state: ReadonlyMap<string, Pending>): string {
@@ -366,28 +372,84 @@ export function parseState(body: string | null | undefined): Map<string, Pending
   return state;
 }
 
+/** The pages of closed issues the marker fallback reads at most (100 each). */
+const STATE_SCAN_PAGES = 3;
+
+const hasMarker = (issue: Issue) => !issue.pull_request && (issue.body ?? "").includes(STATE_MARKER);
+
 async function findStateIssue(repo: string): Promise<Issue | undefined> {
-  const found = await github<Issue[]>(
+  const labelled = await github<Issue[]>(
     "GET",
     `/repos/${repo}/issues?state=all&per_page=10&labels=${encodeURIComponent(STATE_LABEL)}`,
   );
-  return found.find((issue) => !issue.pull_request);
+  const byLabel = labelled.find((issue) => !issue.pull_request);
+  if (byLabel) return byLabel;
+  // No labelled issue: the label may never have been created or applied, so
+  // look for the marker in the body. Both lookups are bounded and best effort.
+  try {
+    const query = encodeURIComponent(`repo:${repo} is:issue in:body ${STATE_LABEL}`);
+    const found = await github<{ items?: Issue[] }>("GET", `/search/issues?q=${query}&per_page=30`);
+    const hit = found.items?.find(hasMarker);
+    if (hit) return hit;
+  } catch (error) {
+    console.warn(`State issue search failed, scanning closed issues: ${(error as Error).message}`);
+  }
+  try {
+    for (let page = 1; page <= STATE_SCAN_PAGES; page++) {
+      const closed = await github<Issue[]>(
+        "GET",
+        `/repos/${repo}/issues?state=closed&per_page=100&sort=created&direction=asc&page=${page}`,
+      );
+      const hit = closed.find(hasMarker);
+      if (hit) return hit;
+      if (closed.length < 100) break;
+    }
+  } catch (error) {
+    console.warn(`State issue scan failed, starting without memory: ${(error as Error).message}`);
+  }
+  return undefined;
 }
+
+/**
+ * Makes sure the state label exists before an issue is given it. An existing
+ * label (422) is fine, and any other failure only costs the label: the issue
+ * is still created and found again by its marker.
+ */
+async function ensureStateLabel(repo: string): Promise<void> {
+  try {
+    await github("POST", `/repos/${repo}/labels`, {
+      name: STATE_LABEL,
+      color: "ededed",
+      description: "Bookkeeping for the source-health workflow",
+    });
+  } catch (error) {
+    const message = (error as Error).message;
+    if (!/-> 422:/.test(message)) console.warn(`Could not create the ${STATE_LABEL} label: ${message}`);
+  }
+}
+
+const hasStateLabel = (issue: Issue) =>
+  (issue.labels ?? []).some((label) => (typeof label === "string" ? label : label.name) === STATE_LABEL);
 
 async function saveState(repo: string, issue: Issue | undefined, state: ReadonlyMap<string, Pending>): Promise<void> {
   const body = renderState(state);
   if (issue) {
+    // An issue found only by its marker gets the label back.
+    const relabel = hasStateLabel(issue) ? {} : { labels: [STATE_LABEL] };
+    if (relabel.labels) await ensureStateLabel(repo);
     // An issue left open by an earlier failed close is closed again here.
     if (issue.state === "open") {
       await github("PATCH", `/repos/${repo}/issues/${issue.number}`, {
         body,
         state: "closed",
         state_reason: "not_planned",
+        ...relabel,
       });
-    } else if (issue.body !== body) {
-      await github("PATCH", `/repos/${repo}/issues/${issue.number}`, { body });
+    } else if (issue.body !== body || relabel.labels) {
+      await github("PATCH", `/repos/${repo}/issues/${issue.number}`, { body, ...relabel });
     }
   } else if (state.size > 0) {
+    await ensureStateLabel(repo);
     const created = await github<Issue>("POST", `/repos/${repo}/issues`, {
       title: STATE_TITLE,
       body,

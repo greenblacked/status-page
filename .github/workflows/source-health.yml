@@ -13,7 +13,8 @@ name: Source health
 # for an hour does not open and close an issue by itself. A real outage
 # therefore reports one run later, hours later when the runs are delayed. The
 # first failing run is remembered in a closed `source-health-state` issue,
-# which needs only the `issues: write` below. A run where most sources fail at
+# which needs only the `issues: write` below (the label is created on first
+# use, and the issue is also found by a marker in its body). A run where most sources fail at
 # once (the runner's network) changes nothing. The deploy-health issue below
 # is unchanged: it opens on the first failing run.
 

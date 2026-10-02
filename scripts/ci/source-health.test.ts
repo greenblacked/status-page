@@ -35,6 +35,11 @@ type FakeIssue = {
 };
 let issues: FakeIssue[] = [];
 let comments: { issue: number; body: string }[] = [];
+// Repository labels, and the faked quirks a test can switch on: a status for
+// POST /labels, and an issue API that drops the state label when it is missing.
+let repoLabels: string[] = [];
+let labelStatus: number | undefined;
+let dropUnknownLabels = false;
 let server: Server;
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -53,15 +58,25 @@ beforeAll(async () => {
     const one = url.pathname.match(/\/issues\/(\d+)$/);
     const commentOn = url.pathname.match(/\/issues\/(\d+)\/comments$/);
     if (req.method === "GET" && url.pathname.endsWith("/issues")) {
-      const wanted = (url.searchParams.get("labels") ?? "").split(",");
-      return send(
-        200,
-        issues.filter(
-          (i) =>
-            (url.searchParams.get("state") === "all" || i.state === url.searchParams.get("state")) &&
-            wanted.every((l) => i.labels.includes(l)),
-        ),
+      const wanted = (url.searchParams.get("labels") ?? "").split(",").filter(Boolean);
+      const matching = issues.filter(
+        (i) =>
+          (url.searchParams.get("state") === "all" || i.state === url.searchParams.get("state")) &&
+          wanted.every((l) => i.labels.includes(l)),
       );
+      const page = Number(url.searchParams.get("page") ?? 1);
+      return send(200, matching.slice((page - 1) * 100, page * 100));
+    }
+    if (req.method === "GET" && url.pathname === "/search/issues") {
+      const term = (url.searchParams.get("q") ?? "").split(" ").at(-1) ?? "";
+      return send(200, { items: issues.filter((i) => i.body.includes(term)) });
+    }
+    if (req.method === "POST" && url.pathname.endsWith("/labels")) {
+      const { name } = (await readJson(req)) as { name: string };
+      if (labelStatus) return send(labelStatus, { message: "label call refused" });
+      if (repoLabels.includes(name)) return send(422, { errors: [{ code: "already_exists" }] });
+      repoLabels.push(name);
+      return send(201, { name });
     }
     if (req.method === "POST" && url.pathname.endsWith("/issues")) {
       const body = await readJson(req);
@@ -71,6 +86,8 @@ beforeAll(async () => {
         created_at: "2026-09-23T00:00:00Z",
         ...body,
       } as FakeIssue;
+      if (dropUnknownLabels)
+        issue.labels = issue.labels.filter((l) => l !== "source-health-state" || repoLabels.includes(l));
       issues.push(issue);
       return send(201, issue);
     }
@@ -100,6 +117,9 @@ afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 beforeEach(() => {
   issues = [];
   comments = [];
+  repoLabels = [];
+  labelStatus = undefined;
+  dropUnknownLabels = false;
   // Only the clock is faked, so each sync below can be a separate hourly run.
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(START);
@@ -185,6 +205,50 @@ describe("source-health issue sync", () => {
     expect(stateIssues()[0].state).toBe("closed");
     expect(stateIssues()[0].state_reason).toBe("not_planned");
     expect(parseState(stateIssues()[0].body).size).toBe(0);
+  });
+
+  it("creates the state label before the first state issue uses it", async () => {
+    dropUnknownLabels = true;
+    await later(0, [broken]);
+    expect(repoLabels).toContain("source-health-state");
+    expect(stateIssues()).toHaveLength(1);
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(stateIssues()).toHaveLength(1);
+  });
+
+  it("carries on when the state label already exists (422)", async () => {
+    repoLabels = ["source-health-state"];
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
+    expect(repoLabels).toEqual(["source-health-state"]);
+    expect(stateIssues()).toHaveLength(1);
+    expect(sourceIssues()).toHaveLength(1);
+  });
+
+  it("still finds the streak by its marker when the label cannot be created", async () => {
+    dropUnknownLabels = true;
+    labelStatus = 403;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await later(0, [broken]);
+    expect(repoLabels).toEqual([]);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    expect(stateIssues()).toHaveLength(0);
+    await later(4 * HOUR, [broken]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+  });
+
+  it("gives an issue found only by its marker the label back, without duplicating it", async () => {
+    await later(0, [broken]);
+    issues[0].labels = [];
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    expect(stateIssues()).toHaveLength(1);
   });
 
   it("closes a state issue that an earlier failed close left open", async () => {
