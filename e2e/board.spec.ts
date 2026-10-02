@@ -2103,7 +2103,9 @@ test("search reveal: a field being typed in is not let go of when the layout alo
   // A board that gives the page nothing to stand on once the filter has taken its cards away: the page ends up
   // above the line where the hero's field is behind the bar, however the browser then moves it (it clamps it
   // to the new end; Chromium's scroll anchoring may take it further). The reader did not scroll.
-  await page.addStyleTag({ content: ".board-body { min-height: 0 !important; } .board-body footer { display: none !important; }" });
+  await page.addStyleTag({
+    content: ".board-body { min-height: 0 !important; } .board-body footer { display: none !important; }",
+  });
   await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
   await page.keyboard.type("ab");
   await expect(bar).toHaveValue("ab");
