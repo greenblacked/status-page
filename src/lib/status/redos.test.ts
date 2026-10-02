@@ -4,6 +4,7 @@ import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./ch
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
+  decodeHtmlNames,
   dropScripts,
   gitlabVersion,
   htmlBlocks,
@@ -306,6 +307,21 @@ describe("parsers stay linear on crafted vendor input", () => {
       ];
       for (const title of cases) expect(elapsed(() => gitlabVersion(title))).toBeLessThan(BUDGET_MS);
       expect(gitlabVersion("GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7")).toBe("18.4.1");
+    });
+
+    it("decodeHtmlNames: ampersands, long names and references that never end", () => {
+      const cases = [
+        "&".repeat(SIZE),
+        "&a".repeat(SIZE / 2),
+        `&${"a".repeat(SIZE)}`,
+        "&hellip".repeat(SIZE / 7),
+        "&hellip;".repeat(SIZE / 8),
+        `${"&abcdefgh".repeat(SIZE / 9)};`,
+        "&;".repeat(SIZE / 2),
+        "&amp;rsquo;".repeat(SIZE / 11),
+      ];
+      for (const text of cases) expect(elapsed(() => decodeHtmlNames(text))).toBeLessThan(BUDGET_MS);
+      expect(decodeHtmlNames("a&hellip;&rsquo;b")).toBe("a\u2026\u2019b");
     });
 
     it("steamNoteLines: brackets, placeholders and equals signs without end", () => {

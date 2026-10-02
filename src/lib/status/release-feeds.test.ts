@@ -8,6 +8,7 @@ import { collectBoard } from "./collect-board.ts";
 import { MAX_BODY_BYTES, PayloadError } from "./http.ts";
 import {
   clearReleaseFeedCache,
+  decodeHtmlNames,
   gitlabVersion,
   htmlBlocks,
   jsonEntries,
@@ -288,6 +289,37 @@ describe("text from a vendor feed", () => {
     ]);
     expect(entries[1]?.release.notes).toEqual(["Escaped paragraph one.", "Escaped paragraph two."]);
     expect(entries[2]?.release.notes).toEqual(["Plain text, no markup at all."]);
+  });
+
+  it("reads the common HTML named references (&hellip; &rsquo; &mdash; ...) in titles and notes, once or double escaped", () => {
+    const entries = entriesOf("github", fixture("releases/named-entities.xml"));
+    expect(entries.map((entry) => entry.title)).toEqual([
+      "Copilot\u2026 now generally available \u2014 for everyone",
+      "Rock \u2019n\u2019 roll \u2013 double escaped",
+    ]);
+    // The numeric reference and the named ones read alike; a name that is not in the list stays as written.
+    expect(entries[0]?.release.notes).toEqual([
+      "Copilot now does X \u2014 and Y\u2026 It\u2019s \u201cready\u201d \u00a9 2026 \u2122 \u2022 &unknown;",
+    ]);
+    expect(entries[1]?.release.notes).toEqual(["It\u2019s ready \u2014 really\u2026", "Price \u00a35 & up"]);
+    for (const entry of entries) {
+      expect(entry.title).not.toMatch(/&[a-z]+;/);
+    }
+  });
+
+  it("decodeHtmlNames knows only its list, only whole references, and never a name from the prototype", () => {
+    expect(decodeHtmlNames("a&hellip;b &HELLIP; &hellip &nosuch; &toString; &__proto__; &;")).toBe(
+      "a\u2026b &HELLIP; &hellip &nosuch; &toString; &__proto__; &;",
+    );
+    // XML's own five are left to decodeXmlEntities, so nothing is decoded twice.
+    expect(decodeHtmlNames("&amp;rsquo; &lt;b&gt; &quot;")).toBe("&amp;rsquo; &lt;b&gt; &quot;");
+  });
+
+  it("CS2: an HTML named reference in a post's title is read too", () => {
+    const body = JSON.stringify({
+      appnews: { newsitems: [{ gid: "1", title: "Counter-Strike 2 Update &mdash; Oct&hellip;", date: 1790000000 }] },
+    });
+    expect(entriesOf("cs2-europe", body)[0]?.title).toBe("Counter-Strike 2 Update \u2014 Oct\u2026");
   });
 
   it("an item whose title is only markup is dropped", () => {

@@ -30,6 +30,7 @@ import {
 } from "./changelog.ts";
 import { PayloadError, unwrapJsonp } from "./http.ts";
 import {
+  decodeHtmlNames,
   dropScripts,
   gitlabVersion,
   htmlBlocks,
@@ -1098,6 +1099,19 @@ describe("release feeds", () => {
     );
   });
 
+  it("decodeHtmlNames: never longer than its input, never throws, and leaves text with no '&' alone", () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.string(), fc.stringMatching(/^[&a-z;#0-9 ]{0,60}$/)), (input) => {
+        const out = decodeHtmlNames(input);
+        expect(out.length).toBeLessThanOrEqual(input.length);
+        if (!input.includes("&")) expect(out).toBe(input);
+        // A second pass finds nothing the first did not: what it writes is never a reference itself.
+        expect(decodeHtmlNames(out)).toBe(out);
+      }),
+      run(),
+    );
+  });
+
   it("boundReleaseFeed: nothing, or at most five titled entries, whatever the feed holds", () => {
     const entry = fc.record(
       {
@@ -1171,6 +1185,7 @@ describe("parsers stay linear", () => {
     ["dropScripts", dropScripts],
     ["gitlabVersion", gitlabVersion],
     ["steamNoteLines", (input: string) => steamNoteLines(input, "title")],
+    ["decodeHtmlNames", decodeHtmlNames],
   ];
 
   it.each(parsers)("%s: crafted input is read in linear time", (_name, parse) => {

@@ -189,9 +189,50 @@ export function dropScripts(html: string): string {
   return out + html.slice(from);
 }
 
+// The named character references a vendor's HTML uses that XML does not predefine: punctuation, quotes and
+// symbols (WordPress and Azure write &hellip; and &rsquo; into titles and excerpts). A small fixed list; an
+// unknown name stays as written. A Map, so a name like "constructor" is never a key.
+const HTML_NAMED_ENTITIES = new Map<string, string>([
+  ["nbsp", " "],
+  ["hellip", "\u2026"],
+  ["lsquo", "\u2018"],
+  ["rsquo", "\u2019"],
+  ["sbquo", "\u201a"],
+  ["ldquo", "\u201c"],
+  ["rdquo", "\u201d"],
+  ["bdquo", "\u201e"],
+  ["ndash", "\u2013"],
+  ["mdash", "\u2014"],
+  ["bull", "\u2022"],
+  ["middot", "\u00b7"],
+  ["copy", "\u00a9"],
+  ["reg", "\u00ae"],
+  ["trade", "\u2122"],
+  ["laquo", "\u00ab"],
+  ["raquo", "\u00bb"],
+  ["times", "\u00d7"],
+  ["deg", "\u00b0"],
+  ["euro", "\u20ac"],
+  ["pound", "\u00a3"],
+  ["rarr", "\u2192"],
+  ["larr", "\u2190"],
+]);
+// Lowercase letters only and at most eight of them: a bounded run after each "&", so linear in the text.
+const HTML_NAMED_ENTITY = /&([a-z]{2,8});/g;
+
+/** `text` with the common HTML named character references replaced; the XML ones are decoded elsewhere. */
+export function decodeHtmlNames(text: string): string {
+  return text.replace(HTML_NAMED_ENTITY, (match, name: string) => HTML_NAMED_ENTITIES.get(name) ?? match);
+}
+
 /** Plain text from markup: scripts gone, tags gone, entities decoded, whitespace collapsed. */
 function plainText(html: string): string {
-  return decodeXmlEntities(stripHtml(dropScripts(html)));
+  return decodeHtmlNames(decodeXmlEntities(stripHtml(dropScripts(html))));
+}
+
+/** A title from the feed's already decoded field: markup gone, HTML named references read, whitespace collapsed. */
+function titleText(raw: string): string {
+  return decodeHtmlNames(stripHtml(dropScripts(raw)));
 }
 
 const BLOCK_OPEN = /<(h[1-6]|p|li|div|br|tr|td|dd|dt)(?=[\s>/])[^<>]*>/gi;
@@ -385,7 +426,7 @@ export function steamNoteLines(contents: string, title: string): string[] {
 function steamEntries(source: ReleaseSource, payload: unknown): ReleaseFeedEntry[] {
   const list = (payload as { appnews?: { newsitems?: unknown } } | null)?.appnews?.newsitems;
   const posts = records<SteamNewsItem>(list).flatMap((row, index) => {
-    const title = typeof row.title === "string" ? stripHtml(dropScripts(row.title.slice(0, MAX_TITLE_CHARS * 4))) : "";
+    const title = typeof row.title === "string" ? titleText(row.title.slice(0, MAX_TITLE_CHARS * 4)) : "";
     if (!title) return [];
     const at = epochToIso(row.date, 1000);
     return [{ row, title, at, time: at ? Date.parse(at) : Number.NEGATIVE_INFINITY, index }];
@@ -445,7 +486,7 @@ export function xmlEntries(source: ReleaseSource, body: string): ReleaseFeedEntr
   if (!kind) throw new PayloadError(`${source.label} was not an RSS or Atom feed.`);
   const shape = source.shape ?? plainShape;
   const entries = parseFeedItems(body, kind).flatMap((item) => {
-    const title = stripHtml(dropScripts(item.title));
+    const title = titleText(item.title);
     if (!title) return [];
     const shaped = shape({ ...item, title }, htmlBlocks(item.body));
     return shaped.title.trim() ? [releaseEntry(source, shaped, item)] : [];
