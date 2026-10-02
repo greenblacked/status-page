@@ -976,6 +976,9 @@ describe("azure feed", () => {
     assert.equal(azureItemHealth("Storage - East US - Increased latency"), "degraded");
     assert.equal(azureItemHealth("Virtual Machines - Service unavailable"), "outage");
     assert.equal(azureItemHealth("Regional OUTAGE"), "outage");
+    assert.equal(azureItemHealth("Preliminary Post Incident Review (PIR) – Azure Front Door – Outage"), "operational");
+    assert.equal(azureItemHealth("Final Post Incident Review (PIR) – Networking"), "operational");
+    assert.equal(azureItemHealth("Preliminary findings: Storage - East US"), "degraded");
     assert.equal(azureItemHealth("Planned maintenance - Key Vault"), "maintenance");
     // An outage wording beats maintenance: the service is down while it is worked on.
     assert.equal(azureItemHealth("Maintenance overran: service unavailable"), "outage");

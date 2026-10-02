@@ -1874,6 +1874,23 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.incidents).toHaveLength(4);
     });
 
+    it.each([
+      "Preliminary Post Incident Review (PIR) – Azure Front Door – Outage across multiple regions",
+      "Final Post Incident Review (PIR) – Azure Front Door – Outage across multiple regions",
+      "Final-PIR – Storage – East US",
+    ])("Azure feed.xml: %j is over, so the card stays operational", async (title) => {
+      const when = new Date(Date.now() - 3_600_000).toUTCString();
+      stubFetch({
+        [URLS.azure]: text(
+          `<rss version="2.0"><channel><item><title>${title}</title><pubDate>${when}</pubDate></item></channel></rss>`,
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
     it("Azure feed.xml: a word in the description that suggests an outage does not make one", async () => {
       const when = new Date(Date.now() - 3_600_000).toUTCString();
       stubFetch({

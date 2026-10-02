@@ -1736,11 +1736,11 @@ async function collectGitlab(): Promise<ServiceSnapshot> {
 
 // An Azure feed item is over when its title begins with a resolution or a post
 // incident review, as Azure prefixes them ("RESOLVED - ...", "Post Incident
-// Review (PIR) - ..."). Only the title is read: "mitigated" or "restored"
+// Review (PIR) - ...", also "Preliminary" or "Final" before the review). Only the title is read: "mitigated" or "restored"
 // inside an active item ("partially mitigated", "restored in East US; West
 // Europe remains impacted") says nothing about the whole incident being over.
 // Anchored at the start, so the test is linear.
-const AZURE_OVER = /^[\s[(]*(?:resolved|mitigated|post[ -]incident review|pir)\b/i;
+const AZURE_OVER = /^[\s[(]*(?:(?:preliminary|final)[\s-]+)?(?:resolved|mitigated|post[ -]incident review|pir)\b/i;
 // An outage only when the title says so; the feed has no severity and most
 // items are one service in one region.
 const AZURE_OUTAGE = /\b(?:outage|service unavailable)\b/i;
