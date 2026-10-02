@@ -253,10 +253,9 @@ jobs:
       # bump step says so); true for every other run that got this far.
       published: ${{ steps.bump.outputs.published != 'false' }}
       # What the sign job needs to finish the release: the commit it names
-      # (the tag does not exist until the draft is published) and whether it
-      # becomes Latest.
+      # (the tag does not exist until the draft is published). Whether it
+      # becomes Latest is worked out again when it is published.
       target: ${{ steps.release.outputs.target }}
-      latest: ${{ steps.release.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -315,6 +314,9 @@ jobs:
       - name: Create the draft GitHub Release
         id: release
         if: steps.bump.outputs.published != 'false'
+        # bash -eo pipefail: a failed lookup below must fail the step, not read
+        # as "no release yet".
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -322,36 +324,65 @@ jobs:
           TAG: ${{ needs.plan.outputs.tag }}
           SHA: ${{ needs.plan.outputs.sha }}
         run: |
-          notes="$RUNNER_TEMP/release-notes.md"
-          ./scripts/ci/release-notes.sh "${TAG#v}" >"$notes"
           # The bump commit, or the commit this run was started for. A
           # backfill tags the older commit plan checked.
           target="$(git rev-parse HEAD)"
           if [ "$MODE" = backfill ]; then
             target="$SHA"
           fi
-          # Only the newest version is Latest, so a backfill never takes the
-          # badge from a newer release.
-          latest=false
-          if [ "$( { git tag --list 'v*.*.*'; echo "$TAG"; } | sort -V | tail -n1)" = "$TAG" ]; then
-            latest=true
+          # A re-run updates the existing release instead of failing on it.
+          # The list includes drafts, which a lookup by tag does not. It is
+          # read into a variable first, so a failed call fails the step
+          # instead of looking like a tag with no release (which would create
+          # a second draft; drafts do not reserve a tag).
+          releases="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft) \(.target_commitish)"')"
+          if [ "$(printf '%s\n' "$releases" | sed '/^$/d' | wc -l)" -gt 1 ]; then
+            echo "::error::more than one GitHub Release names $TAG; delete the extra ones"
+            exit 1
+          fi
+          id=""; draft=""; recorded=""
+          if [ -n "$releases" ]; then
+            read -r id draft recorded <<<"$releases"
+          fi
+          # A draft left by an earlier run whose signing failed names the bump
+          # commit, which is what has to ship. A newer merge may have landed
+          # since, and its commits are not in this version's notes, so the
+          # draft keeps its commit instead of moving to this run's. Those later
+          # commits release with the next merge to main. Only for a draft that
+          # names a commit on main with this version in package.json, and
+          # only while the tag does not exist.
+          if [ "$draft" = true ] && [ "$MODE" = current ] \
+            && ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null \
+            && [[ "$recorded" =~ ^[0-9a-f]{40}$ ]] \
+            && git merge-base --is-ancestor "$recorded" origin/main \
+            && [ "$(git show "$recorded:package.json" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")" = "${TAG#v}" ]; then
+            target="$recorded"
+          fi
+          notes="$RUNNER_TEMP/release-notes.md"
+          if [ "$target" = "$(git rev-parse HEAD)" ] || [ "$MODE" = backfill ]; then
+            ./scripts/ci/release-notes.sh "${TAG#v}" >"$notes"
+          else
+            # The notes of the commit the release names, not of a later main.
+            git show "$target:CHANGELOG.md" >"$RUNNER_TEMP/CHANGELOG.md"
+            CHANGELOG="$RUNNER_TEMP/CHANGELOG.md" ./scripts/ci/release-notes.sh "${TAG#v}" >"$notes"
           fi
           echo "target=$target" >>"$GITHUB_OUTPUT"
-          echo "latest=$latest" >>"$GITHUB_OUTPUT"
-          # A re-run updates the existing release instead of failing on it.
-          # The list includes drafts, which a lookup by tag does not.
-          found="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"' | head -n1)"
-          if [ -n "$found" ]; then
-            read -r id draft <<<"$found"
+          if [ -n "$id" ]; then
             if [ "$draft" = true ]; then
-              # Still unpublished (an earlier run's signing failed): point it
-              # at this run's commit; the sign job publishes it.
+              # Still unpublished (an earlier run's signing failed): the sign
+              # job publishes it, on target.
               gh api -X PATCH "repos/$GH_REPO/releases/$id" \
                 -f name="Status Page $TAG" -F body=@"$notes" -f target_commitish="$target"
             else
               # Already public (made before releases were drafted, or by hand):
-              # stays public, and the sign job only adds the assets.
+              # stays public, and the sign job only adds the assets. Only the
+              # newest version is Latest, so a backfill never takes the badge
+              # from a newer release.
+              latest=false
+              if [ "$( { git tag --list 'v*.*.*'; echo "$TAG"; } | sort -V | tail -n1)" = "$TAG" ]; then
+                latest=true
+              fi
               gh api -X PATCH "repos/$GH_REPO/releases/$id" \
                 -f name="Status Page $TAG" -F body=@"$notes" -f make_latest="$latest"
             fi
@@ -413,21 +444,58 @@ jobs:
       # Attach first, publish last: a failure anywhere above or here leaves
       # only the draft, which the public cannot see.
       - name: Attach them and publish the GitHub Release
+        # bash -eo pipefail: a failed lookup must fail the step.
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
-          LATEST: ${{ needs.publish.outputs.latest }}
+          TARGET: ${{ needs.publish.outputs.target }}
         run: |
-          found="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"' | head -n1)"
-          [ -n "$found" ] || { echo "::error::no GitHub Release for $TAG"; exit 1; }
-          read -r id draft <<<"$found"
+          releases="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft) \(.target_commitish)"')"
+          [ -n "$releases" ] || { echo "::error::no GitHub Release for $TAG"; exit 1; }
+          if [ "$(printf '%s\n' "$releases" | sed '/^$/d' | wc -l)" -gt 1 ]; then
+            echo "::error::more than one GitHub Release names $TAG; delete the extra ones"
+            exit 1
+          fi
+          read -r id draft recorded <<<"$releases"
+          # The archive has to be the tagged tree. A later run may have moved
+          # the draft to its own commit, or published it, since this run
+          # archived $TARGET (a re-run of an older run lands here), so check
+          # the release against $TARGET instead of trusting the tag name.
+          # The last line is the peeled commit when the tag is annotated.
+          tagged="$(git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | awk 'END { print $1 }')"
+          if [ -n "$tagged" ] && [ "$tagged" != "$TARGET" ]; then
+            echo "::error::$TAG is on $tagged, but this run signed $TARGET; run the workflow again"
+            exit 1
+          fi
+          if [ "$draft" = true ]; then
+            # A draft made by hand may name a branch; the publishing call
+            # below moves it to $TARGET. One that names another commit was
+            # set by a different run.
+            if [ -z "$tagged" ] && [[ "$recorded" =~ ^[0-9a-f]{40}$ ]] && [ "$recorded" != "$TARGET" ]; then
+              echo "::error::the draft for $TAG names $recorded, but this run signed $TARGET; run the workflow again"
+              exit 1
+            fi
+          elif [ -z "$tagged" ]; then
+            echo "::error::the release for $TAG is public but its tag is not on origin"
+            exit 1
+          fi
           gh release upload "$TAG" "$RUNNER_TEMP/assets/status-page-${TAG}.tar.gz" "$RUNNER_TEMP/assets/status-page-${TAG}.tar.gz.sigstore.json" --clobber
           # A release that is already public (made before releases were
           # drafted, or by a run that got this far) only gets its assets.
           if [ "$draft" = true ]; then
-            gh api -X PATCH "repos/$GH_REPO/releases/$id" -F draft=false -f make_latest="$LATEST"
+            # Only the newest version is Latest. Worked out from the tags as
+            # they are now, so a run that waited (or a re-run) never takes
+            # the badge from a release published in the meantime.
+            newest="$( { git ls-remote --tags --refs origin 'v*.*.*' | sed 's#.*refs/tags/##'; echo "$TAG"; } \
+              | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' | sort -V | tail -n1)"
+            latest=false
+            if [ "$newest" = "$TAG" ]; then
+              latest=true
+            fi
+            gh api -X PATCH "repos/$GH_REPO/releases/$id" -F draft=false -f make_latest="$latest" -f target_commitish="$TARGET"
           fi
 
   sync-branches:
