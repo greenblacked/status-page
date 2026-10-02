@@ -234,7 +234,7 @@ jobs:
     # The only job with write access. It installs no dependencies and runs
     # no project code: only the release scripts, npm version and gh.
     permissions:
-      contents: write
+      contents: write # push the bump commit to main, create the tag and the GitHub Release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -337,7 +337,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: write
+      contents: write # push the merges of main to stage and dev
     outputs:
       stage_pushed: ${{ steps.merge.outputs.stage_pushed }}
     steps:
@@ -455,7 +455,7 @@ jobs:
       # Only scope beyond the workflow default (contents: read): to start
       # deploy.yml by hand, the same way `gh workflow run` would from a
       # maintainer's machine.
-      actions: write
+      actions: write # gh workflow run deploy.yml: a GITHUB_TOKEN push starts no workflow
     steps:
       - name: Start deploy.yml on stage
         env:
