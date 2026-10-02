@@ -1,5 +1,13 @@
 import { Bell, BellOff, BellRing, RefreshCw, Search, Star, TriangleAlert, X } from "lucide-react";
-import { type ComponentProps, type ReactNode, type RefObject, useEffect, useId, useState } from "react";
+import {
+  type ChangeEvent,
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useId,
+  useState,
+} from "react";
 import { useDockSelect } from "@/components/status/compact-header";
 import type { AlertsState } from "@/components/status/use-alerts";
 import { Button } from "@/components/ui/button";
@@ -117,10 +125,10 @@ const SHORT_PLACEHOLDER = "Search…";
  * padding, and again when either changes. True until measured, which is what
  * the server rendered, so hydration sees the same placeholder.
  */
-function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null>): boolean {
+function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null> | undefined): boolean {
   const [fits, setFits] = useState(true);
   useEffect(() => {
-    const dock = dockRef.current;
+    const dock = dockRef?.current;
     const input = dock?.querySelector("input");
     const canvas = document.createElement("canvas").getContext("2d");
     if (!dock || !input || !canvas) return;
@@ -139,27 +147,66 @@ function usePlaceholderFits(text: string, dockRef: RefObject<HTMLElement | null>
   return fits;
 }
 
+type SearchInputProps = {
+  store: DockStore;
+  /** Which of the two fields this is; the hero's by default. */
+  placement?: "hero" | "bar";
+  /** The hero's dock, which the placeholder is measured against. The bar's copy has no use for it. */
+  dockRef?: RefObject<HTMLElement | null>;
+} & ComponentProps<typeof Input>;
+
 /**
- * The search field's input. Its placeholder is the long one in the hero and the
- * short one once the field is docked, in this component rather than the board's.
- * It goes short the moment the field docks, because the input takes its docked
- * width at once and the long text would be clipped for the length of the move;
- * and it comes back long only when the field has left the bar and stopped
- * moving (`settled`), so it never changes under a field that is still narrow.
- * The short one also stands in wherever the field, at rest, is too narrow to
- * show the long one whole (a small phone, or beside the chips just past 1024px).
+ * The search field's input, in two places. The hero's has the long placeholder, unless the field, at rest, is too
+ * narrow to show it whole (a small phone, or beside the chips just past 1024px), and the short one once it has
+ * docked into the bar on a wide screen. Below 64rem it leaves the Tab order (`tabIndex` -1) while the bar's copy
+ * is the one in reach (`heroAway`). The bar's copy always has the short placeholder, and can be reached only when
+ * `heroAway` (SearchField makes it `inert` until then). Focusing it shows it (`revealed`), which covers a tap,
+ * Tab and `/`. Both carry `data-search-input`, which holds the bar's direction rule while either has focus.
  */
-export function SearchInput({
+export function SearchInput({ store, dockRef, placement = "hero", ...props }: SearchInputProps) {
+  return placement === "bar" ? (
+    <BarSearchInput store={store} {...props} />
+  ) : (
+    <HeroSearchInput store={store} dockRef={dockRef} {...props} />
+  );
+}
+
+function HeroSearchInput({
   store,
   dockRef,
   ...props
-}: { store: DockStore; dockRef: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
-  const short = useDockSelect(store, (state) => state.docked || state.settled);
+}: { store: DockStore; dockRef?: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
+  const short = useDockSelect(store, (state) => state.docked);
+  const heroAway = useDockSelect(store, (state) => state.heroAway);
   const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
-  return <Input placeholder={short || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER} {...props} />;
+  return (
+    <Input
+      placeholder={short || !fits ? SHORT_PLACEHOLDER : LONG_PLACEHOLDER}
+      tabIndex={heroAway ? -1 : undefined}
+      data-search-input="hero"
+      {...props}
+    />
+  );
 }
 
-/** The magnifier, the field, the `/` hint and our own Clear button, inside the dock. */
+function BarSearchInput({ store, ...props }: { store: DockStore } & ComponentProps<typeof Input>) {
+  return (
+    <Input
+      placeholder={SHORT_PLACEHOLDER}
+      data-search-input="bar"
+      onFocus={() => {
+        const state = store.get();
+        if (state.heroAway) store.set({ ...state, revealed: true });
+      }}
+      {...props}
+    />
+  );
+}
+
+/**
+ * The magnifier, the field, the `/` hint and our own Clear button. In the hero it sits inside the dock; the
+ * bar's copy (`placement="bar"`) fills the bar's slot, has the short placeholder, no `/` hint and no landmark.
+ */
 export function SearchField({
   store,
   dockRef,
@@ -167,40 +214,42 @@ export function SearchField({
   query,
   onQuery,
   showSlash,
+  placement = "hero",
 }: {
   store: DockStore;
-  dockRef: RefObject<HTMLElement | null>;
+  dockRef?: RefObject<HTMLElement | null>;
   inputRef: RefObject<HTMLInputElement | null>;
   query: string;
   onQuery: (query: string) => void;
   /** Single-key shortcuts are on: the field says `/` reaches it. */
   showSlash: boolean;
+  placement?: "hero" | "bar";
 }) {
+  const bar = placement === "bar";
+  const heroAway = useDockSelect(store, (state) => state.heroAway);
+  const common = {
+    ref: inputRef,
+    value: query,
+    onChange: (event: ChangeEvent<HTMLInputElement>) => onQuery(event.target.value),
+    type: "search",
+    enterKeyHint: "search",
+    autoCapitalize: "off",
+    autoCorrect: "off",
+    autoComplete: "off",
+    spellCheck: false,
+    className: cn("appearance-none pl-10", query ? "pr-11" : !bar && "sm:pr-10"),
+  } as const;
   return (
-    <div className="search-field">
-      {/*
-        The field's fill, drawn behind the input (which is see-through) so that a phone can move it with a
-        transform while the input itself changes width in one step; see .search-chrome in styles.css.
-      */}
+    // The bar's copy: not reachable until the hero's field is behind the bar. Opacity hides it otherwise, not
+    // visibility, so that Tab from the bar's lead lands here and not on the hero's field far above.
+    <div className="search-field" inert={bar && !heroAway}>
+      {/* The field's fill, drawn behind the input (which is see-through); see .search-chrome in styles.css. */}
       <span aria-hidden className="control search-chrome" />
       <label className="relative block min-w-0 flex-1">
         <span className="sr-only">Search services</span>
         <Search className="pointer-events-none absolute top-1/2 left-3.5 size-[18px] -translate-y-1/2 text-subtle" />
-        <SearchInput
-          ref={inputRef}
-          store={store}
-          dockRef={dockRef}
-          value={query}
-          onChange={(event) => onQuery(event.target.value)}
-          type="search"
-          enterKeyHint="search"
-          autoCapitalize="off"
-          autoCorrect="off"
-          autoComplete="off"
-          spellCheck={false}
-          className={cn("appearance-none pl-10", query ? "pr-11" : "sm:pr-10")}
-        />
-        {showSlash && !query ? (
+        <SearchInput placement={placement} store={store} dockRef={dockRef} {...common} />
+        {!bar && showSlash && !query ? (
           <kbd
             aria-hidden
             className="pointer-events-none absolute top-1/2 right-3.5 hidden -translate-y-1/2 rounded-sm px-1.5 text-footnote text-subtle shadow-[inset_0_0_0_var(--hair)_var(--color-hairline)] sm:block"
@@ -214,6 +263,8 @@ export function SearchField({
         <button
           type="button"
           aria-label="Clear search"
+          // The hero's leaves the Tab order with its field while the bar's copy is the one in reach.
+          tabIndex={!bar && heroAway ? -1 : undefined}
           className="focus-ring pressable absolute top-0 right-0 flex size-11 items-center justify-center rounded-md text-subtle hover:text-fg"
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {

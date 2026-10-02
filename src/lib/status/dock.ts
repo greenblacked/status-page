@@ -2,28 +2,31 @@ import { barShownAt, dockProgress } from "./layout.ts";
 
 /** What the search dock has reached, for the few parts of the page that change with it. */
 export type DockState = {
-  /** The floating bar is up (phase one on a phone, most of the move on a wide screen). */
+  /** The floating bar is up (below 64rem once the hero's last line has scrolled clear, wide most of the way through the move). */
   barShown: boolean;
   /**
-   * The field is in the bar. On a phone this is a threshold on the scroll position, not a progress: the move is
-   * then a short transition (see `settled`). On a wide screen it is fully in, and part way it keeps whatever it was.
+   * Wide only (64rem and up): the field is fully in the bar, and part way it keeps whatever it was. Always false
+   * below 64rem, where the field never moves into the bar (see `revealed`).
    */
   docked: boolean;
   /**
-   * The field has finished moving to the pose `docked` names: the same as `docked` at once when nothing moves
-   * (a wide screen, Reduce Motion), and `DOCK_LEAD_MS + DOCK_MS` after it on a phone, when the transition has ended. The
-   * placeholder leaves the bar's short text only on this, so it never changes under a field that is still moving
-   * out; going in, it follows `docked` itself.
+   * Below 64rem: the bar is up and the hero's field is entirely behind it, so the bar's own copy of the field is
+   * usable (it can be reached with Tab and `/`) and the hero's is not. Always false from 64rem.
    */
-  settled: boolean;
+  heroAway: boolean;
+  /**
+   * Below 64rem: the bar's copy of the field is showing. It implies `heroAway`. The field shows on a scroll up
+   * and hides on a scroll down (see `revealFrame`), and stays while it has focus or a search is written in it.
+   */
+  revealed: boolean;
 };
 
 /**
- * Where the dock keeps those two discrete states. A store outside React, read
+ * Where the dock keeps those discrete states. A store outside React, read
  * with useDockSelect, so that the board (which holds every card) does not
  * render when the bar comes up: only the bar, the hero's two buttons and the
- * field's placeholder do. Every change is a step, never a progress, so a scroll
- * costs React nothing between them.
+ * fields do. Every change is a step, never a progress, so a scroll costs
+ * React nothing between them.
  */
 export type DockStore = {
   get: () => DockState;
@@ -31,8 +34,8 @@ export type DockStore = {
   set: (next: DockState) => void;
 };
 
-/** The dock at the top of the page: no bar, the field in the hero. */
-export const DOCK_REST: DockState = { barShown: false, docked: false, settled: false };
+/** The dock at the top of the page: no bar, only the field in the hero. */
+export const DOCK_REST: DockState = { barShown: false, docked: false, heroAway: false, revealed: false };
 
 export function createDockStore(): DockStore {
   let state = DOCK_REST;
@@ -46,7 +49,14 @@ export function createDockStore(): DockStore {
       };
     },
     set: (next) => {
-      if (next.barShown === state.barShown && next.docked === state.docked && next.settled === state.settled) return;
+      if (
+        next.barShown === state.barShown &&
+        next.docked === state.docked &&
+        next.heroAway === state.heroAway &&
+        next.revealed === state.revealed
+      ) {
+        return;
+      }
       state = next;
       for (const listener of [...listeners]) listener();
     },
@@ -54,99 +64,72 @@ export function createDockStore(): DockStore {
 }
 
 /**
- * On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up. It is
- * also the scrolling the bar has to itself: the field merges only once it has risen to the bar's bottom edge.
+ * How far above its place the hidden bar sits, in px (the translateY of .compact-header[data-shown="false"] in
+ * styles.css): the bar slides down this far as it comes up. The bar's field rises by half of it (--bar-search-rise).
  */
-export const PHONE_GAP = 24;
-/** How far above its place the hidden bar sits, in px (the translateY of .compact-header[data-shown="false"] in styles.css): the bar slides down this far as it comes up. */
 export const BAR_RISE = 8;
 /** On a wide screen: the scrolling the one move takes, and where in it (0 to 1) the bar comes up. */
 export const WIDE_RANGE = 48;
 export const WIDE_BAR_AT = 0.67;
 /**
- * On a phone: how long the field takes to merge into the bar, or to leave it, in ms. It is `--t-dock` in
- * styles.css, which has to say the same; a test reads both. The merge is this much time, whatever the scrolling.
+ * How many px of scrolling back a bar that is up stays up (barShownAt), and a bar field that is usable stays
+ * usable (`heroAway`, see `revealFrame`): the page has to be this far past a threshold to cross it one way, and
+ * back over the threshold itself to cross it the other, so a finger resting on it cannot flip anything.
  */
-export const DOCK_MS = 180;
-/**
- * On a phone: the pause before the merge starts to move, in ms (three frames at 60Hz). It is `--t-dock-lead` in
- * styles.css, which has to say the same; the e2e test of the dock's timing reads both. A transition shows its
- * start value for its delay, so a first frame drawn late is meant to still be the rest box. The jump was seen on
- * an iPhone, where the compositor may lose tens of ms at the start of a move; that this wait absorbs it is the
- * expectation, not yet confirmed on a device.
- */
-export const DOCK_LEAD_MS = 50;
-/** On a phone: how many px of scrolling back the field stays docked after the point where it docks. */
 export const DOCK_HYSTERESIS = 8;
+/** Below 64rem: how many px of upward scrolling, from the lowest point of the run, bring the bar's field in. */
+export const REVEAL_UP_PX = 24;
+/** Below 64rem: how many px of downward scrolling, from the highest point of the run, take it away again. */
+export const HIDE_DOWN_PX = 12;
 
-/** The scroll positions (px) at which the dock moves, docks and brings the bar up, and its flicker guards. */
+/** The scroll positions (px) at which the dock moves and brings the bar up, and its flicker guards. */
 export type DockGeometry = {
-  /** A wide screen, where the move follows the scroll (`start` and `range`); on a phone it is a threshold (`dockAt`). */
+  /** A wide screen, where the field's move follows the scroll (`start` and `range`). Below 64rem nothing does. */
   wide: boolean;
-  /** Where the field starts to move (wide), or reaches the bar's bottom edge (phone). */
+  /** Wide: where the field starts to move. */
   start: number;
-  /** The scrolling the wide move takes. */
+  /** Wide: the scrolling the move takes. */
   range: number;
   /** Where the bar comes up. */
   barStart: number;
   /** How far above `barStart` a bar that is up stays up (and, wide, how far the Reduce Motion snap holds). */
   hysteresis: number;
-  /** Phone only: the scroll position from which the field is docked. */
-  dockAt: number;
-  /** Phone only: the position below which a docked field is released. Never above `dockAt`. */
-  undockAt: number;
+  /**
+   * Below 64rem: the scroll position at which the hero's field has its bottom edge level with the bar's. From
+   * there on the field is behind the bar and the bar's own copy of it can show. Never reached on a wide screen.
+   */
+  revealFrom: number;
 };
 
 /**
- * The dock's geometry from the numbers measured off the page. `end` is the
- * scroll position at which the field reaches its pin; every other offset is
- * worked out from it. `pin` and `barTop` are the field's and the bar's `top`,
- * `barHeight` and `fieldHeight` their heights (phone only).
+ * The dock's geometry from the numbers measured off the page.
  *
- * On a phone the bar is fixed and comes up first, alone: PHONE_GAP px above
- * where the field's top would meet its bottom edge. The field merges only when
- * it has risen to that edge, so it never sits over the bar before it merges,
- * whatever the bar's height (a larger text size makes it taller). At a 16px
- * root that is a bar alone for 24px of scrolling, then the field, which has 46px
- * left to rise to its pin.
+ * Wide: `end` is the scroll position at which the field reaches its pin (`barTop` is the bar's `top`); the move
+ * is WIDE_RANGE px of scrolling ending there, and the bar comes up 67% of the way through it (at its end under
+ * Reduce Motion, where the field snaps).
  *
- * The merge itself is not spread over that scrolling: the field docks at
- * `dockAt`, the point where it meets the bar, and a transition in time moves it
- * into the slot. A docked field stays docked until the page is DOCK_HYSTERESIS
- * px back above that, so a finger resting on the boundary cannot restart the
- * move. Under Reduce Motion nothing moves in time: the field docks where it
- * reaches its pin (`end`), after rising under the bar, and stays docked until
- * it has left the pin by more than the room the bar has around the docked
- * field, `barHeight - fieldHeight - (pin - barTop)` (2px at a 16px root); any
- * further down, the narrow field would be poking out of the bar's bottom edge.
- *
- * `contentBottom` (phone only) is where the hero's last line ends in the page.
- * The bar is never raised over it. The page's spacing is sized so this never
- * has to act: the line is `barHeight + BAR_RISE + PHONE_GAP` px above the field
- * (see .search-dock in styles.css), which is exactly when the sliding bar's top
- * edge clears the line and the bar's bottom edge is PHONE_GAP above the field.
- * If some page ever sits the two closer (a smaller text size than the spacing
- * was drawn for), the bar waits for the line to scroll up past the highest
- * point the sliding bar reaches, and the merge starts with it, so the bar is
- * still always up before the field moves into it.
+ * Below 64rem the field is an ordinary part of the page and the bar is fixed at the top. The bar comes up when
+ * the hero's last line (`contentBottom`) has scrolled clear of the highest point the sliding bar reaches, and
+ * not before. The bar's copy of the field becomes usable (`revealFrom`) when the hero's field, in the flow
+ * with its bottom edge at `fieldBottom` (a page position), has risen to the bar's bottom edge, `barTop` plus
+ * `barHeight`: from there the two fields are never on screen together. The page's spacing puts the field a
+ * little under the live line, so the bar is up alone for a stretch of scrolling before that.
  */
 export function dockGeometry({
   wide,
   reduce,
   end,
-  pin,
   barTop,
   barHeight,
-  fieldHeight = 44,
+  fieldBottom = Number.POSITIVE_INFINITY,
   contentBottom = Number.NEGATIVE_INFINITY,
 }: {
   wide: boolean;
   reduce: boolean;
   end: number;
-  pin: number;
   barTop: number;
   barHeight: number;
-  fieldHeight?: number;
+  fieldBottom?: number;
   contentBottom?: number;
 }): DockGeometry {
   if (wide) {
@@ -158,51 +141,32 @@ export function dockGeometry({
       range,
       barStart: reduce ? end : end - range + WIDE_BAR_AT * range,
       hysteresis: reduce ? 0 : 8,
-      dockAt: end,
-      undockAt: end,
+      revealFrom: Number.POSITIVE_INFINITY,
     };
   }
-  const barStart = Math.max(end - (barHeight + PHONE_GAP - (pin - barTop)), contentBottom - (barTop - BAR_RISE));
-  const start = Math.max(end - (barHeight - (pin - barTop)), barStart);
-  const snapHold = Math.max(0, barHeight - fieldHeight - (pin - barTop));
+  // A page with no hero line to wait for brings the bar up at the top.
+  const barStart = Math.max(0, contentBottom - (barTop - BAR_RISE));
   return {
     wide,
-    start,
-    range: Math.max(1, end - start),
+    start: barStart,
+    range: 1,
     barStart,
     hysteresis: 8,
-    dockAt: reduce ? end : start,
-    undockAt: reduce ? end - snapHold : start - DOCK_HYSTERESIS,
+    revealFrom: fieldBottom - (barTop + barHeight),
   };
 }
 
 /**
- * The longest of the durations in a CSS `transition-duration` value ("0.18s", "180ms", "0s, 0.25s"), in ms. 0 for
- * none, which is how the dock tells that nothing will move and the field can be called settled at once.
- */
-export function transitionMs(value: string): number {
-  let longest = 0;
-  for (const part of value.split(",")) {
-    const time = Number.parseFloat(part);
-    if (!(time > 0)) continue;
-    longest = Math.max(longest, part.trim().endsWith("ms") ? time : time * 1000);
-  }
-  return longest;
-}
-
-/**
- * What the dock looks like at `scrollY`: whether the bar is up, whether the
- * field is docked, and (wide only) its progress `p` into the bar.
+ * What the dock looks like at `scrollY` on a wide screen, or the bar's phase below 64rem: whether the bar is up,
+ * whether the field is docked, and (wide only) its progress `p` into the bar.
  *
  * On a wide screen `p` goes 0 to 1 over the move, in steps of 1/500 so a scroll
  * does not rewrite a style for a change nobody can see; under Reduce Motion it
  * snaps to its two ends. The field is docked at 1 and released at 0; part way
  * it keeps whatever it was (`prev`).
  *
- * On a phone nothing follows the scroll position: the field is docked from
- * `dockAt` and released below `undockAt` (see dockGeometry), and `p` is just
- * 0 or 1 for it. `prev` is the state a moment ago, which both the bar's
- * hysteresis and the docked latch depend on.
+ * Below 64rem the field never docks (`docked` is false, `p` is 0) and only the bar follows the position, with
+ * the hysteresis of barShownAt: what the bar's field does is `revealFrame`'s.
  *
  * No clamping of `scrollY`: iOS reports a rubber band's overshoot (negative above
  * the top, more than the page's end below it), but every threshold here is a
@@ -211,10 +175,7 @@ export function transitionMs(value: string): number {
  */
 export function dockFrame(scrollY: number, geometry: DockGeometry, reduce: boolean, prev: DockState) {
   const barShown = barShownAt(scrollY, geometry.barStart, prev.barShown, geometry.hysteresis);
-  if (!geometry.wide) {
-    const docked = scrollY >= (prev.docked ? geometry.undockAt : geometry.dockAt);
-    return { p: docked ? 1 : 0, barShown, docked };
-  }
+  if (!geometry.wide) return { p: 0, barShown, docked: false };
   let p = dockProgress(scrollY, geometry.start, geometry.range);
   if (reduce) {
     const end = geometry.start + geometry.range;
@@ -225,4 +186,113 @@ export function dockFrame(scrollY: number, geometry: DockGeometry, reduce: boole
   if (p === 1) docked = true;
   else if (p === 0) docked = false;
   return { p, barShown, docked };
+}
+
+/** What `revealFrame` remembers from one frame to the next. */
+export type RevealMemo = {
+  /** The bar is up and the hero's field is behind it. */
+  heroAway: boolean;
+  /** The bar's field is showing. */
+  revealed: boolean;
+  /** The direction the page is going, as far as the thresholds have confirmed it. */
+  dir: "up" | "down";
+  /** The furthest point of the current run: the highest scroll position going down, the lowest going up. */
+  pivot: number;
+  /** The position the last frame saw. */
+  lastY: number;
+};
+
+/** The memo at the top of the page. */
+export const REVEAL_REST: RevealMemo = { heroAway: false, revealed: false, dir: "down", pivot: 0, lastY: 0 };
+
+/**
+ * Below 64rem: whether the bar's copy of the field shows, from the direction the page is being scrolled in.
+ * Pure: the hook hands it the position and what it remembered, and keeps what it returns.
+ *
+ * 1. `y` is clamped to the page (0 to `maxScroll`), so an iOS rubber band, and the recoil from the bottom one,
+ *    which reads as a scroll up, move nothing.
+ * 2. `latched` (a field has focus, a dialog is open, the page has not armed yet) keeps the state and only moves
+ *    the baseline to `y`, so what happens during it (the keyboard opening and scrolling the page) is not read
+ *    as a direction afterwards.
+ * 3. `heroAway` turns on DOCK_HYSTERESIS px past `revealFrom` (with the bar up) and off at `revealFrom`; while it
+ *    is off nothing shows, and the memory restarts from `y`.
+ * 4. A frame at the same position, with nothing else changed, is `prev` itself.
+ * 5. Going down, the pivot follows the page to its lowest point; REVEAL_UP_PX of travel back up from there
+ *    reveals the field and turns the run round. Going up, the pivot follows it to its highest point;
+ *    HIDE_DOWN_PX of travel down from there hides it. A reversal starts the count again, and jitter under a
+ *    threshold changes nothing.
+ *
+ * `keep` (a search is written) holds the field showing for as long as `heroAway`: the field a filter was
+ * typed into must not slip away on the next scroll down. The memory restarts from `y` meanwhile, so a field
+ * that is then cleared goes through the same HIDE_DOWN_PX as one that was just left.
+ */
+export function revealFrame(
+  scrollY: number,
+  maxScroll: number,
+  geometry: DockGeometry,
+  prev: RevealMemo,
+  context: { barShown: boolean; latched: boolean; keep?: boolean },
+): RevealMemo {
+  const y = Math.min(Math.max(scrollY, 0), Math.max(maxScroll, 0));
+  if (context.latched) {
+    return prev.lastY === y && prev.pivot === y ? prev : { ...prev, lastY: y, pivot: y };
+  }
+  const heroAway =
+    context.barShown && y >= (prev.heroAway ? geometry.revealFrom : geometry.revealFrom + DOCK_HYSTERESIS);
+  if (!heroAway) {
+    if (!prev.heroAway && !prev.revealed && prev.dir === "down" && prev.pivot === y && prev.lastY === y) return prev;
+    return { heroAway: false, revealed: false, dir: "down", pivot: y, lastY: y };
+  }
+  if (context.keep) {
+    if (prev.heroAway && prev.revealed && prev.dir === "up" && prev.pivot === y && prev.lastY === y) return prev;
+    return { heroAway: true, revealed: true, dir: "up", pivot: y, lastY: y };
+  }
+  if (prev.heroAway && y === prev.lastY) return prev;
+  let { revealed, dir, pivot } = prev;
+  if (!prev.heroAway) {
+    // Just behind the bar: hidden, and the run starts here.
+    revealed = false;
+    dir = "down";
+    pivot = y;
+  } else if (dir === "down") {
+    pivot = Math.max(pivot, y);
+    if (pivot - y >= REVEAL_UP_PX) {
+      dir = "up";
+      revealed = true;
+      pivot = y;
+    }
+  } else {
+    pivot = Math.min(pivot, y);
+    if (y - pivot >= HIDE_DOWN_PX) {
+      dir = "down";
+      revealed = false;
+      pivot = y;
+    }
+  }
+  return { heroAway: true, revealed, dir, pivot, lastY: y };
+}
+
+let quiet = false;
+let quietToken = 0;
+
+/**
+ * Runs `scroll`, a scroll the page makes itself (to keep a card under the reader's finger after the board
+ * reordered), and has the dock read it as no direction at all: until two frames from now the hook moves its
+ * baseline to the position instead of counting travel (see `quietScrolling`). Left alone, a jump of a screenful
+ * would look like a deliberate scroll up and bring the field in.
+ */
+export function quietScroll(scroll: () => void): void {
+  quiet = true;
+  const token = ++quietToken;
+  scroll();
+  const clear = () => {
+    if (token === quietToken) quiet = false;
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(clear));
+  else queueMicrotask(clear);
+}
+
+/** Whether a `quietScroll` is still within its two frames: the hook's frame rebases while this is true. */
+export function quietScrolling(): boolean {
+  return quiet;
 }

@@ -31,6 +31,7 @@ function render(
     },
     checkedAt: options.checkedAt === undefined ? CHECKED : options.checkedAt,
     nextIn: "1:52",
+    search: createElement("input", { type: "search", "data-copy": "" }),
   };
   return renderToStaticMarkup(
     createElement(
@@ -94,9 +95,20 @@ describe("CompactHeader", () => {
     expect(html.indexOf("max-w-[26rem]")).toBeLessThan(html.indexOf(">Refresh</button>"));
   });
 
-  it("reads the server snapshot on the server: a store that says the bar is up still renders it hidden", () => {
+  it("holds the search field's copy in the slot, for narrow screens only, with no aria-hidden over it", () => {
+    const html = render();
+    expect(html).toMatch(
+      /<div class="[^"]*max-w-\[26rem\][^"]*"><div class="bar-search lg:hidden"><input[^>]*data-copy/,
+    );
+    expect(html).not.toContain('aria-hidden="true"><div');
+    expect(html.indexOf("bar-search")).toBeLessThan(html.indexOf(">Refresh</button>"));
+  });
+
+  it("reads the server snapshot on the server: a store that says the bar is up and the field revealed renders neither", () => {
     const store = createDockStore();
-    store.set({ barShown: true, docked: true, settled: true });
-    expect(render({ store })).toContain('data-shown="false"');
+    store.set({ barShown: true, docked: true, heroAway: true, revealed: true });
+    const html = render({ store });
+    expect(html).toContain('data-shown="false"');
+    expect(html).not.toContain("data-revealed");
   });
 });

@@ -3,6 +3,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { CATALOG } from "@/lib/status/catalog";
+import { quietScroll } from "@/lib/status/dock";
 import { healthLabel } from "@/lib/status/health";
 import { incidentStart, parseTimestamp } from "@/lib/status/schedule";
 import type { ComponentHealth, Health, ServiceId, ServiceSnapshot } from "@/lib/status/types";
@@ -216,7 +217,7 @@ export function ListToggle({
     closedFrom.current = null;
     if (from === null || !button.current) return;
     const moved = button.current.getBoundingClientRect().top - from;
-    if (moved !== 0) window.scrollBy({ top: moved, behavior: "instant" });
+    if (moved !== 0) quietScroll(() => window.scrollBy({ top: moved, behavior: "instant" }));
   }, [expanded]);
   return (
     <button

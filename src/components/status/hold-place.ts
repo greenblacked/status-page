@@ -1,4 +1,5 @@
 import { type RefObject, useEffect, useLayoutEffect, useRef } from "react";
+import { quietScroll } from "@/lib/status/dock";
 import type { Pulse } from "@/lib/status/pulse";
 
 /** Whether the browser keeps what the reader looks at in place when the page above it changes size (scroll anchoring). */
@@ -130,6 +131,6 @@ export function useHoldPlace(root: RefObject<HTMLElement | null>, pulses: Pulse[
     const moved = last.element.getBoundingClientRect().top + window.scrollY - last.offset;
     // Not a row or two of the feed: a reorder of the board, which the reader is not owed a ride along with.
     if (Math.abs(moved) < 0.5 || Math.abs(moved) > window.innerHeight) return;
-    window.scrollBy({ top: moved, behavior: "instant" });
+    quietScroll(() => window.scrollBy({ top: moved, behavior: "instant" }));
   }, [pulses]);
 }
