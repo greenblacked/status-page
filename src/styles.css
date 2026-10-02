@@ -139,13 +139,6 @@
 
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  /*
-    The search field's merge into the bar. It starts gently: --ease-out covers 37% of the way in the first
-    frame at 60Hz and 82% in three, so a first frame that is drawn late (a busy main thread on a phone) shows
-    the field most of the way in at once, a jump. This covers at most 22% in any of the first four frames, and
-    58% in three.
-  */
-  --ease-dock: cubic-bezier(0.3, 0.4, 0.2, 1);
 }
 
 /*
@@ -175,6 +168,12 @@
   --t-quick: 150ms;
   --t-reveal: 250ms;
   --t-dock: 180ms;
+  /*
+    The pause before the field's merge starts to move (DOCK_LEAD_MS in dock.ts says the same): three frames at 60Hz.
+    A transition shows its start value for its delay, and WebKit takes the time its compositor animation misses at
+    the start out of the delay, so a first frame drawn late on a phone is still the rest box, not part way in.
+  */
+  --t-dock-lead: 50ms;
   --t-draw: 400ms;
 
   /* The one translucent layer in Quiet: the floating bar, over whatever scrolls under it. */
@@ -605,12 +604,12 @@
 
 /*
   On a phone the short verdict sits where the field docks; it gives way as the field merges in. Opacity
-  only, over the same time as the field's move (--t-dock, from the moment it docks), so it is on the
-  compositor with it and nothing is redrawn.
+  only, over the same time as the field's move (--t-dock, after the same --t-dock-lead, from the moment it
+  docks), so it is on the compositor with it and nothing is redrawn.
 */
 @media (width < 40rem) {
   [data-bar-verdict] {
-    transition: opacity var(--t-dock) var(--ease-dock);
+    transition: opacity var(--t-dock) var(--ease-out) var(--t-dock-lead);
   }
 
   .compact-header[data-docked] [data-bar-verdict] {
@@ -699,8 +698,7 @@
   The field's fill, behind the input: the input is see-through, so that the fill can be moved on its own. The
   fill is a .control like the input was, so every material (Glass, Reduce glass, forced colours) draws it as
   before. It is the size of the field; below 64rem, useSearchDock plays it from its old width to its new one
-  with a scaleX when the field docks or leaves (holdMove, then playMove a frame later), and CSS runs that as a
-  transition of transform.
+  with a scaleX when the field docks or leaves (flipFill), and CSS runs that as a transition of transform.
 */
 .search-chrome {
   position: absolute;
@@ -725,7 +723,8 @@
 /*
   Below 64rem the bar is fixed and z 40, and the field does not follow the scroll: it docks, in one step, when
   the page reaches it (data-docked, written by useSearchDock), and moves into the bar's slot over --t-dock,
-  with transform and opacity only, which the compositor plays whatever the page's own thread is doing.
+  after --t-dock-lead, with transform and opacity only, which the compositor plays whatever the page's own
+  thread is doing.
   The input takes its docked width at once, under the fill's transition, so nothing is laid out as it moves.
   The field is over the bar (z 41) all the time. With motion that is safe: an undocked field is always below
   the bar's bottom edge, by the page's own geometry (dockGeometry), and a field that a flick carried into the
@@ -743,7 +742,7 @@
 
   .search-field,
   .search-chrome {
-    transition: transform var(--t-dock) var(--ease-dock);
+    transition: transform var(--t-dock) var(--ease-out) var(--t-dock-lead);
   }
 
   /*

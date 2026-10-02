@@ -68,6 +68,13 @@ export const WIDE_BAR_AT = 0.67;
  * styles.css, which has to say the same; a test reads both. The merge is this much time, whatever the scrolling.
  */
 export const DOCK_MS = 180;
+/**
+ * On a phone: the pause before the merge starts to move, in ms (three frames at 60Hz). It is `--t-dock-lead` in
+ * styles.css, which has to say the same. A transition shows its start value for its delay, and WebKit counts the
+ * time its compositor animation misses at the start (the commit of the new pose to the UI process, tens of ms on
+ * an iPhone) out of the delay, not out of the motion, so the first frame drawn is still the rest box.
+ */
+export const DOCK_LEAD_MS = 50;
 /** On a phone: how many px of scrolling back the field stays docked after the point where it docks. */
 export const DOCK_HYSTERESIS = 8;
 

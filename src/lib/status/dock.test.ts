@@ -3,6 +3,7 @@ import {
   BAR_RISE,
   createDockStore,
   DOCK_HYSTERESIS,
+  DOCK_LEAD_MS,
   DOCK_MS,
   DOCK_REST,
   type DockGeometry,
@@ -290,6 +291,11 @@ describe("transitionMs", () => {
   it("agrees with the 180ms the stylesheet names", () => {
     expect(DOCK_MS).toBe(180);
     expect(transitionMs(`${DOCK_MS}ms`)).toBe(DOCK_MS);
+  });
+
+  it("agrees with the 50ms lead the stylesheet names", () => {
+    expect(DOCK_LEAD_MS).toBe(50);
+    expect(transitionMs(`${DOCK_LEAD_MS}ms`)).toBe(DOCK_LEAD_MS);
   });
 });
 

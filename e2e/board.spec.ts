@@ -1387,11 +1387,9 @@ test("keeps the dock steady through a fast scroll, down and back up", async ({ p
 });
 
 /**
- * Scrolls to `y` and, in the frame after the page has docked or released the field (data-docked changes), stops the
+ * Scrolls to `y` and, the moment the page has docked or released the field (data-docked changes), stops the
  * transitions that start with it, before a frame is drawn, so a test can look at the field at the start of its
- * move whatever the speed of the browser. `release` lets them finish. Phone only. The page draws the pose the
- * move starts from in the frame that writes data-docked and starts the move in the next one (useSearchDock), so
- * this waits for that frame's callbacks, which run after the page's own.
+ * move whatever the speed of the browser. `release` lets them finish. Phone only.
  */
 async function dockHeld(page: Page, y: number): Promise<{ clearOpacity: number | null }> {
   // Moves are armed two frames after the load; a scroll before that is a snap, not a move.
@@ -1410,15 +1408,13 @@ async function dockHeld(page: Page, y: number): Promise<{ clearOpacity: number |
           if (dock.hasAttribute("data-docked") === was) return;
           observer.disconnect();
           window.clearTimeout(timer);
-          requestAnimationFrame(() => {
-            // Reading the animations lets the browser start the ones the page has just called for, in this very frame.
-            for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
-              animation.pause();
-            }
-            // Read in this frame: the dock's own timer ends the wait for the move whether or not it is held.
-            const clear = dock.querySelector('button[aria-label="Clear search"]');
-            resolve({ clearOpacity: clear ? Number.parseFloat(getComputedStyle(clear).opacity) : null });
-          });
+          // Reading the animations lets the browser start the ones this change calls for, in this very frame.
+          for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
+            animation.pause();
+          }
+          // Read in this task: the dock's own timer ends the wait for the move whether or not it is held.
+          const clear = dock.querySelector('button[aria-label="Clear search"]');
+          resolve({ clearOpacity: clear ? Number.parseFloat(getComputedStyle(clear).opacity) : null });
         });
         observer.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
         window.scrollTo(0, top);
@@ -1625,53 +1621,63 @@ test("starts the field's fill where it was and ends it in the slot, never at the
   expect(back.chromeTransform).toBe("none");
 });
 
-/** What `sampleDockMove` read on one animation frame. `longPlaceholder`: the placeholder the field started with. */
-type DockFrame = { at: number; left: number; width: number; docked: boolean; longPlaceholder: boolean };
+/** What `sampleDockMove` read on one animation frame. `clipped`: the placeholder shown is wider than the input. */
+type DockFrame = { at: number; left: number; width: number; docked: boolean; clipped: boolean };
 
 /**
  * Scrolls the way `kind` says and reads the search field's fill (left, width), the dock's pose and whether the
- * placeholder is the long one, on every animation frame, for `ms`. The reading runs first in each frame, so it is
- * what the frame before drew. `stall` burns that many ms of the main thread in the task that writes data-docked,
- * the frame that starts the move, which is what a busy phone does there (a render, a layout, a paint).
+ * placeholder is cut off by the input, on every animation frame, for `ms`. The reading runs first in each frame, so
+ * it is what the frame before drew. `lost` is WebKit's: it counts a transition from the frame that starts it, and
+ * its compositor applies the animation only after the commit of that frame to the UI process, so the first frame it
+ * draws of the move is `lost` ms into it (33 ms on an iPhone, by its screen recording). Chromium has no such loss and
+ * draws it one frame (about 17 ms) in, so every animation of the dock and of the bar's verdict is moved on by the
+ * rest in the task that writes data-docked, before a frame is drawn.
  *   drag  - a finger's pace, 14px a frame, to `to`
  *   flick - momentum, 40px a frame
  *   jump  - one scroll event that crosses the whole threshold
  */
 async function sampleDockMove(
   page: Page,
-  move: { kind: "drag" | "flick" | "jump"; from: number; to: number; stall?: number; ms?: number },
-): Promise<DockFrame[]> {
+  move: { kind: "drag" | "flick" | "jump"; from: number; to: number; lost: number; ms?: number },
+): Promise<{ frames: DockFrame[]; changedAt: number }> {
   await scrollAndSettle(page, move.from);
   await dockMoved(page);
   return page.evaluate(
-    ({ kind, from, to, stall = 0, ms = 900 }) =>
-      new Promise<DockFrame[]>((resolve) => {
+    ({ kind, from, to, lost, ms = 900 }) =>
+      new Promise<{ frames: DockFrame[]; changedAt: number }>((resolve) => {
         const dock = document.querySelector(".search-dock") as HTMLElement;
         const chrome = dock.querySelector(".search-chrome") as HTMLElement;
         const input = dock.querySelector("input") as HTMLInputElement;
-        const initial = input.placeholder;
+        const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
+        const measure = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
         const frames: DockFrame[] = [];
         const was = dock.hasAttribute("data-docked");
-        if (stall > 0) {
-          const burn = new MutationObserver(() => {
-            if (dock.hasAttribute("data-docked") === was) return;
-            burn.disconnect();
-            for (const end = performance.now() + stall; performance.now() < end; );
-          });
-          burn.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
-        }
+        let changedAt = 0;
+        const lose = new MutationObserver(() => {
+          if (dock.hasAttribute("data-docked") === was) return;
+          lose.disconnect();
+          changedAt = performance.now();
+          // Reading the animations lets the browser start the ones this change calls for, in this very frame.
+          for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
+            animation.currentTime = Number(animation.currentTime ?? 0) + Math.max(0, lost - 1000 / 60);
+          }
+        });
+        lose.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
         const start = performance.now();
         const read = (now: number) => {
           const box = chrome.getBoundingClientRect();
+          const style = getComputedStyle(input);
+          measure.font = style.font;
+          const room = input.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
           frames.push({
             at: now,
             left: box.left,
             width: box.width,
             docked: dock.hasAttribute("data-docked"),
-            longPlaceholder: input.placeholder === initial,
+            clipped: measure.measureText(input.placeholder).width > room + 1,
           });
           if (now - start < ms) requestAnimationFrame(read);
-          else resolve(frames);
+          else resolve({ frames, changedAt });
         };
         requestAnimationFrame(read);
         const step = kind === "flick" ? 40 : 14;
@@ -1688,7 +1694,7 @@ async function sampleDockMove(
   );
 }
 
-test("moves the field's fill into the dock in small steps from its rest box, from its first frame, however the scroll arrives", async ({
+test("moves the field's fill into the dock in small steps from its rest box, even when its first frames are lost", async ({
   page,
   browserName,
 }) => {
@@ -1697,12 +1703,14 @@ test("moves the field's fill into the dock in small steps from its rest box, fro
   const { wide, moveStart, moveEnd } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll, with no move in time");
   const rest = await dockBoxes(page);
-  // The most of the way a frame at 60Hz may cover (a frame that arrives later may cover its share of more). The
-  // field takes DOCK_MS, but an ease-out that starts steeply covers well over a third of the way in its first
-  // frame, and a first frame that a busy phone draws late (WebKit counts a transition from the frame that starts
-  // it) then shows most of it at once: the field seems to jump.
-  const STEP = 0.25;
   const FRAME = 1000 / 60;
+  // The first frame the move draws is next to its rest box: the lead (--t-dock-lead) is there for the time a
+  // browser loses at the start, and the move has not begun. Without it a first frame 33 ms in draws the fill 65% of
+  // the way in.
+  const FIRST = 0.12;
+  // The most of the way a frame at 60Hz may cover after that: the first frame of --ease-out is 37% of it (the curve
+  // is steep at the start, which is its character), so this holds the move to the curve and not to a jump past it.
+  const STEP = 0.42;
   const cdp = browserName === "chromium" ? await page.context().newCDPSession(page) : null;
   const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
   const past = Math.ceil(moveEnd) + 60;
@@ -1714,14 +1722,20 @@ test("moves the field's fill into the dock in small steps from its rest box, fro
     { kind: "drag", from: past, to: before, name: "a drag out" },
     { kind: "flick", from: before, to: past + 200, name: "a flick in" },
     { kind: "flick", from: past + 200, to: before, name: "a flick out" },
-    { kind: "jump", from: before, to: across, stall: 80, name: "one jump in, the first frame busy" },
-    { kind: "jump", from: past, to: before, stall: 80, name: "one jump out, the first frame busy" },
   ] as const;
-  for (const rate of cdp ? [1, 4] : [1]) {
+  // The time into the move at which its first frame is drawn: 17 ms is none lost, 33 ms is the iPhone's, and a
+  // slow phone loses more.
+  const runs = [
+    { rate: 1, lost: 0 },
+    { rate: 1, lost: 33 },
+    { rate: 1, lost: 45 },
+    ...(cdp ? [{ rate: 4, lost: 33 }] : []),
+  ];
+  for (const { rate, lost } of runs) {
     await cdp?.send("Emulation.setCPUThrottlingRate", { rate });
     for (const move of moves) {
-      const name = `${move.name}${rate > 1 ? ` at ${rate}x CPU` : ""}`;
-      const frames = await sampleDockMove(page, move);
+      const name = `${move.name}, first frame ${lost} ms in${rate > 1 ? ` at ${rate}x CPU` : ""}`;
+      const { frames, changedAt } = await sampleDockMove(page, { ...move, lost });
       const going = move.to > move.from;
       const first = frames.findIndex((frame) => frame.docked === going);
       expect(first, `${name}: the dock reacted`).toBeGreaterThanOrEqual(0);
@@ -1753,18 +1767,21 @@ test("moves the field's fill into the dock in small steps from its rest box, fro
         expect(size, `${label}: not past the slot`).toBeLessThanOrEqual(1.02);
         expect(size, `${label}: not back past where it started`).toBeGreaterThanOrEqual(-0.02);
         expect(size, `${label}: never turns back`).toBeGreaterThanOrEqual(previous - 0.02);
-        // In small steps, the first included: no frame covers more than its share of the way.
+        // In small steps, scaled by the length of the frame.
         const room = STEP * Math.max(1, (frame.at - previousAt) / FRAME);
         expect(size - previous, `${label}: the step`).toBeLessThanOrEqual(Math.min(room, 1));
-        if (index === 0) expect(size, `${label}: starts where it was`).toBeLessThanOrEqual(0.02);
-        // The long placeholder is still there in the frame that shows the dock changed: it shortens with the move,
-        // which starts in the frame after, not with the pose.
-        if (going && index === 0) expect(frame.longPlaceholder, `${label}: the placeholder`).toBe(true);
+        // The first frame drawn is the rest box, as long as it is not itself late (a throttled frame may cover more).
+        if (index === 0 && frame.at - changedAt < 2 * FRAME) {
+          expect(size, `${label}: starts where it was`).toBeLessThanOrEqual(FIRST);
+        }
+        // The long placeholder is never drawn cut off by the input (it changes in the frame the input narrows).
+        expect(frame.clipped, `${label}: the placeholder fits`).toBe(false);
         previous = size;
         previousAt = frame.at;
       }
     }
   }
+  await cdp?.send("Emulation.setCPUThrottlingRate", { rate: 1 });
 });
 
 test("never puts the field under the bar, so a flick's late frame cannot hide it", async ({ page }) => {

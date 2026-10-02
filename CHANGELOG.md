@@ -46,7 +46,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
-- The search field no longer jumps when it docks into the bar on an iPhone. It was drawn at its old size for a frame and then most of the way in at once; it now starts from where it was, moves in even steps over the same 180 ms, and the placeholder shortens once it has begun to move.
+- The search field should no longer jump when it docks into the bar on an iPhone (not yet confirmed on an iPhone). Safari drew its first frame of the move part way in, so the field seemed to snap most of the way and then slide; the move now waits 50 ms at its starting size before it begins, which absorbs the time Safari loses, then runs the same 180 ms.
 - Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
 - A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.
 - Dates and times stay in English when the browser is set to another language; they still follow your time zone.
