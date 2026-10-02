@@ -200,6 +200,27 @@ async function awayFromRefetch(page: Page, seconds = 30): Promise<void> {
     .toBeGreaterThanOrEqual(seconds);
 }
 
+/**
+ * Moves the page's Date to 30 s into a two-minute slot, and lets it run on from there. The turn of a slot adds a row
+ * to Recent changes, which grows the board body and makes the dock measure again (rightly); with the page 30 s in,
+ * the next turn and the wall-clock refetch are 90 s or more away. Only Date moves. page.clock.install would do the
+ * same, but it also replaces requestAnimationFrame with a timer that fires every 16 ms of clock time whether or not
+ * the page has rendered: three of those "frames" can pass before the page has rendered once, and so before a resize
+ * reaches it (the resize event is sent in a rendering update, ahead of the frame callbacks).
+ */
+async function pinToSlot(page: Page): Promise<void> {
+  const offset = Math.floor(Date.now() / 120_000) * 120_000 + 30_000 - Date.now();
+  await page.addInitScript((shift) => {
+    const Native = Date;
+    const now = () => Native.now() + shift;
+    window.Date = new Proxy(Native, {
+      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [now()], newTarget),
+      apply: (target) => new target(now()).toString(),
+      get: (target, key) => (key === "now" ? now : Reflect.get(target, key, target)),
+    });
+  }, offset);
+}
+
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
 function watchConsole(page: Page): string[] {
   const problems: string[] = [];
@@ -1187,9 +1208,8 @@ test("regression guard: keeps the dock docked through a rubber band below the en
 
 test("does not move the dock when only the viewport's height changes, as iOS's toolbar does", async ({ page }) => {
   test.slow();
-  // Pin the page clock well inside a slot. The turn of a slot adds a row to Recent changes, which grows the board
-  // body, and the dock measures again (rightly); the next turn and the wall-clock refetch are then 90 s or more away.
-  await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
+  // Well inside a slot (see pinToSlot), and with the page's frames its own: the counts below wait for those.
+  await pinToSlot(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
@@ -1259,10 +1279,12 @@ test("does not move the dock when only the viewport's height changes, as iOS's t
   }
   expect(await measured(), "a change of height alone measures the page again").toBe(measuredBefore);
 
-  // A change of width does (a rotation), so the guard is not just deaf to resizes.
+  // A change of width does (a rotation), so the guard is not just deaf to resizes. Wait for the measure rather than
+  // for a count of frames: a slow browser may take longer than three to deliver the resize.
   await page.setViewportSize({ width: size.width - 20, height: size.height });
-  await frames(3);
-  expect(await measured(), "a change of width does not measure the page again").toBeGreaterThan(measuredBefore ?? 0);
+  await expect
+    .poll(measured, { message: "a change of width does not measure the page again", timeout: 10_000 })
+    .toBeGreaterThan(measuredBefore ?? 0);
 });
 
 test("keeps the dock steady through a fast scroll, down and back up", async ({ page }) => {
