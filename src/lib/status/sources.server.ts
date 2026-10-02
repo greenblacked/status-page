@@ -60,6 +60,17 @@ const MAX_COMPONENTS = 300;
 // Applied by sortIncidents after the board's ordering, so the cut drops the
 // mildest, oldest rows and never the outage.
 const MAX_INCIDENTS = 50;
+/**
+ * Most entries read from any one array of a vendor payload (components,
+ * incidents, maintenance), in document order; the rest are not looked at. The
+ * 4 MiB body cap alone allows a million `{}` entries, and mapping them
+ * allocated hundreds of MiB before the caps above applied. This is the bound
+ * for the work and memory a payload can cost, in the way MAX_RSS_SCANNED is
+ * for a feed: it sits an order of magnitude over the largest real list.
+ */
+export const MAX_SCANNED_ROWS = 5000;
+/** Most entries read from an array nested in one of those rows (a component's containers, an incident's messages). */
+export const MAX_NESTED_ROWS = 500;
 // Extra, optional fetches (component lists, the Steam connection managers)
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
@@ -440,9 +451,15 @@ function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "c
     : { components: ranked };
 }
 
-/** The objects in a vendor array; anything else (a null entry, a non-array) is skipped, not a crash. */
-function records<T extends object>(value: unknown): T[] {
-  return Array.isArray(value) ? value.filter((item): item is T => typeof item === "object" && item !== null) : [];
+/**
+ * The objects in the first `limit` entries of a vendor array; anything else (a
+ * null entry, a non-array) is skipped, not a crash. The cut comes before the
+ * filter, so a payload of millions of entries costs `limit` of work and memory.
+ */
+function records<T extends object>(value: unknown, limit = MAX_SCANNED_ROWS): T[] {
+  return Array.isArray(value)
+    ? value.slice(0, limit).filter((item): item is T => typeof item === "object" && item !== null)
+    : [];
 }
 
 const MAX_UPCOMING_MAINTENANCE = 3;
@@ -509,7 +526,7 @@ function fromStatuspage(
   // item that lists none.
   const belongs = (item: { name?: string; components?: StatuspageRef[] }): boolean => {
     if (!componentFilter) return true;
-    const refs = records<StatuspageRef>(item.components);
+    const refs = records<StatuspageRef>(item.components, MAX_NESTED_ROWS);
     if (refs.length === 0) return componentFilter(item.name ?? "");
     return refs.some((ref) => {
       const known = ref.id ? componentsById.get(ref.id) : undefined;
@@ -1569,9 +1586,10 @@ async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise
   try {
     const { value, ms } = await timed(() => fetchJson<StatuspageSummary>(STATUSPAGE_SUMMARIES[id]));
     if (value && Array.isArray(value.components)) {
-      value.components = value.components.filter(
-        (component) => !(typeof component?.name === "string" && NOT_A_SERVICE.test(component.name)),
-      );
+      // Cut before the filter, as records() does, so the pass is bounded too.
+      value.components = value.components
+        .slice(0, MAX_SCANNED_ROWS)
+        .filter((component) => !(typeof component?.name === "string" && NOT_A_SERVICE.test(component.name)));
     }
     return fromStatuspage(id, value, ms);
   } catch (error) {
@@ -1586,7 +1604,7 @@ const GITLAB_PAGE_ID = "5b36dc6502d06804c08349f7";
 
 /** The newest message of a Status.io event by its datetime; with none readable, the last listed. */
 function newestStatusIoMessage(event: StatusIoEvent): StatusIoMessage | undefined {
-  const messages = records<StatusIoMessage>(event.messages);
+  const messages = records<StatusIoMessage>(event.messages, MAX_NESTED_ROWS);
   let newest: StatusIoMessage | undefined;
   let newestAt = Number.NEGATIVE_INFINITY;
   for (const message of messages) {
@@ -1608,7 +1626,10 @@ function newestStatusIoMessage(event: StatusIoEvent): StatusIoMessage | undefine
  * all-clear. Components come from `status[]`, incidents from `incidents[]`
  * and maintenance from `maintenance.active[]` and `maintenance.upcoming[]`.
  * Status.io writes no link on an incident, so the link is the page's own
- * incident page, kept to the vendor's host.
+ * incident page, kept to the vendor's host. Each array is cut to its first
+ * MAX_SCANNED_ROWS entries (MAX_NESTED_ROWS for containers and messages)
+ * before anything is mapped, so a reply of a million `{}` costs no more than
+ * a small one.
  */
 export function fromStatusIo(id: ServiceId, data: StatusIoStatus, latencyMs: number, pageId: string): ServiceSnapshot {
   const result = data?.result;
@@ -1627,7 +1648,7 @@ export function fromStatusIo(id: ServiceId, data: StatusIoStatus, latencyMs: num
 
   const components: ComponentHealth[] = records<StatusIoComponent>(result.status).map((component) => {
     const componentHealth = statusIoHealth(component.status_code);
-    const affected = records<StatusIoContainer>(component.containers)
+    const affected = records<StatusIoContainer>(component.containers, MAX_NESTED_ROWS)
       .filter((container) => statusIoHealth(container.status_code) !== "operational")
       .map((container) => text(container.name))
       .filter((name): name is string => name !== undefined);

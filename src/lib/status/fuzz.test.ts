@@ -37,7 +37,9 @@ import {
   grokItemHealth,
   grokTitleService,
   isoTimestamp,
+  MAX_NESTED_ROWS,
   MAX_RSS_ITEMS,
+  MAX_SCANNED_ROWS,
   parseGoogleProducts,
   parseInstatusComponents,
   parseRssItems,
@@ -722,6 +724,45 @@ describe("feeds and payloads", () => {
         }
       }),
       run(),
+    );
+  });
+
+  it("fromStatusIo with arrays of any length past the bound reads at most MAX_SCANNED_ROWS of each", () => {
+    const row = fc.oneof(
+      fc.constant({}),
+      fc.record({ name: anyText, status_code: fc.constantFrom(100, 300, 500) }),
+      fc.constant(null),
+    );
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: MAX_SCANNED_ROWS * 3 }),
+        fc.integer({ min: 0, max: MAX_SCANNED_ROWS * 3 }),
+        fc.integer({ min: 0, max: MAX_SCANNED_ROWS * 3 }),
+        fc.integer({ min: 0, max: MAX_NESTED_ROWS * 3 }),
+        row,
+        (components, incidents, maintenance, nested, entry) => {
+          const many = (n: number, item: unknown = entry) => new Array(n).fill(item);
+          const snapshot = fromStatusIo(
+            "gitlab",
+            {
+              result: {
+                status_overall: { status: "Operational", status_code: 100 },
+                status: many(components, { name: "c", status_code: 100, containers: many(nested) }),
+                incidents: many(incidents, { name: "i", messages: many(nested) }),
+                maintenance: { active: many(maintenance), upcoming: many(maintenance) },
+              },
+            } as never,
+            1,
+            "pg",
+          );
+          expect(snapshot.components.length).toBeLessThanOrEqual(300);
+          expect(snapshot.componentCount ?? 0).toBeLessThanOrEqual(MAX_SCANNED_ROWS);
+          expect(snapshot.incidents.length).toBeLessThanOrEqual(50);
+          expect(snapshot.incidentCount ?? 0).toBeLessThanOrEqual(MAX_SCANNED_ROWS);
+          expect(snapshot.upcomingMaintenance?.length ?? 0).toBeLessThanOrEqual(3);
+        },
+      ),
+      run(50),
     );
   });
 

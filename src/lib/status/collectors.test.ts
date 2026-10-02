@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bytes, type Handler, json, networkError, stubFetch, text, utf16 } from "../../test/stub-fetch.ts";
 import { CATALOG } from "./catalog.ts";
-import { clearMikrotikNotesCache, collectAllServices } from "./sources.server.ts";
+import { MAX_BODY_BYTES } from "./http.ts";
+import {
+  clearMikrotikNotesCache,
+  collectAllServices,
+  MAX_NESTED_ROWS,
+  MAX_RSS_ITEMS,
+  MAX_SCANNED_ROWS,
+} from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
@@ -1623,6 +1630,93 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(gitlab.failure).toEqual({ kind: "parser", message: "Status.io reply has no result." });
       expect(gitlab.incidents).toEqual([]);
       expect(gitlab.components).toEqual([]);
+    });
+
+    // Dense payloads: the largest bodies the 4 MiB cap lets through, made of the
+    // smallest entries (`{}`, three bytes with its comma), so an array holds the
+    // most rows a body can. Reading such a body once mapped every row before
+    // any cap applied (about 190 MiB of heap for a million components, fatal
+    // under a 128 MiB heap); the arrays are now cut first, so the work is
+    // bounded by MAX_SCANNED_ROWS, not by the body.
+    const DENSE_BUDGET_MS = 5000;
+    const dense = (rows: number, row = "{}") => `[${Array.from({ length: rows }, () => row).join(",")}]`;
+    const raw = (body: string): Handler => {
+      expect(body.length).toBeLessThan(MAX_BODY_BYTES);
+      return () => new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    it("GitLab: a dense Status.io body (900,000 components, 200,000 incidents, 200,000 maintenance) is cut before it is mapped", async () => {
+      const body = `{"result":{"status_overall":{"status":"Operational","status_code":100},"status":${dense(900_000)},"incidents":${dense(200_000)},"maintenance":{"active":${dense(100_000)},"upcoming":${dense(100_000)}}}}`;
+      stubFetch({ [URLS.gitlab]: raw(body) });
+      const started = performance.now();
+      const gitlab = await collect("gitlab");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(gitlab.failure).toBeUndefined();
+      // Counts are of what was read: the first MAX_SCANNED_ROWS of each array, never the body's millions.
+      expect(gitlab.components).toHaveLength(300);
+      expect(gitlab.componentCount).toBe(MAX_SCANNED_ROWS);
+      expect(gitlab.incidents).toHaveLength(50);
+      expect(gitlab.incidentCount).toBe(MAX_SCANNED_ROWS);
+      expect(gitlab.upcomingMaintenance?.length ?? 0).toBeLessThanOrEqual(3);
+    });
+
+    it("GitLab: a component with 50,000 containers and an incident with 100,000 messages are cut to the nested bound", async () => {
+      // The first MAX_NESTED_ROWS containers are fine; every one past them is down.
+      const fine = dense(MAX_NESTED_ROWS, '{"name":"ok","status_code":100}').slice(1, -1);
+      const down = dense(50_000, '{"name":"late","status_code":300}').slice(1, -1);
+      const containers = `[${fine},${down}]`;
+      const message = '{"status":300}';
+      const body = `{"result":{"status_overall":{"status":"Operational","status_code":100},"status":[{"name":"Git","status_code":300,"status":"Degraded","containers":${containers}}],"incidents":[{"_id":"a","name":"Slow","messages":${dense(100_000, message)}}]}}`;
+      stubFetch({ [URLS.gitlab]: raw(body) });
+      const started = performance.now();
+      const gitlab = await collect("gitlab");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(gitlab.failure).toBeUndefined();
+      // The containers past the bound are not read, so none is named as affected.
+      expect(gitlab.components[0]).toEqual({ name: "Git", health: "degraded", detail: "Degraded" });
+      expect(gitlab.incidents[0]).toMatchObject({ id: "a", title: "Slow", health: "degraded" });
+    });
+
+    it.each(["github", "confluence"] as const)(
+      "%s: a dense Statuspage body (900,000 components, 300,000 incidents, 100,000 maintenance) is cut before it is mapped",
+      async (id) => {
+        const body = `{"status":{"indicator":"none","description":"All Systems Operational"},"components":${dense(900_000)},"incidents":${dense(300_000)},"scheduled_maintenances":${dense(100_000)}}`;
+        stubFetch({ [URLS[id]]: raw(body) });
+        const started = performance.now();
+        const snapshot = await collect(id);
+        expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+        expect(snapshot.failure).toBeUndefined();
+        expect(snapshot.components).toHaveLength(300);
+        expect(snapshot.componentCount).toBe(MAX_SCANNED_ROWS);
+        expect(snapshot.incidents).toHaveLength(50);
+        expect(snapshot.incidentCount).toBe(MAX_SCANNED_ROWS);
+      },
+    );
+
+    const azureItem = (i: number) =>
+      `<item><title>Outage ${i}</title><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
+
+    it("Azure: a dense feed of 40,000 dated items is scanned to the bound and keeps MAX_RSS_ITEMS", async () => {
+      const xml = `<rss><channel>${Array.from({ length: 40_000 }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const started = performance.now();
+      const azure = await collect("azure");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(azure.failure).toBeUndefined();
+      expect(azure.incidents).toHaveLength(50);
+      expect(azure.incidentCount).toBe(MAX_RSS_ITEMS);
+    });
+
+    it("Azure: items past the scan bound are not read, however many empty ones come first", async () => {
+      const dated = Array.from({ length: 15_000 }, (_, i) => azureItem(i)).join("");
+      const xml = `<rss><channel>${"<item></item>".repeat(200_000)}${dated}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const started = performance.now();
+      const azure = await collect("azure");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
     });
 
     it("Azure: an Atom document (feed-malformed.xml) is unknown with a parser failure", async () => {
