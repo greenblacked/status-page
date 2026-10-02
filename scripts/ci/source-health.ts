@@ -5,6 +5,14 @@
 // that fails, and, with --issues, keeps exactly one GitHub issue open per
 // broken source, closing it again when the source reads cleanly.
 //
+// A source gets an issue only after it has failed in two consecutive runs
+// (CONSECUTIVE_RUNS): vendor status pages time out from the runner for an
+// hour now and then, and an issue that opens and closes itself is noise. The
+// first failing run is remembered in a closed `source-health-state` issue
+// (see findStateIssue / parseState / saveState), so no new permission or
+// infrastructure is needed. The issue's label is created on first use and its
+// body marker is the fallback lookup, so the streak survives a missing label.
+//
 // Local:  node --experimental-strip-types scripts/ci/source-health.ts
 //         (exits 1 when any source fails)
 // CI:     ... scripts/ci/source-health.ts --issues
@@ -26,6 +34,22 @@ import type { ServiceSnapshot, SourceFailure } from "../../src/lib/status/types.
 
 const ATTEMPTS = Number(process.env.SOURCE_HEALTH_ATTEMPTS ?? 3);
 const RETRY_DELAY_MS = Number(process.env.SOURCE_HEALTH_RETRY_MS ?? 20_000);
+// A timeout or a network error is the failure that clears on its own, but
+// not within 20 seconds: from the third attempt on, wait this long instead.
+// The waits start when an attempt ends, and a timed-out attempt takes about 9s,
+// so the attempts begin near 0s, 29s and 128s: about two minutes of trouble.
+const SLOW_RETRY_MS = Number(process.env.SOURCE_HEALTH_SLOW_RETRY_MS ?? 90_000);
+// A source must fail in this many consecutive runs before it gets an issue.
+export const CONSECUTIVE_RUNS = 2;
+// A run closer than this to the last counted one (a manual re-run minutes
+// after a scheduled run) does not count as another run: it would bring back
+// the open-then-close noise the two-run rule is there to stop.
+export const MIN_RUN_GAP_MS = 30 * 60 * 1000;
+// A remembered failure older than this is stale: the next failure starts a
+// new streak. Scheduled runs are hours apart (GitHub delays the hourly cron:
+// gaps of 4 to 9 hours were seen), so this is generous; a clean run ends a
+// streak anyway, the age only guards against very old entries.
+export const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // When this share of sources fails together, the runner's network is a far
 // likelier cause than a dozen vendors breaking in the same hour. Opening a
 // dozen issues would be noise, so fail the job instead.
@@ -42,6 +66,22 @@ export type Result = {
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * How long to wait after a failed attempt: RETRY_DELAY_MS after the first
+ * one, and SLOW_RETRY_MS after any later one while a failing source timed
+ * out or could not connect. A parser or HTTP error does not clear by
+ * waiting longer, so those keep the short delay.
+ */
+export function retryDelayMs(
+  attempt: number,
+  failing: Result[],
+  fastMs: number = RETRY_DELAY_MS,
+  slowMs: number = SLOW_RETRY_MS,
+): number {
+  const transient = failing.some((r) => r.failure?.kind === "timeout" || r.failure?.kind === "network");
+  return transient && attempt >= 2 ? slowMs : fastMs;
+}
 
 async function probe(): Promise<Result[]> {
   const results = new Map<string, Result>();
@@ -61,10 +101,11 @@ async function probe(): Promise<Result[]> {
     }
     const stillFailing = [...results.values()].filter((result) => !result.ok);
     if (stillFailing.length === 0 || attempt === ATTEMPTS) break;
+    const delayMs = retryDelayMs(attempt, stillFailing);
     console.log(
-      `attempt ${attempt}: ${stillFailing.map((r) => r.id).join(", ")} failed; retrying in ${RETRY_DELAY_MS / 1000}s`,
+      `attempt ${attempt}: ${stillFailing.map((r) => r.id).join(", ")} failed; retrying in ${delayMs / 1000}s`,
     );
-    await sleep(RETRY_DELAY_MS);
+    await sleep(delayMs);
   }
   return [...results.values()];
 }
@@ -165,7 +206,16 @@ export function recordResponses(dir: string): () => void {
 
 // ---------------------------------------------------------------- GitHub ---
 
-type Issue = { number: number; created_at: string; pull_request?: unknown };
+type Issue = {
+  number: number;
+  state?: string;
+  labels?: ({ name?: string } | string)[];
+  created_at: string;
+  body?: string | null;
+  pull_request?: unknown;
+  title?: string;
+  user?: { login?: string; type?: string } | null;
+};
 
 function env(name: string): string {
   const value = process.env[name];
@@ -197,7 +247,7 @@ function runUrl(): string {
   return `${server}/${env("GITHUB_REPOSITORY")}/actions/runs/${env("GITHUB_RUN_ID")}`;
 }
 
-function issueBody(result: Result, firstFailure: string, now: string): string {
+function issueBody(result: Result, runs: number, firstFailure: string, now: string): string {
   const failure = result.failure;
   const parserNote =
     failure?.kind === "parser"
@@ -205,7 +255,7 @@ function issueBody(result: Result, firstFailure: string, now: string): string {
       : "`http`, `timeout` and `network` failures are often on the vendor's side and clear by themselves. If this stays open for hours, check whether the official endpoint moved.";
   return [
     `<!-- source-health:${result.id} -->`,
-    `The scheduled source-health check could not read the official status source for **${result.name}** in ${result.attempts} consecutive attempts.`,
+    `The scheduled source-health check could not read the official status source for **${result.name}** in ${runs} consecutive ${runs === 1 ? "run" : "runs"}, and in ${result.attempts === 1 ? "its single attempt" : `all ${result.attempts} attempts`} of the latest one.`,
     "",
     "| | |",
     "| --- | --- |",
@@ -214,18 +264,252 @@ function issueBody(result: Result, firstFailure: string, now: string): string {
     `| Error | \`${inline(failure?.message ?? "none recorded")}\` |`,
     `| First failure | ${firstFailure} |`,
     `| Latest failure | ${now} |`,
+    `| Failing runs in a row | ${runs} |`,
     `| Latest run | ${runUrl()} |`,
     "",
     parserNote,
     "",
-    "This issue is maintained by `.github/workflows/source-health.yml`. It updates on each failing run and closes itself when the source reads cleanly again.",
+    `This issue is maintained by \`.github/workflows/source-health.yml\`. It opens only after the source has failed in ${CONSECUTIVE_RUNS} consecutive runs, updates on each failing run and closes itself when the source reads cleanly again.`,
   ].join("\n");
+}
+
+// ----------------------------------------------------- failing-run state ---
+
+// What a run remembers about a source that is failing but has no issue yet.
+export type Pending = {
+  /** The first run of this streak of failures. */
+  firstFailure: string;
+  /** The latest failing run. */
+  lastFailure: string;
+  /** How many consecutive runs have failed. */
+  runs: number;
+};
+
+/**
+ * Decides, from this run's results and what earlier runs remembered, which
+ * failing sources may now get an issue. Pure, so the rule is tested without
+ * GitHub. `next` is what to remember for the next run: one entry per source
+ * failing now, none for a source that read cleanly (its streak is over). A
+ * source missing from this run (another branch's catalog) keeps its entry
+ * until it ages out.
+ *
+ * A remembered failure older than PENDING_MAX_AGE_MS starts a new streak, and
+ * a run less than MIN_RUN_GAP_MS after the last counted one is not counted.
+ * `open` holds the run count stated by each source's open issue: an issue
+ * that is open means the streak is alive whatever the memory says (an issue
+ * from before this rule, a memory that went stale), so the count continues
+ * from it.
+ */
+export function planRun(
+  results: Result[],
+  previous: ReadonlyMap<string, Pending>,
+  now: string,
+  open: ReadonlyMap<string, number> = new Map(),
+): { next: Map<string, Pending>; mayOpen: ReadonlySet<string> } {
+  const next = new Map<string, Pending>();
+  const mayOpen = new Set<string>();
+  const age = (entry: Pending) => Date.parse(now) - Date.parse(entry.lastFailure);
+  // A remembered time later than this run is wrong (a hand-edited body, or
+  // clocks that disagree). Left alone it would give a negative age and hold
+  // the streak inside the minimum gap for good, so it is clamped to now.
+  const clamp = (entry: Pending): Pending => {
+    const last = Math.min(Date.parse(entry.lastFailure), Date.parse(now));
+    const first = Math.min(Date.parse(entry.firstFailure), last);
+    return { ...entry, firstFailure: new Date(first).toISOString(), lastFailure: new Date(last).toISOString() };
+  };
+  const remembered = new Map([...previous].map(([id, entry]) => [id, clamp(entry)]));
+  const seen = new Set(results.map((result) => result.id));
+  for (const [id, entry] of remembered) {
+    if (!seen.has(id) && age(entry) <= PENDING_MAX_AGE_MS) next.set(id, entry);
+  }
+  for (const result of results) {
+    if (result.ok) continue;
+    const before = remembered.get(result.id);
+    const fresh = before !== undefined && age(before) <= PENDING_MAX_AGE_MS;
+    const known = Math.max(fresh ? before.runs : 0, open.get(result.id) ?? 0);
+    if (fresh && age(before) < MIN_RUN_GAP_MS) {
+      next.set(result.id, { ...before, runs: known });
+    } else {
+      next.set(result.id, { firstFailure: fresh ? before.firstFailure : now, lastFailure: now, runs: known + 1 });
+    }
+    if ((next.get(result.id)?.runs ?? 0) >= CONSECUTIVE_RUNS) mayOpen.add(result.id);
+  }
+  return { next, mayOpen };
+}
+
+// The memory lives in one issue labelled `source-health-state`, kept closed
+// so it never shows among the open ones. Its body carries the entries as JSON
+// in a code block. Issues are the one thing this job may already write, so
+// the workflow needs no new permission and nothing else to run or store.
+// The label is created through the API before it is first used, and the issue
+// can also be found by the marker in its body (STATE_MARKER), so a label that
+// is missing or was dropped can never lose the streak.
+const STATE_LABEL = "source-health-state";
+const STATE_MARKER = `<!-- ${STATE_LABEL} -->`;
+const STATE_TITLE = "Source health: failures awaiting a second run";
+const STATE_INTRO = `${STATE_MARKER}
+Bookkeeping for \`.github/workflows/source-health.yml\`, kept closed on purpose: a source that fails once is noted here, and gets its own issue only if the next run fails too. Do not edit by hand.`;
+
+export function renderState(state: ReadonlyMap<string, Pending>): string {
+  const json = JSON.stringify(Object.fromEntries(state), null, 2);
+  return `${STATE_INTRO}\n\n\`\`\`json\n${json}\n\`\`\`\n`;
+}
+
+/** Reads the entries back; anything unreadable counts as no memory. */
+export function parseState(body: string | null | undefined): Map<string, Pending> {
+  const state = new Map<string, Pending>();
+  const json = body?.match(/```json\r?\n([\s\S]*?)\r?\n```/)?.[1];
+  if (!json) return state;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return state;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return state;
+  for (const [id, value] of Object.entries(parsed)) {
+    const entry = value as Partial<Pending> | null;
+    if (
+      typeof entry?.firstFailure === "string" &&
+      typeof entry.lastFailure === "string" &&
+      Number.isFinite(Date.parse(entry.firstFailure)) &&
+      Number.isFinite(Date.parse(entry.lastFailure)) &&
+      Number.isInteger(entry.runs) &&
+      (entry.runs as number) > 0
+    ) {
+      state.set(id, { firstFailure: entry.firstFailure, lastFailure: entry.lastFailure, runs: entry.runs as number });
+    }
+  }
+  return state;
+}
+
+/** The pages of closed issues the marker fallback reads at most (100 each). */
+const STATE_SCAN_PAGES = 3;
+
+/** The login the workflow's own token acts as (github.token). */
+const STATE_AUTHOR = "github-actions[bot]";
+
+/**
+ * Only an issue this job wrote is the memory: authored by the workflow's bot,
+ * with the exact title and a body that opens with the marker. A marker quoted
+ * in someone else's issue, or planted in one, is never adopted (its body would
+ * be rewritten, its labels replaced and the issue closed).
+ */
+const isStateIssue = (issue: Issue) =>
+  !issue.pull_request &&
+  issue.user?.login === STATE_AUTHOR &&
+  issue.title === STATE_TITLE &&
+  (issue.body ?? "").startsWith(STATE_MARKER);
+
+async function findStateIssue(repo: string): Promise<Issue | undefined> {
+  const labelled = await github<Issue[]>(
+    "GET",
+    `/repos/${repo}/issues?state=all&per_page=10&labels=${encodeURIComponent(STATE_LABEL)}`,
+  );
+  const byLabel = labelled.find(isStateIssue);
+  if (byLabel) return byLabel;
+  // No labelled issue: the label may never have been created or applied, so
+  // look for the marker in the body. Both lookups are bounded and best effort.
+  try {
+    const query = encodeURIComponent(`repo:${repo} is:issue in:body author:app/github-actions ${STATE_LABEL}`);
+    const found = await github<{ items?: Issue[] }>("GET", `/search/issues?q=${query}&per_page=30`);
+    const hit = found.items?.find(isStateIssue);
+    if (hit) return hit;
+  } catch (error) {
+    console.warn(`State issue search failed, scanning closed issues: ${(error as Error).message}`);
+  }
+  try {
+    for (let page = 1; page <= STATE_SCAN_PAGES; page++) {
+      const closed = await github<Issue[]>(
+        "GET",
+        `/repos/${repo}/issues?state=closed&per_page=100&sort=created&direction=asc&page=${page}`,
+      );
+      const hit = closed.find(isStateIssue);
+      if (hit) return hit;
+      if (closed.length < 100) break;
+    }
+  } catch (error) {
+    console.warn(`State issue scan failed, starting without memory: ${(error as Error).message}`);
+  }
+  return undefined;
+}
+
+/**
+ * Makes sure the state label exists before an issue is given it, and says
+ * whether it does. An existing label (422 already_exists) counts. On any
+ * other failure the label is left off the issue, because GitHub may reject an
+ * unknown label outright; the issue is still created and found again by its
+ * marker.
+ */
+async function ensureStateLabel(repo: string): Promise<boolean> {
+  try {
+    await github("POST", `/repos/${repo}/labels`, {
+      name: STATE_LABEL,
+      color: "ededed",
+      description: "Bookkeeping for the source-health workflow",
+    });
+    return true;
+  } catch (error) {
+    const message = (error as Error).message;
+    if (/-> 422:/.test(message) && message.includes("already_exists")) return true;
+    console.warn(`Could not create the ${STATE_LABEL} label: ${message}`);
+    return false;
+  }
+}
+
+const hasStateLabel = (issue: Issue) =>
+  (issue.labels ?? []).some((label) => (typeof label === "string" ? label : label.name) === STATE_LABEL);
+
+async function saveState(repo: string, issue: Issue | undefined, state: ReadonlyMap<string, Pending>): Promise<void> {
+  const body = renderState(state);
+  if (issue) {
+    // An issue found only by its marker gets the label back.
+    const relabel = hasStateLabel(issue) || !(await ensureStateLabel(repo)) ? {} : { labels: [STATE_LABEL] };
+    // An issue left open by an earlier failed close is closed again here.
+    if (issue.state === "open") {
+      await github("PATCH", `/repos/${repo}/issues/${issue.number}`, {
+        body,
+        state: "closed",
+        state_reason: "not_planned",
+        ...relabel,
+      });
+    } else if (issue.body !== body || relabel.labels) {
+      await github("PATCH", `/repos/${repo}/issues/${issue.number}`, { body, ...relabel });
+    }
+  } else if (state.size > 0) {
+    const labels = (await ensureStateLabel(repo)) ? { labels: [STATE_LABEL] } : {};
+    const created = await github<Issue>("POST", `/repos/${repo}/issues`, { title: STATE_TITLE, body, ...labels });
+    await github("PATCH", `/repos/${repo}/issues/${created.number}`, { state: "closed", state_reason: "not_planned" });
+  }
+}
+
+/** The run count each open source issue states, by source id. */
+async function openRunCounts(repo: string): Promise<Map<string, number>> {
+  const open = await github<Issue[]>(
+    "GET",
+    `/repos/${repo}/issues?state=open&per_page=100&labels=${encodeURIComponent(LABEL)}`,
+  );
+  const counts = new Map<string, number>();
+  for (const issue of open) {
+    if (issue.pull_request) continue;
+    const id = issue.body?.match(/<!-- source-health:(\S+) -->/)?.[1];
+    if (!id) continue;
+    const runs = Number(issue.body?.match(/\| Failing runs in a row \| (\d+) \|/)?.[1]);
+    counts.set(id, Number.isInteger(runs) && runs > 0 ? runs : 1);
+  }
+  return counts;
 }
 
 export async function syncIssues(results: Result[]): Promise<void> {
   const repo = env("GITHUB_REPOSITORY");
   const now = new Date().toISOString();
+  const stateIssue = await findStateIssue(repo);
+  const { next, mayOpen } = planRun(results, parseState(stateIssue?.body), now, await openRunCounts(repo));
+  // Remember the streaks first: if an issue call below fails, this run still
+  // counts and the next one opens what is due.
+  await saveState(repo, stateIssue, next);
   for (const result of results) {
+    const pending = next.get(result.id);
     await syncOneIssue(
       repo,
       {
@@ -233,7 +517,9 @@ export async function syncIssues(results: Result[]): Promise<void> {
         labels: [LABEL, `source:${result.id}`],
         title: `Collector failure: ${result.name}`,
         failing: !result.ok,
-        body: (firstFailure, at) => issueBody(result, firstFailure, at),
+        mayOpen: mayOpen.has(result.id),
+        since: pending?.firstFailure,
+        body: (firstFailure, at) => issueBody(result, pending?.runs ?? 1, firstFailure, at),
         recovered: (at) =>
           `✅ Recovered: **${result.name}** read cleanly at ${at} (${result.latencyMs}ms). ${runUrl()}`,
       },
@@ -242,20 +528,27 @@ export async function syncIssues(results: Result[]): Promise<void> {
   }
 }
 
-// One issue per problem, found by its labels: opened on the first failure,
-// its body rewritten on each later one (so an hourly outage is one issue,
-// not a thread of identical comments), and closed with a comment once the
-// check passes again. Shared by the per-collector issues above and the
-// deployment check below.
+// One issue per problem, found by its labels: opened on the first failure
+// (a collector's, on the second consecutive failing run: see planRun), its
+// body rewritten on each later one (so an hourly outage is one issue, not a
+// thread of identical comments), and closed with a comment once the check
+// passes again. Shared by the per-collector issues above and the deployment
+// check below.
 type IssueSpec = {
   /** Named in the log lines. */
   id: string;
   labels: string[];
   title: string;
   failing: boolean;
+  /** False holds a failing check back from opening an issue (default true). */
+  mayOpen?: boolean;
+  /** When the failure began, if that is earlier than the issue itself. */
+  since?: string;
   body: (firstFailure: string, now: string) => string;
   recovered: (now: string) => string;
 };
+
+const earliest = (a: string, b: string) => (Date.parse(a) <= Date.parse(b) ? a : b);
 
 async function syncOneIssue(repo: string, spec: IssueSpec, now: string): Promise<void> {
   const open = (
@@ -266,15 +559,18 @@ async function syncOneIssue(repo: string, spec: IssueSpec, now: string): Promise
   ).filter((issue) => !issue.pull_request);
   const existing = open[0];
 
-  if (spec.failing && !existing) {
+  if (spec.failing && !existing && spec.mayOpen === false) {
+    console.log(`${spec.id} failed; no issue until it fails in ${CONSECUTIVE_RUNS} consecutive runs`);
+  } else if (spec.failing && !existing) {
     const created = await github<Issue>("POST", `/repos/${repo}/issues`, {
       title: spec.title,
-      body: spec.body(now, now),
+      body: spec.body(spec.since ?? now, now),
       labels: spec.labels,
     });
     console.log(`opened #${created.number} for ${spec.id}`);
   } else if (spec.failing && existing) {
-    await github("PATCH", `/repos/${repo}/issues/${existing.number}`, { body: spec.body(existing.created_at, now) });
+    const first = spec.since ? earliest(spec.since, existing.created_at) : existing.created_at;
+    await github("PATCH", `/repos/${repo}/issues/${existing.number}`, { body: spec.body(first, now) });
     console.log(`updated #${existing.number} for ${spec.id}`);
   } else if (!spec.failing && existing) {
     await github("POST", `/repos/${repo}/issues/${existing.number}/comments`, { body: spec.recovered(now) });
@@ -421,7 +717,7 @@ async function main(): Promise<number> {
   const massFailure = results.length > 2 && failures.length >= Math.ceil(results.length * MASS_FAILURE_RATIO);
   if (massFailure) {
     console.error(
-      `::error::${failures.length} of ${results.length} sources failed at once. That points at the runner's network, not at the vendors, so no issues were opened or closed.`,
+      `::error::${failures.length} of ${results.length} sources failed at once. That points at the runner's network, not at the vendors, so no issues were opened or closed and the remembered failures are unchanged.`,
     );
     return 1;
   }
