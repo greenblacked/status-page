@@ -197,6 +197,46 @@ export function clampScroll(scrollY: number, maxScroll: number): number {
   return Math.min(Math.max(scrollY, 0), Math.max(maxScroll, 0));
 }
 
+/**
+ * Whether the reader moved the page since the last frame, as opposed to the layout under it. Pure: the hook hands
+ * it the numbers it read before any rebase touched its baseline.
+ *
+ * A move is the reader's unless the layout accounts for it: the page was held to a nearer end (the position it
+ * left no longer exists, and it now sits at the end), a `quietScroll` is under way, or its travel is the distance
+ * something else moved by, within 1.5px, which is the browser's scroll anchoring holding the reader's place: the
+ * board's anchor moved by that much (`anchorMoved`), or the page's end did (`limit` against `lastLimit`: content
+ * above the reader's place came or went). Travel under 1px is no move. All positions are held to the page, as
+ * `revealFrame` holds its own, or an iOS overshoot would read as travel.
+ */
+export function readerMoved({
+  from,
+  scrollY,
+  limit,
+  lastLimit,
+  anchorMoved = 0,
+  quiet = false,
+}: {
+  /** The position the last frame left the page at (clamped, as the memo keeps it). */
+  from: number;
+  /** The raw position now. */
+  scrollY: number;
+  /** How far the page can scroll now, and as of the last frame. */
+  limit: number;
+  lastLimit: number;
+  /** How far the board's anchor has moved in the document since the last frame. */
+  anchorMoved?: number;
+  /** A scroll the page made itself is under way. */
+  quiet?: boolean;
+}): boolean {
+  const at = clampScroll(scrollY, limit);
+  const travel = at - from;
+  if (Math.abs(travel) < 1 || quiet) return false;
+  if (from > limit + 0.5 && limit - at < 1.5) return false;
+  if (Math.abs(anchorMoved) >= 1 && Math.abs(travel - anchorMoved) < 1.5) return false;
+  const shift = limit - lastLimit;
+  return !(Math.abs(shift) >= 1 && Math.abs(travel - shift) < 1.5);
+}
+
 /** What `revealFrame` remembers from one frame to the next. */
 export type RevealMemo = {
   /** The bar is up and the hero's field is behind it. */
@@ -232,10 +272,6 @@ export const REVEAL_REST: RevealMemo = { heroAway: false, revealed: false, dir: 
  *    HIDE_DOWN_PX of travel down from there hides it. A reversal starts the count again, and jitter under a
  *    threshold changes nothing.
  *
- * `hold` (the bar's field has focus and the page was not moved by the reader since the last frame) keeps `heroAway`
- * on when the position alone says it is off: a field with focus is released by the reader's own scroll, never by
- * the layout changing under it (a filter that shortens the board, whatever the browser's scroll anchoring then does).
- *
  * `keep` (a search is written) holds the field showing for as long as `heroAway`: the field a filter was
  * typed into must not slip away on the next scroll down. The memory restarts from `y` meanwhile, so a field
  * that is then cleared goes through the same HIDE_DOWN_PX as one that was just left.
@@ -245,19 +281,13 @@ export function revealFrame(
   maxScroll: number,
   geometry: DockGeometry,
   prev: RevealMemo,
-  context: { barShown: boolean; latched: boolean; keep?: boolean; hold?: boolean },
+  context: { barShown: boolean; latched: boolean; keep?: boolean },
 ): RevealMemo {
   const y = clampScroll(scrollY, maxScroll);
   const heroAway =
     context.barShown && y >= (prev.heroAway ? geometry.revealFrom : geometry.revealFrom + DOCK_HYSTERESIS);
-  // A field being typed in is not let go of by the page: when it is the layout that has put the hero's field back in
-  // view (a filter removed the cards above the reader's place and the browser's scroll anchoring followed them up),
-  // and not the reader's scroll, the bar's copy stays usable where it is until the reader moves the page.
-  if (context.hold && prev.heroAway && !heroAway) {
-    return prev.lastY === y && prev.pivot === y ? prev : { ...prev, lastY: y, pivot: y };
-  }
   // A latch keeps the state, but not past the hero's field coming back into view: the bar's copy and the hero's
-  // are never on screen together, whoever has focus.
+  // are never on screen together, whoever has focus (the hook moves a focus the bar's copy held to the hero's).
   if (context.latched && !(prev.heroAway && !heroAway)) {
     return prev.lastY === y && prev.pivot === y ? prev : { ...prev, lastY: y, pivot: y };
   }

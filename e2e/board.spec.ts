@@ -2037,13 +2037,18 @@ test("never clips the search placeholder, at any width", async ({ page }, testIn
   }
 });
 
-// A served board, not the live one: what "ab" leaves of the page depends on what the vendors say that day, and on
-// CI (with the network) it was the page's end, or the browser's scroll anchoring, that decided whether this passed.
+// A served board, not the live one, with room to stand on and no scroll anchoring: what "ab" leaves of the page
+// depends on what the vendors say that day, and on CI (with the network) it was the page's end, or the browser's
+// scroll anchoring, that decided whether the page stayed behind the hero's field. Here it does, so that the bar's
+// field is the one being typed in (the test after this one is the layout putting the hero's field back in view).
 test("search reveal: mirrors the query in both fields and keeps focus, text and caret in the one being typed in", async ({
   page,
 }) => {
   test.slow();
   const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
+  await page.addStyleTag({
+    content: ".board-body { min-height: 3000px !important; } * { overflow-anchor: none !important; }",
+  });
   const y0 = await scrollDeep(page, offsets);
   await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
   await expectRevealed(page, true);
@@ -2090,7 +2095,26 @@ test("search reveal: mirrors the query in both fields and keeps focus, text and 
   await expect(page).toHaveURL(/q=acb/);
 });
 
-test("search reveal: a field being typed in is not let go of when the layout alone puts the hero's field back in view", async ({
+/** What is on screen of the two search fields, and which of them has focus. */
+async function fieldsNow(page: Page) {
+  return page.evaluate(() => {
+    const hero = document.querySelector('[data-search-input="hero"]') as HTMLInputElement;
+    const field = document.querySelector(".search-dock .search-field") as HTMLElement;
+    const barEl = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const active = document.activeElement as HTMLElement | null;
+    const box = field.getBoundingClientRect();
+    return {
+      active: active?.dataset.searchInput ?? active?.tagName ?? null,
+      revealed: barEl.hasAttribute("data-revealed"),
+      shown: barEl.getAttribute("data-shown"),
+      heroSeen: box.bottom > barEl.getBoundingClientRect().bottom + 1 && box.top < window.innerHeight,
+      heroTab: hero.tabIndex,
+      heroCaret: [hero.selectionStart, hero.selectionEnd],
+    };
+  });
+}
+
+test("search reveal: when the layout alone puts the hero's field back in view, the typing moves to it", async ({
   page,
 }) => {
   test.slow();
@@ -2100,6 +2124,7 @@ test("search reveal: a field being typed in is not let go of when the layout alo
   await expectRevealed(page, true);
   await barFieldSettled(page);
   const bar = barSearch(page);
+  const hero = heroSearch(page);
   // A board that gives the page nothing to stand on once the filter has taken its cards away: the page ends up
   // above the line where the hero's field is behind the bar, however the browser then moves it (it clamps it
   // to the new end; Chromium's scroll anchoring may take it further). The reader did not scroll.
@@ -2108,25 +2133,72 @@ test("search reveal: a field being typed in is not let go of when the layout alo
   });
   await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
   await page.keyboard.type("ab");
-  await expect(bar).toHaveValue("ab");
   await expect
     .poll(() => page.evaluate(() => window.scrollY), "the filter took the page above the hero's field")
     .toBeLessThan(offsets.revealFrom);
-  // Every frame since has had the chance to let go of the field; it is still the one with focus, and typing goes in.
+  // The reader is still typing, and the two fields are not on screen together: the focus, the text and the caret
+  // went to the hero's field, which is reachable again, and the bar is down.
+  await expect(hero).toBeFocused();
+  await expect(hero).toHaveValue("ab");
+  await expect(bar).toHaveValue("ab");
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  await expect(bar).toBeFocused();
+  expect(await fieldsNow(page)).toEqual({
+    active: "hero",
+    revealed: false,
+    shown: "false",
+    heroSeen: true,
+    heroTab: 0,
+    heroCaret: [2, 2],
+  });
   await page.keyboard.type("c");
+  await expect(hero).toHaveValue("abc");
   await expect(bar).toHaveValue("abc");
-  await expect(heroSearch(page)).toHaveValue("abc");
-  await expectRevealed(page, true);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
-  await expect(bar).toBeFocused();
-  // The reader's own scroll lets it go, as it always did: give the page room, and scroll.
+  // Nothing finds the page held by the bar's field any more, with results, with none, or with the search cleared.
+  await page.keyboard.type("zzzzq");
+  await expect(hero).toHaveValue("abczzzzq");
+  await expect(hero).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(hero).toHaveValue("");
+  await expect(hero).toBeFocused();
+  const cleared = await fieldsNow(page);
+  expect(cleared).toMatchObject({ revealed: false, shown: "false", heroSeen: true, heroTab: 0 });
+});
+
+test("search reveal: the reader's scroll up to the hero lets the bar's field go, whatever else the page does", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
   await page.addStyleTag({ content: ".board-body { min-height: 3000px !important; }" });
-  await scrollAndSettle(page, 0);
-  await expect(bar).toBeFocused();
-  await scrollAndSettle(page, 40);
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await page.keyboard.type("a");
+  await expect(bar).toHaveValue("a");
+  await scrollAndSettle(page, Math.ceil(offsets.revealFrom) + 40);
+  await expectRevealed(page, true);
+  // In the frame the reader scrolls up past the hero's field the page also gets 2px longer (a row of Recent changes,
+  // the live line): the reader's travel is not the layout's, and the bar's field is let go of as it would be alone.
+  await page.evaluate(
+    (top) =>
+      new Promise<void>((resolve) => {
+        document.body.style.paddingBottom = "2px";
+        window.scrollTo(0, top);
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      }),
+    Math.max(0, Math.floor(offsets.revealFrom) - 30),
+  );
   await expect(bar).not.toBeFocused();
+  expect(await fieldsNow(page)).toMatchObject({
+    active: "BODY",
+    revealed: false,
+    heroSeen: true,
+    heroTab: 0,
+  });
+  await expect(heroSearch(page)).toHaveValue("a");
 });
 
 test("search reveal: a query typed in the hero's field shows in the bar's, which then stays revealed", async ({

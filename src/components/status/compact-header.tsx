@@ -13,6 +13,7 @@ import {
   quietScrolling,
   REVEAL_REST,
   type RevealMemo,
+  readerMoved,
   revealFrame,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
@@ -63,9 +64,10 @@ export const WIDE = "(min-width: 64rem)";
  *     field has focus or a dialog is open, and until the page has armed, and the baseline is re-set after
  *     anything that moves the page without the reader (a re-measure, a focus leaving, a quietScroll).
  *   - A search written in the field keeps it showing while `heroAway` (`keepRevealed`).
- *   - A bar field with focus is never let go of by the layout: when a filter shortens the board and the page ends
- *     up above `revealFrom` without the reader scrolling, `heroAway` stays on (`hold`, see revealFrame) until the
- *     reader moves the page or the field loses focus on its own.
+ *   - The two fields are never on screen together, and a field being typed in is not lost to the layout: when a
+ *     filter shortens the board and the page ends up above `revealFrom` without the reader scrolling (`readerMoved`),
+ *     the focus, the text and the caret of the bar's field move to the hero's, which is then in view. The reader's
+ *     own scroll up past `revealFrom` lets the bar's field go (a blur) as it always did.
  *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
@@ -133,6 +135,12 @@ export function useSearchDock({
     let grew = false;
     let insets = { pin: 0, barTop: 0 };
     let maxScroll = 0;
+    // What the last frame saw, for telling the reader's scroll from the layout's (`readerMoved`): how far the page
+    // could go, and (only between a rebase and the frame after it) where the page was before the rebase took the
+    // baseline along, and how far the board's anchor had moved by then.
+    let lastLimit = 0;
+    let travelFrom: number | null = null;
+    let anchorShift = 0;
     let memo: RevealMemo = REVEAL_REST;
     // The board's first thing in view, and its offset in the document at the last reading (see `anchorMoved`).
     let anchor: { element: Element; offset: number } | null = null;
@@ -159,6 +167,10 @@ export function useSearchDock({
      */
     const rebase = (raw: number) => {
       const y = clampScroll(raw, maxScroll);
+      // The next frame still has to tell whether the reader scrolled: keep what it would have compared against,
+      // before the anchor is dropped and the baseline moved.
+      travelFrom ??= memo.lastY;
+      if (memo.heroAway) anchorShift += anchorMoved();
       memo = { ...memo, lastY: y, pivot: y };
       // The layout may have changed with whatever called this: the anchor's place is read again at the frame's end.
       anchor = null;
@@ -272,6 +284,12 @@ export function useSearchDock({
     const frame = () => {
       raf = 0;
       const y = window.scrollY;
+      // Where the page was and how far the anchor had moved before anything below (or a rebase since the last
+      // frame) took the baseline to the new position: what tells the reader's scroll from the layout's.
+      const from = travelFrom ?? memo.lastY;
+      let shift = anchorShift;
+      travelFrom = null;
+      anchorShift = 0;
       const prev = store.get();
       // The 8px hysteresis keeps a bar up that the page has scrolled back a little from its place. It is not for
       // a hero that has grown: the new last line may sit under the bar, which is slowly sliding in, so the bar
@@ -293,6 +311,8 @@ export function useSearchDock({
       // is the layout's doing, and the browser's scroll anchoring may have taken it a long way (to the top, even)
       // when the card it was holding moved up. That is no direction, whatever the resize observer says next.
       const limit = scrollLimit();
+      // The anchor is read before a rebase drops it: how far the layout moved it is part of what it did to the page.
+      if (memo.heroAway) shift += anchorMoved();
       if (Math.abs(limit - maxScroll) >= 1) {
         maxScroll = limit;
         rebase(y);
@@ -311,26 +331,46 @@ export function useSearchDock({
       }
       // A scroll that is exactly the distance the board's anchor moved is the browser's scroll anchoring holding
       // the reader's place, not the reader: no direction (a scroll the reader makes moves the page, not the anchor).
-      if (memo.heroAway && Math.abs(y - memo.lastY) >= 1) {
-        const moved = anchorMoved();
-        if (Math.abs(moved) >= 1 && Math.abs(clampScroll(y, maxScroll) - memo.lastY - moved) < 1.5) rebase(y);
-      }
+      if (memo.heroAway && Math.abs(shift) >= 1 && Math.abs(clampScroll(y, maxScroll) - from - shift) < 1.5) rebase(y);
       const focused = document.activeElement;
       const latched =
         !armed ||
         (focused instanceof Element && focused.hasAttribute("data-search-input")) ||
         document.querySelector("dialog[open]") !== null;
       const wasAway = memo.heroAway;
-      // The bar's field with focus is let go of by the reader's scroll (the page is somewhere else than the last
-      // frame left it, after every rebase above), not by the layout: see `hold` in revealFrame.
-      const holding =
-        focused instanceof HTMLElement && focused.dataset.searchInput === "bar" && Math.abs(y - memo.lastY) < 1;
-      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep, hold: holding });
-      // The page is back above the bar and the hero's field is in view: the bar's copy, which still had focus, is
-      // let go of (it is inert from here) so that the bar does not stay up over the hero for a focus it holds, and
-      // blur tells the bar's own focus tracking (CompactHeader).
-      if (wasAway && !memo.heroAway && focused instanceof HTMLElement && focused.dataset.searchInput === "bar")
-        focused.blur();
+      // Whether the page is where the reader took it, or where the layout left it. Read before the frame's own
+      // rebases moved the baseline (`from`), and only when it matters (the bar's field has focus).
+      const barFocused = focused instanceof HTMLInputElement && focused.dataset.searchInput === "bar";
+      const byReader =
+        barFocused &&
+        readerMoved({
+          from,
+          scrollY: y,
+          limit: maxScroll,
+          lastLimit,
+          anchorMoved: shift,
+          quiet: quietScrolling(),
+        });
+      lastLimit = maxScroll;
+      travelFrom = null;
+      anchorShift = 0;
+      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep });
+      // The hero's field is back in view and the bar's copy, which still had focus, is inert from here: the bar
+      // must not stay up over the hero for a focus it holds, and the two fields are never on screen together.
+      if (wasAway && !memo.heroAway && barFocused) {
+        const hero = document.querySelector('[data-search-input="hero"]');
+        if (byReader || !(hero instanceof HTMLInputElement)) {
+          // The reader scrolled up to the hero: let the field go; blur tells the bar's own focus tracking.
+          focused.blur();
+        } else {
+          // The layout did (a filter shortened the board): the reader is still typing, so the focus, the text and
+          // the caret go to the hero's field, which is in view.
+          const { selectionStart, selectionEnd, selectionDirection } = focused;
+          hero.focus();
+          if (selectionStart !== null && selectionEnd !== null)
+            hero.setSelectionRange(selectionStart, selectionEnd, selectionDirection ?? undefined);
+        }
+      }
       // The anchor is read while the bar's field can show, so that the next frame can tell how far it moved.
       if (!memo.heroAway) anchor = null;
       else if (!anchor && board) {
@@ -378,6 +418,7 @@ export function useSearchDock({
       schedule();
     };
     measure();
+    lastLimit = maxScroll;
     frame();
     if (document.readyState === "complete") arm();
     else window.addEventListener("load", arm, { once: true });

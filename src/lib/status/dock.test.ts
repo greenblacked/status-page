@@ -15,6 +15,7 @@ import {
   REVEAL_REST,
   REVEAL_UP_PX,
   type RevealMemo,
+  readerMoved,
   revealFrame,
   WIDE_BAR_AT,
   WIDE_RANGE,
@@ -553,30 +554,6 @@ describe("revealFrame", () => {
     expect(revealFrame(1200, LIMIT, geometry, REVEAL_REST, latched)).toMatchObject({ heroAway: false });
   });
 
-  it("does not let go of a field with focus when only the layout put the hero's field back in view", () => {
-    const hold = { barShown: true, latched: true, keep: true, hold: true };
-    const shown = behind(900, true);
-    // A filter shortened the board and the browser's scroll anchoring took the page to the top: still away, revealed.
-    expect(revealFrame(0, LIMIT, geometry, shown, hold)).toEqual({ ...shown, lastY: 0, pivot: 0 });
-    // The bar going down with the page (it is at the top) changes nothing either.
-    expect(revealFrame(0, LIMIT, geometry, shown, { ...hold, barShown: false })).toEqual({
-      ...shown,
-      lastY: 0,
-      pivot: 0,
-    });
-    // And frame after frame, as long as the reader does not move the page.
-    const first = revealFrame(0, LIMIT, geometry, shown, hold);
-    expect(revealFrame(0, LIMIT, geometry, first, hold)).toBe(first);
-    expect(revealFrame(120, LIMIT, geometry, first, hold)).toMatchObject({ heroAway: true, revealed: true });
-    // The reader's own scroll (no hold) ends it, as it always did.
-    expect(revealFrame(0, LIMIT, geometry, first, { barShown: true, latched: true, keep: true })).toMatchObject({
-      heroAway: false,
-      revealed: false,
-    });
-    // A hold never turns anything on: with the hero's field in view and nothing away there is nothing to keep.
-    expect(revealFrame(0, LIMIT, geometry, REVEAL_REST, hold)).toMatchObject({ heroAway: false });
-  });
-
   it("returns the same object for an unchanged frame", () => {
     const hidden = behind(1000, false);
     expect(revealFrame(1000, LIMIT, geometry, hidden, up)).toBe(hidden);
@@ -647,5 +624,57 @@ describe("quietScroll", () => {
     expect(quietScrolling()).toBe(true);
     for (let frame = frames.shift(); frame; frame = frames.shift()) frame();
     expect(quietScrolling()).toBe(false);
+  });
+});
+
+describe("readerMoved", () => {
+  const base = { from: 292, scrollY: 292, limit: 800, lastLimit: 800 };
+
+  it("reads no travel under a pixel as no move", () => {
+    expect(readerMoved(base)).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 292.6 })).toBe(false);
+  });
+
+  it("reads travel nothing else accounts for as the reader's, up or down", () => {
+    expect(readerMoved({ ...base, scrollY: 222 })).toBe(true);
+    expect(readerMoved({ ...base, scrollY: 340 })).toBe(true);
+  });
+
+  it("reads a page held to a nearer end as the layout's", () => {
+    // The page shortened to 0 and the position went with it, to the new end.
+    expect(readerMoved({ ...base, scrollY: 0, limit: 0 })).toBe(false);
+    // The end is 150 now and the browser left the page there.
+    expect(readerMoved({ ...base, scrollY: 150, limit: 150 })).toBe(false);
+    // Still short of the new end and further than the anchor or the end can say: the reader's.
+    expect(readerMoved({ ...base, scrollY: 40, limit: 150 })).toBe(true);
+  });
+
+  it("reads travel equal to what the anchor moved as scroll anchoring", () => {
+    expect(readerMoved({ ...base, scrollY: 222, anchorMoved: -70 })).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 223, anchorMoved: -70 })).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 218, anchorMoved: -70 })).toBe(true);
+  });
+
+  it("reads travel equal to how far the end of the page moved as the layout's", () => {
+    // Content above the reader's place went, and the page followed it up.
+    expect(readerMoved({ ...base, scrollY: 222, limit: 730 })).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 222, limit: 800 + 3 })).toBe(true);
+  });
+
+  it("does not let a small change of the page hide the reader's own scroll", () => {
+    // The page got 2px longer in the frame the reader scrolled 70px up.
+    expect(readerMoved({ ...base, scrollY: 222, limit: 802 })).toBe(true);
+  });
+
+  it("reads a scroll the page made itself as the layout's", () => {
+    expect(readerMoved({ ...base, scrollY: 100, quiet: true })).toBe(false);
+  });
+
+  it("holds the position to the page, so an overshoot is no travel", () => {
+    // iOS reports 40px past the end that the last frame was clamped to.
+    expect(readerMoved({ from: 800, scrollY: 840, limit: 800, lastLimit: 800 })).toBe(false);
+    expect(readerMoved({ from: 0, scrollY: -30, limit: 800, lastLimit: 800 })).toBe(false);
+    // And one past a nearer end is the layout's clamp.
+    expect(readerMoved({ from: 600, scrollY: 640, limit: 560, lastLimit: 800 })).toBe(false);
   });
 });
