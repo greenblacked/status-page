@@ -23,6 +23,12 @@ export type ServiceCardProps = {
   highlight?: boolean;
   /** The service changed in the latest check: a "Changed" tag and an accent bar. */
   emphasized?: boolean;
+  /**
+   * The change was a new release (the newest versions moved from known versions), not a health
+   * change. Only a release tracker reads it: its Changed bar is neutral for a release and the
+   * state's colour for a recovery, including a source coming back from unread.
+   */
+  released?: boolean;
   starred: boolean;
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
   /** The client clock (0 until mounted), for how long an incident has run. */
