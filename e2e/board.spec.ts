@@ -1,7 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
-import { DOCK_HYSTERESIS, DOCK_LEAD_MS, DOCK_MS, transitionMs } from "../src/lib/status/dock.ts";
+import { DOCK_HYSTERESIS, DOCK_LEAD_MS, DOCK_MS, transitionMs, WIDE_RANGE } from "../src/lib/status/dock.ts";
+import { dockProgress } from "../src/lib/status/layout.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
@@ -1601,10 +1602,11 @@ test("starts the field's fill where it was and ends it in the slot, never at the
   expect(start.chrome.left).toBeCloseTo(rest.chrome.left, 0);
   await dockRelease(page);
   const end = await dockBoxes(page);
-  // The slot's offsets are whole pixels (the dock measures them from layout), so it is within one.
+  // The dock places the field by the slot's own, fractional box (not by rounded offsets), so it is on the slot to
+  // well under a pixel.
   for (const key of ["left", "width", "height"] as const) {
-    expect(Math.abs(end.chrome[key] - end.slot[key]), `docked fill ${key}`).toBeLessThanOrEqual(1);
-    expect(Math.abs(end.field[key] - end.slot[key]), `docked field ${key}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(end.chrome[key] - end.slot[key]), `docked fill ${key}`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(end.field[key] - end.slot[key]), `docked field ${key}`).toBeLessThanOrEqual(0.5);
   }
   expect(end.chromeTransform, "docked, the fill is unscaled too, so its corners are not squashed").toBe("none");
 
@@ -1621,8 +1623,19 @@ test("starts the field's fill where it was and ends it in the slot, never at the
   expect(back.chromeTransform).toBe("none");
 });
 
-/** What `sampleDockMove` read on one animation frame. `clipped`: the placeholder shown is wider than the input. */
-type DockFrame = { at: number; left: number; width: number; docked: boolean; clipped: boolean };
+/**
+ * What `sampleDockMove` read on one animation frame. `y`: the scroll position. `moving`: how many transitions the
+ * dock has running. `clipped`: the placeholder shown is wider than the input.
+ */
+type DockFrame = {
+  at: number;
+  y: number;
+  left: number;
+  width: number;
+  docked: boolean;
+  moving: number;
+  clipped: boolean;
+};
 
 /**
  * Scrolls the way `kind` says and reads the search field's fill (left, width), the dock's pose and whether the
@@ -1675,9 +1688,12 @@ async function sampleDockMove(
           const room = input.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
           frames.push({
             at: now,
+            y: window.scrollY,
             left: box.left,
             width: box.width,
             docked: dock.hasAttribute("data-docked"),
+            moving: dock.getAnimations({ subtree: true }).filter((animation) => animation instanceof CSSTransition)
+              .length,
             clipped: measure.measureText(input.placeholder).width > room + 1,
           });
           if (now - start < ms) requestAnimationFrame(read);
@@ -1705,7 +1721,6 @@ test("moves the field's fill into the dock in small steps from its rest box, eve
   test.slow();
   await steadyBoard(page);
   const { wide, moveStart, moveEnd } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll, with no move in time");
   const rest = await dockBoxes(page);
   const FRAME = 1000 / 60;
   // The first frame the move draws is next to its rest box: the lead (--t-dock-lead) is there for the time a
@@ -1720,7 +1735,8 @@ test("moves the field's fill into the dock in small steps from its rest box, eve
   const cdp = browserName === "chromium" ? await page.context().newCDPSession(page) : null;
   const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
   const past = Math.ceil(moveEnd) + 60;
-  const across = Math.ceil(moveStart) + 3;
+  // Just over the line that docks the field: from 64rem that is the end of its move, not the start.
+  const across = Math.ceil(wide ? moveEnd : moveStart) + 3;
   const moves = [
     { kind: "drag", from: before, to: past, name: "a drag in" },
     { kind: "jump", from: past, to: before, name: "one jump out" },
@@ -1730,38 +1746,64 @@ test("moves the field's fill into the dock in small steps from its rest box, eve
     { kind: "flick", from: past + 200, to: before, name: "a flick out" },
   ] as const;
   // The time into the move at which its first frame is drawn: 17 ms is none lost, 33 ms is the iPhone's, and a
-  // slow phone loses more.
-  const runs = [
-    { rate: 1, lost: 0 },
-    { rate: 1, lost: 33 },
-    { rate: 1, lost: 40 },
-    ...(cdp ? [{ rate: 4, lost: 33 }] : []),
-  ];
+  // slow phone loses more. From 64rem nothing is played in time, so there is nothing to lose: one run at the
+  // page's pace and, where Chromium can, one at a quarter of it.
+  const runs = wide
+    ? [{ rate: 1, lost: 0 }, ...(cdp ? [{ rate: 4, lost: 0 }] : [])]
+    : [{ rate: 1, lost: 0 }, { rate: 1, lost: 33 }, { rate: 1, lost: 40 }, ...(cdp ? [{ rate: 4, lost: 33 }] : [])];
   for (const { rate, lost } of runs) {
     await cdp?.send("Emulation.setCPUThrottlingRate", { rate });
     for (const move of moves) {
       const name = `${move.name}, first frame ${lost} ms in${rate > 1 ? ` at ${rate}x CPU` : ""}`;
       const { frames, poseAt, extra } = await sampleDockMove(page, { ...move, lost });
       const going = move.to > move.from;
-      const first = frames.findIndex((frame) => frame.docked === going);
+      // Below 64rem the pose (data-docked) says when the dock reacted; from 64rem the fill itself does.
+      const first = wide
+        ? frames.findIndex((frame) => Math.abs(frame.width - (going ? rest.dock.width : rest.slot.width)) > 0.5)
+        : frames.findIndex((frame) => frame.docked === going);
       expect(first, `${name}: the dock reacted`).toBeGreaterThanOrEqual(0);
       await dockMoved(page);
       const box = await dockBoxes(page);
-      // The box the fill leaves and the one it settles in: the field's own at rest, and the slot (within a couple of
-      // pixels: the slot's offsets are whole pixels, and a tablet's bar can leave a sub-pixel more).
+      // The box the fill leaves and the one it settles in: the field's own at rest, and the slot (to half a pixel: the
+      // dock places the field by the slot's own, fractional box).
       const from = going
         ? { left: rest.dock.left, width: rest.dock.width }
         : { left: box.slot.left, width: box.slot.width };
       const to = going ? box.chrome : box.dock;
       const target = going ? box.slot : box.dock;
-      expect(Math.abs(to.left - target.left), `${name}: settles at its left edge`).toBeLessThanOrEqual(2);
-      expect(Math.abs(to.width - target.width), `${name}: settles at its width`).toBeLessThanOrEqual(2);
+      expect(Math.abs(to.left - target.left), `${name}: settles at its left edge`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(to.width - target.width), `${name}: settles at its width`).toBeLessThanOrEqual(0.5);
       expect(Math.abs(to.width - from.width), `${name}: the fill has somewhere to go`).toBeGreaterThan(20);
       const last = frames.at(-1) as DockFrame;
       expect(Math.abs(last.left - to.left), `${name}: ends where it settles`).toBeLessThanOrEqual(1);
       expect(Math.abs(last.width - to.width), `${name}: ends at the width it settles at`).toBeLessThanOrEqual(1);
       // How far along the way from `from` to `to` each of its edges is: 0 at the start, 1 at the end.
       const along = (value: number, key: "left" | "width") => (value - from[key]) / (to[key] - from[key]);
+      if (wide) {
+        // From 64rem the fill is a function of the scroll position, drawn the frame it is scrolled to, and nothing is
+        // played in time: no transition to lose the start of, and so no lead to wait out. The fill is never ahead of the
+        // scroll (a frame reads the scroll of its own or of the frame before: the dock writes after the read), and a
+        // flick that crosses the 48px at once crosses the fill at once, which is the scroll's doing and not the field's.
+        let behind = 0;
+        for (const [index, frame] of frames.entries()) {
+          const label = `${name}, frame ${index}`;
+          const size = along(frame.width, "width");
+          const edge = along(frame.left, "left");
+          const at = (y: number) => {
+            const progress = Math.round(dockProgress(y, moveStart, WIDE_RANGE) * 500) / 500;
+            return going ? progress : 1 - progress;
+          };
+          const shown = [at(frame.y), at(frames[Math.max(0, index - 1)].y)];
+          expect(frame.moving, `${label}: nothing is played in time`).toBe(0);
+          expect(Math.abs(edge - size), `${label}: left and width move together`).toBeLessThanOrEqual(0.04);
+          expect(size, `${label}: not ahead of the scroll`).toBeLessThanOrEqual(Math.max(...shown) + 0.03);
+          expect(size, `${label}: not behind the scroll`).toBeGreaterThanOrEqual(Math.min(...shown) - 0.03);
+          expect(size, `${label}: never turns back`).toBeGreaterThanOrEqual(behind - 0.02);
+          expect(frame.clipped, `${label}: the placeholder fits`).toBe(false);
+          behind = size;
+        }
+        continue;
+      }
       let previous = 0;
       let previousAt = frames[first].at;
       for (const [index, frame] of frames.slice(first).entries()) {
@@ -1888,8 +1930,8 @@ test("keeps a docked field in its slot when the bar's text moves the slot, witho
     "the docked field slid when its slot changed",
   ).toEqual([]);
   const boxes = await dockBoxes(page);
-  expect(Math.abs(boxes.field.left - boxes.slot.left)).toBeLessThanOrEqual(1);
-  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(boxes.field.left - boxes.slot.left)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(0.5);
 });
 
 test("takes the pose a scroll gives it before the page has loaded without playing a move", async ({ page }) => {

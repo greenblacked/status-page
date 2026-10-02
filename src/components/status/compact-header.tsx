@@ -16,15 +16,12 @@ import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
 
-/** An element's left edge in the page, from layout alone, so the bar's hidden-pose transform cannot skew it. */
-function pageLeft(element: HTMLElement): number {
-  let x = 0;
-  let node: HTMLElement | null = element;
-  while (node) {
-    x += node.offsetLeft;
-    node = node.offsetParent as HTMLElement | null;
-  }
-  return x;
+/**
+ * A length in px for a custom property, to 1/64 px (the layout unit): the slot's real, fractional box, so a
+ * field placed by it is on the slot, where a rounded offset would leave it up to a pixel off.
+ */
+function px(value: number): string {
+  return `${Math.round(value * 64) / 64}px`;
 }
 
 /**
@@ -186,8 +183,13 @@ export function useSearchDock({
       });
       const slot = slotRef.current;
       if (!slot) return;
-      const x = `${pageLeft(slot) - pageLeft(dock)}px`;
-      const w = `${slot.offsetWidth}px`;
+      // The slot's box in the viewport less the dock's, both read now, so the same scroll and the same page
+      // offset are in both and cancel. The bar's hidden pose (translateY, vertical only) and its fade cannot
+      // skew a left edge or a width, and offsetLeft, which rounds every offset in the chain, would be off by up to
+      // a pixel. The reads are here, on a measure, never on a scroll.
+      const slotBox = slot.getBoundingClientRect();
+      const x = px(slotBox.left - dock.getBoundingClientRect().left);
+      const w = px(slotBox.width);
       // A docked field whose slot has moved or resized (the bar's lead text changed, from 40rem where it sits
       // in the flow before the slot) follows it at once. Left to the transition it would slide sideways, and
       // its width, which is not timed, would snap in the middle of that. A move already under way retargets.
