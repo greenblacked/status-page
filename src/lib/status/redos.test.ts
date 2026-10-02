@@ -4,6 +4,7 @@ import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./ch
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
+  azureItemHealth,
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
@@ -40,6 +41,29 @@ describe("parsers stay linear on crafted vendor input", () => {
   it("unwrapJsonp: many unclosed parentheses and a long identifier", () => {
     expect(elapsed(() => unwrapJsonp(`f${"(".repeat(SIZE)}`))).toBeLessThan(BUDGET_MS);
     expect(elapsed(() => unwrapJsonp(`${"a".repeat(SIZE)}(1)${" ".repeat(10)}x`))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("azureItemHealth: long runs of the words and prefixes it looks for, and of spaces and brackets", () => {
+    const cases = [
+      `${"resolved ".repeat(SIZE / 9)}x`,
+      `${" ".repeat(SIZE)}resolved`,
+      `${"[(".repeat(SIZE / 2)}resolved`,
+      `${"[ ".repeat(SIZE / 2)}x`,
+      `${"post incident ".repeat(SIZE / 14)}`,
+      `${"post-".repeat(SIZE / 5)}`,
+      `${"preliminary ".repeat(SIZE / 12)}x`,
+      `${"final-".repeat(SIZE / 6)}pir`,
+      `preliminary${" ".repeat(SIZE)}x`,
+      `${"service ".repeat(SIZE / 8)}unavailable`,
+      `${"d".repeat(SIZE)}own`,
+      `${"o".repeat(SIZE)}utage`,
+    ];
+    for (const body of cases) expect(elapsed(() => azureItemHealth(body))).toBeLessThan(BUDGET_MS);
+    expect(azureItemHealth(`${"resolved ".repeat(10)}x`)).toBe("operational");
+    expect(azureItemHealth(`${"unresolved ".repeat(10)}x`)).toBe("degraded");
+    expect(azureItemHealth("Preliminary Post Incident Review (PIR) – Networking – Outage")).toBe("operational");
+    expect(azureItemHealth("Final PIR – Networking")).toBe("operational");
+    expect(azureItemHealth(`${"preliminary ".repeat(10)}x`)).toBe("degraded");
   });
 
   it.each(["title", "description", "pubDate", "link"])("parseRssItems: a repeated unclosed <%s>", (tag) => {

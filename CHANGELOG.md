@@ -8,10 +8,11 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- Cards for **Microsoft Azure** (under Cloud), and **GitHub**, **GitLab** and **Atlassian Confluence** (under Platforms), each read from the vendor's own status page or feed (GitLab's page runs on Status.io, so it is read from there). The board now has twenty services.
 - An **Android releases** card under Releases. I read Google's Android releases page and list the four newest versions (today Android 17, 16, 15 and 14), newest first. When Google adds the next one, it appears on its own, and a browser that already had the board sees "Android 18 released" in **Recent changes** (and gets an alert if alerts are on). The page gives no release dates, so the card never says "New release" (a first-time visitor sees only the list), and the quarterly platform releases are not listed because the page links only their betas. Google publishes no feed for this, so it is the second source read as HTML.
 - A **Details** pop-up on every Releases card, opened from the row or its button: each channel, OS or version it tracks with its version, build, release day and "New release" flag, a link to the vendor's notes, and for RouterOS the first lines of each version's changelog.
 - A **Windows 11** card under Releases. I read the versions table on Microsoft's release health page and show the four newest versions with their latest build, and "New release" when a new version became available in the last 14 days. When Microsoft adds the next version, it appears on its own. Microsoft publishes no feed for this, so it is one of two sources read as HTML.
-- A new look, quieter and more like a page than a dashboard. The top of the board is one sentence that says what needs a look, with the services it names linked to their cards, a pen line under the count and a loop around anything down; when all sixteen are up it says "Everything is up." and writes "all quiet" by hand. Below it, what needs a look is a card each, what could not be read has its own short list, and everything healthy is a compact row in a list per category.
+- A new look, quieter and more like a page than a dashboard. The top of the board is one sentence that says what needs a look, with the services it names linked to their cards, a pen line under the count and a loop around anything down; when every service is up it says "Everything is up." and writes "all quiet" by hand. Below it, what needs a look is a card each, what could not be read has its own short list, and everything healthy is a compact row in a list per category.
 - **Background** in **Settings**: **Quiet** (the default) is flat paper, **Glass** brings back the frosted panels over a still glow, and **Full** adds the slow drift, the lenses, a light that wanders across the cards and the small period dial beside the live line. Reduce glass still turns any of them solid.
 - Times show in your own time zone once the page has loaded (UTC before that, and in the tooltip).
 - The live line under the headline reads "Checked 12:04 CET · next in 1:52", and says "Stale" when a check has been missed for too long.
@@ -20,7 +21,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
 - A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
-- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field a clear stretch below it; the field then rises with the page, and only when it reaches the bar does it merge into it. The field has its own clear button, a full-size touch target.
+- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field a clear stretch below it; the field then rises with the page, and only when it reaches the bar does it merge into it. Docked, the field sits exactly in the bar's slot. The field has its own clear button, a full-size touch target.
 - Every service whose official status page lists components now has the same dropdown on its row. "+N more" is now a "Show all N" button that opens the whole list and closes it again ("Show fewer"), keeping your place.
 - A card for a service with a problem lists its affected components first, then a collapsible "Working components · N".
 
@@ -46,6 +47,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- A Statuspage reply with no status (Spotify, ChatGPT, Claude, Epic, Fortnite, and the new GitHub and Confluence cards) now reads No data instead of Operational.
 - Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
 - A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.
 - Dates and times stay in English when the browser is set to another language; they still follow your time zone.
@@ -62,7 +64,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The summary says "2 outages", not "2 outage".
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
-- On an iPhone the search field no longer jumps or flickers as it docks into the bar while you scroll. It moves in with a short animation of its own instead of following your finger frame by frame, and Safari's toolbar sliding away or back no longer makes the page measure it again. Under Reduce Motion it steps in with no animation.
+- On an iPhone the search field no longer jumps or flickers as it docks into the bar while you scroll. It moves in with a short animation of its own instead of following your finger frame by frame, and Safari's toolbar sliding away or back no longer makes the page measure it again. The field now holds its starting size for 50 ms before it moves, which should keep a slow first frame from showing it part way in (not yet confirmed on an iPhone). Under Reduce Motion it steps in with no animation.
 - The "+N more" under a service counts every incident it has, not only the ones the board kept.
 - In Safari the board no longer jumps when a check adds a line to Recent changes above what you are reading, and the floating bar on a phone gets out of the way as soon as the headline grows under it.
 

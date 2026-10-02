@@ -1,12 +1,13 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
-import { DOCK_HYSTERESIS, DOCK_MS, transitionMs } from "../src/lib/status/dock.ts";
+import { DOCK_HYSTERESIS, DOCK_LEAD_MS, DOCK_MS, transitionMs, WIDE_RANGE } from "../src/lib/status/dock.ts";
+import { dockProgress } from "../src/lib/status/layout.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
 
-const SERVICES = 16;
+const SERVICES = 20;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 /** The services of one board group: "attention", "unread" (Couldn't read), "up" (every category's list) or "releases". */
 const group = (page: Page, id: "attention" | "unread" | "up" | "releases") =>
@@ -506,6 +507,29 @@ const dockValue = (page: Page) =>
   searchDock(page).evaluate((element) =>
     element.hasAttribute("data-docked") ? 1 : Number.parseFloat(element.style.getPropertyValue("--dock") || "0"),
   );
+
+/**
+ * The easing of the dock's move, as the stylesheet's --ease-out says it (the "transform and opacity only" test checks
+ * the two agree). The test of the move's first frames reads its curve from it.
+ */
+const DOCK_EASING = "cubic-bezier(0.23, 1, 0.32, 1)";
+
+/** A CSS cubic-bezier(x1, y1, x2, y2) as a function of the time (0 to 1) to the progress (0 to 1). */
+function cubicBezier(x1: number, y1: number, x2: number, y2: number): (time: number) => number {
+  const at = (t: number, a: number, b: number) => 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t ** 2 * b + t ** 3;
+  return (time) => {
+    if (time <= 0) return 0;
+    if (time >= 1) return 1;
+    let low = 0;
+    let high = 1;
+    for (let step = 0; step < 40; step++) {
+      const mid = (low + high) / 2;
+      if (at(mid, x1, x2) < time) low = mid;
+      else high = mid;
+    }
+    return at((low + high) / 2, y1, y2);
+  };
+}
 
 /**
  * Waits until the search field and its fill have stopped moving: below 64rem a transition of --t-dock follows the
@@ -1076,7 +1100,7 @@ test("takes the bar down when the hero grows under it, at every width below 64re
     // reports that the refresh is over. The button is found by its label instead, which a hidden bar keeps.
     await pressRefresh(page, controlBar(page).locator('button[aria-label="Refresh status now"]'));
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      "Four are down, four are degraded and three are in maintenance.",
+      "Five are down, five are degraded and five are in maintenance.",
     );
     await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
     grew.push((await heroBottom()) - before);
@@ -1207,9 +1231,10 @@ async function overscroll(
 // special handling of the overshoot. They fail if a change makes the dock follow the overshoot (a progress that
 // extrapolates, a threshold that flips on a negative position).
 test("regression guard: keeps the dock still through a rubber band above the top of the page", async ({ page }) => {
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
+  // From a steady board (see steadyBoard): a refetch or a late font that moves the bar's slot makes the dock measure
+  // again, and a measure that lands among the positions below reads the mocked scrollY against a page that did not
+  // move with it, which puts every threshold out (a real rubber band moves the page too).
+  await steadyBoard(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
   const [at] = await overscroll(page, [0]);
   const seen = await overscroll(page, [-4, -90, -1, -320, 0, -40, -2000, 0]);
@@ -1223,9 +1248,8 @@ test("regression guard: keeps the dock still through a rubber band above the top
 
 test("regression guard: keeps the dock docked through a rubber band below the end of the page", async ({ page }) => {
   test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
+  // A steady board, as above: no measure may land among the mocked positions.
+  await steadyBoard(page);
   const limit = await maxScroll(page);
   await scrollAndSettle(page, limit);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
@@ -1524,6 +1548,9 @@ test("moves the docking field with transform and opacity only, over the dock's o
   const { wide, moveStart } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll instead of playing a transition");
 
+  // The first pose (data-instant) plays no transition, so wait for it to end before reading the delays.
+  await expect(page.locator("[data-instant]")).toHaveCount(0);
+
   // What the stylesheet says: of everything in the dock, only transform is timed, over the same time as the
   // stylesheet's token, which dock.ts names too; and on a narrow phone the bar's verdict fades by opacity alone.
   const css = await page.evaluate(() => {
@@ -1537,24 +1564,39 @@ test("moves the docking field with transform and opacity only, over the dock's o
     const verdict = document.querySelector("[data-bar-verdict]") as Element;
     return {
       token: getComputedStyle(document.documentElement).getPropertyValue("--t-dock").trim(),
+      ease: getComputedStyle(document.documentElement).getPropertyValue("--ease-out").trim(),
       field: timed(dock.querySelector(".search-field") as Element),
       chrome: timed(dock.querySelector(".search-chrome") as Element),
       fieldDuration: getComputedStyle(dock.querySelector(".search-field") as Element).transitionDuration,
       everything: [dock, ...dock.querySelectorAll("*")].flatMap(timed),
       verdict: timed(verdict),
       verdictDuration: getComputedStyle(verdict).transitionDuration,
+      lead: getComputedStyle(document.documentElement).getPropertyValue("--t-dock-lead").trim(),
+      fieldDelay: getComputedStyle(dock.querySelector(".search-field") as Element).transitionDelay,
+      chromeDelay: getComputedStyle(dock.querySelector(".search-chrome") as Element).transitionDelay,
+      verdictDelay: getComputedStyle(verdict).transitionDelay,
       narrow: matchMedia("(width < 40rem)").matches,
     };
   });
   // The stylesheet may spell it 180ms or .18s.
   expect(transitionMs(css.token)).toBeCloseTo(DOCK_MS, 5);
+  // The build may spell the easing .23 for 0.23: it is the numbers that are the same. The first-frame test reads its
+  // curve from DOCK_EASING above, so it has to be the token's.
+  const numbers = (value: string) => (value.match(/-?\d*\.?\d+/g) ?? []).map(Number);
+  expect(numbers(css.ease), "--ease-out is the easing the first-frame test assumes").toEqual(numbers(DOCK_EASING));
   expect(css.field).toEqual(["transform"]);
   expect(css.chrome).toEqual(["transform"]);
   expect(Number.parseFloat(css.fieldDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
+  // The lead: the token is DOCK_LEAD_MS (the settle timer counts on it), and the field, its fill and the
+  // verdict all wait it out, so none of them starts before the others (that would be the jump again).
+  expect(transitionMs(css.lead)).toBeCloseTo(DOCK_LEAD_MS, 5);
+  expect(Number.parseFloat(css.fieldDelay) * 1000, "the field's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
+  expect(Number.parseFloat(css.chromeDelay) * 1000, "the fill's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
   for (const property of css.everything) expect(["transform", "opacity"], "in the dock").toContain(property);
   if (css.narrow) {
     expect(css.verdict).toEqual(["opacity"]);
     expect(Number.parseFloat(css.verdictDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
+    expect(Number.parseFloat(css.verdictDelay) * 1000, "the verdict's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
   }
 
   // What the browser then runs when the field docks: transitions of those properties and no other.
@@ -1601,10 +1643,11 @@ test("starts the field's fill where it was and ends it in the slot, never at the
   expect(start.chrome.left).toBeCloseTo(rest.chrome.left, 0);
   await dockRelease(page);
   const end = await dockBoxes(page);
-  // The slot's offsets are whole pixels (the dock measures them from layout), so it is within one.
+  // The dock places the field by the slot's own, fractional box (not by rounded offsets), so it is on the slot to
+  // well under a pixel.
   for (const key of ["left", "width", "height"] as const) {
-    expect(Math.abs(end.chrome[key] - end.slot[key]), `docked fill ${key}`).toBeLessThanOrEqual(1);
-    expect(Math.abs(end.field[key] - end.slot[key]), `docked field ${key}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(end.chrome[key] - end.slot[key]), `docked fill ${key}`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(end.field[key] - end.slot[key]), `docked field ${key}`).toBeLessThanOrEqual(0.5);
   }
   expect(end.chromeTransform, "docked, the fill is unscaled too, so its corners are not squashed").toBe("none");
 
@@ -1619,6 +1662,316 @@ test("starts the field's fill where it was and ends it in the slot, never at the
   expect(back.chrome.width).toBeCloseTo(back.dock.width, 0);
   expect(back.chrome.left).toBeCloseTo(back.dock.left, 0);
   expect(back.chromeTransform).toBe("none");
+});
+
+/**
+ * What `sampleDockMove` read on one animation frame. `y`: the scroll position. `moving`: how many transitions the
+ * dock has running. `clipped`: the placeholder shown is wider than the input. `keycap`: the "/" hint in the field.
+ */
+type DockFrame = {
+  at: number;
+  y: number;
+  left: number;
+  width: number;
+  docked: boolean;
+  moving: number;
+  clipped: boolean;
+  /** The "/" keycap: how opaque it is and where its right edge is. Null where it is not drawn (below 40rem, or with a query). */
+  keycap: { opacity: number; right: number } | null;
+};
+
+/**
+ * Scrolls the way `kind` says and reads the search field's fill (left, width), the dock's pose and whether the
+ * placeholder is cut off by the input, on every animation frame, for `ms`. The reading runs first in each frame, so
+ * it is what the frame before drew. `lost` is, it appears, WebKit's: one iPhone screen recording shows a transition
+ * counted from the frame that starts it, with the compositor applying the animation only after the commit of that
+ * frame to the UI process, so that the first frame drawn of the move is `lost` ms into it (33 ms there). The cause is
+ * not confirmed. Chromium shows no such loss and draws it one frame (about 17 ms) in, so every animation of the
+ * dock and of the bar's verdict is moved on by the rest in the task that writes data-docked, before a frame is
+ * drawn.
+ *   drag  - a finger's pace, 14px a frame, to `to`
+ *   flick - momentum, 40px a frame
+ *   jump  - one scroll event that crosses the whole threshold
+ */
+async function sampleDockMove(
+  page: Page,
+  move: { kind: "drag" | "flick" | "jump"; from: number; to: number; lost: number; ms?: number },
+): Promise<{ frames: DockFrame[]; poseAt: number; extra: number; diag: string[] }> {
+  await scrollAndSettle(page, move.from);
+  await dockMoved(page);
+  return page.evaluate(
+    ({ kind, from, to, lost, ms = 900 }) =>
+      new Promise<{ frames: DockFrame[]; poseAt: number; extra: number; diag: string[] }>((resolve) => {
+        const dock = document.querySelector(".search-dock") as HTMLElement;
+        const chrome = dock.querySelector(".search-chrome") as HTMLElement;
+        const input = dock.querySelector("input") as HTMLInputElement;
+        const keycap = dock.querySelector("kbd");
+        const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
+        const measure = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
+        const frames: DockFrame[] = [];
+        const was = dock.hasAttribute("data-docked");
+        const extra = Math.max(0, lost - 1000 / 60);
+        let readAt = 0;
+        let poseAt = 0;
+        // One compact line per frame from the dock's reaction on, for the failure message of a test that reads
+        // them: what the field, the fill and the verdict are running, what CSS times, the fill's inline style.
+        const diag: string[] = [];
+        const number = (value: unknown) => (value === null || value === undefined ? "-" : Number(value).toFixed(1));
+        const describe = (name: string, element: Element) =>
+          `${name}[${element
+            .getAnimations()
+            .map((animation) => {
+              const timing = (animation.effect as KeyframeEffect | null)?.getTiming();
+              const kind = animation instanceof CSSTransition ? `css:${animation.transitionProperty}` : animation.id;
+              return `${kind} ${animation.playState} t=${number(animation.currentTime)} s=${number(animation.startTime)} d=${timing?.delay}/${timing?.duration} ${timing?.fill}`;
+            })
+            .join("; ")}]`;
+        const note = (label: string, now: number) => {
+          const field = dock.querySelector(".search-field") as HTMLElement;
+          const timed = (element: Element) => {
+            const style = getComputedStyle(element);
+            return `${style.transitionProperty}/${style.transitionDuration}/${style.transitionDelay}`;
+          };
+          diag.push(
+            `${label} at=${number(now)} tl=${number(document.timeline.currentTime)} w=${number(chrome.getBoundingClientRect().width)} ${describe("field", field)} ${describe("fill", chrome)} ${describe("verdict", verdict)} css=${timed(field)},${timed(chrome)} fillStyle="${chrome.getAttribute("style") ?? ""}"`,
+          );
+        };
+        const lose = new MutationObserver(() => {
+          if (dock.hasAttribute("data-docked") === was) return;
+          lose.disconnect();
+          // The frame this runs in: the last one read, as the reading comes first in a frame.
+          poseAt = readAt;
+          // Reading the animations lets the browser start the ones this change calls for, in this very frame.
+          for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
+            animation.currentTime = Number(animation.currentTime ?? 0) + extra;
+          }
+          note("pose", readAt);
+        });
+        lose.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
+        const start = performance.now();
+        const read = (frameTime: number) => {
+          // The animations' own clock, not the frame's timestamp: an engine whose timestamps do not keep up with its
+          // frames (a loaded machine, a headless one) would otherwise make a late frame look early.
+          const now = Number(document.timeline.currentTime ?? frameTime);
+          readAt = now;
+          const box = chrome.getBoundingClientRect();
+          const style = getComputedStyle(input);
+          measure.font = style.font;
+          const room = input.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+          frames.push({
+            at: now,
+            y: window.scrollY,
+            left: box.left,
+            width: box.width,
+            docked: dock.hasAttribute("data-docked"),
+            moving: dock.getAnimations({ subtree: true }).filter((animation) => animation instanceof CSSTransition)
+              .length,
+            clipped: measure.measureText(input.placeholder).width > room + 1,
+            keycap:
+              keycap && getComputedStyle(keycap).display !== "none"
+                ? {
+                    opacity: Number.parseFloat(getComputedStyle(keycap).opacity),
+                    right: keycap.getBoundingClientRect().right,
+                  }
+                : null,
+          });
+          if (poseAt > 0 && diag.length < 8) note(`f${diag.length - 1}`, now);
+          if (frameTime - start < ms) requestAnimationFrame(read);
+          else resolve({ frames, poseAt, extra, diag });
+        };
+        requestAnimationFrame(read);
+        const step = kind === "flick" ? 40 : 14;
+        let y = from;
+        const scroll = () => {
+          y = kind === "jump" ? to : Math.abs(to - y) <= step ? to : y + Math.sign(to - y) * step;
+          window.scrollTo(0, y);
+          if (y !== to) requestAnimationFrame(scroll);
+        };
+        // After a few frames at rest, so the first reading is of the pose before the move.
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(scroll)));
+      }),
+    move,
+  );
+}
+
+test("moves the field's fill into the dock in small steps from its rest box, even when its first frames are lost", async ({
+  page,
+  browserName,
+}) => {
+  test.slow();
+  await steadyBoard(page);
+  const { wide, moveStart, moveEnd } = await dockOffsets(page);
+  const rest = await dockBoxes(page);
+  const FRAME = 1000 / 60;
+  // The first frame the move draws is next to its rest box: the lead (DOCK_LEAD_MS) is there for the time a
+  // browser loses at the start, and the move has not begun. Without it a first frame 33 ms in draws the fill 65% of
+  // the way in.
+  const FIRST = 0.12;
+  // The lead, in ms (DOCK_LEAD_MS in dock.ts).
+  const LEAD = DOCK_LEAD_MS;
+  // How far along its way the fill may be at a given time after the dock changed: the page's easing over DOCK_MS,
+  // after the lead. One frame is added to the time because an animation started in a frame may count from the
+  // frame's own start, and the slack is for the curve's steepness. A frame that arrives late (a loaded machine, a
+  // browser with a slow frame) is then allowed to be further along, in proportion to how late it is, and a fill that
+  // is far along in a frame drawn inside the lead is a lead that was not honoured.
+  const [x1, y1, x2, y2] = (DOCK_EASING.match(/-?\d*\.?\d+/g) ?? []).map(Number);
+  const ease = cubicBezier(x1, y1, x2, y2);
+  const reach = (since: number) => ease((since + FRAME - LEAD) / DOCK_MS) + 0.05;
+  // The most of the way a frame at 60Hz may cover after that: the first frame of --ease-out is 37% of it (the curve
+  // is steep at the start, which is its character), so this holds the move to the curve and not to a jump past it.
+  const STEP = 0.42;
+  const cdp = browserName === "chromium" ? await page.context().newCDPSession(page) : null;
+  const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
+  const past = Math.ceil(moveEnd) + 60;
+  // Just over the line that docks the field: from 64rem that is the end of its move, not the start.
+  const across = Math.ceil(wide ? moveEnd : moveStart) + 3;
+  const moves = [
+    { kind: "drag", from: before, to: past, name: "a drag in" },
+    { kind: "jump", from: past, to: before, name: "one jump out" },
+    { kind: "jump", from: before, to: across, name: "one jump in" },
+    { kind: "drag", from: past, to: before, name: "a drag out" },
+    { kind: "flick", from: before, to: past + 200, name: "a flick in" },
+    { kind: "flick", from: past + 200, to: before, name: "a flick out" },
+  ] as const;
+  // The time into the move at which its first frame is drawn: 17 ms is none lost, 33 ms is the iPhone's, and a
+  // slow phone loses more. From 64rem nothing is played in time, so there is nothing to lose: one run at the
+  // page's pace and, where Chromium can, one at a quarter of it.
+  const runs = wide
+    ? [{ rate: 1, lost: 0 }, ...(cdp ? [{ rate: 4, lost: 0 }] : [])]
+    : [{ rate: 1, lost: 0 }, { rate: 1, lost: 33 }, { rate: 1, lost: 40 }, ...(cdp ? [{ rate: 4, lost: 33 }] : [])];
+  for (const { rate, lost } of runs) {
+    await cdp?.send("Emulation.setCPUThrottlingRate", { rate });
+    for (const move of moves) {
+      const name = `${move.name}, first frame ${lost} ms in${rate > 1 ? ` at ${rate}x CPU` : ""}`;
+      const { frames, poseAt, extra, diag } = await sampleDockMove(page, { ...move, lost });
+      // What the dock was running at the pose and for the frames after it, one line each: it is in the message
+      // of the checks of the first frames, so a CI failure shows what the engine did.
+      const trace = `\n${diag.join("\n")}`;
+      await test.info().attach(`dock-frames ${name}`, { body: diag.join("\n") });
+      const going = move.to > move.from;
+      // Below 64rem the pose (data-docked) says when the dock reacted; from 64rem the fill itself does.
+      const first = wide
+        ? frames.findIndex((frame) => Math.abs(frame.width - (going ? rest.dock.width : rest.slot.width)) > 0.5)
+        : frames.findIndex((frame) => frame.docked === going);
+      expect(first, `${name}: the dock reacted`).toBeGreaterThanOrEqual(0);
+      await dockMoved(page);
+      const box = await dockBoxes(page);
+      // The box the fill leaves and the one it settles in: the field's own at rest, and the slot (to half a pixel: the
+      // dock places the field by the slot's own, fractional box).
+      const from = going
+        ? { left: rest.dock.left, width: rest.dock.width }
+        : { left: box.slot.left, width: box.slot.width };
+      const to = going ? box.chrome : box.dock;
+      const target = going ? box.slot : box.dock;
+      expect(Math.abs(to.left - target.left), `${name}: settles at its left edge`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(to.width - target.width), `${name}: settles at its width`).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(to.width - from.width), `${name}: the fill has somewhere to go`).toBeGreaterThan(20);
+      const last = frames.at(-1) as DockFrame;
+      expect(Math.abs(last.left - to.left), `${name}: ends where it settles`).toBeLessThanOrEqual(1);
+      expect(Math.abs(last.width - to.width), `${name}: ends at the width it settles at`).toBeLessThanOrEqual(1);
+      // How far along the way from `from` to `to` each of its edges is: 0 at the start, 1 at the end.
+      const along = (value: number, key: "left" | "width") => (value - from[key]) / (to[key] - from[key]);
+      if (wide) {
+        // From 64rem the fill is a function of the scroll position, drawn the frame it is scrolled to, and nothing is
+        // played in time: no transition to lose the start of, and so no lead to wait out. The fill is never ahead of the
+        // scroll (a frame reads the scroll of its own or of the frame before: the dock writes after the read), and a
+        // flick that crosses the 48px at once crosses the fill at once, which is the scroll's doing and not the field's.
+        let behind = 0;
+        for (const [index, frame] of frames.entries()) {
+          const label = `${name}, frame ${index}`;
+          const size = along(frame.width, "width");
+          const edge = along(frame.left, "left");
+          const at = (y: number) => {
+            const progress = Math.round(dockProgress(y, moveStart, WIDE_RANGE) * 500) / 500;
+            return going ? progress : 1 - progress;
+          };
+          const shown = [at(frame.y), at(frames[Math.max(0, index - 1)].y)];
+          expect(frame.moving, `${label}: nothing is played in time`).toBe(0);
+          expect(Math.abs(edge - size), `${label}: left and width move together`).toBeLessThanOrEqual(0.04);
+          expect(size, `${label}: not ahead of the scroll`).toBeLessThanOrEqual(Math.max(...shown) + 0.03);
+          expect(size, `${label}: not behind the scroll`).toBeGreaterThanOrEqual(Math.min(...shown) - 0.03);
+          expect(size, `${label}: never turns back`).toBeGreaterThanOrEqual(behind - 0.02);
+          expect(frame.clipped, `${label}: the placeholder fits`).toBe(false);
+          behind = size;
+        }
+        continue;
+      }
+      let previous = 0;
+      let previousAt = frames[first].at;
+      for (const [index, frame] of frames.slice(first).entries()) {
+        const edge = along(frame.left, "left");
+        const size = along(frame.width, "width");
+        const label = `${name}, frame ${index} after the dock changed`;
+        // Never the wrong width for its place: the two edges go together, and the fill stays between the boxes.
+        expect(Math.abs(edge - size), `${label}: left and width move together`).toBeLessThanOrEqual(0.04);
+        expect(size, `${label}: not past the slot`).toBeLessThanOrEqual(1.02);
+        expect(size, `${label}: not back past where it started`).toBeGreaterThanOrEqual(-0.02);
+        expect(size, `${label}: never turns back`).toBeGreaterThanOrEqual(previous - 0.02);
+        // In small steps, scaled by the length of the frame. The first frame has no frame before it to be a step
+        // from: it is held to the time that has passed since the dock changed instead (below).
+        const since = frame.at - poseAt + extra;
+        if (index > 0) {
+          const room = STEP * Math.max(1, (frame.at - previousAt) / FRAME);
+          expect(size - previous, `${label}: the step${trace}`).toBeLessThanOrEqual(Math.min(room, 1));
+        }
+        // And never further along than the page's easing allows for the time since the dock changed.
+        expect(
+          size,
+          `${label}: no further along than ${since.toFixed(1)} ms into the move allows${trace}`,
+        ).toBeLessThanOrEqual(Math.min(reach(since), 1));
+        // The first frame drawn is the rest box, as long as it is drawn inside the lead (a frame that comes later than
+        // that, on a throttled or busy machine, may be part way in).
+        if (index === 0 && since <= LEAD - 4) {
+          expect(size, `${label}: starts where it was${trace}`).toBeLessThanOrEqual(FIRST);
+        }
+        // The long placeholder is never drawn cut off by the input (it changes in the frame the input narrows).
+        expect(frame.clipped, `${label}: the placeholder fits`).toBe(false);
+        previous = size;
+        previousAt = frame.at;
+      }
+    }
+  }
+  await cdp?.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+});
+
+test("hides the / keycap while the field docks and leaves, so it never moves alone outside the fill", async ({
+  page,
+}) => {
+  test.slow();
+  await steadyBoard(page);
+  const { wide, moveStart, moveEnd } = await dockOffsets(page);
+  test.skip(wide, "from 64rem the field follows the scroll, and the keycap with it");
+  test.skip((page.viewportSize()?.width ?? 0) < 640, "the keycap shows from 40rem");
+  const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
+  const past = Math.ceil(moveEnd) + 60;
+  const moves = [
+    { kind: "jump", from: before, to: past, name: "one jump in" },
+    { kind: "jump", from: past, to: before, name: "one jump out" },
+    { kind: "drag", from: before, to: past, name: "a drag in" },
+    { kind: "drag", from: past, to: before, name: "a drag out" },
+  ] as const;
+  for (const lost of [0, 33]) {
+    for (const move of moves) {
+      const name = `${move.name}, first frame ${lost} ms in`;
+      const { frames } = await sampleDockMove(page, { ...move, lost });
+      let hidden = 0;
+      for (const [index, frame] of frames.entries()) {
+        const label = `${name}, frame ${index}`;
+        expect(frame.keycap, `${label}: the keycap is in the field`).not.toBeNull();
+        const { opacity, right } = frame.keycap as { opacity: number; right: number };
+        // The input has its new width at once, while the fill waits out the lead and then moves: the keycap, at the
+        // input's edge, is either not drawn or inside the fill, on every frame.
+        if (opacity === 0) hidden++;
+        else {
+          expect(right, `${label}: not left of the fill`).toBeGreaterThanOrEqual(frame.left - 0.5);
+          expect(right, `${label}: not right of the fill`).toBeLessThanOrEqual(frame.left + frame.width + 0.5);
+        }
+      }
+      expect(hidden, `${name}: it is hidden for the move`).toBeGreaterThan(0);
+      const last = (frames.at(-1) as DockFrame).keycap;
+      expect(last?.opacity, `${name}: and back once the field has stopped`).toBe(1);
+    }
+  }
 });
 
 test("never puts the field under the bar, so a flick's late frame cannot hide it", async ({ page }) => {
@@ -1718,8 +2071,8 @@ test("keeps a docked field in its slot when the bar's text moves the slot, witho
     "the docked field slid when its slot changed",
   ).toEqual([]);
   const boxes = await dockBoxes(page);
-  expect(Math.abs(boxes.field.left - boxes.slot.left)).toBeLessThanOrEqual(1);
-  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
+  expect(Math.abs(boxes.field.left - boxes.slot.left)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(0.5);
 });
 
 test("takes the pose a scroll gives it before the page has loaded without playing a move", async ({ page }) => {
@@ -1833,9 +2186,22 @@ test("shortens the search placeholder as the field docks, and restores it after 
   page,
 }) => {
   test.slow();
+  // A refetch turns the bar's lead line to "Checking…" and back, which moves the field's slot from 40rem on; a
+  // field that is docked and has stopped follows its slot at once, without a move (the dock holds its transitions
+  // for two frames, data-instant), and a release in those frames would then be answered with the placeholder at
+  // once, as it should be for a field that did not move. Two refetches can land in this test. A scheduled one
+  // comes 15 to 30 s into a two-minute slot, so the page's Date is pinned well inside the slot, past that window
+  // (only Date: the timings below need real frames and transitions, see pinToSlot). The other is the refetch on
+  // mount, for a snapshot older than the 45 s staleTime; the guard below waits it out.
+  await pinToSlot(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  // A refetch on mount is not visible until the first client render with a clock: the server markup and the
+  // hydration render read "live" with "next in —" whatever is in flight. The digits come with that render, and a
+  // check that started with the page then shows "Checking…"; leadSteady waits for "live" and the digits, with the
+  // long timeout a sweep behind a stale snapshot needs.
+  await leadSteady(page);
   const { wide, moveStart } = await dockOffsets(page);
   test.skip(wide, "from 64rem there is no move in time, and the placeholder follows the field at once");
   const input = page.getByLabel("Search services");
@@ -2742,10 +3108,18 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
   const board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
 
-  // Needs a look first, then what could not be read, then one list per category (Cloud is all down here), then Releases.
+  // Needs a look first, then what could not be read, then one list per category (Cloud lists only Azure, the one healthy row), then Releases.
   await expect(
     page.locator('#attention-heading, #unread-heading, [id^="up-"][id$="-heading"], #releases-heading'),
-  ).toHaveText([/Needs a look\s*3/, /Couldn't read\s*1/, /Gaming\s*3/, /Platforms\s*2/, /AI\s*3/, /Releases\s*4/]);
+  ).toHaveText([
+    /Needs a look\s*3/,
+    /Couldn't read\s*1/,
+    /Cloud\s*1/,
+    /Gaming\s*3/,
+    /Platforms\s*5/,
+    /AI\s*3/,
+    /Releases\s*4/,
+  ]);
 
   // Issues only leaves the three that need a look, the highlight among them: the unreadable
   // source in the fixture is not an issue, only a source that could not be read.
@@ -3934,7 +4308,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
   await expect(sub).toContainText(
-    "AWS is down. GCP is degraded. Epic is in maintenance. The other twelve are running normally.",
+    "AWS is down. GCP is degraded. Epic is in maintenance. The other sixteen are running normally.",
   );
   await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
@@ -3945,7 +4319,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   await expect(page.locator("#service-aws svg.pen-loop")).toHaveCount(1);
 });
 
-test("writes all quiet by hand, and says so in words, when all sixteen are up", async ({ page }) => {
+test("writes all quiet by hand, and says so in words, when all twenty are up", async ({ page }) => {
   await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Everything is up.");
   await expect(page.locator("h1 svg.pen-underline")).toHaveCount(0);
@@ -3953,7 +4327,7 @@ test("writes all quiet by hand, and says so in words, when all sixteen are up", 
   await expect(note).toBeVisible();
   await expect(note).toHaveAttribute("aria-hidden", "true");
   expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
-  await expect(page.getByText("All sixteen services are running normally.")).toHaveClass(/sr-only/);
+  await expect(page.getByText("All twenty services are running normally.")).toHaveClass(/sr-only/);
   // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
   await expect(page).toHaveTitle("Status");
   await expect(group(page, "attention")).toHaveCount(0);

@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bytes, type Handler, json, networkError, stubFetch, text, utf16 } from "../../test/stub-fetch.ts";
 import { CATALOG } from "./catalog.ts";
-import { clearMikrotikNotesCache, collectAllServices } from "./sources.server.ts";
+import { MAX_BODY_BYTES } from "./http.ts";
+import {
+  clearMikrotikNotesCache,
+  collectAllServices,
+  MAX_NESTED_ROWS,
+  MAX_RSS_ITEMS,
+  MAX_SCANNED_ROWS,
+} from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
@@ -19,6 +26,10 @@ const URLS = {
   cs2Players: "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=730",
   epicFortnite: "https://status.epicgames.com/api/v2/summary.json",
   spotify: "https://spotify.statuspage.io/api/v2/summary.json",
+  github: "https://www.githubstatus.com/api/v2/summary.json",
+  gitlab: "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7",
+  confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+  azure: "https://rssfeed.azure.status.microsoft/en-us/status/feed/",
   apple: "https://www.apple.com/support/systemstatus/data/system_status_en_US.js",
   android: "https://status.play.google.com/incidents.json",
   chatgpt: "https://status.openai.com/api/v2/summary.json",
@@ -1424,6 +1435,517 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(grok.failure).toEqual({ kind: "parser", message: "Grok feed returned no readable items." });
       expect(grok.summary).toBe("Grok feed returned no readable items.");
       expect(grok.incidents).toEqual([]);
+    });
+
+    it("GitHub summary.json: a degraded and a partly-out component, an active incident and upcoming maintenance", async () => {
+      stubFetch({ [URLS.github]: json(JSON.parse(fixture("github/summary.json"))) });
+      const github = await collect("github");
+      expect(github.failure).toBeUndefined();
+      // Minor indicator, a partial outage on Actions and a minor incident: degraded.
+      expect(github.health).toBe("degraded");
+      expect(github.summary).toBe("Disruption with some GitHub services");
+      expect(github.components.map((c) => [c.name, c.health, c.detail])).toEqual([
+        ["Pull Requests", "degraded", undefined],
+        ["Actions", "degraded", "Partial outage"],
+        ["Git Operations", "operational", undefined],
+        ["API Requests", "operational", undefined],
+        ["Webhooks", "operational", undefined],
+        ["Issues", "operational", undefined],
+        ["Packages", "operational", undefined],
+        ["Pages", "operational", undefined],
+        ["Codespaces", "operational", undefined],
+        ["Copilot", "operational", undefined],
+      ]);
+      // The resolved webhook incident is not listed.
+      expect(github.incidents).toEqual([
+        {
+          id: "q2zmv0t6k8x1",
+          title: "Disruption with some GitHub services",
+          health: "degraded",
+          startedAt: "2026-09-20T09:41:00.000Z",
+          updatedAt: "2026-09-20T11:30:00.000Z",
+          url: "https://stspg.io/q2zmv0t6k8x1",
+        },
+      ]);
+      expect(github.upcomingMaintenance).toEqual([
+        {
+          id: "m4w9t2x7b1qa",
+          title: "Scheduled maintenance for Codespaces",
+          scheduledFor: "2026-09-24T02:00:00.000Z",
+          scheduledUntil: "2026-09-24T04:00:00.000Z",
+          url: "https://stspg.io/m4w9t2x7b1qa",
+        },
+      ]);
+      expect(github.sourceUrl).toBe("https://www.githubstatus.com/");
+    });
+
+    it("GitHub summary.json: the page's own pointer to itself is not a service", async () => {
+      stubFetch({ [URLS.github]: json(JSON.parse(fixture("github/summary.json"))) });
+      const github = await collect("github");
+      expect(github.components.some((c) => c.name.startsWith("Visit "))).toBe(false);
+      expect(github.components).toHaveLength(10);
+    });
+
+    it("GitLab status.json (Status.io): a partial disruption, its components with the affected containers, an incident and upcoming maintenance", async () => {
+      stubFetch({ [URLS.gitlab]: json(JSON.parse(fixture("gitlab/status.json"))) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.failure).toBeUndefined();
+      expect(gitlab.health).toBe("degraded");
+      expect(gitlab.summary).toBe("Elevated errors on Git over SSH");
+      expect(gitlab.components).toEqual([
+        { name: "Git Operations", health: "degraded", detail: "Partial Service Disruption (SSH)" },
+        { name: "Container Registry", health: "degraded", detail: "Degraded Performance (Primary)" },
+        { name: "Website", health: "operational" },
+        { name: "API", health: "operational" },
+        { name: "GitLab Pages", health: "operational" },
+      ]);
+      // The newest message's status (400), not the first (300), is the incident's.
+      expect(gitlab.incidents).toEqual([
+        {
+          id: "65f1c0de0000000000000001",
+          title: "Elevated errors on Git over SSH",
+          health: "degraded",
+          startedAt: "2026-09-20T10:05:00.000Z",
+          updatedAt: "2026-09-20T10:12:00.000Z",
+          url: "https://status.gitlab.com/pages/incident/5b36dc6502d06804c08349f7/65f1c0de0000000000000001",
+        },
+      ]);
+      expect(gitlab.upcomingMaintenance).toEqual([
+        {
+          id: "65f1c0de0000000000000002",
+          title: "Database upgrade",
+          scheduledFor: "2026-09-27T01:00:00.000Z",
+          scheduledUntil: "2026-09-27T03:00:00.000Z",
+          url: "https://status.gitlab.com/pages/maintenance/5b36dc6502d06804c08349f7/65f1c0de0000000000000002",
+        },
+      ]);
+      expect(gitlab.sourceUrl).toBe("https://status.gitlab.com/");
+    });
+
+    it.each([
+      [100, "operational"],
+      [200, "maintenance"],
+      [300, "degraded"],
+      [400, "degraded"],
+      [500, "outage"],
+      [600, "degraded"],
+    ])("GitLab: the page's status_code %i is %s", async (code, expected) => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = code;
+      // Only the page's own code is under test: no incident to raise it.
+      status.result.incidents = [];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.failure).toBeUndefined();
+      expect(gitlab.health).toBe(expected);
+    });
+
+    it.each([[undefined], [null], ["100"], [0], [700], [150]])(
+      "GitLab: a status_code of %j is unknown with a parser failure, not an all-clear",
+      async (code) => {
+        const status = JSON.parse(fixture("gitlab/status.json"));
+        status.result.status_overall.status_code = code;
+        stubFetch({ [URLS.gitlab]: json(status) });
+        const gitlab = await collect("gitlab");
+        expect(gitlab.health).toBe("unknown");
+        expect(gitlab.failure).toEqual({ kind: "parser", message: "Status.io reply has no readable overall status." });
+      },
+    );
+
+    it("GitLab: active maintenance on an otherwise operational page is maintenance, and names the window", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = 100;
+      status.result.incidents = [];
+      status.result.maintenance.active = [{ name: "Registry maintenance", _id: "m1" }];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("maintenance");
+      expect(gitlab.summary).toBe("Registry maintenance");
+    });
+
+    it("GitLab: an open incident raises an operational page, and one with no status still counts as degraded", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = 100;
+      status.result.incidents = [
+        { name: "Pipelines delayed", _id: "i1", datetime_open: "2026-09-20T10:00:00.000Z", messages: [] },
+      ];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("degraded");
+      expect(gitlab.incidents[0]).toMatchObject({ title: "Pipelines delayed", health: "unknown" });
+    });
+
+    it("GitLab: an open incident whose newest update says operational is a notice, not a problem", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = 100;
+      status.result.status_overall.status = "Operational";
+      status.result.incidents = [
+        {
+          name: "Pipelines delayed",
+          _id: "i1",
+          datetime_open: "2026-09-20T10:00:00.000Z",
+          messages: [
+            { state: 100, status: 300, datetime: "2026-09-20T10:00:00.000Z" },
+            { state: 300, status: 100, datetime: "2026-09-20T11:00:00.000Z" },
+          ],
+        },
+      ];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("operational");
+      expect(gitlab.incidents).toHaveLength(1);
+      expect(gitlab.incidents[0]).toMatchObject({
+        title: "Pipelines delayed",
+        health: "operational",
+        informational: true,
+      });
+      // Listed, but not counted: the card does not read "Up. 1 resolved recently."
+      expect(gitlab.summary).not.toMatch(/resolved|1 incident/i);
+    });
+
+    it("GitLab: a service disruption in a component is an outage", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status[2].status_code = 500;
+      status.result.status[2].status = "Service Disruption";
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.components[0]).toMatchObject({ name: "Git Operations", health: "outage" });
+    });
+
+    it("GitLab: an incident link that would leave the vendor's host falls back to the card's page", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.incidents[0]._id = "../../..//evil.example/x";
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const url = (await collect("gitlab")).incidents[0].url ?? "";
+      expect(new URL(url).host).toBe("status.gitlab.com");
+    });
+
+    it("Confluence summary.json: a major outage leads, with its incidents worst first; groups are not rows", async () => {
+      stubFetch({ [URLS.confluence]: json(JSON.parse(fixture("confluence/summary.json"))) });
+      const confluence = await collect("confluence");
+      expect(confluence.failure).toBeUndefined();
+      expect(confluence.health).toBe("outage");
+      expect(confluence.summary).toBe("Users cannot edit pages in Confluence Cloud");
+      expect(confluence.components.map((c) => [c.name, c.health])).toEqual([
+        ["Editor", "outage"],
+        ["Notifications", "degraded"],
+        ["Search", "operational"],
+        ["Marketplace Apps", "operational"],
+      ]);
+      expect(confluence.incidents.map((i) => [i.title, i.health])).toEqual([
+        ["Users cannot edit pages in Confluence Cloud", "outage"],
+        ["Delayed email notifications", "degraded"],
+      ]);
+      expect(confluence.upcomingMaintenance).toBeUndefined();
+    });
+
+    it.each(["github", "confluence"] as const)(
+      "%s: a JSON body that is not a Statuspage summary is unknown with a parser failure",
+      async (id) => {
+        stubFetch({ [URLS[id]]: json(JSON.parse(fixture(`${id}/summary-malformed.json`))) });
+        const snapshot = await collect(id);
+        expect(snapshot.health).toBe("unknown");
+        expect(snapshot.failure).toEqual({ kind: "parser", message: "Statuspage summary has no status." });
+        expect(snapshot.incidents).toEqual([]);
+        expect(snapshot.components).toEqual([]);
+      },
+    );
+
+    it("GitLab: a JSON body that is not a Status.io status is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.gitlab]: json(JSON.parse(fixture("gitlab/status-malformed.json"))) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("unknown");
+      expect(gitlab.failure).toEqual({ kind: "parser", message: "Status.io reply has no result." });
+      expect(gitlab.incidents).toEqual([]);
+      expect(gitlab.components).toEqual([]);
+    });
+
+    // Dense payloads: the largest bodies the 4 MiB cap lets through, made of the
+    // smallest entries (`{}`, three bytes with its comma), so an array holds the
+    // most rows a body can. Reading such a body once mapped every row before
+    // any cap applied (about 190 MiB of heap for a million components, fatal
+    // under a 128 MiB heap); the arrays are now cut first, so the work is
+    // bounded by MAX_SCANNED_ROWS, not by the body.
+    const DENSE_BUDGET_MS = 5000;
+    const dense = (rows: number, row = "{}") => `[${Array.from({ length: rows }, () => row).join(",")}]`;
+    const raw = (body: string): Handler => {
+      expect(body.length).toBeLessThan(MAX_BODY_BYTES);
+      return () => new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    it("GitLab: a dense Status.io body (900,000 components, 200,000 incidents, 200,000 maintenance) is cut before it is mapped", async () => {
+      const body = `{"result":{"status_overall":{"status":"Operational","status_code":100},"status":${dense(900_000)},"incidents":${dense(200_000)},"maintenance":{"active":${dense(100_000)},"upcoming":${dense(100_000)}}}}`;
+      stubFetch({ [URLS.gitlab]: raw(body) });
+      const started = performance.now();
+      const gitlab = await collect("gitlab");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(gitlab.failure).toBeUndefined();
+      // Counts are of what was read: the first MAX_SCANNED_ROWS of each array, never the body's millions.
+      expect(gitlab.components).toHaveLength(300);
+      expect(gitlab.componentCount).toBe(MAX_SCANNED_ROWS);
+      expect(gitlab.incidents).toHaveLength(50);
+      expect(gitlab.incidentCount).toBe(MAX_SCANNED_ROWS);
+      expect(gitlab.upcomingMaintenance?.length ?? 0).toBeLessThanOrEqual(3);
+    });
+
+    it("GitLab: a component with 50,000 containers and an incident with 100,000 messages are cut to the nested bound", async () => {
+      // The first MAX_NESTED_ROWS containers are fine; every one past them is down.
+      const fine = dense(MAX_NESTED_ROWS, '{"name":"ok","status_code":100}').slice(1, -1);
+      const down = dense(50_000, '{"name":"late","status_code":300}').slice(1, -1);
+      const containers = `[${fine},${down}]`;
+      const message = '{"status":300}';
+      const body = `{"result":{"status_overall":{"status":"Operational","status_code":100},"status":[{"name":"Git","status_code":300,"status":"Degraded","containers":${containers}}],"incidents":[{"_id":"a","name":"Slow","messages":${dense(100_000, message)}}]}}`;
+      stubFetch({ [URLS.gitlab]: raw(body) });
+      const started = performance.now();
+      const gitlab = await collect("gitlab");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(gitlab.failure).toBeUndefined();
+      // The containers past the bound are not read, so none is named as affected.
+      expect(gitlab.components[0]).toEqual({ name: "Git", health: "degraded", detail: "Degraded" });
+      expect(gitlab.incidents[0]).toMatchObject({ id: "a", title: "Slow", health: "degraded" });
+    });
+
+    it.each(["github", "confluence"] as const)(
+      "%s: a dense Statuspage body (900,000 components, 300,000 incidents, 100,000 maintenance) is cut before it is mapped",
+      async (id) => {
+        const body = `{"status":{"indicator":"none","description":"All Systems Operational"},"components":${dense(900_000)},"incidents":${dense(300_000)},"scheduled_maintenances":${dense(100_000)}}`;
+        stubFetch({ [URLS[id]]: raw(body) });
+        const started = performance.now();
+        const snapshot = await collect(id);
+        expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+        expect(snapshot.failure).toBeUndefined();
+        expect(snapshot.components).toHaveLength(300);
+        expect(snapshot.componentCount).toBe(MAX_SCANNED_ROWS);
+        expect(snapshot.incidents).toHaveLength(50);
+        expect(snapshot.incidentCount).toBe(MAX_SCANNED_ROWS);
+      },
+    );
+
+    const azureItem = (i: number) =>
+      `<item><title>Outage ${i}</title><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
+
+    it("Azure: a dense feed of 40,000 dated items is scanned to the bound and keeps MAX_RSS_ITEMS", async () => {
+      const xml = `<rss><channel>${Array.from({ length: 40_000 }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const started = performance.now();
+      const azure = await collect("azure");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(azure.failure).toBeUndefined();
+      expect(azure.incidents).toHaveLength(50);
+      expect(azure.incidentCount).toBe(MAX_RSS_ITEMS);
+    });
+
+    it("Azure: items past the scan bound are not read, however many empty ones come first", async () => {
+      const dated = Array.from({ length: 15_000 }, (_, i) => azureItem(i)).join("");
+      const xml = `<rss><channel>${"<item></item>".repeat(200_000)}${dated}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const started = performance.now();
+      const azure = await collect("azure");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      // The empty items are read and none has a date; had the dated ones past the bound been read, one would have.
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure: an Atom document (feed-malformed.xml) is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.azure]: text(fixture("azure/feed-malformed.xml")) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed was not an RSS channel." });
+      expect(azure.incidents).toEqual([]);
+      expect(azure.components).toEqual([]);
+    });
+
+    it.each(["github", "confluence", "gitlab"] as const)(
+      "%s: a body that is not JSON, and a null body, are parser failures",
+      async (id) => {
+        stubFetch({ [URLS[id]]: text("<html>Attention Required</html>") });
+        expect((await collect(id)).failure?.kind).toBe("parser");
+        stubFetch({ [URLS[id]]: json(null) });
+        expect((await collect(id)).failure?.kind).toBe("parser");
+      },
+    );
+
+    it.each(["github", "confluence", "gitlab"] as const)("%s: a 503 is unknown with an http failure", async (id) => {
+      stubFetch({ [URLS[id]]: text("down", { status: 503 }) });
+      const snapshot = await collect(id);
+      expect(snapshot.health).toBe("unknown");
+      expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+    });
+
+    it("GitHub: an incident link off Statuspage's and the vendor's hosts falls back to the card's page", async () => {
+      const summary = JSON.parse(fixture("github/summary.json"));
+      summary.incidents[0].shortlink = "https://evil.example/q2zmv0t6k8x1";
+      stubFetch({ [URLS.github]: json(summary) });
+      expect((await collect("github")).incidents[0].url).toBe("https://www.githubstatus.com/");
+    });
+
+    it("Azure feed.xml: unresolved recent items are incidents, worst first; resolved, review and stale items are not", async () => {
+      stubFetch({ [URLS.azure]: text(fixture("azure/feed.xml")) });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("outage");
+      expect(azure.summary).toBe("Virtual Machines - UK South - Service unavailable");
+      expect(azure.components).toEqual([]);
+      expect(azure.incidents).toEqual([
+        {
+          id: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-vm-uk-south",
+          title: "Virtual Machines - UK South - Service unavailable",
+          health: "outage",
+          startedAt: "2026-09-20T07:05:00.000Z",
+          url: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-vm-uk-south",
+        },
+        {
+          id: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-sql-west-europe",
+          title: "Azure SQL Database - West Europe - Investigating degraded connectivity",
+          health: "degraded",
+          startedAt: "2026-09-20T10:20:00.000Z",
+          url: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-sql-west-europe",
+        },
+      ]);
+      expect(azure.sourceUrl).toBe("https://azure.status.microsoft/en-us/status/");
+    });
+
+    it("Azure feed.xml: a channel with no items is operational, not a failure", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<?xml version="1.0"?><rss version="2.0"><channel><title>Azure Status</title></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: only resolved items leave the card operational", async () => {
+      const feed = fixture("azure/feed.xml");
+      const resolvedOnly =
+        feed.slice(0, feed.indexOf("<item>")) +
+        feed.slice(feed.indexOf("<item>", feed.indexOf("azure-2026-09-19-storage-resolved") - 80));
+      stubFetch({ [URLS.azure]: text(resolvedOnly) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: maintenance is maintenance, and an item without a date or with a foreign link is handled", async () => {
+      const item = (title: string, extra: string) =>
+        `<item><title>${title}</title>${extra}<description>Impact.</description></item>`;
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel>' +
+            item(
+              "Planned maintenance - Key Vault",
+              "<pubDate>Sun, 20 Sep 2026 08:00:00 GMT</pubDate><link>https://evil.example/x</link>",
+            ) +
+            item("Undated incident", "") +
+            "</channel></rss>",
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("maintenance");
+      // The undated item cannot be shown to be current; the foreign link is replaced by the card's page.
+      expect(azure.incidents).toHaveLength(1);
+      expect(azure.incidents[0]).toMatchObject({
+        title: "Planned maintenance - Key Vault",
+        health: "maintenance",
+        url: "https://azure.status.microsoft/en-us/status/",
+      });
+    });
+
+    it("Azure feed.xml: resolution words inside an active item do not end the incident", async () => {
+      const when = new Date(Date.now() - 3_600_000).toUTCString();
+      const item = (title: string, description: string) =>
+        `<item><title>${title}</title><pubDate>${when}</pubDate><description>${description}</description></item>`;
+      stubFetch({
+        [URLS.azure]: text(
+          `<rss version="2.0"><channel>${[
+            item("Storage - East US", "We have partially mitigated the issue and are continuing to restore service."),
+            item("Networking - Global", "The issue has not been fully mitigated."),
+            item("SQL - West Europe", "Services have been restored in East US; West Europe remains impacted."),
+            item("App Service - Central US", "We will provide a root cause analysis once mitigated."),
+          ].join("")}</channel></rss>`,
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("degraded");
+      expect(azure.incidents).toHaveLength(4);
+    });
+
+    it.each([
+      "Preliminary Post Incident Review (PIR) – Azure Front Door – Outage across multiple regions",
+      "Final Post Incident Review (PIR) – Azure Front Door – Outage across multiple regions",
+      "Final-PIR – Storage – East US",
+    ])("Azure feed.xml: %j is over, so the card stays operational", async (title) => {
+      const when = new Date(Date.now() - 3_600_000).toUTCString();
+      stubFetch({
+        [URLS.azure]: text(
+          `<rss version="2.0"><channel><item><title>${title}</title><pubDate>${when}</pubDate></item></channel></rss>`,
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: items that are not over, none with a readable date, are unknown with a parser failure", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel><item><title>Virtual Machines - UK South - Service unavailable</title></item><item><title>Storage - East US</title><pubDate>not a date</pubDate></item></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: undated items that are over do not make the feed unreadable", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel><item><title>RESOLVED - Storage - East US</title></item></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+    });
+
+    it("Azure feed.xml: a word in the description that suggests an outage does not make one", async () => {
+      const when = new Date(Date.now() - 3_600_000).toUTCString();
+      stubFetch({
+        [URLS.azure]: text(
+          `<rss version="2.0"><channel><item><title>Storage - East US - Increased latency</title><pubDate>${when}</pubDate><description>Requests may be intermittently unavailable in one region. Drill down in Service Health.</description></item></channel></rss>`,
+        ),
+      });
+      expect((await collect("azure")).health).toBe("degraded");
+    });
+
+    it.each([
+      [
+        "an Atom feed",
+        '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>x</title></entry></feed>',
+      ],
+      ["an HTML page", "<html><body>Service Unavailable</body></html>"],
+      ["an empty body", ""],
+    ])("Azure feed: %s is unknown with a parser failure", async (_name, body) => {
+      stubFetch({ [URLS.azure]: text(body) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed was not an RSS channel." });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed: a 403 is unknown with an http failure naming the vendor host", async () => {
+      stubFetch({ [URLS.azure]: text("Forbidden", { status: 403 }) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toMatchObject({ kind: "http", status: 403 });
+      expect(azure.summary).toContain("azure.status.microsoft");
     });
 
     it("MikroTik: every channel becomes a component, and the newest release's CHANGELOG is the summary", async () => {

@@ -11,7 +11,7 @@ export type DockState = {
   docked: boolean;
   /**
    * The field has finished moving to the pose `docked` names: the same as `docked` at once when nothing moves
-   * (a wide screen, Reduce Motion), and `DOCK_MS` after it on a phone, when the transition has ended. The
+   * (a wide screen, Reduce Motion), and `DOCK_LEAD_MS + DOCK_MS` after it on a phone, when the transition has ended. The
    * placeholder leaves the bar's short text only on this, so it never changes under a field that is still moving
    * out; going in, it follows `docked` itself.
    */
@@ -20,7 +20,7 @@ export type DockState = {
 
 /**
  * Where the dock keeps those two discrete states. A store outside React, read
- * with useDockState, so that the board (which holds every card) does not
+ * with useDockSelect, so that the board (which holds every card) does not
  * render when the bar comes up: only the bar, the hero's two buttons and the
  * field's placeholder do. Every change is a step, never a progress, so a scroll
  * costs React nothing between them.
@@ -68,6 +68,14 @@ export const WIDE_BAR_AT = 0.67;
  * styles.css, which has to say the same; a test reads both. The merge is this much time, whatever the scrolling.
  */
 export const DOCK_MS = 180;
+/**
+ * On a phone: the pause before the merge starts to move, in ms (three frames at 60Hz). It is `--t-dock-lead` in
+ * styles.css, which has to say the same; the e2e test of the dock's timing reads both. A transition shows its
+ * start value for its delay, so a first frame drawn late is meant to still be the rest box. The jump was seen on
+ * an iPhone, where the compositor may lose tens of ms at the start of a move; that this wait absorbs it is the
+ * expectation, not yet confirmed on a device.
+ */
+export const DOCK_LEAD_MS = 50;
 /** On a phone: how many px of scrolling back the field stays docked after the point where it docks. */
 export const DOCK_HYSTERESIS = 8;
 

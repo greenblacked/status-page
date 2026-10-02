@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Azure Status</title>
+    <link>https://azure.status.microsoft/en-us/status/</link>
+    <description>Azure Status RSS feed</description>
+    <language>en-us</language>
+    <lastBuildDate>Sun, 20 Sep 2026 11:50:00 GMT</lastBuildDate>
+    <ttl>5</ttl>
+    <item>
+      <guid isPermaLink="false">azure-2026-09-20-sql-west-europe</guid>
+      <title>Azure SQL Database - West Europe - Investigating degraded connectivity</title>
+      <link>https://azure.status.microsoft/en-us/status/#azure-2026-09-20-sql-west-europe</link>
+      <pubDate>Sun, 20 Sep 2026 10:20:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Summary of impact:</strong> Some customers may experience intermittent connection failures to Azure SQL Database in West Europe.</p><p><strong>Current status:</strong> We are investigating.</p>]]></description>
+    </item>
+    <item>
+      <guid isPermaLink="false">azure-2026-09-20-vm-uk-south</guid>
+      <title>Virtual Machines - UK South - Service unavailable</title>
+      <link>https://azure.status.microsoft/en-us/status/#azure-2026-09-20-vm-uk-south</link>
+      <pubDate>Sun, 20 Sep 2026 07:05:00 GMT</pubDate>
+      <description><![CDATA[<p><strong>Summary of impact:</strong> Customers may be unable to start or allocate Virtual Machines in UK South.</p>]]></description>
+    </item>
+    <item>
+      <guid isPermaLink="false">azure-2026-09-19-storage-resolved</guid>
+      <title>RESOLVED - Storage - East US - Increased latency</title>
+      <link>https://azure.status.microsoft/en-us/status/#azure-2026-09-19-storage-resolved</link>
+      <pubDate>Sat, 19 Sep 2026 16:40:00 GMT</pubDate>
+      <description><![CDATA[<p>This incident has been mitigated and is resolved.</p>]]></description>
+    </item>
+    <item>
+      <guid isPermaLink="false">azure-2026-08-02-pir</guid>
+      <title>Post Incident Review (PIR) - Networking - Global</title>
+      <link>https://azure.status.microsoft/en-us/status/history/#azure-2026-08-02-pir</link>
+      <pubDate>Sun, 02 Aug 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>What happened? Between 09:00 and 11:30 UTC, customers experienced degraded networking.</p>]]></description>
+    </item>
+    <item>
+      <guid isPermaLink="false">azure-2026-08-01-stale</guid>
+      <title>App Service - Central US - Degraded performance</title>
+      <link>https://azure.status.microsoft/en-us/status/#azure-2026-08-01-stale</link>
+      <pubDate>Sat, 01 Aug 2026 12:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Customers may see slow responses.</p>]]></description>
+    </item>
+  </channel>
+</rss>

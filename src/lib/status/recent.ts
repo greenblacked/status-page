@@ -11,7 +11,7 @@ export type RecentRow = {
   /** The newest check the row covers, as a slot in epoch ms. */
   at: number;
   text: string;
-  /** "12 of 16 up", with the names or the reason after it when something changed. */
+  /** "12 of 20 up", with the names or the reason after it when something changed. */
   caption: string;
   /** How many checks the row stands for; more than one only for a run with no change. */
   checks: number;
@@ -40,7 +40,7 @@ export function describeChange(change: PulseChange): string {
   }
 }
 
-/** "12 of 16 up": the services in operation out of all the check counted. */
+/** "12 of 20 up": the services in operation out of all the check counted. */
 export function upCaption(counts: Pulse["counts"]): string {
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   return `${counts.operational} of ${total} up`;
