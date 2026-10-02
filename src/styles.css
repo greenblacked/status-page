@@ -640,8 +640,9 @@
 }
 
 /*
-  Hidden, it stays in layout (visibility, not display: none): the search
-  field docks into its middle slot, which must stay measurable. It is
+  Hidden, it stays in layout (visibility, not display: none): its middle slot,
+  which the search field docks into from 64rem and holds the bar's copy of it
+  below that, must stay measurable. It is
   invisible, inert and out of the accessibility tree once the fade ends.
   Its blur goes at once (not animated), so a hidden bar keeps no blurred
   layer for the compositor to hold.
@@ -782,7 +783,7 @@
 /*
   A link to a card, the skip link and a revealed service stop below the bar,
   not under it. Per target rather than scroll-padding on the page: padding
-  would count the docked field and the bar's buttons, which sit inside it, as
+  would count the bar's field and buttons, which sit inside it, as
   out of view and scroll the page back up whenever one of them took focus.
 */
 article[id^="service-"],

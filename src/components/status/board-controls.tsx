@@ -120,7 +120,7 @@ const SHORT_PLACEHOLDER = "Search…";
 
 /**
  * Whether `text` fits the field as a placeholder, unclipped. The field at rest
- * is as wide as its dock (`dockRef`, which the merge into the bar never
+ * is as wide as its dock (`dockRef`, which moving into the bar never
  * resizes), so this measures the text against that width less the input's own
  * padding, and again when either changes. True until measured, which is what
  * the server rendered, so hydration sees the same placeholder.

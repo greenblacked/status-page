@@ -416,7 +416,7 @@ export function CompactHeader({
         >
           {/*
             Under 1024px the lead cannot give the long form the room (a phone's slot is 134px at 320; from 640px
-            the lead would squeeze the docked field), so the compact form is drawn and the short one is read by
+            the lead would squeeze the field in the slot), so the compact form is drawn and the short one is read by
             screen readers. Either ends in an ellipsis if it still does not fit.
           */}
           <span
