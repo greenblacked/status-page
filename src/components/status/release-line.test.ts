@@ -123,10 +123,11 @@ describe("the release line of a status card", () => {
     expect(text(lineOf(html))).toContain("GitLab 18.4");
   });
 
-  it("sits after the <details> of a row with a list, outside it, with the list below the line", () => {
+  it("sits after the <details> of a row with a list, outside it, with the list left inside as it was", () => {
     const components: ComponentHealth[] = [{ name: "Git operations", health: "operational" }];
     const html = render("gitlab", { components, releaseFeed: feed("GitLab 18.4") });
     const summary = html.slice(html.indexOf("<summary"), html.indexOf("</summary>"));
+    const details = html.slice(html.indexOf("<details"), html.indexOf("</details>"));
     expect(html.match(/<summary/g)).toHaveLength(1);
     expect(html.match(/data-release-line/g)).toHaveLength(1);
     expect(summary).toContain("Operational");
@@ -134,14 +135,17 @@ describe("the release line of a status card", () => {
     expect(summary).not.toContain("data-release-line");
     expect(summary).not.toContain("<button");
     // Nor is it in the <details> at all: whatever an engine does with a shut <details>'s content, the line shows.
+    expect(details).not.toContain("data-release-line");
     expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("data-release-line"));
-    // The <details> holds the summary alone; the list follows the line and shuts itself with the row.
-    expect(html.slice(html.indexOf("<details"), html.indexOf("</details>"))).not.toContain("Git operations");
-    expect(html.indexOf("data-release-line")).toBeLessThan(html.indexOf("data-row-components"));
-    expect(html.indexOf("data-row-components")).toBeLessThan(html.indexOf("Git operations"));
-    // Hidden by CSS from the `open` attribute until the page hydrates (and where there is no `until-found`).
-    expect(html).toContain("[details:not([open])~&amp;:not([data-until-found])]:hidden");
+    // The list stays inside the <details>, after the summary: the engine hides it while the row is shut, a text
+    // fragment or find-in-page opens the row before any script runs, and a screen reader reads it as the group's.
+    expect(details.indexOf("</summary>")).toBeLessThan(details.indexOf("Git operations"));
+    expect(html).not.toContain("data-row-components");
+    expect(html).not.toContain("until-found");
+    expect(html).not.toMatch(/\shidden[\s=>]/);
     expect(html).not.toContain("::details-content");
+    // The release line is the last thing in the row's wrapper, below the list.
+    expect(html.indexOf("Git operations")).toBeLessThan(html.indexOf("data-release-line"));
     // The summary gives its bottom padding and its minimum height to the line under it, so the chevron moves
     // down by half the top padding to stay on the middle of the text.
     expect(summary).toContain("pb-0");
@@ -158,16 +162,31 @@ describe("the release line of a status card", () => {
     const html = render("gitlab", { components });
     expect(html).not.toContain("row-details-feed");
     expect(html).not.toContain("data-release-line");
-    // The list is in the same place as on a row with a feed, after the <details>, so a feed joining or leaving
-    // does not replace it (and the focus and the "Show all" state inside it).
-    expect(html.slice(html.indexOf("<details"), html.indexOf("</details>"))).not.toContain("Git operations");
-    expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("data-row-components"));
-    expect(html.indexOf("data-row-components")).toBeLessThan(html.indexOf("Git operations"));
-    expect(html).toContain("[details:not([open])~&amp;:not([data-until-found])]:hidden");
+    // The list is in the same place as on a row with a feed, inside the <details> after the summary, and the
+    // <details> sits in the same wrapper, so a feed joining or leaving does not replace either (and the open
+    // state, the focus and the "Show all" state inside it).
+    const details = html.slice(html.indexOf("<details"), html.indexOf("</details>"));
+    expect(details.indexOf("</summary>")).toBeLessThan(details.indexOf("Git operations"));
+    expect(html).toContain('<div class="min-w-0"><details');
+    expect(html).not.toContain("data-row-components");
+    expect(html).not.toContain("until-found");
     expect(html).toContain("after:top-[calc(50%-0.25rem)]");
     expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).toContain(
       "min-h-(--row-h)",
     );
+  });
+
+  it("keeps the <details> in the same place with or without the feed, the line only a trailing slot", () => {
+    const components: ComponentHealth[] = [{ name: "Git operations", health: "operational" }];
+    const upToDetails = (html: string) => html.slice(0, html.indexOf("<details"));
+    const withFeed = render("gitlab", { components, releaseFeed: feed("GitLab 18.4") });
+    const without = render("gitlab", { components });
+    // Everything up to the <details> is the same markup, and the line follows the closing tag of the <details>.
+    expect(upToDetails(withFeed)).toBe(upToDetails(without));
+    expect(withFeed.slice(withFeed.indexOf("</details>"))).toMatch(
+      /^<\/details><div class="pr-6 pb-2"><p data-release-line/,
+    );
+    expect(without.slice(without.indexOf("</details>"))).toMatch(/^<\/details><\/div>/);
   });
 
   it("is in the header of a row that has no list to open", () => {

@@ -250,7 +250,9 @@ test("Details stays on the line of the item it belongs to, and the line is one r
   }
 });
 
-test("the line stays directly under the health line when the component list is open", async ({ page }) => {
+test("the line sits under the health line while the row is shut and below the list while it is open", async ({
+  page,
+}) => {
   await openBoard(page);
   await page.setViewportSize({ width: 390, height: 900 });
   let withList = 0;
@@ -265,16 +267,19 @@ test("the line stays directly under the health line when the component list is o
       if (!health || !release) throw new Error(`${id} has no lines`);
       return release.y - (health.y + health.height);
     };
-    // The line is neither in the summary (a button in a summary is a nested control) nor in the <details> (an
-    // engine may hide what a shut <details> holds): it is a plain sibling after it, and shown while the row is shut.
+    // The line is not in the summary (a button in a summary is a nested control) and not in the <details> (an
+    // engine may hide what a shut <details> holds): it is a plain sibling after it, and shown while the row is
+    // shut. The list is in the <details>, where it belongs for a screen reader and for find-in-page.
     await expect(page.locator(`#service-${id} summary [data-release-line]`)).toHaveCount(0);
     await expect(row.locator("[data-release-line]")).toHaveCount(0);
     const feedLine = line(page, id);
     const button = trigger(page, id);
-    const list = page.locator(`#service-${id} [data-row-components]`);
+    const list = row.locator(":scope > div");
+    await expect(list).toHaveCount(1);
     await expect(feedLine).toBeVisible();
     await expect(button).toBeVisible();
     await expect(list).toBeHidden();
+    // Shut: the line is right under the health line.
     const closed = await gap();
     expect(closed).toBeGreaterThanOrEqual(-1);
     expect(closed).toBeLessThan(8);
@@ -287,13 +292,14 @@ test("the line stays directly under the health line when the component list is o
     await expect(row).toHaveAttribute("open", "");
     await expect(feedLine).toBeVisible();
     await expect(list).toBeVisible();
-    expect(Math.abs((await gap()) - closed), `${id} with its list open`).toBeLessThan(1);
-    // ...and the list begins below the line, not above it.
+    // Open: the list opens under the health line and the release line sits below it.
     const release = await feedLine.boundingBox();
-    const below = await list.boundingBox();
-    if (!release || !below) throw new Error(`${id} has no list`);
-    expect(below.y).toBeGreaterThanOrEqual(release.y + release.height - 1);
-    // Shut again: the line has not moved and the list is gone.
+    const opened = await list.boundingBox();
+    const health = await page.locator(`#service-${id} [data-card-header] p`).first().boundingBox();
+    if (!release || !opened || !health) throw new Error(`${id} has no list`);
+    expect(opened.y).toBeGreaterThanOrEqual(health.y + health.height - 1);
+    expect(release.y).toBeGreaterThanOrEqual(opened.y + opened.height - 1);
+    // Shut again: the line is back under the health line, where it was, and the list is gone.
     await page.locator(`#service-${id} summary h3`).click();
     await expect(row).not.toHaveAttribute("open", "");
     await expect(list).toBeHidden();
@@ -303,41 +309,32 @@ test("the line stays directly under the health line when the component list is o
   expect(withList).toBeGreaterThan(0);
 });
 
-test("a shut row's component list can still be found on the page, where the browser can", async ({ page }) => {
-  await openBoard(page);
-  const row = page.locator("#service-cs2-europe details.row-details");
-  const list = page.locator("#service-cs2-europe [data-row-components]");
-  const found = await list.evaluate((element) => "onbeforematch" in element);
-  test.skip(!found, "this browser has no hidden=until-found, so the list is plainly hidden while the row is shut");
-  // Shut: hidden, but in a way the browser's find and text fragments see into (not display:none).
-  await expect(row).not.toHaveAttribute("open", "");
-  await expect(list).toHaveAttribute("hidden", "until-found");
-  await expect(list).toBeHidden();
-  expect(await list.evaluate((element) => getComputedStyle(element).display)).not.toBe("none");
-  // A match inside the list opens the row, which shows the list and drops the attribute.
-  await list.evaluate((element) => element.dispatchEvent(new Event("beforematch", { bubbles: true })));
-  await expect(row).toHaveAttribute("open", "");
-  await expect(list).not.toHaveAttribute("hidden", /.*/);
-  await expect(list).toBeVisible();
-  await expect(list).toContainText("Frankfurt");
-  // Shut again by hand: hidden and findable again.
-  await page.locator("#service-cs2-europe summary h3").click();
-  await expect(row).not.toHaveAttribute("open", "");
-  await expect(list).toHaveAttribute("hidden", "until-found");
-  await expect(list).toBeHidden();
-});
+// A link to a component's name ("#:~:text=...", a shared link or a search result) opens the row that lists it. The
+// list is inside the <details>, so the browser opens the row itself as it does for any shut <details>, with no
+// script of the page involved: the test loads the page cold, with scripts off, so it is the server's markup alone,
+// which is what a slow phone shows before the page has hydrated. The server reads the live vendors, so the name is
+// taken from a row of that markup that has no release feed.
+test.describe("a cold link", () => {
+  test.use({ javaScriptEnabled: false });
 
-test("a text-fragment link to a component opens the shut row that lists it", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "the text-fragment reveal is checked in Chromium");
-  await openBoard(page);
-  const row = page.locator("#service-cs2-europe details.row-details");
-  await expect(row).not.toHaveAttribute("open", "");
-  // A link to the component's name, as a shared "#:~:text=" link or a search result makes it: the browser looks for
-  // the text in the page, finds it in the list hidden until found, and the row opens.
-  await page.evaluate(() => {
-    location.hash = ":~:text=Frankfurt";
+  test("to a component opens the shut row that lists it, before any script has run", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "the reveal of a shut <details> by a text fragment is checked in Chromium");
+    // A page of its own to read the names from, so the one under test is loaded fresh, not by a hash change.
+    const probe = await page.context().newPage();
+    await probe.goto("/");
+    const names = (
+      await probe.locator("details.row-details:not(.row-details-feed) [data-component-row]").allInnerTexts()
+    ).map((text) => text.split("\n")[0]?.trim());
+    const text = await probe.locator("body").textContent();
+    await probe.close();
+    // A name that occurs once on the page, so the fragment can only mean this row.
+    const name = names.find((candidate) => candidate && candidate.length > 5 && text?.split(candidate).length === 2);
+    test.skip(!name, "the server's board had no component list without a release feed to link to (no vendor answered)");
+    await page.goto(`/#:~:text=${encodeURIComponent(name as string)}`);
+    const target = page.locator("details.row-details:not(.row-details-feed)", { hasText: name as string });
+    await expect(target).toHaveCount(1);
+    await expect(target).toHaveAttribute("open", "");
   });
-  await expect(row).toHaveAttribute("open", "");
 });
 
 test("the chevron sits on the same line of the row with or without a release line", async ({ page }) => {
@@ -537,7 +534,8 @@ for (const [name, from, to] of [
     await expect(line(page, "cs2-europe")).toHaveCount(hasFeed ? 1 : 0);
 
     const row = page.locator("#service-cs2-europe");
-    const list = row.locator("[data-row-components]");
+    // The list is the <details>' own child after the summary, wherever the release line is.
+    const list = row.locator("details > div");
     const items = list.getByText(/^Relay \d$/);
     await row.locator("summary").focus();
     await page.keyboard.press("Enter");
