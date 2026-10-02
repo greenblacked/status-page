@@ -311,30 +311,51 @@ test("the line sits under the health line while the row is shut and below the li
 
 // A link to a component's name ("#:~:text=...", a shared link or a search result) opens the row that lists it. The
 // list is inside the <details>, so the browser opens the row itself as it does for any shut <details>, with no
-// script of the page involved: the test loads the page cold, with scripts off, so it is the server's markup alone,
-// which is what a slow phone shows before the page has hydrated. The server reads the live vendors, so the name is
-// taken from a row of that markup that has no release feed.
-test.describe("a cold link", () => {
-  test.use({ javaScriptEnabled: false });
-
-  test("to a component opens the shut row that lists it, before any script has run", async ({ page, browserName }) => {
-    test.skip(browserName !== "chromium", "the reveal of a shut <details> by a text fragment is checked in Chromium");
-    // A page of its own to read the names from, so the one under test is loaded fresh, not by a hash change.
-    const probe = await page.context().newPage();
-    await probe.goto("/");
-    const names = (
-      await probe.locator("details.row-details:not(.row-details-feed) [data-component-row]").allInnerTexts()
-    ).map((text) => text.split("\n")[0]?.trim());
-    const text = await probe.locator("body").textContent();
-    await probe.close();
-    // A name that occurs once on the page, so the fragment can only mean this row.
-    const name = names.find((candidate) => candidate && candidate.length > 5 && text?.split(candidate).length === 2);
-    test.skip(!name, "the server's board had no component list without a release feed to link to (no vendor answered)");
-    await page.goto(`/#:~:text=${encodeURIComponent(name as string)}`);
-    const target = page.locator("details.row-details:not(.row-details-feed)", { hasText: name as string });
-    await expect(target).toHaveCount(1);
-    await expect(target).toHaveAttribute("open", "");
+// script of the page involved. The test loads the page cold: scripts are switched off on a fresh page that is
+// served the markup of the fixture board (the live vendors would make the name vary, or be missing offline), so it
+// is the markup alone, which is what a slow phone shows before the page has hydrated. The name is taken from a row
+// that has no release feed. It must be found: a missing name fails the test, never skips it.
+test("a cold link to a component opens the shut row that lists it, before any script has run", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "the reveal of a shut <details> by a text fragment is checked in Chromium");
+  await openBoard(page);
+  const names = await page
+    .locator('details.row-details:not(.row-details-feed) ul[aria-label="Components"] li span[title]')
+    .evaluateAll((spans) => spans.map((span) => span.getAttribute("title") ?? ""));
+  // The page's own text, without the scripts and templates that carry the board a second time as data.
+  const text = await page.evaluate(() => {
+    const body = document.body.cloneNode(true) as HTMLElement;
+    for (const node of body.querySelectorAll("script,template")) node.remove();
+    return body.textContent ?? "";
   });
+  // A name that occurs once on the page, so the fragment can only mean this row.
+  const name = names.find((candidate) => candidate.length > 5 && text.split(candidate).length === 2);
+  expect(
+    name,
+    `a component of a row with no release feed that is named once; found ${JSON.stringify(names)}`,
+  ).toBeTruthy();
+  // The hydration flag is the page's own doing; without it the markup is what the server sends.
+  const markup = (await page.content()).replace(/ data-hydrated=""/, "");
+  // A page of its own, so the one under test is loaded fresh, not by a hash change, with scripts off.
+  const cold = await page.context().newPage();
+  const cdp = await page.context().newCDPSession(cold);
+  await cdp.send("Emulation.setScriptExecutionDisabled", { value: true });
+  await cold.route(
+    (url) => url.pathname === "/",
+    (route) => route.fulfill({ contentType: "text/html; charset=utf-8", body: markup }),
+  );
+  const rowOf = (on: Page) =>
+    on.locator("details.row-details:not(.row-details-feed)", { has: on.locator(`[title="${name}"]`) });
+  // The row is one, and shut, before the link is followed.
+  await expect(rowOf(page)).toHaveCount(1);
+  await expect(rowOf(page)).not.toHaveAttribute("open", "");
+  await cold.goto(`/#:~:text=${encodeURIComponent(name as string)}`);
+  await expect(rowOf(cold)).toHaveCount(1);
+  await expect(rowOf(cold)).toHaveAttribute("open", "");
+  await expect(cold.locator("html")).not.toHaveAttribute("data-hydrated", "");
+  await cold.close();
 });
 
 test("the chevron sits on the same line of the row with or without a release line", async ({ page }) => {
