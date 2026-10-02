@@ -290,7 +290,7 @@ function soonest(items: UpcomingMaintenance[], limit: number): UpcomingMaintenan
 
 /**
  * The incidents to list, in board order and cut to MAX_INCIDENTS, with what
- * the cut hides: `incidentCount` (everything the source listed) is set only
+ * the cut hides: `incidentCount` (the count read, at most MAX_SCANNED_ROWS) is set only
  * when some were cut, like `componentCount`, and `problems` counts the real
  * ones in the whole list, which is what a summary should say.
  */
@@ -440,7 +440,7 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
 // Non-operational first, in the board's urgency order (SEVERITY_ORDER: outage,
 // degraded, unknown, maintenance; equals keep source order), then operational
 // in source order, capped at MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
-// the total the source listed, set only when the cap dropped some, so a card
+// the count read (at most MAX_SCANNED_ROWS), set only when the cap dropped some, so a card
 // can say how many it is not showing.
 function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
   const isUp = (component: ComponentHealth) => component.health === "operational";

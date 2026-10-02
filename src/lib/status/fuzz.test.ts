@@ -742,13 +742,15 @@ describe("feeds and payloads", () => {
         row,
         (components, incidents, maintenance, nested, entry) => {
           const many = (n: number, item: unknown = entry) => new Array(n).fill(item);
+          const withFirst = (rows: unknown[], first: unknown) => (rows.length > 0 ? [first, ...rows.slice(1)] : rows);
           const snapshot = fromStatusIo(
             "gitlab",
             {
               result: {
                 status_overall: { status: "Operational", status_code: 100 },
-                status: many(components, { name: "c", status_code: 100, containers: many(nested) }),
-                incidents: many(incidents, { name: "i", messages: many(nested) }),
+                // Nested arrays on one row each: the cost stays linear in the row counts.
+                status: withFirst(many(components), { name: "c", status_code: 100, containers: many(nested) }),
+                incidents: withFirst(many(incidents), { name: "i", messages: many(nested) }),
                 maintenance: { active: many(maintenance), upcoming: many(maintenance) },
               },
             } as never,
