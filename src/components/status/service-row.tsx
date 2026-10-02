@@ -1,5 +1,5 @@
 import { ArrowUpRight } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { useServiceHistoryDays } from "@/components/status/board-history-provider";
 import { HistoryStrip } from "@/components/status/history-strip";
 import { ReleaseFeedLine } from "@/components/status/release-line";
@@ -110,6 +110,66 @@ export function RowHeader({
 }
 
 /**
+ * A row with a release line and a component list: the <details> holds the summary alone, then the line, then the
+ * list. The list is hidden while the row is shut, and the page can still find what is in it: Ctrl+F or a text
+ * fragment to a component name opens the row, as it does for a list inside a shut <details>.
+ *
+ * Before the page hydrates, and in an engine without `hidden="until-found"` (Safari), the list is hidden by CSS
+ * from the `open` attribute (`[details:not([open])~&]:hidden`). Where the engine has `beforematch`, this takes
+ * over: the list wears `hidden="until-found"` while the row is shut (React has no prop for that value, so it is
+ * set here and follows the details' `toggle` event), the CSS rule steps aside (`data-until-found`), and a match
+ * inside the list opens the row (`beforematch`).
+ */
+function RowWithFeed({
+  summaryClass,
+  header,
+  line,
+  panel,
+}: {
+  summaryClass: string;
+  header: ReactNode;
+  line: ReactNode;
+  panel: ReactNode;
+}) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const details = detailsRef.current;
+    const list = listRef.current;
+    if (!details || !list || !("onbeforematch" in list)) return;
+    const sync = () => {
+      if (details.open) list.removeAttribute("hidden");
+      else list.setAttribute("hidden", "until-found");
+    };
+    const reveal = () => {
+      details.open = true;
+    };
+    sync();
+    list.dataset.untilFound = "";
+    details.addEventListener("toggle", sync);
+    list.addEventListener("beforematch", reveal);
+    return () => {
+      details.removeEventListener("toggle", sync);
+      list.removeEventListener("beforematch", reveal);
+      list.removeAttribute("hidden");
+      delete list.dataset.untilFound;
+    };
+  }, []);
+  return (
+    <div className="min-w-0">
+      {/* The chevron is at the middle of the summary (50%): the line under it takes the bottom padding. */}
+      <details ref={detailsRef} className="row-details row-details-feed min-w-0 [&>summary]:after:top-1/2!">
+        <summary className={summaryClass}>{header}</summary>
+      </details>
+      <div className="pr-6 pb-2">{line}</div>
+      <div ref={listRef} data-row-components className="[details:not([open])~&:not([data-until-found])]:hidden">
+        {panel}
+      </div>
+    </div>
+  );
+}
+
+/**
  * A service in the compact list. Healthy: an outline glyph, the name, and
  * "Operational · 142 ms" in the light tone, with nothing else to read; a
  * service that lists components opens to them (<details>). One that could not
@@ -138,7 +198,7 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
   // anything after a summary inside the <details> is hidden by the engine while the row is shut, in a way that
   // differs between browsers. So the <details> holds the summary alone (it still owns the open state, the
   // chevron and the keyboard), and the line and the list follow it as plain siblings: the line is always
-  // rendered, and the list hides itself from the `open` attribute (`[details:not([open])~&]:hidden`).
+  // rendered, and the list is hidden while the row is shut (see RowWithFeed).
   const feedLine = releaseFeedOf(service) ? <ReleaseFeedLine service={service} /> : null;
   const header = (
     <RowHeader
@@ -194,38 +254,18 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
       />
     </div>
   );
+  const summaryClass = "focus-ring flex items-center rounded-md focus-visible:-outline-offset-2!";
+  // The chevron (styles.css) sits at the middle of the name and health lines. In a summary with padding on
+  // both sides that is its middle (50% less the chevron's half height).
   const details = (
-    // The chevron (styles.css) sits at the middle of the name and health lines. In a summary with padding on
-    // both sides that is its middle (50% less the chevron's half height). With the release line under it the
-    // summary has no bottom padding, so the text's middle is 4px (half the top padding) below the summary's: 50%.
-    // `row-details-feed` only marks such a row (no rule of its own).
-    <details
-      className={cn(
-        "row-details min-w-0",
-        feedLine ? "row-details-feed [&>summary]:after:top-1/2!" : "[&>summary]:after:top-[calc(50%-0.25rem)]!",
-      )}
-    >
-      <summary
-        className={cn(
-          "focus-ring flex items-center rounded-md focus-visible:-outline-offset-2!",
-          // With the line right under it the summary is as tall as its two lines, like a plain row's header.
-          !feedLine && "min-h-(--row-h)",
-        )}
-      >
-        {header}
-      </summary>
-      {feedLine ? null : panel}
+    <details className="row-details min-w-0 [&>summary]:after:top-[calc(50%-0.25rem)]!">
+      <summary className={cn(summaryClass, "min-h-(--row-h)")}>{header}</summary>
+      {panel}
     </details>
   );
   const body = withDetails ? (
     feedLine ? (
-      <div className="min-w-0">
-        {details}
-        <div className="pr-6 pb-2">{feedLine}</div>
-        <div data-row-components className="[details:not([open])~&]:hidden">
-          {panel}
-        </div>
-      </div>
+      <RowWithFeed summaryClass={summaryClass} header={header} line={feedLine} panel={panel} />
     ) : (
       details
     )

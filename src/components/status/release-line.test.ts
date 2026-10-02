@@ -139,7 +139,8 @@ describe("the release line of a status card", () => {
     expect(html.slice(html.indexOf("<details"), html.indexOf("</details>"))).not.toContain("Git operations");
     expect(html.indexOf("data-release-line")).toBeLessThan(html.indexOf("data-row-components"));
     expect(html.indexOf("data-row-components")).toBeLessThan(html.indexOf("Git operations"));
-    expect(html).toContain("[details:not([open])~&amp;]:hidden");
+    // Hidden by CSS from the `open` attribute until the page hydrates (and where there is no `until-found`).
+    expect(html).toContain("[details:not([open])~&amp;:not([data-until-found])]:hidden");
     expect(html).not.toContain("::details-content");
     // The summary gives its bottom padding and its minimum height to the line under it, so the chevron moves
     // down by half the top padding to stay on the middle of the text.

@@ -303,6 +303,40 @@ test("the line stays directly under the health line when the component list is o
   expect(withList).toBeGreaterThan(0);
 });
 
+test("a shut row's component list can still be found on the page, where the browser can", async ({ page }) => {
+  await openBoard(page);
+  const row = page.locator("#service-cs2-europe details.row-details");
+  const list = page.locator("#service-cs2-europe [data-row-components]");
+  const found = await list.evaluate((element) => "onbeforematch" in element);
+  test.skip(!found, "this browser has no hidden=until-found, so the list is plainly hidden while the row is shut");
+  // Shut: hidden, but in a way the browser's find and text fragments see into (not display:none).
+  await expect(row).not.toHaveAttribute("open", "");
+  await expect(list).toHaveAttribute("hidden", "until-found");
+  await expect(list).toBeHidden();
+  expect(await list.evaluate((element) => getComputedStyle(element).display)).not.toBe("none");
+  // A match inside the list opens the row, which shows the list and drops the attribute.
+  await list.evaluate((element) => element.dispatchEvent(new Event("beforematch", { bubbles: true })));
+  await expect(row).toHaveAttribute("open", "");
+  await expect(list).not.toHaveAttribute("hidden", /.*/);
+  await expect(list).toBeVisible();
+  await expect(list).toContainText("Frankfurt");
+  // Shut again by hand: hidden and findable again.
+  await page.locator("#service-cs2-europe summary h3").click();
+  await expect(row).not.toHaveAttribute("open", "");
+  await expect(list).toHaveAttribute("hidden", "until-found");
+  await expect(list).toBeHidden();
+});
+
+test("the browser's own find opens a shut row that lists the component", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "find-in-page reveal is checked in Chromium, where window.find is a real find");
+  await openBoard(page);
+  const row = page.locator("#service-cs2-europe details.row-details");
+  await expect(row).not.toHaveAttribute("open", "");
+  // The browser's find (window.find runs the same search as Ctrl+F) reveals what is hidden until found.
+  await page.evaluate(() => window.find("Frankfurt"));
+  await expect(row).toHaveAttribute("open", "");
+});
+
 test("the chevron sits on the same line of the row with or without a release line", async ({ page }) => {
   await openBoard(page);
   for (const width of [320, 390, 1280]) {
