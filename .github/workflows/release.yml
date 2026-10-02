@@ -420,18 +420,52 @@ jobs:
           id="${found%% *}"
 
           # Already public (an older run's sign re-run, or a release made
-          # before signing or by hand): add only the assets it lacks. Never
-          # --clobber here, which deletes a public asset before replacing it.
+          # before signing or by hand): never --clobber here, which deletes a
+          # public asset before replacing it. An asset already there is
+          # checked, not trusted by its name: a different archive under the
+          # expected name (a renamed source tarball, say) would leave users
+          # with a bundle for other bytes. Any mismatch fails the run and
+          # changes nothing; only the asset that is absent is uploaded.
           if [ "${found##* }" = false ]; then
             have="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
-            missing=()
-            for f in "$archive" "$bundle"; do
-              printf '%s\n' "$have" | grep -qxF "$(basename "$f")" || missing+=("$f")
-            done
-            if [ "${#missing[@]}" -eq 0 ]; then
-              echo "::notice::$TAG is already public with its signed assets"
+            has_archive=false
+            has_bundle=false
+            printf '%s\n' "$have" | grep -qxF "$(basename "$archive")" && has_archive=true
+            printf '%s\n' "$have" | grep -qxF "$(basename "$bundle")" && has_bundle=true
+            repo_re="${GH_REPO//./\\.}"
+            verify() { # verify <bundle> <archive>
+              cosign verify-blob \
+                --bundle "$1" \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                --certificate-identity-regexp "^https://github\.com/${repo_re}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$" \
+                "$2"
+            }
+            existing="$RUNNER_TEMP/existing"
+            rm -rf "$existing"
+            mkdir -p "$existing"
+            if [ "$has_archive" = true ] && [ "$has_bundle" = true ]; then
+              gh release download "$TAG" --dir "$existing" --pattern "$(basename "$archive")" --pattern "$(basename "$bundle")"
+              if ! verify "$existing/$(basename "$bundle")" "$existing/$(basename "$archive")"; then
+                echo "::error::$TAG is public, but its archive and signature bundle do not verify; not replacing public assets"
+                exit 1
+              fi
+              echo "::notice::$TAG is already public with its signed assets, which verify"
+            elif [ "$has_archive" = true ]; then
+              gh release download "$TAG" --dir "$existing" --pattern "$(basename "$archive")"
+              if [ "$(sha256sum <"$existing/$(basename "$archive")" | cut -d' ' -f1)" != "$(sha256sum <"$archive" | cut -d' ' -f1)" ]; then
+                echo "::error::$TAG is public with an archive that is not this tag's source; not signing it"
+                exit 1
+              fi
+              gh release upload "$TAG" "$bundle"
+            elif [ "$has_bundle" = true ]; then
+              gh release download "$TAG" --dir "$existing" --pattern "$(basename "$bundle")"
+              if ! verify "$existing/$(basename "$bundle")" "$archive"; then
+                echo "::error::$TAG is public with a signature bundle that does not verify this tag's source; not replacing it"
+                exit 1
+              fi
+              gh release upload "$TAG" "$archive"
             else
-              gh release upload "$TAG" "${missing[@]}"
+              gh release upload "$TAG" "$archive" "$bundle"
             fi
             exit 0
           fi
