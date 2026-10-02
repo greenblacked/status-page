@@ -27,7 +27,9 @@ name: Release
 # starts no workflow of its own, so when one actually moved stage this also
 # starts deploy.yml on stage by hand, or the stage preview would keep running
 # the pre-release code until an unrelated push to stage updated it (dev
-# deploys nothing). CONTRIBUTING.md#releases has the details.
+# deploys nothing). A separate job also attaches a source archive and its
+# keyless Sigstore signature to the release (CONTRIBUTING.md#releases has the
+# details, and how to verify it).
 
 on:
   push:
@@ -82,6 +84,7 @@ jobs:
         id: plan
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           BUMP: ${{ inputs.bump }}
@@ -98,6 +101,14 @@ jobs:
 
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
             fail "$GITHUB_SHA is not on main; only main is released"
+
+          # Run workflow from any other ref (stage can sit on main's tip) would
+          # publish, but the sign job's certificate would name that ref and
+          # fail its own check, leaving a release without signed assets.
+          if [ "$EVENT" = workflow_dispatch ]; then
+            [[ "$REF" =~ ^refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$ ]] ||
+              fail "run this workflow from main or a vX.Y.Z tag, not $REF"
+          fi
 
           # Backfill: tag an older commit with a version main's changelog has.
           if [ "$EVENT" = workflow_dispatch ] && [ -n "$VERSION$COMMIT" ]; then
@@ -235,6 +246,10 @@ jobs:
     # no project code: only the release scripts, npm version and gh.
     permissions:
       contents: write # push the bump commit to main, create the tag and the GitHub Release
+    outputs:
+      # false when main moved and the newer push's run releases instead (the
+      # bump step says so); true for every other run that got this far.
+      published: ${{ steps.bump.outputs.published != 'false' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -322,6 +337,58 @@ jobs:
             # with GITHUB_TOKEN starts this workflow again.
             gh release create "$TAG" --target "$target" --title "Status Page $TAG" --notes-file "$notes" --latest="$latest"
           fi
+
+  sign:
+    name: sign release
+    needs: [plan, publish]
+    if: needs.publish.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The only job in this workflow with id-token: write, and it runs no
+    # project code: git, cosign and gh. contents: write is for uploading the two release assets.
+    # A re-run of just this job (Re-run failed jobs) replaces them.
+    permissions:
+      contents: write # upload the source archive and its signature to the GitHub Release
+      id-token: write # keyless Sigstore signing with this run's GitHub OIDC identity
+    steps:
+      # The tag publish just created (or the one pushed by hand): the archive
+      # is exactly the commit the release names.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Scorecard's Signed-Releases check looks for a signature asset on the
+      # release (*.sigstore.json is one it accepts); users verify the archive
+      # with it (CONTRIBUTING.md#releases).
+      - name: Archive and sign the source
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/assets"
+          archive="$RUNNER_TEMP/assets/status-page-${TAG}.tar.gz"
+          git archive --format=tar.gz --prefix="status-page-${TAG#v}/" -o "$archive" "refs/tags/$TAG"
+          cosign sign-blob --yes --bundle "$archive.sigstore.json" "$archive"
+          # A bad or mismatched signature fails the run before anything is
+          # attached. The identity is this repository's release workflow on
+          # main, or on a version tag pushed by hand, issued by GitHub Actions.
+          repo_re="${REPO//./\\.}"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github\.com/${repo_re}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$" \
+            "$archive"
+
+      - name: Attach them to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          gh release upload "$TAG" "$RUNNER_TEMP/assets/status-page-${TAG}.tar.gz" "$RUNNER_TEMP/assets/status-page-${TAG}.tar.gz.sigstore.json" --clobber
 
   sync-branches:
     name: merge main into stage and dev

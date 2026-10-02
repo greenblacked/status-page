@@ -221,7 +221,8 @@ When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 3. Commits `chore(release): X.Y.Z` to `main`, authored by the account that merged. The commit updates `package.json`, `package-lock.json` and the changelog, and turns `## [Unreleased]` into the dated `## [X.Y.Z]` section. If the pull request added nothing under Unreleased, the section is written from the merged commits' subjects instead.
 4. Tags that commit `vX.Y.Z`.
 5. Publishes the GitHub Release with that section as its notes.
-6. Merges `main` back into `stage` and then `dev`, released or not, so both carry the release commit and anything that reached `main` without going through `stage`, such as a `release/vX.Y.Z` bump. When that merge actually moves `stage`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `stage` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, the preview would keep running the pre-release code until an unrelated push to `stage` updated it. `dev` deploys nothing, so its merge needs no follow-up. A release on `main` while `stage` or `dev` has lines under Unreleased conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts the branch's lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, after it has tried the other branch, and you resolve it on a branch from the one that conflicted:
+6. Signs the release. A separate `sign release` job archives the tagged commit (`git archive`) as `status-page-vX.Y.Z.tar.gz`, signs it keylessly with [Sigstore cosign](https://docs.sigstore.dev/cosign/signing/overview/) under the workflow's GitHub identity, checks the signature with `cosign verify-blob` (a bad one fails the run before anything is attached) and uploads the archive and its bundle, `status-page-vX.Y.Z.tar.gz.sigstore.json`, to the GitHub Release. It is the only job in `release.yml` with `id-token: write`, and it runs no project code. Re-run it alone (**Re-run failed jobs**) if it fails; the upload replaces the assets.
+7. Merges `main` back into `stage` and then `dev`, released or not, so both carry the release commit and anything that reached `main` without going through `stage`, such as a `release/vX.Y.Z` bump. When that merge actually moves `stage`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `stage` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, the preview would keep running the pre-release code until an unrelated push to `stage` updated it. `dev` deploys nothing, so its merge needs no follow-up. A release on `main` while `stage` or `dev` has lines under Unreleased conflicts on `CHANGELOG.md`. The job resolves that case itself: it keeps `main`'s released section and puts the branch's lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). Any other conflict fails the job, after it has tried the other branch, and you resolve it on a branch from the one that conflicted:
 
    ```bash
    git fetch origin
@@ -249,6 +250,22 @@ The bump commit and the tag are pushed with the workflow's `GITHUB_TOKEN`, so th
 A ruleset on `main`, `stage` or `dev` that requires pull requests or status checks rejects the workflow's direct pushes to it (the release commit, and the merges of `main` back) unless GitHub Actions is a bypass actor; [Branch protection](#branch-protection) adds it. Without that, release with `bump.sh` and a pull request into `main`, and bring `main` into `stage` and `dev` through a `chore/sync-main` branch and pull request (see above).
 
 Never move or reuse a tag that has a published release; release a new patch version instead.
+
+### Verifying a release
+
+Each release made since signing was added carries two assets besides GitHub's automatic source archives: `status-page-vX.Y.Z.tar.gz`, the source of the tagged commit, and `status-page-vX.Y.Z.tar.gz.sigstore.json`, its [Sigstore](https://www.sigstore.dev/) bundle. The signature is keyless: the certificate in the bundle names the `release.yml` workflow of this repository on `main` (or on a `vX.Y.Z` tag pushed by hand), issued to GitHub Actions, and the signing is recorded in the public Rekor transparency log. To check a download with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) (v3 or later, the version `release.yml` signs with; earlier versions cannot read its bundle format):
+
+```bash
+VERSION=v0.6.0   # the release you downloaded
+gh release download "$VERSION" --repo greenblacked/status-page \
+  --pattern "status-page-$VERSION.tar.gz" --pattern "status-page-$VERSION.tar.gz.sigstore.json"
+cosign verify-blob "status-page-$VERSION.tar.gz" \
+  --bundle "status-page-$VERSION.tar.gz.sigstore.json" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github\.com/greenblacked/status-page/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$'
+```
+
+`Verified OK` means the archive is byte for byte what `release.yml` signed. Anything else, including a different workflow or repository in the certificate, means you should not use it. Earlier releases have no signed assets. The Worker itself is not a release asset: it is built and deployed from the same commit by [`deploy.yml`](.github/workflows/deploy.yml).
 
 ## Deploying
 
