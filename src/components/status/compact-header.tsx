@@ -130,7 +130,12 @@ export function useSearchDock({
       hysteresis: 8,
       revealFrom: Number.POSITIVE_INFINITY,
     };
-    const scrollLimit = () => document.documentElement.scrollHeight - document.documentElement.clientHeight;
+    // The end of the page is measured against the viewport that really scrolls: on iOS Safari,
+    // documentElement.clientHeight is the layout viewport with the toolbars expanded and does not grow when they
+    // collapse, while innerHeight does. The taller of the two gives the true last position, so a bounce at the
+    // bottom is clamped at the end and its recoil reads as no travel. Elsewhere the two are the same.
+    const scrollLimit = () =>
+      document.documentElement.scrollHeight - Math.max(document.documentElement.clientHeight, window.innerHeight);
     /** Moves the direction rule's baseline to `y`: what happens to the page without the reader is no direction. */
     const rebase = (y: number) => {
       memo = { ...memo, lastY: y, pivot: y };
@@ -257,7 +262,13 @@ export function useSearchDock({
         !armed ||
         (focused instanceof Element && focused.hasAttribute("data-search-input")) ||
         document.querySelector("dialog[open]") !== null;
+      const wasAway = memo.heroAway;
       memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep });
+      // The page is back above the bar and the hero's field is in view: the bar's copy, which still had focus, is
+      // let go of (it is inert from here) so that the bar does not stay up over the hero for a focus it holds, and
+      // blur tells the bar's own focus tracking (CompactHeader).
+      if (wasAway && !memo.heroAway && focused instanceof HTMLElement && focused.dataset.searchInput === "bar")
+        focused.blur();
       store.set({ barShown: next.barShown, docked: false, heroAway: memo.heroAway, revealed: memo.revealed });
     };
     const schedule = () => {

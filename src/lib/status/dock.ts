@@ -213,7 +213,8 @@ export const REVEAL_REST: RevealMemo = { heroAway: false, revealed: false, dir: 
  *    which reads as a scroll up, move nothing.
  * 2. `latched` (a field has focus, a dialog is open, the page has not armed yet) keeps the state and only moves
  *    the baseline to `y`, so what happens during it (the keyboard opening and scrolling the page) is not read
- *    as a direction afterwards.
+ *    as a direction afterwards. It does not outlast `heroAway` (3): once the page is back above `revealFrom`
+ *    the hero's field is in view, and the latch lets go so that only one of the two fields is.
  * 3. `heroAway` turns on DOCK_HYSTERESIS px past `revealFrom` (with the bar up) and off at `revealFrom`; while it
  *    is off nothing shows, and the memory restarts from `y`.
  * 4. A frame at the same position, with nothing else changed, is `prev` itself.
@@ -234,11 +235,13 @@ export function revealFrame(
   context: { barShown: boolean; latched: boolean; keep?: boolean },
 ): RevealMemo {
   const y = Math.min(Math.max(scrollY, 0), Math.max(maxScroll, 0));
-  if (context.latched) {
-    return prev.lastY === y && prev.pivot === y ? prev : { ...prev, lastY: y, pivot: y };
-  }
   const heroAway =
     context.barShown && y >= (prev.heroAway ? geometry.revealFrom : geometry.revealFrom + DOCK_HYSTERESIS);
+  // A latch keeps the state, but not past the hero's field coming back into view: the bar's copy and the hero's
+  // are never on screen together, whoever has focus.
+  if (context.latched && !(prev.heroAway && !heroAway)) {
+    return prev.lastY === y && prev.pivot === y ? prev : { ...prev, lastY: y, pivot: y };
+  }
   if (!heroAway) {
     if (!prev.heroAway && !prev.revealed && prev.dir === "down" && prev.pivot === y && prev.lastY === y) return prev;
     return { heroAway: false, revealed: false, dir: "down", pivot: y, lastY: y };

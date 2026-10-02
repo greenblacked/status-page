@@ -1561,6 +1561,48 @@ test("search reveal: back at the top there is only the hero's field, and never t
   expect(offsets.natural).toBeGreaterThan(0);
 });
 
+test("search reveal: back at the top with the bar's field focused, only one field is on screen", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await expect(bar).toBeFocused();
+  await page.keyboard.type("a");
+  await expect(bar).toHaveValue("a");
+  // Up the page in steps, with the bar's field focused and a query in it, to the top.
+  const viewportHeight = page.viewportSize()?.height ?? 0;
+  const path = [Math.ceil(offsets.revealFrom) + 60, Math.ceil(offsets.revealFrom) + 4, offsets.revealFrom - 4, 150, 0];
+  for (const y of path.map((step) => Math.max(0, Math.round(step)))) {
+    await scrollAndSettle(page, y);
+    const seen = await page.evaluate(() => {
+      const hero = document.querySelector('[data-search-input="hero"]') as HTMLElement;
+      const field = document.querySelector(".search-dock .search-field") as HTMLElement;
+      const barEl = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+      const box = field.getBoundingClientRect();
+      return {
+        revealed: barEl.hasAttribute("data-revealed"),
+        fieldTop: box.top,
+        fieldBottom: box.bottom,
+        barBottom: barEl.getBoundingClientRect().bottom,
+        heroTab: hero.tabIndex,
+      };
+    });
+    const heroSeen = seen.fieldBottom > seen.barBottom + 1 && seen.fieldTop < viewportHeight;
+    expect(heroSeen && seen.revealed, `both fields at ${y}`).toBe(false);
+    // While the hero's field is in view it is in the Tab order, and the bar's copy has let go of focus.
+    if (heroSeen) expect(seen.heroTab, `the hero's field is reachable at ${y}`).toBe(0);
+  }
+  await expectRevealed(page, false);
+  await expect(bar).not.toBeFocused();
+  // The hero's field keeps the query, and the bar is down again: nothing holds it up.
+  await expect(heroSearch(page)).toHaveValue("a");
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+});
+
 test("search reveal: the revealed field takes the tap and the page behind it does not", async ({ page }) => {
   test.slow();
   const offsets = await revealBoard(page);

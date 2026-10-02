@@ -502,6 +502,29 @@ describe("revealFrame", () => {
     expect(revealFrame(690 - REVEAL_UP_PX, LIMIT, geometry, hidden.at(-1) as RevealMemo, up).revealed).toBe(true);
   });
 
+  it("lets a latch go once the page is back above the hero-away line, so only one field is on screen", () => {
+    const latched = { barShown: true, latched: true };
+    const shown = behind(900, true);
+    // Still behind the bar (at the line, going up, and with the bar's hysteresis): the latch holds.
+    expect(revealFrame(500, LIMIT, geometry, shown, latched)).toMatchObject({ heroAway: true, revealed: true });
+    // Above it the hero's field is in view: nothing is away, nothing is revealed, whoever has focus.
+    expect(revealFrame(499.9, LIMIT, geometry, shown, latched)).toEqual({
+      heroAway: false,
+      revealed: false,
+      dir: "down",
+      pivot: 499.9,
+      lastY: 499.9,
+    });
+    expect(revealFrame(0, LIMIT, geometry, shown, latched)).toMatchObject({ heroAway: false, revealed: false });
+    // The bar going down ends it too.
+    expect(revealFrame(900, LIMIT, geometry, shown, { barShown: false, latched: true })).toMatchObject({
+      heroAway: false,
+      revealed: false,
+    });
+    // A latch with the hero's field in view never turns heroAway on (a hero field in use is not hidden).
+    expect(revealFrame(1200, LIMIT, geometry, REVEAL_REST, latched)).toMatchObject({ heroAway: false });
+  });
+
   it("returns the same object for an unchanged frame", () => {
     const hidden = behind(1000, false);
     expect(revealFrame(1000, LIMIT, geometry, hidden, up)).toBe(hidden);
