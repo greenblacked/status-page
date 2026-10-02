@@ -24,7 +24,7 @@ function render(id: ServiceSnapshot["id"], overrides: Partial<ServiceSnapshot> =
 
 const feed = (title: string, releasedAt: string | null = "2026-09-18T00:00:00.000Z"): ReleaseFeed => ({
   sourceName: "GitLab releases",
-  sourceUrl: "https://about.gitlab.com/releases/",
+  sourceUrl: "https://docs.gitlab.com/releases/",
   entries: [
     { title, release: { version: "18.4", ...(releasedAt ? { releasedAt } : {}) } },
     { title: "GitLab 18.3.2", release: { version: "18.3.2", releasedAt: "2026-09-10T00:00:00.000Z" } },

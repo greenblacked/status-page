@@ -10,7 +10,7 @@ vi.mock("./details-content", () => ({ useDetailsContent: () => false }));
 
 const feed: ReleaseFeed = {
   sourceName: "GitLab releases",
-  sourceUrl: "https://about.gitlab.com/releases/",
+  sourceUrl: "https://docs.gitlab.com/releases/",
   entries: [{ title: "GitLab 18.4", release: { version: "18.4", releasedAt: "2026-09-18T00:00:00.000Z" } }],
 };
 const components: ComponentHealth[] = [{ name: "Git operations", health: "operational" }];

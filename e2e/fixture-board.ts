@@ -294,12 +294,12 @@ function releaseFeeds(now: number): Partial<Record<ServiceId, ReleaseFeed>> {
   return {
     gitlab: {
       sourceName: "GitLab releases",
-      sourceUrl: "https://about.gitlab.com/releases/",
+      sourceUrl: "https://docs.gitlab.com/releases/",
       entries: [
         entry(
           "GitLab 18.4.1",
           9,
-          "https://about.gitlab.com/releases/2026/09/24/patch-release-gitlab-18-4-1-released/",
+          "https://docs.gitlab.com/releases/patches/patch-release-gitlab-18-4-1-released/",
           "Release post",
           [
             "GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7",
@@ -310,15 +310,15 @@ function releaseFeeds(now: number): Partial<Record<ServiceId, ReleaseFeed>> {
         entry(
           "GitLab 18.4",
           15,
-          "https://about.gitlab.com/releases/2026/09/18/gitlab-18-4-released/",
+          "https://docs.gitlab.com/releases/18/gitlab-18-4-released/",
           "Release post",
-          ["GitLab 18.4 released with Duo Agent Platform improvements and a faster merge train"],
+          ["GitLab 18.4 Released with Duo Agent Platform improvements and a faster merge train"],
           "18.4",
         ),
         entry(
           "GitLab 18.3.2",
           23,
-          "https://about.gitlab.com/releases/2026/09/10/patch-release-gitlab-18-3-2/",
+          "https://docs.gitlab.com/releases/patches/patch-release-gitlab-18-3-2-released/",
           "Release post",
           [],
           "18.3.2",

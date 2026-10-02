@@ -82,7 +82,7 @@ test("Details opens the vendor's recent entries: title, day, notes and a link on
   const link = entries.nth(0).getByRole("link", { name: /Release post for GitLab 18\.4\.1/ });
   await expect(link).toHaveAttribute(
     "href",
-    "https://about.gitlab.com/releases/2026/09/24/patch-release-gitlab-18-4-1-released/",
+    "https://docs.gitlab.com/releases/patches/patch-release-gitlab-18-4-1-released/",
   );
   await expect(link).toHaveAttribute("target", "_blank");
   await expect(link).toHaveAttribute("rel", "noreferrer");

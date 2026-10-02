@@ -165,14 +165,14 @@ describe("releaseEntries", () => {
 describe("a status card's release feed", () => {
   const feed: ReleaseFeed = {
     sourceName: "GitLab releases",
-    sourceUrl: "https://about.gitlab.com/releases/",
+    sourceUrl: "https://docs.gitlab.com/releases/",
     entries: [
       {
         title: "GitLab 18.4.1",
         release: {
           version: "18.4.1",
           releasedAt: "2026-09-24T00:00:00.000Z",
-          url: "https://about.gitlab.com/releases/2026/09/24/patch/",
+          url: "https://docs.gitlab.com/releases/2026/09/24/patch/",
           linkLabel: "Release post",
           notes: ["GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7", "", "Fixes."],
         },
@@ -195,7 +195,7 @@ describe("a status card's release feed", () => {
   });
 
   it("names the feed, not the health source, as where the entries come from", () => {
-    expect(releaseSource(card())).toEqual({ name: "GitLab releases", url: "https://about.gitlab.com/releases/" });
+    expect(releaseSource(card())).toEqual({ name: "GitLab releases", url: "https://docs.gitlab.com/releases/" });
     expect(releaseSource(card({ releaseFeed: undefined }))).toEqual({
       name: "GitLab.com Status",
       url: "https://status.example.com/gitlab",
@@ -207,7 +207,7 @@ describe("a status card's release feed", () => {
     expect(entries.map((entry) => entry.name)).toEqual(["GitLab 18.4.1", "Counter-Strike 2 Update", "GitLab 18.4"]);
     expect(entries.every((entry) => entry.fresh === false)).toBe(true);
     expect(entries[0]).toMatchObject({
-      url: "https://about.gitlab.com/releases/2026/09/24/patch/",
+      url: "https://docs.gitlab.com/releases/2026/09/24/patch/",
       own: true,
       linkLabel: "Release post",
       releasedAt: { at: Date.parse("2026-09-24T00:00:00Z"), dayOnly: false },
@@ -219,7 +219,7 @@ describe("a status card's release feed", () => {
 
   it("links the feed's page for an entry whose link is not https, and drops a date nobody can read", () => {
     const [, second, third] = releaseEntries(card());
-    expect(second).toMatchObject({ url: "https://about.gitlab.com/releases/", own: false, version: undefined });
+    expect(second).toMatchObject({ url: "https://docs.gitlab.com/releases/", own: false, version: undefined });
     expect(third?.releasedAt).toBeUndefined();
   });
 });

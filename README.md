@@ -87,7 +87,7 @@ Six of these cards also read the vendor's own release or changelog feed, for the
 | Google Cloud | [Release notes](https://cloud.google.com/release-notes) Atom, `https://cloud.google.com/feeds/gcp-release-notes.xml` (it redirects to `docs.cloud.google.com`, the one redirect the board follows there) | The products of the latest day's notes, and the day |
 | Microsoft Azure | [Azure Updates](https://azure.microsoft.com/en-us/updates) RSS, `https://www.microsoft.com/releasecommunications/api/v2/azure/rss` | The latest update's title and day |
 | GitHub | [GitHub Changelog](https://github.blog/changelog/) RSS, `https://github.blog/changelog/feed/` | The latest entry's title and day |
-| GitLab | [GitLab releases](https://about.gitlab.com/releases/) Atom, `https://about.gitlab.com/releases.xml` | The newest version ("GitLab 18.4", or "GitLab 18.4.1" for a patch release) and day |
+| GitLab | [GitLab releases](https://docs.gitlab.com/releases/) RSS (monthly and patch releases), `https://docs.gitlab.com/releases/all-releases.xml` | The newest version ("GitLab 18.4", or "GitLab 18.4.1" for a patch release) and day |
 | CS2 Europe | Steam news for app `730`, `https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/` (community announcements) | The latest update post's title and day |
 
 Confluence, Claude, ChatGPT, Grok, Spotify, Epic, Fortnite, Apple, Android / Play and Steam publish no official machine-readable release feed that this board reads, so their cards have no such line.

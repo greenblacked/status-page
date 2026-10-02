@@ -76,7 +76,7 @@ describe("the release sources", () => {
       gcp: "https://cloud.google.com/feeds/gcp-release-notes.xml",
       azure: "https://www.microsoft.com/releasecommunications/api/v2/azure/rss",
       github: "https://github.blog/changelog/feed/",
-      gitlab: "https://about.gitlab.com/releases.xml",
+      gitlab: "https://docs.gitlab.com/releases/all-releases.xml",
       "cs2-europe":
         "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/?appid=730&count=10&maxlength=300&feeds=steam_community_announcements",
     });
@@ -200,12 +200,12 @@ describe("each feed's fixture", () => {
     ]);
     expect(entries[0]?.release).toMatchObject({
       releasedAt: "2026-09-24T00:00:00.000Z",
-      url: "https://about.gitlab.com/releases/2026/09/24/patch-release-gitlab-18-4-1-released/",
+      url: "https://docs.gitlab.com/releases/patches/patch-release-gitlab-18-4-1-released/",
       linkLabel: "Release post",
     });
     expect(entries[0]?.release.notes?.[0]).toBe("GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7");
     expect(entries[1]?.release.notes?.[0]).toBe(
-      "GitLab 18.4 released with Duo Agent Platform improvements and a faster merge train",
+      "GitLab 18.4 Released with Duo Agent Platform improvements and a faster merge train",
     );
   });
 
@@ -393,6 +393,27 @@ describe("links from a vendor feed", () => {
     expect(parseFeedItems(fixture("releases/unsafe-links.xml"), "item").length).toBeGreaterThan(MAX_FEED_ENTRIES);
   });
 
+  it("GitLab: a link reaches the page on docs.gitlab.com or about.gitlab.com, and nowhere else", () => {
+    const item = (link: string) =>
+      `<item><title>GitLab 18.4 Released</title><pubDate>Fri, 18 Sep 2026 00:00:00 +0000</pubDate><link>${link}</link></item>`;
+    const xml = `<rss version="2.0"><channel>${[
+      "https://docs.gitlab.com/releases/18/gitlab-18-4-released/",
+      "https://about.gitlab.com/releases/2026/09/18/gitlab-18-4-released/",
+      "https://evil.example/gitlab.com/",
+      "https://docs.gitlab.com.evil.example/releases/",
+      "http://docs.gitlab.com/releases/18/gitlab-18-4-released/",
+    ]
+      .map(item)
+      .join("")}</channel></rss>`;
+    expect(entriesOf("gitlab", xml).map((entry) => entry.release.url)).toEqual([
+      "https://docs.gitlab.com/releases/18/gitlab-18-4-released/",
+      "https://about.gitlab.com/releases/2026/09/18/gitlab-18-4-released/",
+      "https://docs.gitlab.com/releases/",
+      "https://docs.gitlab.com/releases/",
+      "https://docs.gitlab.com/releases/",
+    ]);
+  });
+
   it("an Atom entry's link is its alternate; self, edit and enclosure links are not the entry's page", () => {
     const xml = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>A</title><updated>2026-10-01T00:00:00Z</updated>
       <link rel="self" href="https://about.gitlab.com/self"/><link rel="enclosure" href="https://about.gitlab.com/file.zip"/>
@@ -402,7 +423,7 @@ describe("links from a vendor feed", () => {
     expect(entriesOf("gitlab", xml).map((entry) => entry.release.url)).toEqual([
       "https://about.gitlab.com/releases/a/",
       "https://about.gitlab.com/releases/b/",
-      "https://about.gitlab.com/releases/",
+      "https://docs.gitlab.com/releases/",
     ]);
   });
 
@@ -463,6 +484,7 @@ describe("gitlabVersion", () => {
     ["GitLab 18.4 released with Duo improvements", "18.4"],
     ["GitLab 18.4.1 released", "18.4.1"],
     ["gitlab 19.0 RELEASED", "19.0"],
+    ["GitLab 19.0 Released with Duo Agent Platform updates", "19.0"],
     ["GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7", "18.4.1"],
     ["GitLab Patch Releases: 18.9.5, 18.10.1, 18.8.9", "18.10.1"],
     ["GitLab Critical Patch Release: 18.3.1, 18.2.5", "18.3.1"],
@@ -523,7 +545,7 @@ describe("reading one feed", () => {
     expect(result).toMatchObject({ id: "gitlab", label: "GitLab releases", ok: true });
     expect(result.feed).toMatchObject({
       sourceName: "GitLab releases",
-      sourceUrl: "https://about.gitlab.com/releases/",
+      sourceUrl: "https://docs.gitlab.com/releases/",
     });
     expect(result.feed?.entries).toHaveLength(4);
     expect(result.bytes).toBeGreaterThan(0);
@@ -696,7 +718,7 @@ describe("how often the feeds are read", () => {
 describe("the advisory rule", () => {
   const feed: ReleaseFeed = {
     sourceName: "GitLab releases",
-    sourceUrl: "https://about.gitlab.com/releases/",
+    sourceUrl: "https://docs.gitlab.com/releases/",
     entries: [{ title: "GitLab 18.4", release: { version: "18.4", releasedAt: "2026-09-18T00:00:00.000Z" } }],
   };
 
