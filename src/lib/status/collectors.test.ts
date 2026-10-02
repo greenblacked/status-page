@@ -29,7 +29,7 @@ const URLS = {
   github: "https://www.githubstatus.com/api/v2/summary.json",
   gitlab: "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7",
   confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
-  azure: "https://azure.status.microsoft/en-us/status/feed/",
+  azure: "https://rssfeed.azure.status.microsoft/en-us/status/feed/",
   apple: "https://www.apple.com/support/systemstatus/data/system_status_en_US.js",
   android: "https://status.play.google.com/incidents.json",
   chatgpt: "https://status.openai.com/api/v2/summary.json",

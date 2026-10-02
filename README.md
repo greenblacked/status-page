@@ -60,7 +60,7 @@ Twenty services, each read from one official source. This table is the contract:
 | --- | --- | --- |
 | Cloud | Google Cloud | [status.cloud.google.com](https://status.cloud.google.com/) (`incidents.json` and `products.json`) |
 | Cloud | AWS | [AWS Health Dashboard](https://health.aws.amazon.com/health/status) |
-| Cloud | Microsoft Azure | [Azure status](https://azure.status.microsoft/en-us/status/) (the RSS feed Microsoft documents at `/en-us/status/feed/`) |
+| Cloud | Microsoft Azure | [Azure status](https://azure.status.microsoft/en-us/status/) (the RSS feed Microsoft documents at `https://rssfeed.azure.status.microsoft/en-us/status/feed/`) |
 | Gaming | Steam | [Steam Web API](https://api.steampowered.com/) (including its connection-manager directory) and Store |
 | Gaming | CS2 Europe | Valve SDR config for app `730`, plus the live player count |
 | Gaming | Epic Games | [status.epicgames.com](https://status.epicgames.com/) |

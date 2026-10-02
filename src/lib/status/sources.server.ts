@@ -1769,10 +1769,14 @@ export function azureItemActive(item: { title: string; pubDate?: string }, now: 
   return Number.isFinite(at) && now - at <= STALE_MS;
 }
 
+// The feed Microsoft documents for Azure status. Its host is a subdomain of
+// the card's, so item links on it pass vendorUrl too.
+const AZURE_FEED_URL = "https://rssfeed.azure.status.microsoft/en-us/status/feed/";
+
 async function collectAzure(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() => fetchText("https://azure.status.microsoft/en-us/status/feed/"));
+    const { value, ms } = await timed(() => fetchText(AZURE_FEED_URL));
     // A healthy Azure feed may hold no items at all, so "no items" is not a
     // failure here. A body that is not an RSS channel (an HTML error page, an
     // Atom feed) is: reading it as "operational" would be a confident
