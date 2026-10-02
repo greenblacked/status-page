@@ -1773,17 +1773,22 @@ test("shortens the search placeholder as the field docks, and restores it after 
   page,
 }) => {
   test.slow();
-  // Pin the page clock well inside a two-minute slot, past where the board's refetch can land (15 to 30 s in). A
-  // refetch in the middle of the test turns the bar's lead line to "Checking…" and back, which moves the field's
-  // slot from 40rem on; a field that is docked and has stopped follows its slot at once, without a move (the
-  // dock holds its transitions for two frames, data-instant), and a release in those frames would then be
-  // answered with the placeholder at once, as it should be for a field that did not move.
+  // A refetch turns the bar's lead line to "Checking…" and back, which moves the field's slot from 40rem on; a
+  // field that is docked and has stopped follows its slot at once, without a move (the dock holds its transitions
+  // for two frames, data-instant), and a release in those frames would then be answered with the placeholder at
+  // once, as it should be for a field that did not move. Two refetches can land in this test. A scheduled one
+  // comes 15 to 30 s into a two-minute slot, so the page clock is pinned well inside the slot, past that window.
+  // The other is the refetch on mount, for a snapshot older than the 45 s staleTime; the guard below waits it out.
   await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  // A check that starts with the page (a snapshot past its age) is done before the bar's lead line is relied on.
-  await expect(page.locator("[data-bar-lead]")).toHaveAttribute("data-state", "live");
+  // A refetch on mount is not visible until the first client render with a clock: the server markup and the
+  // hydration render read "live" with "next in —" whatever is in flight. The digits come with that render, and a
+  // check that started with the page then shows "Checking…", so wait for the digits and then for "live" again.
+  const lead = page.locator("[data-bar-lead]");
+  await expect(lead).toContainText(/next in \d+:\d{2}/);
+  await expect(lead).toHaveAttribute("data-state", "live");
   const { wide, moveStart } = await dockOffsets(page);
   test.skip(wide, "from 64rem there is no move in time, and the placeholder follows the field at once");
   const input = page.getByLabel("Search services");
