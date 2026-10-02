@@ -14,7 +14,8 @@ const BUBBLE_KEYS = Array.from({ length: BUBBLES }, (_, index) => `bubble-${inde
  * all fixed numbers, never random) is in src/background.css, which also shows
  * the layer only on the Full background (Quiet and Glass hide it) and gives
  * laptop, tablet and phone widths their own places and fewer bubbles, so none
- * sits over the margin column's bare text.
+ * sits over the margin column's bare text. On a phone the six that remain sit in
+ * the page's side gutters, where no text ever is.
  *
  * On Full, with a mouse or trackpad, each bubble drifts and breathes slowly,
  * on transform alone and in pure CSS; touch screens and Reduce Motion keep

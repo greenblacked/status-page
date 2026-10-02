@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { fixtureBoard, serveBoard } from "./fixture-board";
+import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
 
 // The bubble layer (src/components/status/lens-field.tsx and the .lens rules in
 // src/background.css; the class is still "lens"): its markup and asset, the rules
@@ -376,10 +376,17 @@ test.describe("styling", () => {
   /**
    * The drawn bubbles, each with the box it sweeps (its own box and its float's reach: --dx and --dy are cqmin),
    * against the bare text of the page at the top: text outside every panel, whose blur would soften a bubble.
-   * Also, above phone width, against the margin column's whole x-range, which the text runs down as the page scrolls under the fixed layer.
+   * Also, from 48rem (768px), where it becomes a column, against the margin column's whole x-range, which the text runs down as the page scrolls under the fixed layer.
+   * With `anyHeight`, a text counts wherever it is on the page (the layer is fixed and the page scrolls under it), so the answer
+   * holds at every scroll position and for any board, not only for what happens to be under a bubble now.
    */
-  async function bubblesOnText(page: Page) {
-    return page.evaluate(() => {
+  async function bubblesOnText(page: Page, anyHeight = false) {
+    return page.evaluate((anyHeight) => {
+      const scrollsSideways = (element: Element) => {
+        for (let up: Element | null = element; up; up = up.parentElement)
+          if (/auto|scroll/.test(getComputedStyle(up).overflowX) && up.scrollWidth > up.clientWidth) return true;
+        return false;
+      };
       const unit = Math.min(innerWidth, innerHeight) / 100;
       const sweeps = [...document.querySelectorAll<HTMLElement>(".lens")]
         .filter((lens) => getComputedStyle(lens).display !== "none")
@@ -397,10 +404,18 @@ test.describe("styling", () => {
         if (!element || !node.textContent?.trim()) continue;
         if (element.closest(".surface, .sr-only, [aria-hidden=true], .float")) continue;
         if (getComputedStyle(element).visibility === "hidden") continue;
+        // Wherever the page is scrolled, a strip that scrolls sideways (the filter tabs, when they overflow a narrow screen)
+        // runs its text out under the screen's edge by design; it is clipped there, and the one place a bubble can meet it.
+        if (anyHeight && scrollsSideways(element)) continue;
         const range = document.createRange();
         range.selectNodeContents(node);
         for (const box of range.getClientRects())
-          if (box.width > 0) texts.push({ label: node.textContent.trim().slice(0, 24), ...box.toJSON() });
+          if (box.width > 0)
+            texts.push({
+              label: node.textContent.trim().slice(0, 24),
+              ...box.toJSON(),
+              ...(anyHeight ? { top: -Infinity, bottom: Infinity } : {}),
+            });
       }
       const margin = [...document.querySelectorAll(".board-margin")].map((el) => el.getBoundingClientRect());
       const hits: string[] = [];
@@ -409,13 +424,13 @@ test.describe("styling", () => {
           if (text.left < sweep.right && text.right > sweep.left && text.top < sweep.bottom && text.bottom > sweep.top)
             hits.push(`bubble ${sweep.index + 1} over "${text.label}"`);
         for (const column of margin)
-          if (innerWidth > 704 && column.width > 0 && column.left < sweep.right && column.right > sweep.left)
+          if (innerWidth >= 768 && column.width > 0 && column.left < sweep.right && column.right > sweep.left)
             hits.push(
               `bubble ${sweep.index + 1} inside the margin column (${Math.round(column.left)}-${Math.round(column.right)})`,
             );
       }
       return hits;
-    });
+    }, anyHeight);
   }
 
   for (const [width, height] of [
@@ -459,6 +474,34 @@ test.describe("styling", () => {
     for (const box of drawn) expect(Math.abs(box.cx - 195)).toBeGreaterThan(120);
     expect(await bubblesOnText(page)).toEqual([]);
   });
+
+  // The layer is fixed and the page scrolls under it, so "off the text" cannot depend on how tall the cards happen to
+  // be: it has to hold at every scroll position, for every board. The bubbles stay in the side gutter, where no text is.
+  for (const [width, height] of [
+    [320, 568],
+    [360, 740],
+    [390, 844],
+    [430, 932],
+    [600, 900],
+    [767, 1024],
+  ] as const) {
+    for (const [shape, board] of [
+      ["the usual board", fixtureBoard],
+      ["a calm board", calmBoard],
+      ["the longest hero", longHeroBoard],
+    ] as const) {
+      test(`at ${width}x${height} no bubble can reach any text, on ${shape}`, async ({ page }, testInfo) => {
+        test.skip(testInfo.project.name !== "desktop", "one Chromium run covers the geometry");
+        await page.setViewportSize({ width, height });
+        await serveBoard(page, () => board(Date.now()));
+        await page.goto("/");
+        await hydrated(page);
+        expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+        expect(await page.locator(".lens:visible").count()).toBe(6);
+        expect(await bubblesOnText(page, true)).toEqual([]);
+      });
+    }
+  }
 
   test("bubbles are small, and laptop and tablet widths draw nine", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "needs a desktop-width page");

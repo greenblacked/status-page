@@ -293,7 +293,7 @@
     the margin column is far enough in for the first places to hold, bar three
     (4, 5 and 11) that move further out to the left.
   */
-  @container (min-width: 44.01rem) and (max-width: 100rem) {
+  @container (48rem <= width <= 100rem) {
     .lens:is(:nth-child(5), :nth-child(11)) {
       display: none;
     }
@@ -307,28 +307,58 @@
     .lens:nth-child(10) { --x: 88; --y: 95; }
   }
 
-  @container (min-width: 100.01rem) {
+  @container (width > 100rem) {
     .lens:nth-child(4) { --x: 12; }
     .lens:nth-child(5) { --x: 18; --y: 62; }
     .lens:nth-child(11) { --x: 10; --y: 31; }
   }
 
   /*
-    A phone: the first six, hugging the edges (partly off the screen for the
-    bigger ones), where the text and the cards leave the page's own margin.
-    They hardly drift, so they stay there.
+    A phone: the first six, in the page's side gutters and nowhere else. The
+    text and the cards start one --gutter in from the screen's edge (at least:
+    the safe area only widens it), so a bubble whose whole reach stays inside
+    that strip cannot touch any text, whatever the board says: how tall the
+    cards are, how many incidents there are, which sections render. The layer
+    is fixed and the page scrolls under it, so a place anywhere further in is
+    over text at some scroll position.
+
+    Each bubble is placed by its inner edge, not its centre. --reach is how far
+    in from the screen's edge the bubble may ever get: the gutter, less the
+    float's sideways swing (--dx, cqmin, counted twice: the lenses spec takes
+    a bubble's box mid-float and adds the swing again, so it clears that too),
+    less the breath (the widest scale is 1.045, so 0.0225 of a diameter each
+    side; 0.03em covers it, and the em here is the bubble's own diameter), less
+    2px of slack. Left bubbles (even) sit
+    with their inner edge on that line and the rest of them off the screen;
+    right bubbles (odd) mirror them. What shows is a cap of the bubble in the
+    gutter, so the sizes are kept small enough for the cap to be a good part of
+    it. The bubbles hardly drift sideways, so the cap stays a cap. The strip
+    runs up to the width where the page gets a wider gutter and the margin
+    column (48rem), so no window width falls between this rule and the next.
   */
-  @container (max-width: 44rem) {
+  @container (width < 48rem) {
     .lens:nth-child(n + 7) {
       display: none;
     }
 
-    .lens:nth-child(1) { --x: 93; --y: 9; --dx: 0.8; }
-    .lens:nth-child(2) { --x: 0; --y: 38; --dx: 0.8; }
-    .lens:nth-child(3) { --x: 98; --y: 34; --dx: 0.6; }
-    .lens:nth-child(4) { --x: 0; --y: 63; --dx: 0.8; }
-    .lens:nth-child(5) { --x: 99; --y: 79; --dx: 0.6; }
-    .lens:nth-child(6) { --x: 4; --y: 94; --dx: 0.8; }
+    .lens {
+      --reach: calc(var(--gutter) - 2px - var(--dx) * 2cqmin - 0.03em);
+    }
+
+    .lens:nth-child(odd) {
+      left: calc(100% - var(--reach) + var(--d) / 2);
+    }
+
+    .lens:nth-child(even) {
+      left: calc(var(--reach) - var(--d) / 2);
+    }
+
+    .lens:nth-child(1) { --y: 9; --d: clamp(16px, 5cqmin, 24px); --dx: 0.3; }
+    .lens:nth-child(2) { --y: 38; --d: clamp(18px, 6.6cqmin, 26px); --dx: 0.3; }
+    .lens:nth-child(3) { --y: 34; --d: clamp(14px, 3.6cqmin, 20px); --dx: 0.25; }
+    .lens:nth-child(4) { --y: 63; --d: clamp(16px, 5cqmin, 24px); --dx: 0.3; }
+    .lens:nth-child(5) { --y: 79; --d: clamp(12px, 3cqmin, 18px); --dx: 0.25; }
+    .lens:nth-child(6) { --y: 94; --d: clamp(14px, 3.6cqmin, 20px); --dx: 0.3; }
   }
 
   /*
