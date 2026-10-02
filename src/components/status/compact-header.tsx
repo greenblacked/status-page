@@ -389,7 +389,7 @@ export function CompactHeader({
       ref={barRef}
       aria-label="Board controls"
       data-shown={visible}
-      data-revealed={revealed || undefined}
+      data-revealed={revealed ? "" : undefined}
       inert={!visible}
       onFocus={(event) => setKeyboardFocus(keyboardFocus(event.target))}
       onBlur={(event) => {

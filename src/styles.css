@@ -661,10 +661,18 @@
 /*
   The board body holds the bar, the search field, the filter chips and the
   cards. It is at least one screen tall, so a search with few or no results
-  cannot shorten the page and scroll the bar's field out from under the reader.
+  cannot shorten the page under the bar's field and scroll it out of use. Below 64rem the bar's field can
+  be used once the hero's field is behind the bar, which is a little after the hero itself has scrolled
+  away (the field's margin and its height, less the bar's bottom edge): 2rem more than a screen holds it.
 */
 .board-body {
-  min-height: 100lvh;
+  min-height: calc(100lvh + 2rem);
+}
+
+@media (min-width: 64rem) {
+  .board-body {
+    min-height: 100lvh;
+  }
 }
 
 /*
