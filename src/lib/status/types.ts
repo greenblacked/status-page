@@ -20,10 +20,34 @@ export type CategoryId = "cloud" | "gaming" | "platforms" | "ai" | "updates";
 
 export type Health = "operational" | "degraded" | "outage" | "maintenance" | "unknown";
 
+/**
+ * What a release tracker knows about one version it lists, for the Details
+ * pop-up on its card. Every field comes from the source the collector already
+ * reads; a field the source does not give is left out, never filled in.
+ */
+export type ReleaseInfo = {
+  /** "7.24.5", "27.2 beta 2", "26H2". */
+  version: string;
+  /** The build or revision, "24B5089g", "26300.1000", when the source gives one apart from the version. */
+  build?: string;
+  /** When it came out: an ISO 8601 timestamp, or a bare "2026-09-29" when the source gives only a day (UTC). */
+  releasedAt?: string;
+  /** When its latest update shipped, in the same two forms, when the source says and it differs. */
+  updatedAt?: string;
+  /** The vendor's own page for this release's notes (an https link). */
+  url?: string;
+  /** What the link says it is, when "Release page" is not true enough: "Release notes", "Apple Developer post". */
+  linkLabel?: string;
+  /** A few short plain-text lines taken from the vendor's notes, never more than MAX_NOTE_LINES. Absent when the source has none. */
+  notes?: string[];
+};
+
 export type ComponentHealth = {
   name: string;
   health: Health;
   detail?: string;
+  /** Set only by the release trackers (category "updates"): the version behind `detail`, for the Details pop-up. */
+  release?: ReleaseInfo;
 };
 
 export type Incident = {

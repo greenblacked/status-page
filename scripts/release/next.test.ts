@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,19 @@ describe("next.sh level", () => {
     git("tag", "v1.0.0");
     commit("fix: keep the old route", "BREAKING CHANGE: /badge is now /api/badge");
     expect(next("level", "v1.0.0..HEAD")).toBe("major\n");
+  });
+
+  it("sees a BREAKING CHANGE footer ahead of a body longer than a pipe buffer", () => {
+    // 200 KB after the footer: the body is still being written when the footer
+    // has matched, so a reader that stops at the first match must not turn
+    // that into a failed check.
+    const message = join(repo, ".git", "COMMIT_LONG");
+    writeFileSync(
+      message,
+      `fix: keep the old route\n\nBREAKING CHANGE: /badge is now /api/badge\n\n${"x".repeat(99).concat("\n").repeat(2000)}`,
+    );
+    git("commit", "--quiet", "--allow-empty", "-F", message);
+    expect(next("level")).toBe("major\n");
   });
 
   it("ignores release bump commits and non-conventional subjects", () => {

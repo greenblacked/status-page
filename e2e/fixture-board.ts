@@ -1,7 +1,8 @@
 import type { Page, Route } from "@playwright/test";
 import { toCrossJSONAsync } from "seroval";
 import { CATALOG } from "../src/lib/status/catalog.ts";
-import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/lib/status/types.ts";
+import { formatReleaseAge } from "../src/lib/status/changelog.ts";
+import type { BoardSnapshot, ComponentHealth, Health, ServiceId, ServiceSnapshot } from "../src/lib/status/types.ts";
 
 // A board with every state the page can show, for tests that must see
 // them all whatever the vendors say today (and offline, every vendor says
@@ -16,12 +17,31 @@ import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "../src/l
 // events and the connection-manager directory.
 
 const minute = 60_000;
+const day = 24 * 60 * minute;
 
 /** A long, all-operational component list, the shape a big vendor (Google Cloud lists over two hundred) gives. */
 const longList = (prefix: string, count: number) =>
   Array.from({ length: count }, (_, index) => ({ name: `${prefix} ${index + 1}`, health: "operational" as const }));
 
 type Override = Partial<Omit<ServiceSnapshot, "id">>;
+
+const WINDOWS_PAGE = "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information";
+
+/** A channel or OS of a release tracker, its row line and its Details built from one date, as the collectors do. */
+function release(
+  name: string,
+  health: Health,
+  releasedAt: string,
+  version: string,
+  more: Omit<NonNullable<ComponentHealth["release"]>, "version" | "releasedAt">,
+): ComponentHealth {
+  return {
+    name,
+    health,
+    detail: [version, formatReleaseAge(releasedAt)].join(" · "),
+    release: { version, releasedAt, ...more },
+  };
+}
 
 function overrides(now: number, grok: Health): Partial<Record<ServiceId, Override>> {
   const at = (offset: number) => new Date(now + offset).toISOString();
@@ -130,20 +150,87 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
         { name: "Vienna", health: "operational", detail: "12 relays" },
       ],
     },
+    // The release trackers carry the Details their collectors build: RouterOS has the first lines of each
+    // version's changelog, Apple's feed has none, Windows' table gives bare days and a build, and Android's page
+    // gives only a link. The row's line is built from the same date as the Details, as the collectors do.
     mikrotik: {
       summary: "RouterOS 7.21 stable",
       components: [
-        { name: "Stable", health: "maintenance", detail: "7.21 · Sep 24" },
-        { name: "Long-term", health: "operational", detail: "7.18.2" },
-        { name: "Testing", health: "operational", detail: "7.22beta3" },
+        release("Stable", "maintenance", at(-6 * day), "7.21", {
+          url: "https://download.mikrotik.com/routeros/7.21/CHANGELOG",
+          linkLabel: "Release notes",
+          notes: [
+            "bgp - fixed route refresh handling when the peer restarts",
+            "bridge - improved MAC learning performance on CRS3xx series devices",
+            "wifi - fixed station roaming between access points on the same channel",
+          ],
+        }),
+        release("Long-term", "operational", at(-70 * day), "7.18.2", {
+          url: "https://download.mikrotik.com/routeros/7.18.2/CHANGELOG",
+          linkLabel: "Release notes",
+          notes: ["dhcpv4-server - fixed lease expiry reported in the wrong unit"],
+        }),
+        release("Testing", "operational", at(-20 * day), "7.22beta3", {
+          url: "https://download.mikrotik.com/routeros/7.22beta3/CHANGELOG",
+          linkLabel: "Release notes",
+        }),
       ],
     },
     "apple-os": {
       summary: "Latest: iOS 27.2 beta 2",
       components: [
-        { name: "iOS", health: "maintenance", detail: "27.2 beta 2 · Sep 21" },
-        { name: "macOS", health: "operational", detail: "27.1" },
+        release("iOS", "maintenance", at(-9 * day), "27.2 beta 2", {
+          build: "24B5089g",
+          url: "https://developer.apple.com/news/releases/?id=09212026a",
+          linkLabel: "Apple Developer post",
+        }),
+        release("macOS", "operational", at(-40 * day), "27.1", {
+          build: "26B5042",
+          url: "https://developer.apple.com/news/releases/?id=08202026b",
+          linkLabel: "Apple Developer post",
+        }),
       ],
+    },
+    windows: {
+      summary: `Latest: Windows 11 26H2 (build 26300.1000) · ${formatReleaseAge(at(-2 * day).slice(0, 10))}`,
+      components: [
+        {
+          name: "26H2",
+          health: "maintenance",
+          detail: `26300.1000 · ${formatReleaseAge(at(-2 * day).slice(0, 10))}`,
+          release: {
+            version: "26H2",
+            build: "26300.1000",
+            releasedAt: at(-2 * day).slice(0, 10),
+            url: WINDOWS_PAGE,
+          },
+        },
+        {
+          name: "26H1",
+          health: "operational",
+          detail: `28000.1575 · ${formatReleaseAge(at(-9 * day).slice(0, 10))}`,
+          release: {
+            version: "26H1",
+            build: "28000.1575",
+            releasedAt: "2026-02-10",
+            updatedAt: at(-9 * day).slice(0, 10),
+            url: WINDOWS_PAGE,
+          },
+        },
+      ],
+    },
+    "android-os": {
+      summary: "Latest: Android 17",
+      components: [17, 16, 15, 14].map((version) => ({
+        name: `Android ${version}`,
+        health: "operational" as const,
+        detail: "released",
+        release: {
+          version: `Android ${version}`,
+          url: `https://developer.android.com/about/versions/${version}`,
+          linkLabel: `Android ${version} page`,
+        },
+      })),
     },
   };
 }
@@ -219,21 +306,24 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
 }
 
 /**
- * The longest hero the page can have: eleven services need a look, so the headline is "Eleven things need a look."
- * and the line under it names three of them, "and 8 more", says the other three are running normally, and that two
- * could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
+ * The longest hero the page can have: eleven services need a look, in all three states, so the headline is
+ * "Four are down, four are degraded and three are in maintenance." and the line under it names three of each
+ * ("and 1 more" after the first two), says the other three are running normally, and that two could not be read
+ * (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
  * sits under them.
  */
 export function longHeroBoard(now: number): BoardSnapshot {
   const board = fixtureBoard(now);
   const unread = new Set<ServiceId>(["android", "grok"]);
   const calm = new Set<ServiceId>(["apple-os", "windows", "android-os"]);
-  const services = board.services.map((service, index): ServiceSnapshot => {
+  const states: Health[] = ["outage", "degraded", "maintenance"];
+  let next = 0;
+  const services = board.services.map((service): ServiceSnapshot => {
     if (unread.has(service.id)) {
       return { ...service, health: "unknown", summary: "The official source did not answer in time" };
     }
     if (calm.has(service.id)) return service;
-    const health: Health = index % 2 ? "outage" : "degraded";
+    const health = states[next++ % states.length];
     return {
       ...service,
       health,

@@ -1017,8 +1017,13 @@ test("takes the bar down when the hero grows under it, at every width below 64re
       });
     const before = await heroBottom();
     board = longHeroBoard(Date.now());
-    await pressRefresh(page, controlBar(page).getByRole("button", { name: "Refresh status now" }));
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("Eleven things need a look.");
+    // This answer is meant to take the bar down, and a bar that is down is out of the accessibility tree (it is
+    // visibility: hidden once its fade ends), so a role query would stop finding its button before the button
+    // reports that the refresh is over. The button is found by its label instead, which a hidden bar keeps.
+    await pressRefresh(page, controlBar(page).locator('button[aria-label="Refresh status now"]'));
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(
+      "Four are down, four are degraded and three are in maintenance.",
+    );
     await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
     grew.push((await heroBottom()) - before);
     // Either the bar went down with the line under it, or the line is out from under the bar: never both there.
@@ -1182,9 +1187,16 @@ test("regression guard: keeps the dock docked through a rubber band below the en
 
 test("does not move the dock when only the viewport's height changes, as iOS's toolbar does", async ({ page }) => {
   test.slow();
+  // Pin the page clock well inside a slot. The turn of a slot adds a row to Recent changes, which grows the board
+  // body, and the dock measures again (rightly); the next turn and the wall-clock refetch are then 90 s or more away.
+  await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  // The refetch on mount of a snapshot past its TTL changes the live line's height, and with it the hero's: the dock
+  // measures again, rightly, and the count below would take that for a resize. Start only when that refetch is done,
+  // which the countdown having room for the whole test shows. Live vendors make its timing differ from run to run.
+  await awayFromRefetch(page);
   const { wide, moveStart, moveEnd } = await dockOffsets(page);
   const frames = (count: number) =>
     page.evaluate(
@@ -3869,14 +3881,16 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
 }) => {
   await openFixture(page, () => fixtureBoard(Date.now()));
   const headline = page.getByRole("heading", { level: 1 });
-  await expect(headline).toHaveText("Three things need a look.");
+  await expect(headline).toHaveText("One is down, one is degraded and one is in maintenance.");
   await expect(headline).toHaveAttribute("id", "board-headline");
   // One pen stroke, under the count only, drawn from constants (aria-hidden, no text of its own).
   await expect(headline.locator("svg.pen-underline")).toHaveCount(1);
   await expect(headline.locator("svg.pen-underline")).toHaveAttribute("aria-hidden", "true");
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
-  await expect(sub).toContainText("The other twelve are running normally.");
+  await expect(sub).toContainText(
+    "AWS is down. GCP is degraded. Epic is in maintenance. The other twelve are running normally.",
+  );
   await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
   await expect(links).toHaveText(["AWS", "GCP", "Epic", "Android"]);
@@ -4009,11 +4023,33 @@ test("puts the floating bar's verdict, check time and countdown beside the docke
   await page.locator("footer").scrollIntoViewIfNeeded();
   await expect(bar).toHaveAttribute("data-shown", "true");
   const lead = bar.locator("p[data-bar-lead]");
-  await expect(lead).toContainText("3 need a look");
+  await expect(lead).toContainText("1 down · 1 degraded · 1 in maintenance");
   await expect(lead).toContainText(/Checked \d\d:\d\d\sUTC · next in \d:\d\d/);
   // The bar is a float: the one translucent element on a Quiet page.
   await expect(bar).toHaveClass(/\bfloat\b/);
 });
+
+for (const [name, makeBoard] of [
+  ["the plain fixture", fixtureBoard],
+  ["the longest hero", longHeroBoard],
+] as const) {
+  test(`never cuts the floating bar's verdict short on ${name}`, async ({ page }) => {
+    await openFixture(page, () => makeBoard(Date.now()));
+    const bar = controlBar(page);
+    await page.locator("footer").scrollIntoViewIfNeeded();
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    // The drawn form: the compact one below 1024px, the short one from there up. Its text must fit its box.
+    const drawn = await bar
+      .locator("[data-bar-verdict] > span:not(:last-child)")
+      .evaluateAll((spans) =>
+        spans
+          .filter((span) => span.getBoundingClientRect().width > 1)
+          .map((span) => ({ text: span.textContent, clipped: span.scrollWidth > span.clientWidth })),
+      );
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].clipped, `"${drawn[0].text}" fits its slot`).toBe(false);
+  });
+}
 
 test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
