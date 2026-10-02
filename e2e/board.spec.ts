@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
-import { DOCK_HYSTERESIS, DOCK_MS, transitionMs } from "../src/lib/status/dock.ts";
+import { DOCK_HYSTERESIS, DOCK_LEAD_MS, DOCK_MS, transitionMs } from "../src/lib/status/dock.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
@@ -1639,12 +1639,12 @@ type DockFrame = { at: number; left: number; width: number; docked: boolean; cli
 async function sampleDockMove(
   page: Page,
   move: { kind: "drag" | "flick" | "jump"; from: number; to: number; lost: number; ms?: number },
-): Promise<{ frames: DockFrame[]; changedAt: number }> {
+): Promise<{ frames: DockFrame[]; poseAt: number; extra: number }> {
   await scrollAndSettle(page, move.from);
   await dockMoved(page);
   return page.evaluate(
     ({ kind, from, to, lost, ms = 900 }) =>
-      new Promise<{ frames: DockFrame[]; changedAt: number }>((resolve) => {
+      new Promise<{ frames: DockFrame[]; poseAt: number; extra: number }>((resolve) => {
         const dock = document.querySelector(".search-dock") as HTMLElement;
         const chrome = dock.querySelector(".search-chrome") as HTMLElement;
         const input = dock.querySelector("input") as HTMLInputElement;
@@ -1652,19 +1652,23 @@ async function sampleDockMove(
         const measure = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
         const frames: DockFrame[] = [];
         const was = dock.hasAttribute("data-docked");
-        let changedAt = 0;
+        const extra = Math.max(0, lost - 1000 / 60);
+        let readAt = 0;
+        let poseAt = 0;
         const lose = new MutationObserver(() => {
           if (dock.hasAttribute("data-docked") === was) return;
           lose.disconnect();
-          changedAt = performance.now();
+          // The frame this runs in: the last one read, as the reading comes first in a frame.
+          poseAt = readAt;
           // Reading the animations lets the browser start the ones this change calls for, in this very frame.
           for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
-            animation.currentTime = Number(animation.currentTime ?? 0) + Math.max(0, lost - 1000 / 60);
+            animation.currentTime = Number(animation.currentTime ?? 0) + extra;
           }
         });
         lose.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
         const start = performance.now();
         const read = (now: number) => {
+          readAt = now;
           const box = chrome.getBoundingClientRect();
           const style = getComputedStyle(input);
           measure.font = style.font;
@@ -1677,7 +1681,7 @@ async function sampleDockMove(
             clipped: measure.measureText(input.placeholder).width > room + 1,
           });
           if (now - start < ms) requestAnimationFrame(read);
-          else resolve({ frames, changedAt });
+          else resolve({ frames, poseAt, extra });
         };
         requestAnimationFrame(read);
         const step = kind === "flick" ? 40 : 14;
@@ -1708,6 +1712,8 @@ test("moves the field's fill into the dock in small steps from its rest box, eve
   // browser loses at the start, and the move has not begun. Without it a first frame 33 ms in draws the fill 65% of
   // the way in.
   const FIRST = 0.12;
+  // --t-dock-lead, in ms (DOCK_LEAD_MS in dock.ts).
+  const LEAD = DOCK_LEAD_MS;
   // The most of the way a frame at 60Hz may cover after that: the first frame of --ease-out is 37% of it (the curve
   // is steep at the start, which is its character), so this holds the move to the curve and not to a jump past it.
   const STEP = 0.42;
@@ -1728,14 +1734,14 @@ test("moves the field's fill into the dock in small steps from its rest box, eve
   const runs = [
     { rate: 1, lost: 0 },
     { rate: 1, lost: 33 },
-    { rate: 1, lost: 45 },
+    { rate: 1, lost: 40 },
     ...(cdp ? [{ rate: 4, lost: 33 }] : []),
   ];
   for (const { rate, lost } of runs) {
     await cdp?.send("Emulation.setCPUThrottlingRate", { rate });
     for (const move of moves) {
       const name = `${move.name}, first frame ${lost} ms in${rate > 1 ? ` at ${rate}x CPU` : ""}`;
-      const { frames, changedAt } = await sampleDockMove(page, { ...move, lost });
+      const { frames, poseAt, extra } = await sampleDockMove(page, { ...move, lost });
       const going = move.to > move.from;
       const first = frames.findIndex((frame) => frame.docked === going);
       expect(first, `${name}: the dock reacted`).toBeGreaterThanOrEqual(0);
@@ -1770,8 +1776,9 @@ test("moves the field's fill into the dock in small steps from its rest box, eve
         // In small steps, scaled by the length of the frame.
         const room = STEP * Math.max(1, (frame.at - previousAt) / FRAME);
         expect(size - previous, `${label}: the step`).toBeLessThanOrEqual(Math.min(room, 1));
-        // The first frame drawn is the rest box, as long as it is not itself late (a throttled frame may cover more).
-        if (index === 0 && frame.at - changedAt < 2 * FRAME) {
+        // The first frame drawn is the rest box, as long as it is drawn inside the lead (a frame that comes later than
+        // that, on a throttled or busy machine, may be part way in).
+        if (index === 0 && frame.at - poseAt + extra <= LEAD - 4) {
           expect(size, `${label}: starts where it was`).toBeLessThanOrEqual(FIRST);
         }
         // The long placeholder is never drawn cut off by the input (it changes in the frame the input narrows).
