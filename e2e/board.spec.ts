@@ -1811,9 +1811,10 @@ test("shortens the search placeholder as the field docks, and restores it after 
   // field that is docked and has stopped follows its slot at once, without a move (the dock holds its transitions
   // for two frames, data-instant), and a release in those frames would then be answered with the placeholder at
   // once, as it should be for a field that did not move. Two refetches can land in this test. A scheduled one
-  // comes 15 to 30 s into a two-minute slot, so the page clock is pinned well inside the slot, past that window.
-  // The other is the refetch on mount, for a snapshot older than the 45 s staleTime; the guard below waits it out.
-  await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
+  // comes 15 to 30 s into a two-minute slot, so the page's Date is pinned well inside the slot, past that window
+  // (only Date: the timings below need real frames and transitions, see pinToSlot). The other is the refetch on
+  // mount, for a snapshot older than the 45 s staleTime; the guard below waits it out.
+  await pinToSlot(page);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
