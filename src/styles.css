@@ -564,18 +564,6 @@
 }
 
 /*
-  A row with a vendor release line keeps that line right under its health line, open or shut. The line is the
-  first thing after the summary, and the browser hides everything after the summary while the row is shut, so
-  here the hidden part is made visible and the component list in it hides itself (service-row.tsx). A browser
-  without ::details-content (older than Chrome 131, Safari 18.4, Firefox 143) would drop this rule and hide the
-  line, so there the row does not take this path at all: it puts the line after the <details>, where it is
-  always visible (`useDetailsContent`), and `row-details-feed` is never set.
-*/
-.row-details-feed:not([open])::details-content {
-  content-visibility: visible;
-}
-
-/*
   The compact header slides in once the hero has scrolled away. Hidden, it
   is also `inert` (compact-header.tsx), and visibility waits for the fade
   to finish before taking it out of the accessibility tree.

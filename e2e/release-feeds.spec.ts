@@ -265,22 +265,40 @@ test("the line stays directly under the health line when the component list is o
       if (!health || !release) throw new Error(`${id} has no lines`);
       return release.y - (health.y + health.height);
     };
-    // The line is the first thing after the summary, not in it (a button in a summary is a nested control), and
-    // it is there while the row is shut.
+    // The line is neither in the summary (a button in a summary is a nested control) nor in the <details> (an
+    // engine may hide what a shut <details> holds): it is a plain sibling after it, and shown while the row is shut.
     await expect(page.locator(`#service-${id} summary [data-release-line]`)).toHaveCount(0);
-    await expect(row.locator("[data-release-line]")).toBeVisible();
-    await expect(row.locator("[data-release-details-trigger]")).toBeVisible();
+    await expect(row.locator("[data-release-line]")).toHaveCount(0);
+    const feedLine = line(page, id);
+    const button = trigger(page, id);
+    const list = page.locator(`#service-${id} [data-row-components]`);
+    await expect(feedLine).toBeVisible();
+    await expect(button).toBeVisible();
+    await expect(list).toBeHidden();
     const closed = await gap();
     expect(closed).toBeGreaterThanOrEqual(-1);
     expect(closed).toBeLessThan(8);
+    const shut = await feedLine.boundingBox();
+    const shutButton = await button.boundingBox();
+    if (!shut || !shutButton) throw new Error(`${id} has no line`);
+    expect(shut.height).toBeGreaterThan(0);
+    expect(shutButton.width).toBeGreaterThan(0);
     await page.locator(`#service-${id} summary h3`).click();
     await expect(row).toHaveAttribute("open", "");
+    await expect(feedLine).toBeVisible();
+    await expect(list).toBeVisible();
     expect(Math.abs((await gap()) - closed), `${id} with its list open`).toBeLessThan(1);
     // ...and the list begins below the line, not above it.
-    const release = await line(page, id).boundingBox();
-    const list = await row.locator("summary ~ div").last().boundingBox();
-    if (!release || !list) throw new Error(`${id} has no list`);
-    expect(list.y).toBeGreaterThanOrEqual(release.y + release.height - 1);
+    const release = await feedLine.boundingBox();
+    const below = await list.boundingBox();
+    if (!release || !below) throw new Error(`${id} has no list`);
+    expect(below.y).toBeGreaterThanOrEqual(release.y + release.height - 1);
+    // Shut again: the line has not moved and the list is gone.
+    await page.locator(`#service-${id} summary h3`).click();
+    await expect(row).not.toHaveAttribute("open", "");
+    await expect(list).toBeHidden();
+    await expect(feedLine).toBeVisible();
+    expect(Math.abs((await gap()) - closed), `${id} shut again`).toBeLessThan(1);
   }
   expect(withList).toBeGreaterThan(0);
 });

@@ -1,7 +1,6 @@
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { useServiceHistoryDays } from "@/components/status/board-history-provider";
-import { useDetailsContent } from "@/components/status/details-content";
 import { HistoryStrip } from "@/components/status/history-strip";
 import { ReleaseFeedLine } from "@/components/status/release-line";
 import {
@@ -135,14 +134,12 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
         : "Notice";
   const withDetails = !unread && (service.components.length > 0 || extras);
   // The vendor's release line is the third line of the row, under the health line. A plain row holds it in its
-  // header. A row with a list holds it right after the <summary>, in the <details>, because a button may not sit
-  // inside a summary (axe: nested-interactive); a closed row still shows it (styles.css, `row-details-feed`), and
-  // it stays put when the list opens, with the list below it. A browser without ::details-content cannot show
-  // it while the row is shut, so there it follows the <details> instead (`lineInDetails`).
+  // header. A row with a list cannot: a button may not sit inside a <summary> (axe: nested-interactive), and
+  // anything after a summary inside the <details> is hidden by the engine while the row is shut, in a way that
+  // differs between browsers. So the <details> holds the summary alone (it still owns the open state, the
+  // chevron and the keyboard), and the line and the list follow it as plain siblings: the line is always
+  // rendered, and the list hides itself from the `open` attribute (`[details:not([open])~&]:hidden`).
   const feedLine = releaseFeedOf(service) ? <ReleaseFeedLine service={service} /> : null;
-  // Where the browser cannot show part of a shut <details> (no ::details-content), the line stays after the
-  // <details>, where it is always visible, and only a supporting browser holds it in.
-  const lineInDetails = useDetailsContent();
   const header = (
     <RowHeader
       name={service.name}
@@ -186,48 +183,51 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
       <HistoryStrip days={days} nowMs={now} className="pt-1 pb-3" />
     ) : null;
 
-  const list = (
+  // The extras and the components, what a row opens to.
+  const panel = (
+    <div className="flex flex-col gap-3 pr-6 pb-3">
+      <ServiceExtras service={service} now={now} />
+      <HealthyComponents
+        components={service.components}
+        total={service.componentCount ?? service.components.length}
+        sourceUrl={service.sourceUrl}
+      />
+    </div>
+  );
+  const details = (
     // The chevron (styles.css) sits at the middle of the name and health lines. In a summary with padding on
     // both sides that is its middle (50% less the chevron's half height). With the release line under it the
     // summary has no bottom padding, so the text's middle is 4px (half the top padding) below the summary's: 50%.
+    // `row-details-feed` only marks such a row (no rule of its own).
     <details
       className={cn(
         "row-details min-w-0",
-        feedLine && lineInDetails
-          ? "row-details-feed [&>summary]:after:top-1/2!"
-          : "[&>summary]:after:top-[calc(50%-0.25rem)]!",
+        feedLine ? "row-details-feed [&>summary]:after:top-1/2!" : "[&>summary]:after:top-[calc(50%-0.25rem)]!",
       )}
     >
       <summary
         className={cn(
           "focus-ring flex items-center rounded-md focus-visible:-outline-offset-2!",
           // With the line right under it the summary is as tall as its two lines, like a plain row's header.
-          !(feedLine && lineInDetails) && "min-h-(--row-h)",
+          !feedLine && "min-h-(--row-h)",
         )}
       >
         {header}
       </summary>
-      {feedLine && lineInDetails ? <div className="pr-6 pb-2">{feedLine}</div> : null}
-      <div
-        className={cn("flex flex-col gap-3 pr-6 pb-3", feedLine && lineInDetails && "[details:not([open])>&]:hidden")}
-      >
-        <ServiceExtras service={service} now={now} />
-        <HealthyComponents
-          components={service.components}
-          total={service.componentCount ?? service.components.length}
-          sourceUrl={service.sourceUrl}
-        />
-      </div>
+      {feedLine ? null : panel}
     </details>
   );
   const body = withDetails ? (
-    feedLine && !lineInDetails ? (
+    feedLine ? (
       <div className="min-w-0">
-        {list}
+        {details}
         <div className="pr-6 pb-2">{feedLine}</div>
+        <div data-row-components className="[details:not([open])~&]:hidden">
+          {panel}
+        </div>
       </div>
     ) : (
-      list
+      details
     )
   ) : (
     <div className="flex min-h-(--row-h) min-w-0 items-center">{header}</div>

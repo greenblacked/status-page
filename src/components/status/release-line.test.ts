@@ -123,23 +123,28 @@ describe("the release line of a status card", () => {
     expect(text(lineOf(html))).toContain("GitLab 18.4");
   });
 
-  it("sits right after the summary of a row with a list, before the list and outside the summary", () => {
+  it("sits after the <details> of a row with a list, outside it, with the list below the line", () => {
     const components: ComponentHealth[] = [{ name: "Git operations", health: "operational" }];
     const html = render("gitlab", { components, releaseFeed: feed("GitLab 18.4") });
     const summary = html.slice(html.indexOf("<summary"), html.indexOf("</summary>"));
     expect(html.match(/<summary/g)).toHaveLength(1);
-    expect(html).toContain("row-details-feed");
+    expect(html.match(/data-release-line/g)).toHaveLength(1);
     expect(summary).toContain("Operational");
     // A button inside a summary is a nested interactive control (axe), so the line is not in it.
     expect(summary).not.toContain("data-release-line");
     expect(summary).not.toContain("<button");
-    expect(html.indexOf("</summary>")).toBeLessThan(html.indexOf("data-release-line"));
-    // The component list comes after the line, and shuts itself while the row is shut.
-    expect(html.indexOf("data-release-line")).toBeLessThan(html.indexOf("Git operations"));
-    expect(html.slice(html.indexOf("</summary>"))).toContain("[details:not([open])&gt;&amp;]:hidden");
+    // Nor is it in the <details> at all: whatever an engine does with a shut <details>'s content, the line shows.
+    expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("data-release-line"));
+    // The <details> holds the summary alone; the list follows the line and shuts itself with the row.
+    expect(html.slice(html.indexOf("<details"), html.indexOf("</details>"))).not.toContain("Git operations");
+    expect(html.indexOf("data-release-line")).toBeLessThan(html.indexOf("data-row-components"));
+    expect(html.indexOf("data-row-components")).toBeLessThan(html.indexOf("Git operations"));
+    expect(html).toContain("[details:not([open])~&amp;]:hidden");
+    expect(html).not.toContain("::details-content");
     // The summary gives its bottom padding and its minimum height to the line under it, so the chevron moves
     // down by half the top padding to stay on the middle of the text.
     expect(summary).toContain("pb-0");
+    expect(html).toContain("row-details-feed");
     expect(html).toContain("after:top-1/2");
     expect(html).not.toContain("after:top-[calc(50%-0.25rem)]");
     expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).not.toContain(
@@ -152,6 +157,7 @@ describe("the release line of a status card", () => {
     const html = render("gitlab", { components });
     expect(html).not.toContain("row-details-feed");
     expect(html).not.toContain("[details:not([open])");
+    expect(html).not.toContain("data-row-components");
     expect(html).toContain("after:top-[calc(50%-0.25rem)]");
     expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).toContain(
       "min-h-(--row-h)",
