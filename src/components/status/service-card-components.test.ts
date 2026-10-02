@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
+import { visibleText } from "../../test/markup";
 import { ServiceCard } from "./service-card";
 
 const noop = () => {};
@@ -35,7 +36,7 @@ const header = (html: string) =>
   html.slice(html.indexOf("data-card-header"), html.indexOf("</p>", html.indexOf("data-card-header")));
 
 /** What the header line reads as text: its items are separate elements, so the markup is left out. */
-const headerText = (html: string) => header(html).replace(/<[^>]*>/g, "");
+const headerText = (html: string) => visibleText(header(html));
 
 describe("healthy service row", () => {
   it("is one article with a glyph, the name, the word and the latency, and no summary line", () => {

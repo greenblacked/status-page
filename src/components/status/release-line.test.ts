@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ComponentHealth, ReleaseFeed, ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
+import { visibleText } from "../../test/markup";
 import { ServiceCard } from "./service-card";
 
 const noop = () => {};
@@ -30,7 +31,7 @@ const feed = (title: string, releasedAt: string | null = "2026-09-18T00:00:00.00
   ],
 });
 
-const text = (html: string) => html.replace(/<[^>]*>/g, "");
+const text = visibleText;
 const triggers = (html: string) => html.match(/data-release-details-trigger/g) ?? [];
 const lineOf = (html: string) => {
   const start = html.indexOf("data-release-line");
