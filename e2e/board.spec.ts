@@ -1653,11 +1653,12 @@ type DockFrame = {
 /**
  * Scrolls the way `kind` says and reads the search field's fill (left, width), the dock's pose and whether the
  * placeholder is cut off by the input, on every animation frame, for `ms`. The reading runs first in each frame, so
- * it is what the frame before drew. `lost` is WebKit's: it counts a transition from the frame that starts it, and
- * its compositor applies the animation only after the commit of that frame to the UI process, so the first frame it
- * draws of the move is `lost` ms into it (33 ms on an iPhone, by its screen recording). Chromium has no such loss and
- * draws it one frame (about 17 ms) in, so every animation of the dock and of the bar's verdict is moved on by the
- * rest in the task that writes data-docked, before a frame is drawn.
+ * it is what the frame before drew. `lost` is, it appears, WebKit's: one iPhone screen recording shows a transition
+ * counted from the frame that starts it, with the compositor applying the animation only after the commit of that
+ * frame to the UI process, so that the first frame drawn of the move is `lost` ms into it (33 ms there). The cause is
+ * not confirmed. Chromium shows no such loss and draws it one frame (about 17 ms) in, so every animation of the
+ * dock and of the bar's verdict is moved on by the rest in the task that writes data-docked, before a frame is
+ * drawn.
  *   drag  - a finger's pace, 14px a frame, to `to`
  *   flick - momentum, 40px a frame
  *   jump  - one scroll event that crosses the whole threshold
@@ -2071,10 +2072,9 @@ test("shortens the search placeholder as the field docks, and restores it after 
   await hydrated(page);
   // A refetch on mount is not visible until the first client render with a clock: the server markup and the
   // hydration render read "live" with "next in —" whatever is in flight. The digits come with that render, and a
-  // check that started with the page then shows "Checking…", so wait for the digits and then for "live" again.
-  const lead = page.locator("[data-bar-lead]");
-  await expect(lead).toContainText(/next in \d+:\d{2}/);
-  await expect(lead).toHaveAttribute("data-state", "live");
+  // check that started with the page then shows "Checking…"; leadSteady waits for "live" and the digits, with the
+  // long timeout a sweep behind a stale snapshot needs.
+  await leadSteady(page);
   const { wide, moveStart } = await dockOffsets(page);
   test.skip(wide, "from 64rem there is no move in time, and the placeholder follows the field at once");
   const input = page.getByLabel("Search services");
