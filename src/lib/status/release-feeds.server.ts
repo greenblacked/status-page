@@ -48,8 +48,11 @@ const MAX_ENTRIES_READ = 12;
 /** Most text blocks (paragraphs, list items, headings) read from one entry, and tags looked at to find them. */
 const MAX_BLOCKS = 60;
 const MAX_BLOCK_SCAN = 500;
-/** The part of a feed asked for when a vendor's whole history would pass the body cap (Range; a server that ignores it sends all). */
-const GCP_RANGE = "bytes=0-524287";
+/**
+ * The part of a feed asked for when a vendor's whole history would pass the body cap (Range; a server that ignores
+ * it sends all). Both feeds that need it list newest first, so the start of the body is the newest entries.
+ */
+const HEAD_RANGE = "bytes=0-524287";
 
 // ------------------------------------------------------------ XML entries ---
 
@@ -323,13 +326,16 @@ function noteLines(blocks: TextBlock[], title: string): string[] {
 // ----------------------------------------------------------------- shapes ---
 
 type Shape = { title: string; version?: string; notes: string[] };
-type Shaper = (item: FeedItem, blocks: TextBlock[]) => Shape;
+/** How an entry reads, or undefined for an entry the card should not show at all. */
+type Shaper = (item: FeedItem, blocks: TextBlock[]) => Shape | undefined;
 
 const plainShape: Shaper = (item, blocks) => ({ title: item.title, notes: noteLines(blocks, item.title) });
 
-// GitLab: "GitLab 18.4 released with ..." and "GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7".
+// GitLab: "GitLab 19.4 release notes" (the monthly release; older posts said "GitLab 18.4 released with ..."),
+// "GitLab Patch Release: 19.4.1, 19.3.3, 19.2.7" and "GitLab Critical Patch Release: ...". The feed also carries
+// "GitLab AI Gateway Critical Patch Release: ..." posts, which name no GitLab version and are left out.
 // Anchored, with bounded runs of spaces, so the cost is linear in the title.
-const GITLAB_RELEASED = /^GitLab\s{1,5}(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\s{1,5}released\b/i;
+const GITLAB_RELEASED = /^GitLab\s{1,5}(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\s{1,5}(?:released|release\s{1,5}notes)\b/i;
 const GITLAB_PATCH = /^GitLab\s{1,5}(?:critical\s{1,5})?patch\s{1,5}releases?\b/i;
 const SEMVER = /\b\d{1,3}\.\d{1,3}\.\d{1,3}\b/g;
 const MAX_PATCH_VERSIONS = 12;
@@ -338,22 +344,22 @@ function versionKey(version: string): number[] {
   return version.split(".").map(Number);
 }
 
+/** Positive when dotted version `a` is higher than `b`, negative when lower, 0 when equal; number by number. */
+function compareVersions(a: string, b: string): number {
+  const left = versionKey(a);
+  const right = versionKey(b);
+  for (let at = 0; at < Math.max(left.length, right.length); at += 1) {
+    const diff = (left[at] ?? 0) - (right[at] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 /** The highest of some dotted versions, compared number by number. */
 function newestVersion(versions: string[]): string | undefined {
   let best: string | undefined;
   for (const version of versions) {
-    if (best === undefined) {
-      best = version;
-      continue;
-    }
-    const a = versionKey(version);
-    const b = versionKey(best);
-    for (let at = 0; at < Math.max(a.length, b.length); at += 1) {
-      const diff = (a[at] ?? 0) - (b[at] ?? 0);
-      if (diff === 0) continue;
-      if (diff > 0) best = version;
-      break;
-    }
+    if (best === undefined || compareVersions(version, best) > 0) best = version;
   }
   return best;
 }
@@ -375,7 +381,8 @@ export function gitlabVersion(title: string): string | undefined {
 
 const gitlabShape: Shaper = (item, blocks) => {
   const version = gitlabVersion(item.title);
-  if (!version) return plainShape(item, blocks);
+  // A post that names no GitLab version (the AI Gateway's patches) is not a GitLab release: it must never be the line.
+  if (!version) return undefined;
   const label = `GitLab ${version}`;
   // The label is all the line says; the post's own title (which patch branches, what is new) is the first note.
   return { title: label, version, notes: [clip(item.title, MAX_NOTE_CHARS), ...noteLines(blocks, item.title)] };
@@ -492,6 +499,26 @@ function releaseEntry(source: ReleaseSource, shaped: Shape, from: { link?: strin
   return { title: clip(shaped.title, MAX_FEED_TITLE_CHARS), release };
 }
 
+/**
+ * Entries of one day, highest version first. A vendor that releases several branches in a day (GitLab's
+ * patch posts) lists the older branch first, and the line shows the first entry. Newest day first, as the
+ * entries came; entries without a version keep their feed order, after the numbered ones of the same day.
+ */
+function sameDayNewestFirst(entries: ReleaseFeedEntry[]): ReleaseFeedEntry[] {
+  const time = (entry: ReleaseFeedEntry) =>
+    entry.release.releasedAt ? Date.parse(entry.release.releasedAt) : Number.NEGATIVE_INFINITY;
+  return entries
+    .map((entry, index) => ({ entry, index, at: time(entry) }))
+    .sort((a, b) => {
+      if (a.at !== b.at) return a.at > b.at ? -1 : 1;
+      const [x, y] = [a.entry.release.version, b.entry.release.version];
+      if (x && y) return compareVersions(y, x) || a.index - b.index;
+      // An entry with a version outranks one without, so the order stays a consistent one.
+      return x ? -1 : y ? 1 : a.index - b.index;
+    })
+    .map(({ entry }) => entry);
+}
+
 export function xmlEntries(source: ReleaseSource, body: string): ReleaseFeedEntry[] {
   // RSS says channel, Atom says feed; anything else (an HTML error page, a login wall) is not a feed.
   const kind = /<(?:rss|channel)[\s>]/i.test(body) ? "item" : /<feed[\s>]/i.test(body) ? "entry" : undefined;
@@ -501,10 +528,10 @@ export function xmlEntries(source: ReleaseSource, body: string): ReleaseFeedEntr
     const title = titleText(item.title);
     if (!title) return [];
     const shaped = shape({ ...item, title }, htmlBlocks(item.body));
-    return shaped.title.trim() ? [releaseEntry(source, shaped, item)] : [];
+    return shaped?.title.trim() ? [releaseEntry(source, shaped, item)] : [];
   });
   if (entries.length === 0) throw new PayloadError(`${source.label} had no readable entries.`);
-  return entries.slice(0, MAX_FEED_ENTRIES);
+  return sameDayNewestFirst(entries).slice(0, MAX_FEED_ENTRIES);
 }
 
 export function jsonEntries(source: ReleaseSource, body: string): ReleaseFeedEntry[] {
@@ -545,7 +572,7 @@ export const RELEASE_SOURCES: readonly ReleaseSource[] = [
     pageUrl: "https://cloud.google.com/release-notes",
     hosts: ["cloud.google.com"],
     linkLabel: "Release notes",
-    headers: { Range: GCP_RANGE },
+    headers: { Range: HEAD_RANGE },
     shape: gcpShape,
     read: xmlEntries,
   },
@@ -579,6 +606,8 @@ export const RELEASE_SOURCES: readonly ReleaseSource[] = [
     pageUrl: "https://docs.gitlab.com/releases/",
     hosts: ["docs.gitlab.com", "about.gitlab.com"],
     linkLabel: "Release post",
+    // All releases since 2023 with their full text (3.6 MB in October 2026, newest first): only the start is read.
+    headers: { Range: HEAD_RANGE },
     shape: gitlabShape,
     read: xmlEntries,
   },

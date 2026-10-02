@@ -299,6 +299,10 @@ describe("parsers stay linear on crafted vendor input", () => {
       const cases = [
         `GitLab${" ".repeat(SIZE)}18.4 released`,
         `GitLab 18.4${" ".repeat(SIZE)}released`,
+        `GitLab 19.4${" ".repeat(SIZE)}release notes`,
+        `GitLab 19.4 release${" ".repeat(SIZE)}notes`,
+        `GitLab 19.4 release${" ".repeat(SIZE)}`,
+        `GitLab AI Gateway Critical Patch Release: ${"19.4.1, ".repeat(SIZE / 8)}`,
         `GitLab Patch Release: ${"18.4.1, ".repeat(SIZE / 8)}`,
         `GitLab Patch Release: ${"1.".repeat(SIZE / 2)}`,
         `GitLab critical${" ".repeat(SIZE)}patch release`,
@@ -307,6 +311,7 @@ describe("parsers stay linear on crafted vendor input", () => {
       ];
       for (const title of cases) expect(elapsed(() => gitlabVersion(title))).toBeLessThan(BUDGET_MS);
       expect(gitlabVersion("GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7")).toBe("18.4.1");
+      expect(gitlabVersion("GitLab 19.4 release notes")).toBe("19.4");
     });
 
     it("decodeHtmlNames: ampersands, long names and references that never end", () => {

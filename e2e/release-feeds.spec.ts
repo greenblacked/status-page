@@ -56,7 +56,7 @@ test("the line sits under the health line: GitLab names its version and day, and
   const header = page.locator("#service-gitlab [data-card-header]");
   await expect(header.locator("p").first()).toContainText("Operational");
   await expect(header.locator("p").first()).toContainText(/\d+\s?ms/);
-  await expect(line(page, "gitlab")).toContainText(/^GitLab 18\.4\.1 · \w{3} \d{1,2}/);
+  await expect(line(page, "gitlab")).toContainText(/^GitLab 19\.4\.1 · \w{3} \d{1,2}/);
   const health = await header.locator("p").first().boundingBox();
   const release = await line(page, "gitlab").boundingBox();
   if (!health || !release) throw new Error("the card has no lines");
@@ -74,15 +74,15 @@ test("Details opens the vendor's recent entries: title, day, notes and a link on
   await expect(dialog(page).getByRole("heading", { level: 2 })).toHaveText("Details · GitLab");
   const entries = dialog(page).locator("[data-release-entry]");
   await expect(entries).toHaveCount(3);
-  await expect(entries.nth(0).getByRole("heading", { level: 3 })).toHaveText("GitLab 18.4.1");
+  await expect(entries.nth(0).getByRole("heading", { level: 3 })).toHaveText("GitLab 19.4.1");
   // A feed entry is never "New release": that tag is the trackers' two-week rule.
   await expect(dialog(page)).not.toContainText("New release");
   await expect(entries.nth(0).getByRole("list", { name: "Changes" }).getByRole("listitem")).toHaveCount(2);
-  await expect(entries.nth(0)).toContainText("GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7");
-  const link = entries.nth(0).getByRole("link", { name: /Release post for GitLab 18\.4\.1/ });
+  await expect(entries.nth(0)).toContainText("GitLab Critical Patch Release: 19.4.1, 19.3.3, 19.2.7");
+  const link = entries.nth(0).getByRole("link", { name: /Release post for GitLab 19\.4\.1/ });
   await expect(link).toHaveAttribute(
     "href",
-    "https://docs.gitlab.com/releases/patches/patch-release-gitlab-18-4-1-released/",
+    "https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-4-1-released/",
   );
   await expect(link).toHaveAttribute("target", "_blank");
   await expect(link).toHaveAttribute("rel", "noreferrer");

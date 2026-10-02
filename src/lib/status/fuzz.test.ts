@@ -947,6 +947,7 @@ const FEED_MARKUP = [
   "[url=",
   "{STEAM_CLAN_IMAGE}/",
   "GitLab 18.4 released",
+  "GitLab 19.4 release notes",
   "GitLab Patch Release: 18.4.1, 18.3.3",
   "Thu, 01 Oct 2026 16:00:00 +0000",
   "2026-10-01T00:00:00Z",

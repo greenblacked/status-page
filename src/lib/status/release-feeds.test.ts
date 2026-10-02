@@ -193,20 +193,60 @@ describe("each feed's fixture", () => {
   it("GitLab: the version of a release or the newest of a patch release, then the post's own title as a note", () => {
     const entries = entriesOf("gitlab", fixture("gitlab/releases.xml"));
     expect(entries.map((entry) => [entry.title, entry.release.version])).toEqual([
-      ["GitLab 18.4.1", "18.4.1"],
-      ["GitLab 18.4", "18.4"],
-      ["GitLab 18.3.2", "18.3.2"],
-      ["GitLab 18.3.1", "18.3.1"],
+      ["GitLab 19.4.1", "19.4.1"],
+      ["GitLab 19.0.9", "19.0.9"],
+      ["GitLab 19.4", "19.4"],
+      ["GitLab 19.3.2", "19.3.2"],
     ]);
     expect(entries[0]?.release).toMatchObject({
-      releasedAt: "2026-09-24T00:00:00.000Z",
-      url: "https://docs.gitlab.com/releases/patches/patch-release-gitlab-18-4-1-released/",
+      releasedAt: "2026-09-23T00:00:00.000Z",
+      url: "https://docs.gitlab.com/releases/patches/patch-release-gitlab-19-4-1-released/",
       linkLabel: "Release post",
     });
-    expect(entries[0]?.release.notes?.[0]).toBe("GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7");
-    expect(entries[1]?.release.notes?.[0]).toBe(
-      "GitLab 18.4 Released with Duo Agent Platform improvements and a faster merge train",
+    expect(entries[0]?.release.notes?.[0]).toBe("GitLab Critical Patch Release: 19.4.1, 19.3.3, 19.2.7");
+    expect(entries[2]?.release).toMatchObject({
+      releasedAt: "2026-09-17T00:00:00.000Z",
+      url: "https://docs.gitlab.com/releases/19/gitlab-19-4-released/",
+    });
+    expect(entries[2]?.release.notes?.[0]).toBe("GitLab 19.4 release notes");
+  });
+
+  it("GitLab: a GitLab AI Gateway patch post is not a GitLab release, even as the newest entry of the feed", () => {
+    const xml = fixture("gitlab/releases.xml");
+    // The recording's first entry is the AI Gateway post, a day newer than any other.
+    expect(xml.indexOf("<title>GitLab AI Gateway Critical Patch Release")).toBeGreaterThan(0);
+    expect(xml.indexOf("<title>GitLab AI Gateway")).toBeLessThan(xml.indexOf("<title>GitLab 19.4 release notes"));
+    const entries = entriesOf("gitlab", xml);
+    expect(entries.map((entry) => entry.title)).not.toContain(
+      "GitLab AI Gateway Critical Patch Release: 19.2.4, 19.3.2, and 19.4.1",
     );
+    expect(entries.every((entry) => entry.release.version !== "")).toBe(true);
+    expect(entries.some((entry) => entry.release.url?.includes("/other-patches/"))).toBe(false);
+    expect(entries[0]?.title).toBe("GitLab 19.4.1");
+  });
+
+  it("GitLab: patch posts of one day put the highest version first, whichever order the feed lists them", () => {
+    const post = (title: string, day: string) =>
+      `<entry><title>${title}</title><published>${day}T00:00:00Z</published></entry>`;
+    const feed = (...entries: string[]) => `<feed xmlns="http://www.w3.org/2005/Atom">${entries.join("")}</feed>`;
+    const older = post("GitLab Critical Patch Release: 19.0.9, 18.11.12", "2026-09-23");
+    const newer = post("GitLab Critical Patch Release: 19.4.1, 19.3.3, 19.2.7", "2026-09-23");
+    const month = post("GitLab 19.4 release notes", "2026-09-17");
+    for (const xml of [feed(older, newer, month), feed(newer, older, month)]) {
+      expect(entriesOf("gitlab", xml).map((entry) => entry.title)).toEqual([
+        "GitLab 19.4.1",
+        "GitLab 19.0.9",
+        "GitLab 19.4",
+      ]);
+    }
+    // A later day still wins over a higher version of an earlier day.
+    const later = post("GitLab Patch Release: 19.0.10, 18.11.13", "2026-09-24");
+    expect(entriesOf("gitlab", feed(newer, later))[0]?.title).toBe("GitLab 19.0.10");
+  });
+
+  it("GitLab: a feed of nothing but AI Gateway posts has no readable entries", () => {
+    const xml = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>GitLab AI Gateway Patch Release: 19.4.1</title><published>2026-10-02T00:00:00Z</published></entry></feed>`;
+    expect(() => entriesOf("gitlab", xml)).toThrow("had no readable entries");
   });
 
   it("CS2: the update posts only, newest first, with BBCode and picture placeholders gone and a link built from the id", () => {
@@ -395,7 +435,7 @@ describe("links from a vendor feed", () => {
 
   it("GitLab: a link reaches the page on docs.gitlab.com or about.gitlab.com, and nowhere else", () => {
     const item = (link: string) =>
-      `<item><title>GitLab 18.4 Released</title><pubDate>Fri, 18 Sep 2026 00:00:00 +0000</pubDate><link>${link}</link></item>`;
+      `<item><title>GitLab 19.4 release notes</title><pubDate>Fri, 18 Sep 2026 00:00:00 +0000</pubDate><link>${link}</link></item>`;
     const xml = `<rss version="2.0"><channel>${[
       "https://docs.gitlab.com/releases/18/gitlab-18-4-released/",
       "https://about.gitlab.com/releases/2026/09/18/gitlab-18-4-released/",
@@ -415,11 +455,11 @@ describe("links from a vendor feed", () => {
   });
 
   it("an Atom entry's link is its alternate; self, edit and enclosure links are not the entry's page", () => {
-    const xml = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>A</title><updated>2026-10-01T00:00:00Z</updated>
+    const xml = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>GitLab 19.4 release notes</title><updated>2026-10-01T00:00:00Z</updated>
       <link rel="self" href="https://about.gitlab.com/self"/><link rel="enclosure" href="https://about.gitlab.com/file.zip"/>
       <link rel='alternate' href='https://about.gitlab.com/releases/a/'/></entry>
-      <entry><title>B</title><updated>2026-09-30T00:00:00Z</updated><link href="https://about.gitlab.com/releases/b/"/></entry>
-      <entry><title>C</title><updated>2026-09-29T00:00:00Z</updated><link rel="self" href="https://about.gitlab.com/self"/></entry></feed>`;
+      <entry><title>GitLab 19.3 release notes</title><updated>2026-09-30T00:00:00Z</updated><link href="https://about.gitlab.com/releases/b/"/></entry>
+      <entry><title>GitLab 19.2 release notes</title><updated>2026-09-29T00:00:00Z</updated><link rel="self" href="https://about.gitlab.com/self"/></entry></feed>`;
     expect(entriesOf("gitlab", xml).map((entry) => entry.release.url)).toEqual([
       "https://about.gitlab.com/releases/a/",
       "https://about.gitlab.com/releases/b/",
@@ -484,7 +524,15 @@ describe("gitlabVersion", () => {
     ["GitLab 18.4 released with Duo improvements", "18.4"],
     ["GitLab 18.4.1 released", "18.4.1"],
     ["gitlab 19.0 RELEASED", "19.0"],
-    ["GitLab 19.0 Released with Duo Agent Platform updates", "19.0"],
+    ["GitLab 19.4 release notes", "19.4"],
+    ["GitLab 19.4  Release  Notes", "19.4"],
+    ["GitLab 19.4 release notes and more", "19.4"],
+    ["GitLab Critical Patch Release: 19.4.1, 19.3.3, 19.2.7", "19.4.1"],
+    ["GitLab AI Gateway Critical Patch Release: 19.2.4, 19.3.2, and 19.4.1", undefined],
+    ["GitLab AI Gateway Patch Release: 19.4.1", undefined],
+    ["GitLab 19.4 release", undefined],
+    ["GitLab 19 release notes", undefined],
+    ["GitLab release notes 19.4", undefined],
     ["GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7", "18.4.1"],
     ["GitLab Patch Releases: 18.9.5, 18.10.1, 18.8.9", "18.10.1"],
     ["GitLab Critical Patch Release: 18.3.1, 18.2.5", "18.3.1"],
@@ -626,6 +674,40 @@ describe("reading one feed", () => {
     const result = await readReleaseFeed(source("gcp"));
     expect(result.ok).toBe(true);
     expect(result.feed?.entries[0]?.title).toBe("Cloud Run, BigQuery and 2 more");
+  });
+
+  it("asks GitLab for the start of its feed, where the newest entries are", async () => {
+    const seen: Array<string | null> = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("range"));
+      return new Response(fixture("gitlab/releases.xml"), { status: 206 });
+    });
+    const result = await readReleaseFeed(source("gitlab"));
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual(["bytes=0-524287"]);
+    expect(result.feed?.entries[0]?.title).toBe("GitLab 19.4.1");
+  });
+
+  it("a truncated GitLab Atom body still gives its complete leading entries", async () => {
+    const xml = fixture("gitlab/releases.xml");
+    const titles = async (cut: string) => {
+      stubFetch({ [URLS.gitlab]: text(cut) });
+      const result = await readReleaseFeed(source("gitlab"));
+      expect(result.ok).toBe(true);
+      return result.feed?.entries.map((entry) => entry.title);
+    };
+    // Cut inside an entry's text: the entries before it are whole, and it keeps the title and day it had.
+    expect(await titles(xml.slice(0, xml.indexOf("GitLab 19.4 was released") + 20))).toEqual([
+      "GitLab 19.4.1",
+      "GitLab 19.0.9",
+      "GitLab 19.4",
+    ]);
+    // Cut inside an entry's title: that entry has none and is skipped.
+    expect(await titles(xml.slice(0, xml.indexOf("GitLab Critical Patch Release: 19.3.2") + 20))).toEqual([
+      "GitLab 19.4.1",
+      "GitLab 19.0.9",
+      "GitLab 19.4",
+    ]);
   });
 
   it("probeReleaseFeeds reads every feed now and reports each one's own result", async () => {
@@ -891,7 +973,7 @@ describe("the advisory rule", () => {
       calls.length = 0;
       const second = await collectBoard();
       expect(second.services.find((card) => card.id === "gitlab")?.releaseFeed?.entries[0]?.release.version).toBe(
-        "18.4.1",
+        "19.4.1",
       );
       expect(calls.filter((url) => url === URLS.gitlab)).toHaveLength(0);
     });
