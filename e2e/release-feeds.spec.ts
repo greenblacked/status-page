@@ -327,13 +327,16 @@ test("a shut row's component list can still be found on the page, where the brow
   await expect(list).toBeHidden();
 });
 
-test("the browser's own find opens a shut row that lists the component", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "find-in-page reveal is checked in Chromium, where window.find is a real find");
+test("a text-fragment link to a component opens the shut row that lists it", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "the text-fragment reveal is checked in Chromium");
   await openBoard(page);
   const row = page.locator("#service-cs2-europe details.row-details");
   await expect(row).not.toHaveAttribute("open", "");
-  // The browser's find (window.find runs the same search as Ctrl+F) reveals what is hidden until found.
-  await page.evaluate(() => (window as unknown as { find: (text: string) => boolean }).find("Frankfurt"));
+  // A link to the component's name, as a shared "#:~:text=" link or a search result makes it: the browser looks for
+  // the text in the page, finds it in the list hidden until found, and the row opens.
+  await page.evaluate(() => {
+    location.hash = ":~:text=Frankfurt";
+  });
   await expect(row).toHaveAttribute("open", "");
 });
 
