@@ -445,3 +445,53 @@ test("has no accessibility violations, with the lines on the board and with the 
   );
   expect(found(await new AxeBuilder({ page }).include("dialog[data-release-details]").analyze())).toEqual([]);
 });
+
+// A feed joins a board after the status sweep, so a row can gain or lose its release line between two boards.
+// Its <details> must be the same node afterwards: an open row stays open and the focus in its summary stays.
+for (const [name, from, to] of [
+  ["gains", fixtureBoard, feedBoard],
+  ["loses", feedBoard, fixtureBoard],
+] as const) {
+  test(`keeps an open row open, and its summary focused, when the row ${name} its release feed`, async ({ page }) => {
+    let current = from(Date.now());
+    await serveBoard(page, () => current);
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
+    const press = async () => {
+      const answered = page.waitForResponse(
+        (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
+      );
+      // A script click: a real one would move the focus to the Refresh button, and the test is whether the
+      // new board takes it from the summary.
+      await refresh.evaluate((button) => (button as HTMLButtonElement).click());
+      await answered;
+      await expect(refresh).toHaveAttribute("aria-busy", "false");
+    };
+    await press();
+    const hasFeed = from === feedBoard;
+    await expect(line(page, "cs2-europe")).toHaveCount(hasFeed ? 1 : 0);
+
+    const summary = page.locator("#service-cs2-europe summary");
+    const details = page.locator("#service-cs2-europe details");
+    await summary.focus();
+    await page.keyboard.press("Enter");
+    await expect(details).toHaveJSProperty("open", true);
+    await expect(summary).toBeFocused();
+    await details.evaluate((element) => {
+      (window as unknown as { __kept: Element }).__kept = element;
+    });
+
+    current = to(Date.now());
+    await press();
+    await expect(line(page, "cs2-europe")).toHaveCount(hasFeed ? 0 : 1);
+    expect(await details.evaluate((element) => element === (window as unknown as { __kept: Element }).__kept)).toBe(
+      true,
+    );
+    await expect(details).toHaveJSProperty("open", true);
+    await expect(summary).toBeFocused();
+    // The list is where the structure puts it, and shows: open, with the release line or without it.
+    await expect(page.locator("#service-cs2-europe").getByText("Frankfurt")).toBeVisible();
+  });
+}

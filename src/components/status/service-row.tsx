@@ -110,17 +110,26 @@ export function RowHeader({
 }
 
 /**
- * A row with a release line and a component list: the <details> holds the summary alone, then the line, then the
- * list. The list is hidden while the row is shut, and the page can still find what is in it: Ctrl+F or a text
- * fragment to a component name opens the row, as it does for a list inside a shut <details>.
+ * A row with a component list. Whether or not it has a release line, it is one structure: a wrapper holding the
+ * <details>, then (with a feed) the line and the list. A release feed joins a board after the status sweep, so a
+ * row gains or loses its feed between boards; the same elements stay at the same places, and the <details> is
+ * never replaced: an open row stays open, and the focus in its summary stays.
+ *
+ * Without a feed the <details> holds the summary and the list, as it always did. With one it holds the summary
+ * alone, then the line, then the list: a button may not sit inside a <summary> (axe: nested-interactive), and
+ * what follows a summary inside a shut <details> is hidden by the engine in a way that differs between browsers,
+ * so the line is a plain sibling and always shows. The list is hidden while the row is shut, and the page can
+ * still find what is in it: Ctrl+F or a text fragment to a component name opens the row, as it does for a list
+ * inside a shut <details>.
  *
  * Before the page hydrates, and in an engine without `hidden="until-found"` (Safari), the list is hidden by CSS
  * from the `open` attribute (`[details:not([open])~&]:hidden`). Where the engine has `beforematch`, this takes
  * over: the list wears `hidden="until-found"` while the row is shut (React has no prop for that value, so it is
  * set here and follows the details' `toggle` event), the CSS rule steps aside (`data-until-found`), and a match
- * inside the list opens the row (`beforematch`).
+ * inside the list opens the row (`beforematch`). The effect runs while there is a feed and is undone when the
+ * feed goes.
  */
-function RowWithFeed({
+function RowWithComponents({
   summaryClass,
   header,
   line,
@@ -128,15 +137,17 @@ function RowWithFeed({
 }: {
   summaryClass: string;
   header: ReactNode;
+  /** The release line, or null for a row without a feed. */
   line: ReactNode;
   panel: ReactNode;
 }) {
+  const hasFeed = line !== null;
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const details = detailsRef.current;
     const list = listRef.current;
-    if (!details || !list || !("onbeforematch" in list)) return;
+    if (!hasFeed || !details || !list || !("onbeforematch" in list)) return;
     const sync = () => {
       if (details.open) list.removeAttribute("hidden");
       else list.setAttribute("hidden", "until-found");
@@ -154,17 +165,26 @@ function RowWithFeed({
       list.removeAttribute("hidden");
       delete list.dataset.untilFound;
     };
-  }, []);
+  }, [hasFeed]);
   return (
     <div className="min-w-0">
-      {/* The chevron is at the middle of the summary (50%): the line under it takes the bottom padding. */}
-      <details ref={detailsRef} className="row-details row-details-feed min-w-0 [&>summary]:after:top-1/2!">
-        <summary className={summaryClass}>{header}</summary>
+      {/* With a feed the chevron is at the middle of the summary (50%): the line under it takes the bottom padding. */}
+      <details
+        ref={detailsRef}
+        className={cn(
+          "row-details min-w-0",
+          hasFeed ? "row-details-feed [&>summary]:after:top-1/2!" : "[&>summary]:after:top-[calc(50%-0.25rem)]!",
+        )}
+      >
+        <summary className={cn(summaryClass, !hasFeed && "min-h-(--row-h)")}>{header}</summary>
+        {hasFeed ? null : panel}
       </details>
-      <div className="pr-6 pb-2">{line}</div>
-      <div ref={listRef} data-row-components className="[details:not([open])~&:not([data-until-found])]:hidden">
-        {panel}
-      </div>
+      {hasFeed ? <div className="pr-6 pb-2">{line}</div> : null}
+      {hasFeed ? (
+        <div ref={listRef} data-row-components className="[details:not([open])~&:not([data-until-found])]:hidden">
+          {panel}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -198,7 +218,7 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
   // anything after a summary inside the <details> is hidden by the engine while the row is shut, in a way that
   // differs between browsers. So the <details> holds the summary alone (it still owns the open state, the
   // chevron and the keyboard), and the line and the list follow it as plain siblings: the line is always
-  // rendered, and the list is hidden while the row is shut (see RowWithFeed).
+  // rendered, and the list is hidden while the row is shut (see RowWithComponents).
   const feedLine = releaseFeedOf(service) ? <ReleaseFeedLine service={service} /> : null;
   const header = (
     <RowHeader
@@ -257,18 +277,8 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
   const summaryClass = "focus-ring flex items-center rounded-md focus-visible:-outline-offset-2!";
   // The chevron (styles.css) sits at the middle of the name and health lines. In a summary with padding on
   // both sides that is its middle (50% less the chevron's half height).
-  const details = (
-    <details className="row-details min-w-0 [&>summary]:after:top-[calc(50%-0.25rem)]!">
-      <summary className={cn(summaryClass, "min-h-(--row-h)")}>{header}</summary>
-      {panel}
-    </details>
-  );
   const body = withDetails ? (
-    feedLine ? (
-      <RowWithFeed summaryClass={summaryClass} header={header} line={feedLine} panel={panel} />
-    ) : (
-      details
-    )
+    <RowWithComponents summaryClass={summaryClass} header={header} line={feedLine} panel={panel} />
   ) : (
     <div className="flex min-h-(--row-h) min-w-0 items-center">{header}</div>
   );
