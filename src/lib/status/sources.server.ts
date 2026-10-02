@@ -16,6 +16,7 @@ import {
   googleImpactInfo,
   instatusComponent,
   overallSummary,
+  statusIoHealth,
   statuspageComponent,
   statuspageComponentDetail,
   statuspageIncidentImpact,
@@ -97,6 +98,28 @@ type StatuspageSummary = {
     shortlink?: string;
     components?: StatuspageRef[];
   }>;
+};
+
+// Status.io's public status API (the host behind status.gitlab.com). Every
+// field a vendor could omit is optional, like the Statuspage type above.
+type StatusIoContainer = { id?: string; name?: string; status?: string; status_code?: number };
+type StatusIoComponent = StatusIoContainer & { containers?: StatusIoContainer[] };
+type StatusIoMessage = { details?: string; state?: number; status?: number; datetime?: string };
+type StatusIoEvent = {
+  _id?: string;
+  name?: string;
+  datetime_open?: string;
+  datetime_planned_start?: string;
+  datetime_planned_end?: string;
+  messages?: StatusIoMessage[];
+};
+type StatusIoStatus = {
+  result?: {
+    status_overall?: { updated?: string; status?: string; status_code?: number };
+    status?: StatusIoComponent[];
+    incidents?: StatusIoEvent[];
+    maintenance?: { active?: StatusIoEvent[]; upcoming?: StatusIoEvent[] };
+  };
 };
 
 type GoogleIncident = {
@@ -1521,51 +1544,191 @@ async function collectGrok(): Promise<ServiceSnapshot> {
   }
 }
 
-// GitHub, GitLab and Confluence each publish a Statuspage of their own, so
-// they are the Spotify collector with a different address. Each fetches the
-// vendor's own host only (http.ts refuses a redirect off it).
+// GitHub and Confluence each publish a Statuspage of their own, so they are
+// the Spotify collector with a different address. Each fetches the vendor's
+// own host only (http.ts refuses a redirect off it). GitLab is not here: its
+// page runs on Status.io, which has no Statuspage API (see collectGitlab).
 const STATUSPAGE_SUMMARIES = {
   github: "https://www.githubstatus.com/api/v2/summary.json",
-  gitlab: "https://status.gitlab.com/api/v2/summary.json",
   confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
 } as const;
+
+// A page's own pointer to itself ("Visit www.githubstatus.com for more
+// information") is listed by the vendor as a component. It is not a service,
+// and as a row it would read Operational and count as a working component.
+const NOT_A_SERVICE = /^Visit /;
 
 async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const { value, ms } = await timed(() => fetchJson<StatuspageSummary>(STATUSPAGE_SUMMARIES[id]));
+    if (value && Array.isArray(value.components)) {
+      value.components = value.components.filter(
+        (component) => !(typeof component?.name === "string" && NOT_A_SERVICE.test(component.name)),
+      );
+    }
     return fromStatuspage(id, value, ms);
   } catch (error) {
     return failed(id, started, error);
   }
 }
 
-// "resolved", "mitigated" or "restored" as a word of its own (not "unresolved"),
-// unless "not", "not yet" or "not been" leads it; or a post incident review.
-// The lookbehinds look back at most nine characters, so the test stays linear.
-const AZURE_OVER =
-  /(?<!\bnot (?:yet |been )?)\b(?:resolved|mitigated|restored)\b|post[ -]incident review|root cause analysis/;
+// status.gitlab.com is a Status.io page. Status.io publishes no Statuspage
+// `api/v2` for it; its public status API takes the page's id.
+const GITLAB_STATUS_URL = "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7";
+const GITLAB_PAGE_ID = "5b36dc6502d06804c08349f7";
+
+/** The newest message of a Status.io event by its datetime; with none readable, the last listed. */
+function newestStatusIoMessage(event: StatusIoEvent): StatusIoMessage | undefined {
+  const messages = records<StatusIoMessage>(event.messages);
+  let newest: StatusIoMessage | undefined;
+  let newestAt = Number.NEGATIVE_INFINITY;
+  for (const message of messages) {
+    const at = typeof message.datetime === "string" ? Date.parse(message.datetime) : Number.NaN;
+    const value = Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+    if (newest === undefined || value >= newestAt) {
+      newest = message;
+      newestAt = value;
+    }
+  }
+  return newest;
+}
 
 /**
- * What an Azure status feed item says about its incident. The feed is RSS 2.0
- * with no status field, so the reading is from the words of the title and
- * description, case-folded: a resolution, a mitigation or a post incident
- * review means it is over ("operational"), an outage word means "outage",
- * maintenance means "maintenance", and anything else the feed still lists is
- * "degraded". Substring tests and one bounded-lookbehind regex, so the cost is linear in the text.
+ * A card from Status.io's public status API reply. The page's own
+ * `status_overall.status_code` is the health (100 operational, 200
+ * maintenance, 300/400/600 degraded, 500 outage; see statusIoHealth); a reply
+ * without a readable one is not a status and is a parser failure, never an
+ * all-clear. Components come from `status[]`, incidents from `incidents[]`
+ * and maintenance from `maintenance.active[]` and `maintenance.upcoming[]`.
+ * Status.io writes no link on an incident, so the link is the page's own
+ * incident page, kept to the vendor's host.
  */
-export function azureItemHealth(title: string, description: string): Health {
-  const text = `${title} ${stripHtml(description)}`.toLowerCase();
-  if (AZURE_OVER.test(text)) return "operational";
-  if (text.includes("outage") || text.includes("unavailable") || /\bdown\b/.test(text)) return "outage";
-  if (text.includes("maintenance")) return "maintenance";
+export function fromStatusIo(id: ServiceId, data: StatusIoStatus, latencyMs: number, pageId: string): ServiceSnapshot {
+  const result = data?.result;
+  if (typeof result !== "object" || result === null) throw new PayloadError("Status.io reply has no result.");
+  let health = statusIoHealth(result.status_overall?.status_code);
+  if (health === "unknown") throw new PayloadError("Status.io reply has no readable overall status.");
+  const checkedAt = new Date().toISOString();
+  const { sourceUrl } = CATALOG_BY_ID[id];
+  const hosts = [hostOf(sourceUrl)];
+  // Vendor fields are not validated: only a string is text.
+  const text = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
+  const eventUrl = (kind: "incident" | "maintenance", event: StatusIoEvent): string | undefined => {
+    const eventId = text(event._id);
+    return eventId ? vendorUrl(`/pages/${kind}/${pageId}/${encodeURIComponent(eventId)}`, sourceUrl, hosts) : undefined;
+  };
+
+  const components: ComponentHealth[] = records<StatusIoComponent>(result.status).map((component) => {
+    const componentHealth = statusIoHealth(component.status_code);
+    const affected = records<StatusIoContainer>(component.containers)
+      .filter((container) => statusIoHealth(container.status_code) !== "operational")
+      .map((container) => text(container.name))
+      .filter((name): name is string => name !== undefined);
+    const detail =
+      componentHealth === "operational" || componentHealth === "unknown"
+        ? undefined
+        : [text(component.status), affected.length ? `(${affected.join(", ")})` : ""].filter(Boolean).join(" ") ||
+          undefined;
+    return {
+      name: text(component.name) ?? "Component",
+      health: componentHealth,
+      ...(detail ? { detail } : {}),
+    };
+  });
+
+  const mapped: Incident[] = records<StatusIoEvent>(result.incidents).map((incident) => {
+    const newest = newestStatusIoMessage(incident);
+    return {
+      id:
+        text(incident._id) ??
+        `statusio-${fingerprint(`${text(incident.name) ?? ""}|${text(incident.datetime_open) ?? ""}`)}`,
+      title: text(incident.name) ?? "Incident",
+      health: statusIoHealth(newest?.status),
+      startedAt: isoTimestamp(incident.datetime_open),
+      updatedAt: isoTimestamp(newest?.datetime),
+      url: eventUrl("incident", incident),
+    };
+  });
+  // As for Statuspage: an open incident is a statement about the service in
+  // its own right, so the card is never better than the worst one; one whose
+  // status the vendor left out still is a problem (Degraded).
+  for (const incident of mapped)
+    health = worseHealth(health, incident.health === "unknown" ? "degraded" : incident.health);
+  const { incidents, problems, incidentCount } = listIncidents(mapped);
+
+  const maintenance = result.maintenance;
+  const active = records<StatusIoEvent>(maintenance?.active);
+  if (active.length && health === "operational") health = "maintenance";
+  const upcoming: UpcomingMaintenance[] = soonest(
+    records<StatusIoEvent>(maintenance?.upcoming).map((event) => ({
+      id:
+        text(event._id) ??
+        `statusio-${fingerprint(`${text(event.name) ?? ""}|${text(event.datetime_planned_start) ?? ""}`)}`,
+      title: text(event.name) ?? "Scheduled maintenance",
+      scheduledFor: isoTimestamp(event.datetime_planned_start),
+      scheduledUntil: isoTimestamp(event.datetime_planned_end),
+      url: eventUrl("maintenance", event),
+    })),
+    MAX_UPCOMING_MAINTENANCE,
+  );
+
+  const hint =
+    firstProblemTitle(incidents) ||
+    (health === "maintenance" ? text(active[0]?.name) : undefined) ||
+    text(result.status_overall?.status);
+  return {
+    ...base(id, checkedAt, latencyMs),
+    health,
+    summary: overallSummary(health, problems, hint),
+    ...rankComponents(components),
+    incidents,
+    ...(incidentCount ? { incidentCount } : {}),
+    ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),
+  };
+}
+
+async function collectGitlab(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() => fetchJson<StatusIoStatus>(GITLAB_STATUS_URL));
+    return fromStatusIo("gitlab", value, ms, GITLAB_PAGE_ID);
+  } catch (error) {
+    return failed("gitlab", started, error);
+  }
+}
+
+// An Azure feed item is over when its title begins with a resolution or a post
+// incident review, as Azure prefixes them ("RESOLVED - ...", "Post Incident
+// Review (PIR) - ..."). Only the title is read: "mitigated" or "restored"
+// inside an active item ("partially mitigated", "restored in East US; West
+// Europe remains impacted") says nothing about the whole incident being over.
+// Anchored at the start, so the test is linear.
+const AZURE_OVER = /^[\s[(]*(?:resolved|mitigated|post[ -]incident review|pir)\b/i;
+// An outage only when the title says so; the feed has no severity and most
+// items are one service in one region.
+const AZURE_OUTAGE = /\b(?:outage|service unavailable)\b/i;
+
+/**
+ * What an Azure status feed item's title says about its incident. The feed is
+ * RSS 2.0 with no status field, so the reading is from the title alone,
+ * case-folded: a resolution or post incident review prefix means it is over
+ * ("operational"), "outage" or "service unavailable" means "outage",
+ * "maintenance" means "maintenance", and anything else the feed still lists is
+ * "degraded". Two anchored or bounded regexes and a substring test, so the
+ * cost is linear in the text.
+ */
+export function azureItemHealth(title: string): Health {
+  if (AZURE_OVER.test(title)) return "operational";
+  if (AZURE_OUTAGE.test(title)) return "outage";
+  if (title.toLowerCase().includes("maintenance")) return "maintenance";
   return "degraded";
 }
 
 // Like Grok's feed, an item is evidence about right now only when it is
 // unresolved and recent; one with no readable date cannot be shown to be.
-export function azureItemActive(item: { title: string; description: string; pubDate?: string }, now: number): boolean {
-  if (azureItemHealth(item.title, item.description) === "operational") return false;
+export function azureItemActive(item: { title: string; pubDate?: string }, now: number): boolean {
+  if (azureItemHealth(item.title) === "operational") return false;
   const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
   return Number.isFinite(at) && now - at <= STALE_MS;
 }
@@ -1585,7 +1748,7 @@ async function collectAzure(): Promise<ServiceSnapshot> {
     const now = Date.now();
     const active = items.filter((item) => azureItemActive(item, now));
     const health = active.reduce<Health>(
-      (worst, item) => worseHealth(worst, azureItemHealth(item.title, item.description)),
+      (worst, item) => worseHealth(worst, azureItemHealth(item.title)),
       "operational",
     );
     const { sourceUrl } = CATALOG_BY_ID.azure;
@@ -1593,7 +1756,7 @@ async function collectAzure(): Promise<ServiceSnapshot> {
       active.map((item, index) => ({
         id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
         title: item.title || "Azure incident",
-        health: azureItemHealth(item.title, item.description),
+        health: azureItemHealth(item.title),
         startedAt: isoTimestamp(item.pubDate),
         url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
       })),
@@ -1868,7 +2031,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectApple,
       collectAndroid,
       () => collectStatuspage("github"),
-      () => collectStatuspage("gitlab"),
+      collectGitlab,
       () => collectStatuspage("confluence"),
       collectGrok,
       collectChatGpt,

@@ -43,17 +43,21 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(elapsed(() => unwrapJsonp(`${"a".repeat(SIZE)}(1)${" ".repeat(10)}x`))).toBeLessThan(BUDGET_MS);
   });
 
-  it('azureItemHealth: long runs of the words it looks for, and of spaces and "not"', () => {
+  it("azureItemHealth: long runs of the words and prefixes it looks for, and of spaces and brackets", () => {
     const cases = [
-      `${"not ".repeat(SIZE / 4)}resolved`,
-      `${"not yet ".repeat(SIZE / 8)}x`,
-      `${"resolve ".repeat(SIZE / 8)}`,
+      `${"resolved ".repeat(SIZE / 9)}x`,
       `${" ".repeat(SIZE)}resolved`,
+      `${"[(".repeat(SIZE / 2)}resolved`,
+      `${"[ ".repeat(SIZE / 2)}x`,
       `${"post incident ".repeat(SIZE / 14)}`,
+      `${"post-".repeat(SIZE / 5)}`,
+      `${"service ".repeat(SIZE / 8)}unavailable`,
       `${"d".repeat(SIZE)}own`,
+      `${"o".repeat(SIZE)}utage`,
     ];
-    for (const body of cases) expect(elapsed(() => azureItemHealth("t", body))).toBeLessThan(BUDGET_MS);
-    expect(azureItemHealth("t", `${"not ".repeat(10)}resolved`)).toBe("degraded");
+    for (const body of cases) expect(elapsed(() => azureItemHealth(body))).toBeLessThan(BUDGET_MS);
+    expect(azureItemHealth(`${"resolved ".repeat(10)}x`)).toBe("operational");
+    expect(azureItemHealth(`${"unresolved ".repeat(10)}x`)).toBe("degraded");
   });
 
   it.each(["title", "description", "pubDate", "link"])("parseRssItems: a repeated unclosed <%s>", (tag) => {

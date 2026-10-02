@@ -23,13 +23,16 @@ import {
   parseVersionMap,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
-import { unwrapJsonp } from "./http.ts";
+import { PayloadError, unwrapJsonp } from "./http.ts";
 import {
   awsEventActive,
   awsLatestLog,
+  azureItemActive,
+  azureItemHealth,
   decodeXmlEntities,
   decodeXmlField,
   epochToIso,
+  fromStatusIo,
   grokFeedComponents,
   grokItemHealth,
   grokTitleService,
@@ -644,6 +647,84 @@ describe("feeds and payloads", () => {
     );
   });
 
+  it("azureItemHealth: one of the five healths for any title, over only when it begins with a resolution", () => {
+    const title = fc.oneof(
+      anyText,
+      markup,
+      fc.constantFrom("RESOLVED - x", "Post Incident Review (PIR) - y", "Service unavailable", "Planned maintenance"),
+    );
+    fc.assert(
+      fc.property(title, fc.option(anyText, { nil: undefined }), (text, pubDate) => {
+        expect(HEALTHS).toContain(azureItemHealth(text));
+        if (azureItemHealth(text) === "operational") {
+          expect(/^[\s[(]*(?:resolved|mitigated|post[ -]incident review|pir)/i.test(text)).toBe(true);
+        }
+        expect(typeof azureItemActive({ title: text, pubDate }, Date.now())).toBe("boolean");
+      }),
+      run(),
+    );
+  });
+
+  it("fromStatusIo with any JSON is a snapshot inside the board's states, or a thrown parser failure", () => {
+    const code = fc.oneof(fc.constantFrom(100, 200, 300, 400, 500, 600), fc.jsonValue());
+    const event = fc.oneof(
+      fc.jsonValue(),
+      fc.record({
+        _id: fc.oneof(anyText, fc.jsonValue()),
+        name: fc.oneof(anyText, fc.jsonValue()),
+        datetime_open: fc.oneof(anyText, fc.jsonValue()),
+        messages: fc.array(fc.record({ status: code, datetime: fc.oneof(anyText, fc.jsonValue()) }), { maxLength: 4 }),
+      }),
+    );
+    const component = fc.oneof(
+      fc.jsonValue(),
+      fc.record({
+        name: fc.oneof(anyText, fc.jsonValue()),
+        status: fc.oneof(anyText, fc.jsonValue()),
+        status_code: code,
+        containers: fc.oneof(
+          fc.jsonValue(),
+          fc.array(fc.record({ name: anyText, status_code: code }), { maxLength: 4 }),
+        ),
+      }),
+    );
+    const payload = fc.oneof(
+      fc.jsonValue(),
+      fc.record({
+        result: fc.record({
+          status_overall: fc.record({ status: anyText, status_code: code }),
+          status: fc.oneof(fc.jsonValue(), fc.array(component, { maxLength: 6 })),
+          incidents: fc.oneof(fc.jsonValue(), fc.array(event, { maxLength: 4 })),
+          maintenance: fc.oneof(
+            fc.jsonValue(),
+            fc.record({ active: fc.array(event, { maxLength: 3 }), upcoming: fc.array(event, { maxLength: 3 }) }),
+          ),
+        }),
+      }),
+    );
+    fc.assert(
+      fc.property(payload, (value) => {
+        try {
+          const snapshot = fromStatusIo("gitlab", value as never, 1, "pg");
+          expect(HEALTHS).toContain(snapshot.health);
+          expect(snapshot.health).not.toBe("unknown");
+          for (const row of snapshot.components) {
+            expect(HEALTHS).toContain(row.health);
+            expect(typeof row.name).toBe("string");
+          }
+          for (const incident of snapshot.incidents) {
+            expect(typeof incident.id).toBe("string");
+            expect(typeof incident.title).toBe("string");
+            if (incident.url !== undefined) expect(new URL(incident.url).host).toBe("status.gitlab.com");
+          }
+        } catch (error) {
+          expect(error).toBeInstanceOf(PayloadError);
+        }
+      }),
+      run(),
+    );
+  });
+
   it("saysResolved: a boolean for any text, and never true for text without the word", () => {
     fc.assert(
       fc.property(anyText, (text) => {
@@ -807,6 +888,7 @@ describe("parsers stay linear", () => {
     ["summarizeMikrotikChangelog", summarizeMikrotikChangelog],
     ["grokTitleService", grokTitleService],
     ["grokItemHealth", grokItemHealth],
+    ["azureItemHealth", azureItemHealth],
     ["saysResolved", saysResolved],
     ["parseWindowsVersion", parseWindowsVersion],
     ["parseWindowsDate", parseWindowsDate],
