@@ -14,7 +14,7 @@ const SETTLE_MS = 150;
 const STALE_MS = 200;
 
 /** The first thing in view under the root, as scroll anchoring picks it: the first child wholly in view, else the deepest one cut by the top edge. */
-function firstInView(root: Element): Element | null {
+export function firstInView(root: Element): Element | null {
   for (const child of root.children) {
     const { top, bottom, width, height } = child.getBoundingClientRect();
     if ((width === 0 && height === 0) || bottom <= 0 || top >= window.innerHeight) continue;

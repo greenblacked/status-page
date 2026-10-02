@@ -1829,6 +1829,93 @@ test("search reveal: the revealed field keeps still when the bar's lead text cha
   expect(await isRevealed(page)).toBe(true);
 });
 
+test("search reveal: a reorder above the reader that keeps the board's height does not flip the field", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  // A tall block after the last card, so that there are cards above the viewport whatever the board holds (offline
+  // it is short). It is also what gives the 40px back below.
+  await page.evaluate(() => {
+    const filler = document.createElement("div");
+    filler.id = "test-filler";
+    filler.style.height = "2400px";
+    document.getElementById("services")?.appendChild(filler);
+  });
+  await expect.poll(() => maxScroll(page)).toBeGreaterThan(offsets.limit + 2000);
+  const y0 = offsets.revealFrom + 1000;
+  await scrollAndSettle(page, y0);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect(await isRevealed(page)).toBe(false);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  await page.evaluate(() => {
+    const tracked = window as Window & { __flips?: boolean[] };
+    const flips: boolean[] = [];
+    tracked.__flips = flips;
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    let was = bar.hasAttribute("data-revealed");
+    new MutationObserver(() => {
+      const now = bar.hasAttribute("data-revealed");
+      if (now !== was) flips.push(now);
+      was = now;
+    }).observe(bar, { attributes: true, attributeFilter: ["data-revealed"] });
+  });
+  // A card above the viewport gains 40px and the block after the last card gives 40px back, in one style change: the board
+  // reorders above the reader's anchor and its total height stays the same, so nothing resizes for the dock to
+  // notice. Where the browser anchors scrolling, it moves the page by the shift; the dock must not read it as the
+  // reader (which would hide the revealed field, a scroll down of 40px, with no input).
+  const shifted = await page.evaluate(
+    () =>
+      new Promise<{ before: number; after: number; heightBefore: number; heightAfter: number; anchors: boolean }>(
+        (resolve, reject) => {
+          const all = [...document.querySelectorAll<HTMLElement>('article[id^="service-"]')];
+          const above = all.filter((card) => card.getBoundingClientRect().bottom < 0).at(-1);
+          const filler = document.getElementById("test-filler");
+          if (!above || !filler) {
+            reject(new Error("no card to shift"));
+            return;
+          }
+          const before = window.scrollY;
+          const heightBefore = document.documentElement.scrollHeight;
+          above.style.marginTop = "40px";
+          filler.style.height = "2360px";
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() =>
+                resolve({
+                  before,
+                  after: window.scrollY,
+                  heightBefore,
+                  heightAfter: document.documentElement.scrollHeight,
+                  anchors:
+                    CSS.supports("overflow-anchor", "auto") &&
+                    getComputedStyle(document.documentElement).overflowAnchor !== "none",
+                }),
+              ),
+            ),
+          );
+        },
+      ),
+  );
+  expect(shifted.heightAfter, "the board's height is unchanged").toBe(shifted.heightBefore);
+  // Chromium and Firefox anchor, so the page really moved by the shift; where the browser does not, there is no
+  // adjustment to read and the field must still be where it was.
+  if (shifted.anchors)
+    expect(Math.abs(shifted.after - shifted.before), "the page was moved by the browser").toBeGreaterThan(20);
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  expect(await isRevealed(page), "the revealed field stayed").toBe(true);
+  expect(
+    await page.evaluate(() => (window as Window & { __flips?: boolean[] }).__flips ?? []),
+    "data-revealed did not change",
+  ).toEqual([]);
+  // The reader's own scroll counts from here: HIDE_DOWN_PX down still hides it.
+  const here = await page.evaluate(() => window.scrollY);
+  await scrollAndSettle(page, here + HIDE_DOWN_PX + 4);
+  await expectRevealed(page, false);
+});
+
 test("search reveal: the bar's verdict gives way while the field is revealed and returns when it hides", async ({
   page,
 }) => {

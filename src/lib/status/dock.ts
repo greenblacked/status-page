@@ -188,6 +188,15 @@ export function dockFrame(scrollY: number, geometry: DockGeometry, reduce: boole
   return { p, barShown, docked };
 }
 
+/**
+ * `scrollY` held to the page (0 to `maxScroll`): the position the direction rule reads, and so the one its baseline
+ * must be taken at. iOS reports a rubber band's overshoot past either end, and a baseline taken at the raw number
+ * would sit beyond the end that every later frame is clamped to, and read as travel back up.
+ */
+export function clampScroll(scrollY: number, maxScroll: number): number {
+  return Math.min(Math.max(scrollY, 0), Math.max(maxScroll, 0));
+}
+
 /** What `revealFrame` remembers from one frame to the next. */
 export type RevealMemo = {
   /** The bar is up and the hero's field is behind it. */
@@ -234,7 +243,7 @@ export function revealFrame(
   prev: RevealMemo,
   context: { barShown: boolean; latched: boolean; keep?: boolean },
 ): RevealMemo {
-  const y = Math.min(Math.max(scrollY, 0), Math.max(maxScroll, 0));
+  const y = clampScroll(scrollY, maxScroll);
   const heroAway =
     context.barShown && y >= (prev.heroAway ? geometry.revealFrom : geometry.revealFrom + DOCK_HYSTERESIS);
   // A latch keeps the state, but not past the hero's field coming back into view: the bar's copy and the hero's

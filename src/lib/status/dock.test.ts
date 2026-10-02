@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BAR_RISE,
+  clampScroll,
   createDockStore,
   DOCK_HYSTERESIS,
   DOCK_REST,
@@ -357,6 +358,18 @@ describe("dockFrame, below 64rem", () => {
   });
 });
 
+describe("clampScroll", () => {
+  it("holds a position to the page, from 0 to what it can scroll", () => {
+    expect(clampScroll(120, 2000)).toBe(120);
+    expect(clampScroll(-30, 2000)).toBe(0);
+    expect(clampScroll(2040, 2000)).toBe(2000);
+    expect(clampScroll(2000, 2000)).toBe(2000);
+    // A page that cannot scroll (or has not been measured) is only its top.
+    expect(clampScroll(40, 0)).toBe(0);
+    expect(clampScroll(40, -5)).toBe(0);
+  });
+});
+
 describe("revealFrame", () => {
   // The hero's field is behind the bar from 500 (usable from 508 going down), on a page that scrolls to 2000.
   const geometry: DockGeometry = {
@@ -477,6 +490,21 @@ describe("revealFrame", () => {
     const frames = run([1900, LIMIT, LIMIT + 60, LIMIT + 120, LIMIT + 60, LIMIT, LIMIT + 6, LIMIT - 1]);
     for (const memo of frames) expect(memo.revealed).toBe(false);
     expect(frames.at(-2)).toMatchObject({ pivot: LIMIT, lastY: LIMIT });
+  });
+
+  it("reveals nothing when the baseline was taken at an overshoot and the next frame is at or past the end", () => {
+    // A rebase (a toolbar returning, a focus leaving) during a bottom rubber band, held to the page as the hook does.
+    const at = clampScroll(LIMIT + 40, LIMIT);
+    expect(at).toBe(LIMIT);
+    const baseline: RevealMemo = { ...behind(1500, false), pivot: at, lastY: at };
+    for (const y of [LIMIT, LIMIT + 40, LIMIT + 120]) {
+      const next = revealFrame(y, LIMIT, geometry, baseline, up);
+      expect(next.revealed, `at ${y}`).toBe(false);
+      expect(next).toMatchObject({ dir: "down", pivot: LIMIT, lastY: LIMIT });
+    }
+    // The raw number as a baseline is what read as 40px of travel up: the reason the hook holds it to the page.
+    const raw: RevealMemo = { ...baseline, pivot: LIMIT + 40, lastY: LIMIT + 40 };
+    expect(revealFrame(LIMIT, LIMIT, geometry, raw, up).revealed).toBe(true);
   });
 
   it("reads a negative scroll as 0", () => {

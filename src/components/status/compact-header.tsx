@@ -1,7 +1,9 @@
 import { type ReactNode, type RefObject, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { firstInView } from "@/components/status/hold-place";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
+  clampScroll,
   DOCK_REST,
   type DockGeometry,
   type DockState,
@@ -62,10 +64,16 @@ export const WIDE = "(min-width: 64rem)";
  *     anything that moves the page without the reader (a re-measure, a focus leaving, a quietScroll).
  *   - A search written in the field keeps it showing while `heroAway` (`keepRevealed`).
  *
+ * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
+ * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
+ * (a card moving to another section) has no resize to say so. While the bar's field can show, the first thing of
+ * the board in view is therefore kept with its place in the document, and a frame whose scroll is exactly the
+ * distance that place moved took the baseline along instead of counting travel.
+ *
  * Progress comes from window.scrollY against offsets measured when the layout changes, never from a rect
- * read on every frame. A resize that changes only the viewport's height, which is what iOS fires each time its
- * toolbar collapses or returns mid-scroll, measures nothing again: it refreshes how far the page can scroll
- * (to clamp a rubber band) and moves the baseline.
+ * read on every frame (the one exception is that anchor's, only while `heroAway`). A resize that changes only
+ * the viewport's height, which is what iOS fires each time its toolbar collapses or returns mid-scroll, measures
+ * nothing again: it refreshes how far the page can scroll (to clamp a rubber band) and moves the baseline.
  *
  * On a wide screen (64rem and up) the field shares its row with the chips, so it is a single move of 48px of
  * scrolling that does follow the scroll position: --dock (0 to 1) is written on the dock and on the chips beside
@@ -121,6 +129,9 @@ export function useSearchDock({
     let insets = { pin: 0, barTop: 0 };
     let maxScroll = 0;
     let memo: RevealMemo = REVEAL_REST;
+    // The board's first thing in view, and its offset in the document at the last reading (see `anchorMoved`).
+    let anchor: { element: Element; offset: number } | null = null;
+    const board = host.querySelector("main");
     let seenKeep = keepRef.current;
     let geometry: DockGeometry = {
       wide: false,
@@ -136,9 +147,34 @@ export function useSearchDock({
     // bottom is clamped at the end and its recoil reads as no travel. Elsewhere the two are the same.
     const scrollLimit = () =>
       document.documentElement.scrollHeight - Math.max(document.documentElement.clientHeight, window.innerHeight);
-    /** Moves the direction rule's baseline to `y`: what happens to the page without the reader is no direction. */
-    const rebase = (y: number) => {
+    /**
+     * Moves the direction rule's baseline to `y`: what happens to the page without the reader is no direction. It is
+     * held to the page as revealFrame holds its frames (an iOS overshoot past the end is the end), or the next
+     * frame, clamped, would read the overshoot as travel back up.
+     */
+    const rebase = (raw: number) => {
+      const y = clampScroll(raw, maxScroll);
       memo = { ...memo, lastY: y, pivot: y };
+      // The layout may have changed with whatever called this: the anchor's place is read again at the frame's end.
+      anchor = null;
+    };
+    /**
+     * How far the board's anchor has moved in the document since it was last read, in px (0 if there is none to
+     * read). A reader's scroll does not move it; a change of the board does. The browser's scroll anchoring then
+     * scrolls the page by the same distance, which keeps the anchor still in the viewport.
+     */
+    const anchorMoved = (): number => {
+      const held = anchor;
+      if (!held) return 0;
+      const { top, bottom } = held.element.getBoundingClientRect();
+      if (!held.element.isConnected || bottom <= 0 || top >= window.innerHeight) {
+        anchor = null;
+        return 0;
+      }
+      const offset = top + window.scrollY;
+      const moved = offset - held.offset;
+      held.offset = offset;
+      return moved;
     };
     const measure = () => {
       width = document.documentElement.clientWidth;
@@ -244,6 +280,7 @@ export function useSearchDock({
           writeProgress(next.p);
         }
         memo = REVEAL_REST;
+        anchor = null;
         store.set({ barShown: next.barShown, docked: next.docked, heroAway: false, revealed: false });
         return;
       }
@@ -255,8 +292,16 @@ export function useSearchDock({
       }
       if (quietScrolling()) rebase(y);
       // Focus in the bar's field shows it without a scroll (SearchInput, onFocus): take that up as a run going up.
-      if (prev.revealed && !memo.revealed && memo.heroAway)
-        memo = { ...memo, revealed: true, dir: "up", pivot: y, lastY: y };
+      if (prev.revealed && !memo.revealed && memo.heroAway) {
+        const at = clampScroll(y, maxScroll);
+        memo = { ...memo, revealed: true, dir: "up", pivot: at, lastY: at };
+      }
+      // A scroll that is exactly the distance the board's anchor moved is the browser's scroll anchoring holding
+      // the reader's place, not the reader: no direction (a scroll the reader makes moves the page, not the anchor).
+      if (memo.heroAway && Math.abs(y - memo.lastY) >= 1) {
+        const moved = anchorMoved();
+        if (Math.abs(moved) >= 1 && Math.abs(clampScroll(y, maxScroll) - memo.lastY - moved) < 1.5) rebase(y);
+      }
       const focused = document.activeElement;
       const latched =
         !armed ||
@@ -269,6 +314,12 @@ export function useSearchDock({
       // blur tells the bar's own focus tracking (CompactHeader).
       if (wasAway && !memo.heroAway && focused instanceof HTMLElement && focused.dataset.searchInput === "bar")
         focused.blur();
+      // The anchor is read while the bar's field can show, so that the next frame can tell how far it moved.
+      if (!memo.heroAway) anchor = null;
+      else if (!anchor && board) {
+        const element = firstInView(board);
+        if (element) anchor = { element, offset: element.getBoundingClientRect().top + window.scrollY };
+      }
       store.set({ barShown: next.barShown, docked: false, heroAway: memo.heroAway, revealed: memo.revealed });
     };
     const schedule = () => {
@@ -298,6 +349,7 @@ export function useSearchDock({
           // How far the page can go changes with the height, and the position may move with it: no direction.
           maxScroll = scrollLimit();
           rebase(window.scrollY);
+          schedule();
           return;
         }
       }
