@@ -44,11 +44,11 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: { executablePath } } },
     // An iPad's size in Chromium: 834px is still the narrow layout (below 64rem) but wide enough (from 40rem)
     // for the bar's lead text to sit in the flow before the field's slot, which only WebKit's iPad would
-    // otherwise cover. It runs the tests of the search reveal (the bar's copy of the field) and of the floating
-    // bar, not the whole suite: the rest has its Chromium coverage at the other two sizes.
+    // otherwise cover. It runs the tests of the search reveal (the bar's copy of the field), the field's fill and
+    // the floating bar, not the whole suite: the rest has its Chromium coverage at the other two sizes.
     {
       name: "tablet",
-      grep: /search reveal|floating bar/i,
+      grep: /search reveal|floating bar|field's fill/i,
       use: { ...devices["iPad Pro 11"], defaultBrowserType: "chromium", launchOptions: { executablePath } },
     },
     { name: "Desktop Safari", use: { ...devices["Desktop Safari"] } },

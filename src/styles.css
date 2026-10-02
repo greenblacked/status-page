@@ -726,6 +726,12 @@
     */
     will-change: transform;
   }
+
+  /* The field's fill is a layer of its own here as well, as it always has been. */
+  .search-chrome {
+    transform-origin: left center;
+    will-change: transform;
+  }
 }
 
 /* The bar's copy takes its clicks from the box it is in: none while that is hidden (.bar-search, above). */
