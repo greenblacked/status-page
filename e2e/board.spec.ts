@@ -1429,6 +1429,138 @@ async function revealObserved(
   );
 }
 
+test("search reveal: scrolling down keeps one field in the page and none in the bar", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const ys: number[] = [];
+  for (let y = 0; y <= Math.min(offsets.limit, Math.ceil(offsets.revealFrom) + 300); y += 24) ys.push(y);
+  const stops = await sweepDock(page, ys);
+  for (const stop of stops) {
+    // The hero's field rises 1:1 with the page, as ordinary content does...
+    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(offsets.natural - stop.scrollY, 0);
+    // ...and the bar's copy is not there: not revealed, not drawn.
+    expect(stop.revealed, `at ${stop.y}`).toBe(false);
+    expect(stop.barFieldOpacity, `at ${stop.y}`).toBe(0);
+  }
+  expect(
+    stops.some((stop) => stop.shown === "true"),
+    "the bar came up on the way",
+  ).toBe(true);
+  // Nothing in the bar takes a tap: at the middle of its slot the bar answers, not an input.
+  const hit = await page.evaluate(() => {
+    const slot = (document.querySelector(".bar-search") as HTMLElement).parentElement as HTMLElement;
+    const box = slot.getBoundingClientRect();
+    const element = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    return { inBar: Boolean(element && bar.contains(element)), isInput: element instanceof HTMLInputElement };
+  });
+  expect(hit).toEqual({ inBar: true, isInput: false });
+});
+
+test("search reveal: scrolling up shows the field in the floating bar", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  // Short of REVEAL_UP_PX it stays hidden, whatever the finger does up to there; past it, it comes in.
+  await scrollAndSettle(page, y0 - (REVEAL_UP_PX - 4));
+  expect(await isRevealed(page), "4px short").toBe(false);
+  await scrollAndSettle(page, y0 - (REVEAL_UP_PX + 4));
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  expect(
+    await page.locator(".bar-search").evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity)),
+  ).toBe(1);
+  // Keeps going up: it stays.
+  await scrollAndSettle(page, y0 - 3 * REVEAL_UP_PX);
+  expect(await isRevealed(page)).toBe(true);
+});
+
+test("search reveal: scrolling down again hides it", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  const low = y0 - 2 * REVEAL_UP_PX;
+  await scrollAndSettle(page, low);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  // Short of HIDE_DOWN_PX it stays; past it, it goes.
+  await scrollAndSettle(page, low + (HIDE_DOWN_PX - 4));
+  expect(await isRevealed(page), "4px short").toBe(true);
+  await scrollAndSettle(page, low + (HIDE_DOWN_PX + 4));
+  await expectRevealed(page, false);
+  await barFieldSettled(page);
+  expect(
+    await page.locator(".bar-search").evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity)),
+  ).toBe(0);
+  expect(await page.locator(".bar-search").evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("none");
+});
+
+test("search reveal: jitter and reversals do not flip it", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  // Every change of the bar's data-revealed from here on, in order.
+  await page.evaluate(() => {
+    const flips: boolean[] = [];
+    (window as Window & { __flips?: boolean[] }).__flips = flips;
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    let was = bar.hasAttribute("data-revealed");
+    new MutationObserver(() => {
+      const now = bar.hasAttribute("data-revealed");
+      if (now !== was) flips.push(now);
+      was = now;
+    }).observe(bar, { attributes: true, attributeFilter: ["data-revealed"] });
+  });
+  const flips = () => page.evaluate(() => (window as Window & { __flips?: boolean[] }).__flips ?? []);
+  const y0 = await scrollDeep(page, offsets);
+  // Hidden: small steps up and down around the highest point, none of them REVEAL_UP_PX from it.
+  for (const y of [y0 - 10, y0 + 6, y0 - 14, y0 + 8, y0 - 8, y0 + 2]) await scrollAndSettle(page, y);
+  expect(await flips(), "jitter while hidden").toEqual([]);
+  // A real scroll up reveals it once.
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  expect(await flips()).toEqual([true]);
+  // Shown: steps down and up around the lowest point, none of them HIDE_DOWN_PX from it.
+  const low = y0 - 2 * REVEAL_UP_PX;
+  for (const y of [low + 6, low - 5, low + 5, low - 8, low + 2, low - 2]) await scrollAndSettle(page, y);
+  expect(await flips(), "jitter while shown").toEqual([true]);
+  // A real scroll down hides it once; a small step back up does not bring it back.
+  await scrollAndSettle(page, low - 8 + HIDE_DOWN_PX + 4);
+  await expectRevealed(page, false);
+  await scrollAndSettle(page, low - 8 + HIDE_DOWN_PX + 4 - 10);
+  expect(await isRevealed(page), "a step back up of 10px").toBe(false);
+  expect(await flips()).toEqual([true, false]);
+});
+
+test("search reveal: back at the top there is only the hero's field, and never two together", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const { path } = await dockPath(page, 12);
+  const stops = await sweepDock(page, path);
+  const viewportHeight = page.viewportSize()?.height ?? 0;
+  for (const stop of stops) {
+    // The hero's field can be seen when its bottom edge is below the bar's and its top is on screen.
+    const heroSeen = stop.fieldBottom > stop.barBottom + 1 && stop.fieldTop < viewportHeight;
+    expect(heroSeen && stop.revealed, `both fields at ${stop.y}`).toBe(false);
+  }
+  expect(
+    stops.some((stop) => stop.revealed),
+    "the bar's field showed on the way back",
+  ).toBe(true);
+  expect(
+    stops.some((stop) => stop.fieldBottom > stop.barBottom + 1 && !stop.revealed),
+    "the hero's showed too",
+  ).toBe(true);
+  // At the top: the bar is down, nothing is revealed, and the bar's copy is not drawn once its fade has run.
+  await scrollAndSettle(page, 0);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+  expect(await isRevealed(page)).toBe(false);
+  await barFieldSettled(page);
+  expect(
+    await page.locator(".bar-search").evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity)),
+  ).toBe(0);
+  expect(offsets.natural).toBeGreaterThan(0);
+});
+
 test("search reveal: the revealed field takes the tap and the page behind it does not", async ({ page }) => {
   test.slow();
   const offsets = await revealBoard(page);
