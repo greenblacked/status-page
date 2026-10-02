@@ -6,18 +6,26 @@ import { LocalTime } from "@/components/status/local-time";
 import { Button } from "@/components/ui/button";
 import { Tag } from "@/components/ui/tag";
 import { formatUtcDay } from "@/lib/status/local-time";
-import { hasReleaseDetails, type ReleaseDate, type ReleaseEntry, releaseEntries } from "@/lib/status/release-details";
+import {
+  hasReleaseDetails,
+  type ReleaseDate,
+  type ReleaseEntry,
+  releaseEntries,
+  releaseSource,
+} from "@/lib/status/release-details";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
 
 /** A release's day: in the viewer's zone for a moment, the UTC day for a source that gave only a day. */
-function ReleaseDay({ date, reference }: { date: ReleaseDate; reference: number }) {
+export function ReleaseDay({ date, reference }: { date: ReleaseDate; reference: number }) {
   if (!date.dayOnly) return <LocalTime at={date.at} reference={reference} format="day" />;
   return <time dateTime={new Date(date.at).toISOString().slice(0, 10)}>{formatUtcDay(date.at, reference)}</time>;
 }
 
 /** What one channel, OS or version says about itself: its facts on one line, then its notes, then its link. */
 function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: ServiceSnapshot; reference: number }) {
+  // A tracker's own name, or the name of the vendor feed a status card's entries come from.
+  const source = releaseSource(service);
   // " · " between the facts a release has, and not before the first.
   let shown = 0;
   const lead = () => (shown++ > 0 ? " · " : null);
@@ -72,7 +80,7 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
           ))}
         </ul>
       ) : (
-        <p className="mt-2 text-footnote text-subtle">No notes text from {service.sourceName}.</p>
+        <p className="mt-2 text-footnote text-subtle">No notes text from {source.name}.</p>
       )}
       <a
         href={entry.url}
@@ -80,7 +88,7 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
         rel="noreferrer"
         className="focus-ring pressable mt-1 inline-flex min-h-8 items-center gap-1 rounded-md text-footnote text-accent pointer-coarse:min-h-11"
       >
-        {entry.own ? (entry.linkLabel ?? "Release page") : service.sourceName}
+        {entry.own ? (entry.linkLabel ?? "Release page") : source.name}
         <span className="sr-only">
           {" "}
           for {entry.name}
@@ -93,7 +101,8 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
 }
 
 /**
- * A release tracker's Details, in a native modal <dialog> like Settings: it
+ * A release tracker's Details, or a status card's list of its vendor's latest
+ * release or changelog entries, in a native modal <dialog> like Settings: it
  * traps focus, closes on Escape, and a click on the dimmed backdrop closes it.
  * It lists every channel, OS or version the tracker holds, not only the two
  * its row names: the version and build, the day it came out, "New release"
@@ -186,18 +195,25 @@ export function openDetailsFromCard(event: MouseEvent<HTMLElement>): void {
 }
 
 /**
- * The "Details" button of a release tracker and the pop-up it opens; nothing
- * for a service that has nothing to show. In a row (`inline`) the button sits
+ * The "Details" button of a release tracker or of a status card with a release
+ * feed, and the pop-up it opens; nothing for a service that has nothing to show. In a row (`inline`) the button sits
  * at the end of the row's line and a pseudo-element stretches its hit area over
  * the row's header (the nearest positioned ancestor, which the row makes), so a
  * click on the name or the line opens it too, while the star and the
  * open-in-new-tab link beside it keep their own targets. The button is the one
  * thing Tab reaches, and Enter or Space opens it. In a card (`button`) it is a
- * plain 44px link-style button. Focus goes back to the button when the pop-up
+ * plain 44px link-style button, and on a status card's release line (`line`) a
+ * small button of its own, with no reach over the row. Focus goes back to the button when the pop-up
  * closes, because not every browser (Safari) focuses a button on click and
  * restores it by itself.
  */
-export function ReleaseDetails({ service, variant }: { service: ServiceSnapshot; variant: "inline" | "button" }) {
+export function ReleaseDetails({
+  service,
+  variant,
+}: {
+  service: ServiceSnapshot;
+  variant: "inline" | "line" | "button";
+}) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
@@ -216,9 +232,10 @@ export function ReleaseDetails({ service, variant }: { service: ServiceSnapshot;
         data-release-details-trigger
         className={cn(
           "focus-ring inline-flex cursor-pointer items-center gap-0.5 rounded-md text-caption text-accent",
-          variant === "inline"
-            ? "ml-1 align-baseline after:absolute after:inset-0 after:content-['']"
-            : "pressable min-h-11 text-caption",
+          variant === "inline" && "ml-1 align-baseline after:absolute after:inset-0 after:content-['']",
+          // On a status card the button stays its own target: the row around it opens the components, not Details.
+          variant === "line" && "ml-1 min-h-6",
+          variant === "button" && "pressable min-h-11 text-caption",
         )}
       >
         Details

@@ -2,6 +2,7 @@ import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { useServiceHistoryDays } from "@/components/status/board-history-provider";
 import { HistoryStrip } from "@/components/status/history-strip";
+import { ReleaseFeedLine } from "@/components/status/release-line";
 import {
   HealthyComponents,
   type ServiceCardProps,
@@ -12,6 +13,7 @@ import {
 import { CHANGED_BAR, STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { Tag } from "@/components/ui/tag";
 import { serviceAnchor } from "@/lib/status/layout";
+import { releaseFeedOf } from "@/lib/status/release-details";
 import { cn } from "@/lib/utils";
 
 /** The leading mark sits on the row's middle line, whatever the row's height (56 on a phone, 52 on desktop). */
@@ -89,16 +91,20 @@ export function RowHeader({
   name,
   children,
   className,
+  after,
 }: {
   name: string;
   children: ReactNode;
   /** Extra classes for the header; a release row makes it `relative` so its Details button can cover it. */
   className?: string;
+  /** A further line under the first (a status card's release line). */
+  after?: ReactNode;
 }) {
   return (
     <div data-card-header className={cn("min-w-0 py-2", className)}>
       <h3 className="text-row text-balance">{name}</h3>
       <p className="text-caption text-subtle">{children}</p>
+      {after}
     </div>
   );
 }
@@ -126,8 +132,17 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
       : upcoming
         ? "Maintenance planned"
         : "Notice";
+  const withDetails = !unread && (service.components.length > 0 || extras);
+  // The vendor's release line: inside the header while the row is a plain line, and under the row when the
+  // header is the <summary> of a list, because a button may not sit inside a summary (it is interactive itself).
+  const feedLine = releaseFeedOf(service) ? <ReleaseFeedLine service={service} /> : null;
   const header = (
-    <RowHeader name={service.name}>
+    <RowHeader
+      name={service.name}
+      after={withDetails ? undefined : feedLine}
+      // The release line follows the summary directly, so the summary gives up its bottom padding to it.
+      className={withDetails && feedLine ? "pb-0" : undefined}
+    >
       <StateWord health={service.health} />
       {unread ? (
         // The kind-mapped sentence from the collector; it wraps, since it is the reason.
@@ -155,7 +170,6 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
       ) : null}
     </RowHeader>
   );
-  const withDetails = !unread && (service.components.length > 0 || extras);
   // The 30-day uptime strip, in a build that collects history: under the row's own line, so the row
   // stays as it is until there are days to draw. A release tracker (the changelog category) has none.
   const historyBuild = import.meta.env.VITE_STATUS_HISTORY === "1";
@@ -165,7 +179,7 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
       <HistoryStrip days={days} nowMs={now} className="pt-1 pb-3" />
     ) : null;
 
-  const body = withDetails ? (
+  const list = (
     // The chevron (styles.css) sits at the summary's middle line, which is the row's, not its top.
     <details className="row-details min-w-0 [&>summary]:after:top-[calc(50%-0.25rem)]!">
       <summary className="focus-ring flex min-h-(--row-h) items-center rounded-md focus-visible:-outline-offset-2!">
@@ -180,6 +194,16 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
         />
       </div>
     </details>
+  );
+  const body = withDetails ? (
+    feedLine ? (
+      <div className="min-w-0">
+        {list}
+        <div className="pb-2">{feedLine}</div>
+      </div>
+    ) : (
+      list
+    )
   ) : (
     <div className="flex min-h-(--row-h) min-w-0 items-center">{header}</div>
   );

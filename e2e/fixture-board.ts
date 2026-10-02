@@ -2,7 +2,14 @@ import type { Page, Route } from "@playwright/test";
 import { toCrossJSONAsync } from "seroval";
 import { CATALOG } from "../src/lib/status/catalog.ts";
 import { formatReleaseAge } from "../src/lib/status/changelog.ts";
-import type { BoardSnapshot, ComponentHealth, Health, ServiceId, ServiceSnapshot } from "../src/lib/status/types.ts";
+import type {
+  BoardSnapshot,
+  ComponentHealth,
+  Health,
+  ReleaseFeed,
+  ServiceId,
+  ServiceSnapshot,
+} from "../src/lib/status/types.ts";
 
 // A board with every state the page can show, for tests that must see
 // them all whatever the vendors say today (and offline, every vendor says
@@ -269,6 +276,158 @@ export function calmBoard(now: number): BoardSnapshot {
     ...board,
     services,
     counts: { operational: services.length, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
+  };
+}
+
+/**
+ * The release feeds a board attaches to the status cards whose vendors publish one, as the collectors build them:
+ * a version where the vendor numbers its releases (GitLab), the entry's headline where it does not, a day, a few
+ * plain notes and a link on the vendor's own host. Advisory, so they sit beside the cards' health and change none
+ * of it: `feedBoard` is `fixtureBoard` with these added, and a test that wants none uses `fixtureBoard`.
+ */
+function releaseFeeds(now: number): Partial<Record<ServiceId, ReleaseFeed>> {
+  const at = (days: number) => new Date(now - days * day).toISOString();
+  const entry = (title: string, days: number, url: string, linkLabel: string, notes: string[], version = "") => ({
+    title,
+    release: { version, releasedAt: at(days), url, linkLabel, ...(notes.length > 0 ? { notes } : {}) },
+  });
+  return {
+    gitlab: {
+      sourceName: "GitLab releases",
+      sourceUrl: "https://about.gitlab.com/releases/",
+      entries: [
+        entry(
+          "GitLab 18.4.1",
+          9,
+          "https://about.gitlab.com/releases/2026/09/24/patch-release-gitlab-18-4-1-released/",
+          "Release post",
+          [
+            "GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7",
+            "Today we are releasing versions 18.4.1, 18.3.3, and 18.2.7.",
+          ],
+          "18.4.1",
+        ),
+        entry(
+          "GitLab 18.4",
+          15,
+          "https://about.gitlab.com/releases/2026/09/18/gitlab-18-4-released/",
+          "Release post",
+          ["GitLab 18.4 released with Duo Agent Platform improvements and a faster merge train"],
+          "18.4",
+        ),
+        entry(
+          "GitLab 18.3.2",
+          23,
+          "https://about.gitlab.com/releases/2026/09/10/patch-release-gitlab-18-3-2/",
+          "Release post",
+          [],
+          "18.3.2",
+        ),
+      ],
+    },
+    github: {
+      sourceName: "GitHub Changelog",
+      sourceUrl: "https://github.blog/changelog/",
+      entries: [
+        entry(
+          "Copilot code review is now generally available for all plans",
+          1,
+          "https://github.blog/changelog/2026-10-01-copilot-code-review-is-now-generally-available-for-all-plans/",
+          "Changelog post",
+          ["Copilot code review is now generally available for every GitHub plan."],
+        ),
+        entry(
+          "Actions: larger runners get Windows Server 2025 images",
+          2,
+          "https://github.blog/changelog/2026-09-30-actions-larger-runners-get-windows-server-2025-images/",
+          "Changelog post",
+          ["Larger runners now offer Windows Server 2025 images."],
+        ),
+      ],
+    },
+    aws: {
+      sourceName: "AWS What's New",
+      sourceUrl: "https://aws.amazon.com/new/",
+      entries: [
+        entry(
+          "Amazon EC2 R9i instances are now generally available in additional regions",
+          1,
+          "https://aws.amazon.com/about-aws/whats-new/2026/10/amazon-ec2-r9i-additional-regions/",
+          "What's New post",
+          [
+            "Starting today, Amazon EC2 R9i instances are available in the Europe (Stockholm) and Asia Pacific (Seoul) Regions.",
+          ],
+        ),
+        entry(
+          "AWS Lambda adds support for Node.js 26 & Python 3.15",
+          2,
+          "https://aws.amazon.com/about-aws/whats-new/2026/09/aws-lambda-nodejs-26-python-3-15/",
+          "What's New post",
+          [],
+        ),
+      ],
+    },
+    gcp: {
+      sourceName: "Google Cloud release notes",
+      sourceUrl: "https://cloud.google.com/release-notes",
+      entries: [
+        entry(
+          "Cloud Run, BigQuery and 2 more",
+          1,
+          "https://cloud.google.com/release-notes#October_01_2026",
+          "Release notes",
+          [
+            "Cloud Run now supports GPU-backed worker pools in europe-west1.",
+            "BigQuery now supports vector search over partitioned tables.",
+          ],
+        ),
+      ],
+    },
+    azure: {
+      sourceName: "Azure Updates",
+      sourceUrl: "https://azure.microsoft.com/en-us/updates",
+      entries: [
+        entry(
+          "[Launched] Generally available: Azure Kubernetes Service Automatic in more regions",
+          1,
+          "https://azure.microsoft.com/updates?id=551201",
+          "Azure update",
+          ["AKS Automatic is now generally available in 12 additional Azure regions."],
+        ),
+      ],
+    },
+    "cs2-europe": {
+      sourceName: "Counter-Strike 2 updates",
+      sourceUrl: "https://store.steampowered.com/news/app/730",
+      entries: [
+        entry(
+          "Counter-Strike 2 Update",
+          3,
+          "https://store.steampowered.com/news/app/730/view/5123456789012345678",
+          "Steam announcement",
+          ["Added the new Anubis match map to the Premier map pool.", "Fixed a crash when spectating a bot."],
+        ),
+        entry(
+          "Counter-Strike 2 Update",
+          8,
+          "https://store.steampowered.com/news/app/730/view/5123456789012345001",
+          "Steam announcement",
+          [],
+        ),
+      ],
+    },
+  };
+}
+
+/** `fixtureBoard` with the vendors' release feeds attached to the six status cards that have one. */
+export function feedBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const feeds = releaseFeeds(now);
+  return {
+    ...board,
+    services: board.services.map((service) =>
+      feeds[service.id] ? { ...service, releaseFeed: feeds[service.id] } : service,
+    ),
   };
 }
 
