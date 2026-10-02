@@ -1671,12 +1671,16 @@ export function fromStatusIo(id: ServiceId, data: StatusIoStatus, latencyMs: num
 
   const mapped: Incident[] = records<StatusIoEvent>(result.incidents).map((incident) => {
     const newest = newestStatusIoMessage(incident);
+    const incidentHealth = statusIoHealth(newest?.status);
     return {
       id:
         text(incident._id) ??
         `statusio-${fingerprint(`${text(incident.name) ?? ""}|${text(incident.datetime_open) ?? ""}`)}`,
       title: text(incident.name) ?? "Incident",
-      health: statusIoHealth(newest?.status),
+      health: incidentHealth,
+      // As Statuspage's impact "none": an incident whose newest update says
+      // the service is operational is a notice, listed but not counted.
+      ...(incidentHealth === "operational" ? { informational: true as const } : {}),
       startedAt: isoTimestamp(incident.datetime_open),
       updatedAt: isoTimestamp(newest?.datetime),
       url: eventUrl("incident", incident),

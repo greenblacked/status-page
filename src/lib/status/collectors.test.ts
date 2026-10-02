@@ -1575,6 +1575,34 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(gitlab.incidents[0]).toMatchObject({ title: "Pipelines delayed", health: "unknown" });
     });
 
+    it("GitLab: an open incident whose newest update says operational is a notice, not a problem", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = 100;
+      status.result.status_overall.status = "Operational";
+      status.result.incidents = [
+        {
+          name: "Pipelines delayed",
+          _id: "i1",
+          datetime_open: "2026-09-20T10:00:00.000Z",
+          messages: [
+            { state: 100, status: 300, datetime: "2026-09-20T10:00:00.000Z" },
+            { state: 300, status: 100, datetime: "2026-09-20T11:00:00.000Z" },
+          ],
+        },
+      ];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("operational");
+      expect(gitlab.incidents).toHaveLength(1);
+      expect(gitlab.incidents[0]).toMatchObject({
+        title: "Pipelines delayed",
+        health: "operational",
+        informational: true,
+      });
+      // Listed, but not counted: the card does not read "Up. 1 resolved recently."
+      expect(gitlab.summary).not.toMatch(/resolved|1 incident/i);
+    });
+
     it("GitLab: a service disruption in a component is an outage", async () => {
       const status = JSON.parse(fixture("gitlab/status.json"));
       status.result.status[2].status_code = 500;
