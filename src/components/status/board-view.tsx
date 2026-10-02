@@ -120,9 +120,9 @@ export function BoardView({
   // Recent changes follows Needs a look (or leads the board when nothing needs a look).
   useHoldPlace(mainRef, store?.pulses);
   const feed = <UpdateFeed pulses={pulseStore.pulses} />;
-  const changedIds = new Set(
-    (pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? [])).map((change) => change.id),
-  );
+  const latestChanges = pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? []);
+  const changedIds = new Set(latestChanges.map((change) => change.id));
+  const releasedIds = new Set(latestChanges.filter((change) => change.release).map((change) => change.id));
 
   const slot = now > 0 ? lastPulseAt(now) : null;
 
@@ -428,6 +428,7 @@ export function BoardView({
                 groups={groups}
                 mostUrgentId={mostUrgentId}
                 changedIds={changedIds}
+                releasedIds={releasedIds}
                 starred={starred}
                 onToggleStar={onToggleStar}
                 now={now}

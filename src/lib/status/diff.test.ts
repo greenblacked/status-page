@@ -60,8 +60,47 @@ describe("diffBoards", () => {
         from: "operational",
         to: "operational",
         summary: "RouterOS 7 stable 7.24.4",
+        release: true,
       },
     ]);
+  });
+
+  it("tells a recovery from a new release by the release flag", () => {
+    const meta = { latest: "7.24.3", versions: "RouterOS 7 stable=7.24.3" };
+    const unread = board([service("mikrotik", { health: "unknown" })]);
+    const recovered = board([service("mikrotik", { health: "operational", meta })]);
+    const [recovery] = diffBoards(unread, recovered);
+    assert.equal(recovery?.from, "unknown");
+    assert.equal(recovery?.to, "operational");
+    assert.equal("release" in (recovery ?? {}), false);
+
+    const released = board([
+      service("mikrotik", {
+        health: "operational",
+        meta: { latest: "7.24.4", versions: "RouterOS 7 stable=7.24.4" },
+      }),
+    ]);
+    assert.equal(diffBoards(recovered, released)[0]?.release, true);
+  });
+
+  it("counts a recovery from unread as a recovery, even with versions", () => {
+    const unread = board([service("mikrotik", { health: "unknown" })]);
+    const recovered = board([
+      service("mikrotik", { health: "operational", meta: { latest: "7.24.4", versions: "RouterOS 7 stable=7.24.4" } }),
+    ]);
+    const [change] = diffBoards(unread, recovered);
+    assert.equal(change?.to, "operational");
+    assert.equal("release" in (change ?? {}), false);
+  });
+
+  it("counts a health change that comes with moved versions as a release", () => {
+    const degraded = board([
+      service("mikrotik", { health: "degraded", meta: { latest: "7.24.3", versions: "RouterOS 7 stable=7.24.3" } }),
+    ]);
+    const both = board([
+      service("mikrotik", { health: "operational", meta: { latest: "7.24.4", versions: "RouterOS 7 stable=7.24.4" } }),
+    ]);
+    assert.equal(diffBoards(degraded, both)[0]?.release, true);
   });
 
   it("does not announce the listed versions as releases when a failed check recovers", () => {
@@ -122,6 +161,7 @@ describe("diffBoards", () => {
         from: "operational",
         to: "operational",
         summary: "Android 18 released",
+        release: true,
       },
     ]);
   });

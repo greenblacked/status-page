@@ -8,6 +8,15 @@ export type PulseChange = {
   from: Health;
   to: Health;
   summary: string;
+  /**
+   * Set (to true) when the service's newest versions moved from known
+   * versions: a new release, which a release tracker shows with the neutral
+   * Changed bar. Left out for a health-only change, so a recovery keeps the
+   * green one. A source coming back from unread has no earlier versions to
+   * compare with, so it counts as a recovery, including a recovery that also
+   * brought a new version (that cannot be detected).
+   */
+  release?: true;
 };
 
 export function overallHealth(board: BoardSnapshot): Health {
@@ -45,6 +54,8 @@ export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseC
       from: before.health,
       to: service.health,
       summary: releaseSummary || service.summary,
+      // releaseChange is "" without known previous versions, so latestChanged means a release from known versions.
+      ...(latestChanged ? { release: true as const } : {}),
     });
   }
   return changes;

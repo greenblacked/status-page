@@ -27,6 +27,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Changed
 
 - The headline says what is wrong instead of counting things that need a look: "Two services are down.", "One service is degraded.", or, when the states differ, "One is down, one is degraded." The line under it names the services state by state ("ChatGPT is down. Apple is degraded."), the floating bar reads "1 down · 1 degraded", and the JSON API, the feed and the board badge use the same words.
+- The thin bar beside a card that changed in the latest check now shows how serious it is: red for an outage, amber for degraded, green for a recovery, and the maintenance tone for maintenance. A new release keeps the neutral bar; a release tracker whose source came back with the same versions gets the green one.
 - The page footer no longer says what the site is built with, and no longer links the badges.
 - The name at the top of the page reads Status Page and sits in the middle.
 - Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until the search field takes its place). The settings button is called **Settings**.

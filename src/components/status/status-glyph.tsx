@@ -27,6 +27,31 @@ export const STATUS_TEXT: Record<Health, string> = {
   maintenance: "text-muted",
 };
 
+/**
+ * The Changed bar on a card's or row's inline-start edge, in the colour of the
+ * state the service is in now: the same tokens as STATUS_TEXT, so contrast,
+ * dark and Increase Contrast follow the glyph (print drops the bar, as it
+ * always has). Unknown keeps the neutral accent. Written out in full, because
+ * Tailwind reads class names from the source. A card's bar is an element (`card`); a row's is its ::after
+ * (`row`).
+ */
+export const CHANGED_BAR: Record<"card" | "row", Record<Health, string>> = {
+  card: {
+    operational: "bg-ok",
+    degraded: "bg-warn",
+    outage: "bg-down",
+    unknown: "bg-accent",
+    maintenance: "bg-muted",
+  },
+  row: {
+    operational: "after:bg-ok",
+    degraded: "after:bg-warn",
+    outage: "after:bg-down",
+    unknown: "after:bg-accent",
+    maintenance: "after:bg-muted",
+  },
+};
+
 /** The smallest size that carries the detail. */
 export const GLYPH_DETAIL_MIN = 18;
 
