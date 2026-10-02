@@ -1732,27 +1732,66 @@ test("search reveal: the revealed field keeps still when the bar's lead text cha
   await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
   await expectRevealed(page, true);
   await barFieldSettled(page);
-  // From here on, every transition on the bar's field, and the field's box in every frame. Refreshing changes the
-  // bar's lead text ("Checking..."), which from 40rem sits in the flow before the slot: the lead has a width of its
-  // own, so the slot, and the field in it, stay where they are.
+  // From here on, everything that could start a transition on the bar's field, and the field's box in every frame.
+  // Refreshing changes the bar's lead text ("Checking..."), which from 40rem sits in the flow before the slot: the
+  // lead has a width of its own, so the slot, and the field in it, stay where they are. The field's CSS transition
+  // starts only when the bar's data-revealed flips (opacity and translate both follow it), and that follows the
+  // dock store's `revealed`, which only a scroll the rule reads, or heroAway / barShown turning off, can flip. So
+  // the page also keeps a log of those: the marks on the bar and on the field's wrapper (data-revealed, data-shown,
+  // inert), every scroll event with its position, the page's height, and each transition that runs anywhere in the
+  // bar, with its target. A failure prints the log, which says which of them moved first.
   await page.evaluate(() => {
+    type Tracked = Window & {
+      __runs?: string[];
+      __log?: string[];
+      __boxes?: { left: number; width: number }[];
+      __watching?: boolean;
+    };
+    const tracked = window as Tracked;
     const runs: string[] = [];
+    const log: string[] = [];
     const boxes: { left: number; width: number }[] = [];
-    const tracked = window as Window & { __runs?: string[]; __boxes?: typeof boxes; __watching?: boolean };
+    const t0 = performance.now();
+    const stamp = () => `${(performance.now() - t0).toFixed(0)}ms`;
     tracked.__runs = runs;
+    tracked.__log = log;
     tracked.__boxes = boxes;
     tracked.__watching = true;
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const describe = (element: Element) =>
+      `${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).split(" ")[0]}` : ""}`;
     document.addEventListener(
       "transitionrun",
       (event) => {
-        if ((event.target as Element).closest(".bar-search")) runs.push(event.propertyName);
+        const target = event.target as Element;
+        if (!bar.contains(target)) return;
+        log.push(`${stamp()} transitionrun ${event.propertyName} on ${describe(target)}`);
+        if (target.closest(".bar-search")) runs.push(event.propertyName);
       },
       true,
     );
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const target = record.target as Element;
+        log.push(
+          `${stamp()} ${record.attributeName}=${JSON.stringify(target.getAttribute(record.attributeName as string))} on ${describe(target)}`,
+        );
+      }
+    }).observe(bar, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ["data-revealed", "data-shown", "inert", "data-state"],
+    });
+    let height = document.documentElement.scrollHeight;
+    window.addEventListener("scroll", () => log.push(`${stamp()} scroll to ${window.scrollY}`), { passive: true });
     const input = document.querySelector('[data-search-input="bar"]') as HTMLElement;
     const watch = () => {
       const box = input.getBoundingClientRect();
       boxes.push({ left: box.left, width: box.width });
+      if (document.documentElement.scrollHeight !== height) {
+        log.push(`${stamp()} page height ${height} -> ${document.documentElement.scrollHeight}`);
+        height = document.documentElement.scrollHeight;
+      }
       if (tracked.__watching) requestAnimationFrame(watch);
     };
     watch();
@@ -1760,16 +1799,28 @@ test("search reveal: the revealed field keeps still when the bar's lead text cha
   const refresh = controlBar(page).getByRole("button", { name: "Refresh status now" });
   await pressRefresh(page, refresh);
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  const { runs, boxes } = await page.evaluate(() => {
+  const { runs, log, boxes } = await page.evaluate(() => {
     const tracked = window as Window & {
       __runs?: string[];
+      __log?: string[];
       __boxes?: { left: number; width: number }[];
       __watching?: boolean;
     };
     tracked.__watching = false;
-    return { runs: tracked.__runs ?? [], boxes: tracked.__boxes ?? [] };
+    return {
+      runs: tracked.__runs ?? [],
+      log: tracked.__log ?? [],
+      boxes: tracked.__boxes ?? [],
+    };
   });
-  expect(runs, "the field moved when its slot changed").toEqual([]);
+  const story = `\n${log.join("\n")}`;
+  // The marks the field's state is written to, and the position, never moved: the lead's text is "data-state" and is
+  // the only mark that may change.
+  expect(
+    log.filter((line) => /(data-revealed|data-shown|inert)=|scroll to|page height/.test(line)),
+    `the field's state or the page's position moved${story}`,
+  ).toEqual([]);
+  expect(runs, `the field moved when its slot changed${story}`).toEqual([]);
   expect(boxes.length).toBeGreaterThan(3);
   const lefts = boxes.map((box) => box.left);
   const widths = boxes.map((box) => box.width);
