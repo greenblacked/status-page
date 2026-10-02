@@ -275,7 +275,8 @@ describe("text from a vendor feed", () => {
     const entries = entriesOf("aws", fixture("releases/html-titles.xml"));
     expect(entries.map((entry) => entry.title)).toEqual([
       "Bold and italic title",
-      "Escaped markup &amp; ampersand",
+      // A title is read as HTML like a note: the feed's "&amp;amp;" is the HTML "&amp;", which reads as "&".
+      "Escaped markup & ampersand",
       "Spaces and newlines in a title",
     ]);
     for (const entry of entries) {
@@ -311,8 +312,27 @@ describe("text from a vendor feed", () => {
     expect(decodeHtmlNames("a&hellip;b &HELLIP; &hellip &nosuch; &toString; &__proto__; &;")).toBe(
       "a\u2026b &HELLIP; &hellip &nosuch; &toString; &__proto__; &;",
     );
-    // XML's own five are left to decodeXmlEntities, so nothing is decoded twice.
+    // XML's own five are left to decodeXmlEntities, which plainText runs after this, so nothing is decoded twice.
     expect(decodeHtmlNames("&amp;rsquo; &lt;b&gt; &quot;")).toBe("&amp;rsquo; &lt;b&gt; &quot;");
+  });
+
+  it("reads a reference once: a name behind an escaped ampersand stays as typed, in notes and in titles", () => {
+    const feedWith = (title: string, description: string) =>
+      `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title><item><title>${title}</title>` +
+      `<link>https://github.blog/changelog/x/</link><description>${description}</description>` +
+      "<pubDate>Thu, 01 Oct 2026 16:00:00 +0000</pubDate></item></channel></rss>";
+    // HTML text "&hellip; and &copy; as typed" in a paragraph, escaped once for HTML and once for XML.
+    const [entry] = entriesOf(
+      "github",
+      feedWith(
+        "Render &amp;amp;nbsp; and Q&amp;amp;A &amp;rsquo;s",
+        "&lt;p&gt;Markdown now keeps &amp;amp;hellip; and &amp;amp;copy; as typed, &amp;hellip; here&lt;/p&gt;",
+      ),
+    );
+    // "&amp;hellip;" in the HTML is the text "&hellip;"; "&hellip;" itself is the ellipsis.
+    expect(entry?.release.notes).toEqual(["Markdown now keeps &hellip; and &copy; as typed, \u2026 here"]);
+    // The title is read the same way: names and the XML five, each once.
+    expect(entry?.title).toBe("Render &nbsp; and Q&A \u2019s");
   });
 
   it("CS2: an HTML named reference in a post's title is read too", () => {

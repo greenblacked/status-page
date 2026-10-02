@@ -225,14 +225,26 @@ export function decodeHtmlNames(text: string): string {
   return text.replace(HTML_NAMED_ENTITY, (match, name: string) => HTML_NAMED_ENTITIES.get(name) ?? match);
 }
 
-/** Plain text from markup: scripts gone, tags gone, entities decoded, whitespace collapsed. */
-function plainText(html: string): string {
-  return decodeHtmlNames(decodeXmlEntities(stripHtml(dropScripts(html))));
+/**
+ * `text` with its HTML character references read once: the named ones first, then the XML five and the numeric
+ * ones. In that order a name written behind an escaped ampersand ("&amp;hellip;", a code span that shows the
+ * entity) survives the first pass and is read only as "&hellip;", not as the ellipsis it names.
+ */
+function decodeHtmlText(text: string): string {
+  return decodeXmlEntities(decodeHtmlNames(text));
 }
 
-/** A title from the feed's already decoded field: markup gone, HTML named references read, whitespace collapsed. */
+/** Plain text from markup: scripts gone, tags gone, entities decoded, whitespace collapsed. */
+function plainText(html: string): string {
+  return decodeHtmlText(stripHtml(dropScripts(html)));
+}
+
+/**
+ * A title from the feed's already XML-decoded field, read as HTML like a note is: markup gone, character
+ * references read once ("Q&amp;amp;A" in the feed is "Q&amp;A" here, and "Q&A" on the card), whitespace collapsed.
+ */
 function titleText(raw: string): string {
-  return decodeHtmlNames(stripHtml(dropScripts(raw)));
+  return decodeHtmlText(stripHtml(dropScripts(raw)));
 }
 
 const BLOCK_OPEN = /<(h[1-6]|p|li|div|br|tr|td|dd|dt)(?=[\s>/])[^<>]*>/gi;

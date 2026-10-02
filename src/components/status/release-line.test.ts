@@ -137,8 +137,11 @@ describe("the release line of a status card", () => {
     // The component list comes after the line, and shuts itself while the row is shut.
     expect(html.indexOf("data-release-line")).toBeLessThan(html.indexOf("Git operations"));
     expect(html.slice(html.indexOf("</summary>"))).toContain("[details:not([open])&gt;&amp;]:hidden");
-    // The summary gives its bottom padding and its minimum height to the line under it.
+    // The summary gives its bottom padding and its minimum height to the line under it, so the chevron moves
+    // down by half the top padding to stay on the middle of the text.
     expect(summary).toContain("pb-0");
+    expect(html).toContain("after:top-1/2");
+    expect(html).not.toContain("after:top-[calc(50%-0.25rem)]");
     expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).not.toContain(
       "min-h-(--row-h)",
     );
@@ -149,6 +152,7 @@ describe("the release line of a status card", () => {
     const html = render("gitlab", { components });
     expect(html).not.toContain("row-details-feed");
     expect(html).not.toContain("[details:not([open])");
+    expect(html).toContain("after:top-[calc(50%-0.25rem)]");
     expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).toContain(
       "min-h-(--row-h)",
     );

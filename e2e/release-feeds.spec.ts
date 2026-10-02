@@ -285,6 +285,43 @@ test("the line stays directly under the health line when the component list is o
   expect(withList).toBeGreaterThan(0);
 });
 
+test("the chevron sits on the same line of the row with or without a release line", async ({ page }) => {
+  await openBoard(page);
+  for (const width of [320, 390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    // The chevron's middle minus the middle of the name and health lines, for every row that opens.
+    const offsets = await page.evaluate(() => {
+      const found: Array<{ id: string | undefined; feed: boolean; offset: number }> = [];
+      for (const details of document.querySelectorAll("details.row-details")) {
+        const summary = details.querySelector("summary");
+        const name = summary?.querySelector("h3");
+        const health = summary?.querySelector("p");
+        if (!summary || !name || !health) continue;
+        const chevron = getComputedStyle(summary, "::after");
+        const middle =
+          summary.getBoundingClientRect().top + Number.parseFloat(chevron.top) + Number.parseFloat(chevron.height) / 2;
+        const lines = (name.getBoundingClientRect().top + health.getBoundingClientRect().bottom) / 2;
+        found.push({
+          id: details.closest("article")?.id,
+          feed: details.classList.contains("row-details-feed"),
+          offset: middle - lines,
+        });
+      }
+      return found;
+    });
+    expect(
+      offsets.some((row) => row.feed),
+      `a row with a feed and a list at ${width}px`,
+    ).toBe(true);
+    expect(
+      offsets.some((row) => !row.feed),
+      `a row with a list and no feed at ${width}px`,
+    ).toBe(true);
+    const spread = Math.max(...offsets.map((row) => row.offset)) - Math.min(...offsets.map((row) => row.offset));
+    expect(spread, `${width}px: ${JSON.stringify(offsets)}`).toBeLessThan(1.5);
+  }
+});
+
 test("on a touch screen the Details button has a 44px target and the line keeps its height", async ({ page }) => {
   await openBoard(page);
   await page.setViewportSize({ width: 390, height: 900 });
