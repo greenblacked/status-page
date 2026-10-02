@@ -1,19 +1,31 @@
 // tokens-allow: raw-color (the displacement filter's neutral grey is a map value, not a design colour)
 
+/** How many bubbles there are; src/background.css places each by its position among them. */
+const BUBBLES = 11;
+const BUBBLE_KEYS = Array.from({ length: BUBBLES }, (_, index) => `bubble-${index + 1}`);
+
 /**
- * The liquid-glass lenses behind the board: four static glass discs, each
- * drawing a copy of the aurora's colour and a soft caustic bent through
- * thick-glass refraction, with a coloured fringe at its rim. Static markup,
- * no state, and always rendered, so the server's HTML and the hydrated page
- * agree: src/background.css places and sizes them, and shows them only on the
- * Full background (Quiet and Glass hide the layer). Reduced motion stops only
- * the rim light's slow orbit; Reduce glass, prefers-reduced-transparency,
- * Increase Contrast and forced colours hide the whole layer.
+ * The bubbles behind the board: eleven small glass bubbles, each drawing a copy
+ * of the aurora's colour and a soft caustic bent through thin-glass refraction
+ * (`#lens-refract`), with a bright rim, an iridescent fringe, a crisp specular
+ * highlight and a softer reflection opposite it. Static markup, no state, and
+ * always rendered, so the server's HTML and the hydrated page agree. Where each
+ * bubble sits, how big it is and how it floats (its own path, pace and phase,
+ * all fixed numbers, never random) is in src/background.css, which also shows
+ * the layer only on the Full background (Quiet and Glass hide it) and gives
+ * laptop, tablet and phone widths their own places and fewer bubbles, so none
+ * sits over the margin column's bare text. On a phone the six that remain sit in
+ * the page's side gutters, where no text ever is.
+ *
+ * On Full, with a mouse or trackpad, each bubble drifts and breathes slowly,
+ * on transform alone and in pure CSS; touch screens and Reduce Motion keep
+ * them still. Reduce glass, prefers-reduced-transparency, Increase Contrast and
+ * forced colours hide the whole layer.
  *
  * `#lens-refract` is the filter each `.lens-fx` applies. Its displacement map
  * is /lens-map.png, baked by scripts/lens-map.mjs. The SVG holding it must stay
  * rendered, not display:none, or the filter does not resolve, so it is a
- * zero-size sibling of the lenses rather than inside them.
+ * zero-size sibling of the bubbles rather than inside them.
  */
 export function LensField() {
   return (
@@ -85,18 +97,11 @@ export function LensField() {
         </filter>
       </svg>
       <div className="lenses" aria-hidden>
-        <div className="lens">
-          <div className="lens-fx" />
-        </div>
-        <div className="lens">
-          <div className="lens-fx" />
-        </div>
-        <div className="lens">
-          <div className="lens-fx" />
-        </div>
-        <div className="lens">
-          <div className="lens-fx" />
-        </div>
+        {BUBBLE_KEYS.map((key) => (
+          <div key={key} className="lens">
+            <div className="lens-fx" />
+          </div>
+        ))}
       </div>
     </>
   );
