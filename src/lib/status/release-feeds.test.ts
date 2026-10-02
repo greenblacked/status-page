@@ -813,6 +813,13 @@ describe("reading one feed", () => {
       expect(result.bytes).toBe(HEAD_BYTES);
       expect(state.cancelled).toBe(true);
       expect(source("aws").head).toBeUndefined();
+
+      const oversized = streamed(new Uint8Array(MAX_BODY_BYTES * 2));
+      stubFetch({ [URLS.aws]: () => new Response(oversized.body) });
+      const refused = await readReleaseFeed(source("aws"));
+      expect(refused.ok).toBe(false);
+      expect(refused.failure?.message).toContain("larger than 4 MiB");
+      expect(oversized.state.cancelled).toBe(true);
     });
   });
 
