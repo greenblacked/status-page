@@ -1773,9 +1773,17 @@ test("shortens the search placeholder as the field docks, and restores it after 
   page,
 }) => {
   test.slow();
+  // Pin the page clock well inside a two-minute slot, past where the board's refetch can land (15 to 30 s in). A
+  // refetch in the middle of the test turns the bar's lead line to "Checking…" and back, which moves the field's
+  // slot from 40rem on; a field that is docked and has stopped follows its slot at once, without a move (the
+  // dock holds its transitions for two frames, data-instant), and a release in those frames would then be
+  // answered with the placeholder at once, as it should be for a field that did not move.
+  await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  // A check that starts with the page (a snapshot past its age) is done before the bar's lead line is relied on.
+  await expect(page.locator("[data-bar-lead]")).toHaveAttribute("data-state", "live");
   const { wide, moveStart } = await dockOffsets(page);
   test.skip(wide, "from 64rem there is no move in time, and the placeholder follows the field at once");
   const input = page.getByLabel("Search services");
