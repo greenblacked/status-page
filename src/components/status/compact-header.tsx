@@ -68,7 +68,9 @@ export const WIDE = "(min-width: 64rem)";
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
  * (a card moving to another section) has no resize to say so. While the bar's field can show, the first thing of
  * the board in view is therefore kept with its place in the document, and a frame whose scroll is exactly the
- * distance that place moved took the baseline along instead of counting travel.
+ * distance that place moved took the baseline along instead of counting travel. The limit: an adjustment reads as
+ * no travel only when it is the whole of a frame's scroll; one that lands in the same frame as the reader's own
+ * scroll (a board update during a drag or fling) is still counted as the reader's travel.
  *
  * Progress comes from window.scrollY against offsets measured when the layout changes, never from a rect
  * read on every frame (the one exception is that anchor's, only while `heroAway`). A resize that changes only
