@@ -41,6 +41,15 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
 }
 
+/**
+ * `serveBoard` only answers the client's server-function calls, and the first render comes from the server (live vendor data),
+ * so press Refresh to bring the fixture in, and wait for its headline before measuring anything.
+ */
+async function loadFixture(page: Page, headline: RegExp): Promise<void> {
+  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(headline);
+}
+
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
 function watchConsole(page: Page): string[] {
   const problems: string[] = [];
@@ -382,10 +391,19 @@ test.describe("styling", () => {
    */
   async function bubblesOnText(page: Page, anyHeight = false) {
     return page.evaluate((anyHeight) => {
-      const scrollsSideways = (element: Element) => {
-        for (let up: Element | null = element; up; up = up.parentElement)
-          if (/auto|scroll/.test(getComputedStyle(up).overflowX) && up.scrollWidth > up.clientWidth) return true;
-        return false;
+      // What of a text is actually painted: its sides cut at every ancestor that clips sideways (a strip that scrolls
+      // sideways, like the filter tabs on a narrow screen, runs its text out under the screen's edge by design, but is
+      // clipped at its own box). The part left, if any, is what a bubble can meet.
+      const painted = (element: Element, box: DOMRect) => {
+        let left = box.left;
+        let right = box.right;
+        for (let up: Element | null = element; up; up = up.parentElement) {
+          if (getComputedStyle(up).overflowX === "visible") continue;
+          const clip = up.getBoundingClientRect();
+          left = Math.max(left, clip.left);
+          right = Math.min(right, clip.right);
+        }
+        return right - left > 0.5 ? { left, right } : null;
       };
       const unit = Math.min(innerWidth, innerHeight) / 100;
       const sweeps = [...document.querySelectorAll<HTMLElement>(".lens")]
@@ -404,18 +422,18 @@ test.describe("styling", () => {
         if (!element || !node.textContent?.trim()) continue;
         if (element.closest(".surface, .sr-only, [aria-hidden=true], .float")) continue;
         if (getComputedStyle(element).visibility === "hidden") continue;
-        // Wherever the page is scrolled, a strip that scrolls sideways (the filter tabs, when they overflow a narrow screen)
-        // runs its text out under the screen's edge by design; it is clipped there, and the one place a bubble can meet it.
-        if (anyHeight && scrollsSideways(element)) continue;
         const range = document.createRange();
         range.selectNodeContents(node);
-        for (const box of range.getClientRects())
-          if (box.width > 0)
+        for (const box of range.getClientRects()) {
+          const sides = box.width > 0 ? painted(element, box) : null;
+          if (sides)
             texts.push({
               label: node.textContent.trim().slice(0, 24),
               ...box.toJSON(),
+              ...sides,
               ...(anyHeight ? { top: -Infinity, bottom: Infinity } : {}),
             });
+        }
       }
       const margin = [...document.querySelectorAll(".board-margin")].map((el) => el.getBoundingClientRect());
       const hits: string[] = [];
@@ -450,6 +468,7 @@ test.describe("styling", () => {
       await serveBoard(page, () => fixtureBoard(Date.now()));
       await page.goto("/");
       await hydrated(page);
+      await loadFixture(page, /Three things need a look\./);
       expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
       expect(await bubblesOnText(page)).toEqual([]);
     });
@@ -460,6 +479,7 @@ test.describe("styling", () => {
     await serveBoard(page, () => fixtureBoard(Date.now()));
     await page.goto("/");
     await hydrated(page);
+    await loadFixture(page, /Three things need a look\./);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     const boxes = await page.locator(".lens").evaluateAll((all) =>
       all.map((lens) => {
@@ -485,10 +505,10 @@ test.describe("styling", () => {
     [600, 900],
     [767, 1024],
   ] as const) {
-    for (const [shape, board] of [
-      ["the usual board", fixtureBoard],
-      ["a calm board", calmBoard],
-      ["the longest hero", longHeroBoard],
+    for (const [shape, board, headline] of [
+      ["the usual board", fixtureBoard, /Three things need a look\./],
+      ["a calm board", calmBoard, /Everything is up\./],
+      ["the longest hero", longHeroBoard, /Eleven things need a look\./],
     ] as const) {
       test(`at ${width}x${height} no bubble can reach any text, on ${shape}`, async ({ page }, testInfo) => {
         test.skip(testInfo.project.name !== "desktop", "one Chromium run covers the geometry");
@@ -496,6 +516,7 @@ test.describe("styling", () => {
         await serveBoard(page, () => board(Date.now()));
         await page.goto("/");
         await hydrated(page);
+        await loadFixture(page, headline);
         expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
         expect(await page.locator(".lens:visible").count()).toBe(6);
         expect(await bubblesOnText(page, true)).toEqual([]);
