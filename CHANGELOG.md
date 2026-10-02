@@ -20,7 +20,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
 - A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
-- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field a clear stretch below it; the field then rises with the page, and only when it reaches the bar does it merge into it. The field has its own clear button, a full-size touch target.
+- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field a clear stretch below it; the field then rises with the page, and only when it reaches the bar does it merge into it. Docked, the field sits exactly in the bar's slot. The field has its own clear button, a full-size touch target.
 - Every service whose official status page lists components now has the same dropdown on its row. "+N more" is now a "Show all N" button that opens the whole list and closes it again ("Show fewer"), keeping your place.
 - A card for a service with a problem lists its affected components first, then a collapsible "Working components · N".
 
@@ -46,8 +46,6 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
-- The search field should no longer jump when it docks into the bar on an iPhone (not yet confirmed on an iPhone). Safari drew its first frame of the move part way in, so the field seemed to snap most of the way and then slide; the move now waits 50 ms at its starting size before it begins, which absorbs the time Safari loses, then runs the same 180 ms.
-- The docked search field now sits exactly in the bar's slot. It was up to a pixel to the left of it, and a pixel too narrow or wide on a tablet, because the dock placed it by whole-pixel offsets; it is now placed by the slot's own box.
 - Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
 - A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.
 - Dates and times stay in English when the browser is set to another language; they still follow your time zone.
@@ -64,7 +62,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The summary says "2 outages", not "2 outage".
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
-- On an iPhone the search field no longer jumps or flickers as it docks into the bar while you scroll. It moves in with a short animation of its own instead of following your finger frame by frame, and Safari's toolbar sliding away or back no longer makes the page measure it again. Under Reduce Motion it steps in with no animation.
+- On an iPhone the search field no longer jumps or flickers as it docks into the bar while you scroll. It moves in with a short animation of its own instead of following your finger frame by frame, and Safari's toolbar sliding away or back no longer makes the page measure it again. The field now holds its starting size for 50 ms before it moves, so a slow first frame no longer shows it snapping part way in. Under Reduce Motion it steps in with no animation.
 - The "+N more" under a service counts every incident it has, not only the ones the board kept.
 - In Safari the board no longer jumps when a check adds a line to Recent changes above what you are reading, and the floating bar on a phone gets out of the way as soon as the headline grows under it.
 

@@ -76,8 +76,8 @@ function flipFill(chrome: HTMLElement, change: () => void): void {
  * visible is therefore tied to the scroll position on a phone. This hook only compares it with thresholds
  * (dockFrame), and the merge is a transition in time that CSS plays on the compositor, of transform and
  * opacity only, from the moment the threshold is crossed (data-docked on the dock and on the bar). The merge
- * waits DOCK_LEAD_MS first, drawing its start (the rest box) meanwhile, so a start the browser skips (WebKit's
- * compositor misses the first tens of ms on a phone) comes out of that wait and not out of the motion.
+ * waits DOCK_LEAD_MS first, drawing its start (the rest box) meanwhile, so that a start the browser draws late
+ * (seen on an iPhone, not yet confirmed fixed there) comes out of that wait and not out of the motion.
  *
  * Progress comes from window.scrollY against offsets measured when the layout changes, never from a rect
  * read on every frame. Every offset is worked out from `end`, the scroll position at which the field reaches

@@ -164,14 +164,14 @@
 
   /* A hairline is a device pixel: 0.5px on a 2x screen. */
   --hair: 1px;
-  /* Four durations: hover, press and the chevron; a reveal; the search field merging into the bar on a phone (DOCK_MS in dock.ts says the same); a pen stroke drawn once. */
+  /* Four durations: hover, press and the chevron; a reveal; the search field merging into the bar on a phone (DOCK_MS in dock.ts says the same, and --t-dock-lead below is the wait before it starts); a pen stroke drawn once. */
   --t-quick: 150ms;
   --t-reveal: 250ms;
   --t-dock: 180ms;
   /*
     The pause before the field's merge starts to move (DOCK_LEAD_MS in dock.ts says the same): three frames at 60Hz.
-    A transition shows its start value for its delay, and WebKit takes the time its compositor animation misses at
-    the start out of the delay, so a first frame drawn late on a phone is still the rest box, not part way in.
+    A transition shows its start value for its delay, so a first frame drawn late is meant to still be the rest
+    box, not part way in. The jump was seen on an iPhone; that this absorbs it is not yet confirmed on a device.
   */
   --t-dock-lead: 50ms;
   --t-draw: 400ms;
