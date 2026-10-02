@@ -324,6 +324,25 @@ export function revealFrame(
   return { heroAway: true, revealed, dir, pivot, lastY: y };
 }
 
+/**
+ * The state of the reveal once a field has the focus in the bar's copy, which shows it without a scroll: a run
+ * going up from `y`. Unchanged when the hero's field is not behind the bar (the copy cannot be reached then) or the
+ * copy is showing already. Pure.
+ */
+export function focusReveal(memo: RevealMemo, y: number): RevealMemo {
+  if (!memo.heroAway || memo.revealed) return memo;
+  return { ...memo, revealed: true, dir: "up", pivot: y, lastY: y };
+}
+
+/**
+ * Which search field a focus carried across the 64rem line belongs in. From 64rem the hero's field is the only
+ * one (docked in the bar, the bar's copy is not drawn). Below it, it is the hero's while that is in view and the
+ * bar's copy once the hero's is behind the bar (`heroAway`, read from the scroll position as it is now). Pure.
+ */
+export function crossingTarget({ wide, heroAway }: { wide: boolean; heroAway: boolean }): "hero" | "bar" {
+  return wide || !heroAway ? "hero" : "bar";
+}
+
 let quiet = false;
 let quietToken = 0;
 

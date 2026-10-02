@@ -3,12 +3,14 @@ import {
   BAR_RISE,
   clampScroll,
   createDockStore,
+  crossingTarget,
   DOCK_HYSTERESIS,
   DOCK_REST,
   type DockGeometry,
   type DockState,
   dockFrame,
   dockGeometry,
+  focusReveal,
   HIDE_DOWN_PX,
   quietScroll,
   quietScrolling,
@@ -589,6 +591,33 @@ describe("revealFrame", () => {
     const keep = { barShown: true, latched: false, keep: true };
     const kept = revealFrame(900, LIMIT, geometry, REVEAL_REST, keep);
     expect(revealFrame(900, LIMIT, geometry, kept, keep)).toBe(kept);
+  });
+});
+
+describe("focusReveal", () => {
+  const away: RevealMemo = { heroAway: true, revealed: false, dir: "down", pivot: 900, lastY: 880 };
+
+  it("shows the bar's field as a run going up from the position, once the hero's field is behind the bar", () => {
+    expect(focusReveal(away, 700)).toEqual({ heroAway: true, revealed: true, dir: "up", pivot: 700, lastY: 700 });
+  });
+
+  it("changes nothing while the hero's field is in view, or when the bar's is showing already", () => {
+    const home: RevealMemo = { ...REVEAL_REST, lastY: 40, pivot: 40 };
+    expect(focusReveal(home, 40)).toBe(home);
+    const showing: RevealMemo = { heroAway: true, revealed: true, dir: "up", pivot: 700, lastY: 710 };
+    expect(focusReveal(showing, 705)).toBe(showing);
+  });
+});
+
+describe("crossingTarget", () => {
+  it("is the hero's field from 64rem, whatever the scroll position says", () => {
+    expect(crossingTarget({ wide: true, heroAway: false })).toBe("hero");
+    expect(crossingTarget({ wide: true, heroAway: true })).toBe("hero");
+  });
+
+  it("is the hero's field below 64rem while it is in view, and the bar's copy once it is behind the bar", () => {
+    expect(crossingTarget({ wide: false, heroAway: false })).toBe("hero");
+    expect(crossingTarget({ wide: false, heroAway: true })).toBe("bar");
   });
 });
 

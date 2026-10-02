@@ -2201,6 +2201,212 @@ test("search reveal: the reader's scroll up to the hero lets the bar's field go,
   await expect(heroSearch(page)).toHaveValue("a");
 });
 
+// An iPad turned between upright and sideways crosses 64rem (the lg breakpoint) with the reader's hand in a field:
+// the field that was in use is hidden or out of reach in the other layout, so the typing goes to the one that is not.
+// Served board, room to stand on and no scroll anchoring, as above; each test opens the page at the width it starts at.
+const UPRIGHT = { width: 820, height: 900 };
+const SIDEWAYS = { width: 1280, height: 900 };
+
+/** Opens the served board at one size (and motion setting), armed, with room to scroll. */
+async function openCrossingBoard(page: Page, view: { width: number; height: number }, reduced: boolean): Promise<void> {
+  await page.emulateMedia({ reducedMotion: reduced ? "reduce" : "no-preference" });
+  await page.setViewportSize(view);
+  await pinToSlot(page);
+  await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
+  await leadSteady(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  await page.addStyleTag({
+    content: ".board-body { min-height: 3000px !important; } * { overflow-anchor: none !important; }",
+  });
+}
+
+/** Turns the device: resizes the viewport across 64rem and lets three frames pass. */
+async function turnTo(page: Page, view: { width: number; height: number }): Promise<void> {
+  await page.setViewportSize(view);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      ),
+  );
+}
+
+/** Types "abc" into the field in `focusable`, which gets focus, and selects the "b" backwards: a caret to carry over. */
+async function typeAndSelect(field: Locator): Promise<void> {
+  await field.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await field.page().keyboard.type("abc");
+  await field.evaluate((input) => (input as HTMLInputElement).setSelectionRange(1, 2, "backward"));
+}
+
+/** Both search fields, as a reader would find them: which has focus, what they hold and whether they can be used. */
+async function searchFields(page: Page) {
+  return page.evaluate(() => {
+    const hero = document.querySelector('[data-search-input="hero"]') as HTMLInputElement;
+    const bar = document.querySelector('[data-search-input="bar"]') as HTMLInputElement;
+    const section = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const active = document.activeElement as HTMLElement | null;
+    const reachable = (input: HTMLInputElement) =>
+      input.closest("[inert]") === null && input.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+    const onScreen = (input: HTMLInputElement) => {
+      const box = input.getBoundingClientRect();
+      return box.width > 0 && box.bottom > 0 && box.top < window.innerHeight;
+    };
+    const selection = (input: HTMLInputElement) => [input.selectionStart, input.selectionEnd, input.selectionDirection];
+    return {
+      active: active?.dataset?.searchInput ?? active?.tagName ?? null,
+      wide: matchMedia("(min-width: 64rem)").matches,
+      scrollY: window.scrollY,
+      heroValue: hero.value,
+      barValue: bar.value,
+      heroSelection: selection(hero),
+      barSelection: selection(bar),
+      heroOnScreen: onScreen(hero),
+      heroReachable: reachable(hero),
+      barReachable: reachable(bar),
+      barRevealed: section.hasAttribute("data-revealed"),
+      barShown: section.getAttribute("data-shown"),
+    };
+  });
+}
+
+for (const reduced of [false, true]) {
+  const motion = reduced ? ", under Reduce Motion" : "";
+
+  test(`search reveal: turning sideways with the bar's field in use moves the typing to the docked field${motion}`, async ({
+    page,
+  }) => {
+    test.slow();
+    await openCrossingBoard(page, UPRIGHT, reduced);
+    const offsets = await dockOffsets(page);
+    const y0 = await scrollDeep(page, { ...offsets, limit: await maxScroll(page) });
+    await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+    await expectRevealed(page, true);
+    await barFieldSettled(page);
+    await typeAndSelect(barSearch(page));
+    await expect(barSearch(page)).toBeFocused();
+    await turnTo(page, SIDEWAYS);
+    // The bar's copy is hidden in the wide layout (lg:hidden): the docked field has the focus, the text and the caret.
+    await expect(heroSearch(page)).toBeFocused();
+    expect(await searchFields(page)).toMatchObject({
+      active: "hero",
+      wide: true,
+      heroValue: "abc",
+      barValue: "abc",
+      heroSelection: [1, 2, "backward"],
+      heroOnScreen: true,
+      heroReachable: true,
+      barRevealed: false,
+    });
+    expect(await dockValue(page)).toBe(1);
+    // Typing goes on where the caret was: the selected "b" is replaced.
+    await page.keyboard.type("d");
+    await expect(heroSearch(page)).toHaveValue("adc");
+    await expect(barSearch(page)).toHaveValue("adc");
+  });
+
+  test(`search reveal: turning upright with the docked field in use moves the typing to the bar's, which is revealed${motion}`, async ({
+    page,
+  }) => {
+    test.slow();
+    await openCrossingBoard(page, SIDEWAYS, reduced);
+    const y = 900;
+    await scrollAndSettle(page, y);
+    expect(await dockValue(page)).toBe(1);
+    await typeAndSelect(heroSearch(page));
+    await expect(heroSearch(page)).toBeFocused();
+    await turnTo(page, UPRIGHT);
+    // Upright, the hero's field is far above the page's position: the bar's copy is the one in reach.
+    const upright = await dockOffsets(page);
+    expect(y, "the page is past the hero's field in the upright layout").toBeGreaterThan(
+      upright.revealFrom + DOCK_HYSTERESIS,
+    );
+    await expect(barSearch(page)).toBeFocused();
+    await barFieldSettled(page);
+    expect(await searchFields(page)).toMatchObject({
+      active: "bar",
+      wide: false,
+      heroValue: "abc",
+      barValue: "abc",
+      barSelection: [1, 2, "backward"],
+      barReachable: true,
+      barRevealed: true,
+      barShown: "true",
+    });
+    await page.keyboard.type("d");
+    await expect(barSearch(page)).toHaveValue("adc");
+    await expect(heroSearch(page)).toHaveValue("adc");
+    // And it stays: the field in use is not let go of by the frames after the turn.
+    await scrollAndSettle(page, y);
+    await expect(barSearch(page)).toBeFocused();
+    await expectRevealed(page, true);
+  });
+}
+
+test("search reveal: turning sideways at the top of the page keeps the typing in the hero's field", async ({
+  page,
+}) => {
+  test.slow();
+  await openCrossingBoard(page, UPRIGHT, false);
+  await typeAndSelect(heroSearch(page));
+  await turnTo(page, SIDEWAYS);
+  await expect(heroSearch(page)).toBeFocused();
+  expect(await searchFields(page)).toMatchObject({
+    active: "hero",
+    wide: true,
+    heroValue: "abc",
+    heroSelection: [1, 2, "backward"],
+    heroOnScreen: true,
+    barRevealed: false,
+    scrollY: 0,
+  });
+  await page.keyboard.type("d");
+  await expect(heroSearch(page)).toHaveValue("adc");
+});
+
+test("search reveal: turning upright at the top of the page keeps the typing in the hero's field, in view", async ({
+  page,
+}) => {
+  test.slow();
+  await openCrossingBoard(page, SIDEWAYS, false);
+  await typeAndSelect(heroSearch(page));
+  await turnTo(page, UPRIGHT);
+  await expect(heroSearch(page)).toBeFocused();
+  const upright = await searchFields(page);
+  expect(upright).toMatchObject({
+    active: "hero",
+    wide: false,
+    heroValue: "abc",
+    heroSelection: [1, 2, "backward"],
+    heroOnScreen: true,
+    barRevealed: false,
+    barReachable: false,
+    scrollY: 0,
+  });
+  await page.keyboard.type("d");
+  await expect(heroSearch(page)).toHaveValue("adc");
+  await expect(barSearch(page)).toHaveValue("adc");
+  expect(await searchFields(page)).toMatchObject({ active: "hero", barRevealed: false, barReachable: false });
+});
+
+test("search reveal: turning the device takes no focus when neither search field has it", async ({ page }) => {
+  test.slow();
+  await openCrossingBoard(page, SIDEWAYS, false);
+  await scrollAndSettle(page, 900);
+  // The Refresh that loaded the served board is still focused: let go, so that nothing is.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await turnTo(page, UPRIGHT);
+  await barFieldSettled(page);
+  expect(await searchFields(page)).toMatchObject({ active: "BODY", wide: false, barRevealed: false });
+  await turnTo(page, SIDEWAYS);
+  expect(await searchFields(page)).toMatchObject({ active: "BODY", wide: true, barRevealed: false });
+  // Nor does it leave the dock or the bar in a state a scroll has to repair: a scroll up upright reveals as usual.
+  await turnTo(page, UPRIGHT);
+  const y = await page.evaluate(() => window.scrollY);
+  await scrollAndSettle(page, y - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  expect((await searchFields(page)).active).toBe("BODY");
+});
+
 test("search reveal: a query typed in the hero's field shows in the bar's, which then stays revealed", async ({
   page,
 }) => {

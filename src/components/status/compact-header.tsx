@@ -4,12 +4,14 @@ import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
   clampScroll,
+  crossingTarget,
   DOCK_REST,
   type DockGeometry,
   type DockState,
   type DockStore,
   dockFrame,
   dockGeometry,
+  focusReveal,
   quietScrolling,
   REVEAL_REST,
   type RevealMemo,
@@ -44,6 +46,23 @@ export function useDockSelect<T extends boolean | number | string>(
   );
 }
 
+/**
+ * Moves the focus from one search field to the other, with the caret or the selection and its direction (the text is
+ * the one query both show). The page stays where it is: the field being left is why the reader is where they are.
+ */
+function handFocus(from: HTMLInputElement, to: HTMLInputElement): void {
+  const { selectionStart, selectionEnd, selectionDirection } = from;
+  to.focus({ preventScroll: true });
+  if (selectionStart !== null && selectionEnd !== null)
+    to.setSelectionRange(selectionStart, selectionEnd, selectionDirection ?? undefined);
+}
+
+/** The search field that has focus, if one does. */
+function searchFieldInHand(): HTMLInputElement | null {
+  const focused = document.activeElement;
+  return focused instanceof HTMLInputElement && focused.hasAttribute("data-search-input") ? focused : null;
+}
+
 /** The width from which the search field shares a row with the filter chips (Tailwind's lg). */
 export const WIDE = "(min-width: 64rem)";
 
@@ -68,6 +87,11 @@ export const WIDE = "(min-width: 64rem)";
  *     filter shortens the board and the page ends up above `revealFrom` without the reader scrolling (`readerMoved`),
  *     the focus, the text and the caret of the bar's field move to the hero's, which is then in view. The reader's
  *     own scroll up past `revealFrom` lets the bar's field go (a blur) as it always did.
+ *   - The same hand-over when the screen crosses 64rem (an iPad turned) with a field in use. The field that was in use
+ *     is hidden (the bar's copy from 64rem up) or out of reach (the hero's, scrolled away, below it), so the reveal
+ *     is read again from the scroll position as it is now, not from the reset the crossing leaves, and the focus,
+ *     the text and the caret go to the field that is there (`crossingTarget`): the docked one from 64rem, below it
+ *     the hero's while in view and otherwise the bar's copy, revealed. A crossing with no field in use moves no focus.
  *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
@@ -142,6 +166,12 @@ export function useSearchDock({
     let travelFrom: number | null = null;
     let anchorShift = 0;
     let memo: RevealMemo = REVEAL_REST;
+    // The search field that had focus when the screen crossed 64rem, until its focus has been handed to the field
+    // that is there (below 64rem that waits for the bar's copy to be reachable: a render or two) or given up on.
+    let crossing: { from: HTMLInputElement; frames: number; orphan: boolean } | null = null;
+    // A search field the browser let go of because the new layout hides it, seen by `onFocusOut` while the screen has
+    // crossed 64rem and this hook has not yet taken that in. Under load that can come before the media query's event.
+    let dropped: HTMLInputElement | null = null;
     // The board's first thing in view, and its offset in the document at the last reading (see `anchorMoved`).
     let anchor: { element: Element; offset: number } | null = null;
     const board = host.querySelector("main");
@@ -268,9 +298,9 @@ export function useSearchDock({
         }
       }
     };
-    /** The other layout's marks, which a change across the 64rem line leaves behind. */
-    const clearMarks = () => {
-      if (laidOutWide === wide.matches) return;
+    /** The other layout's marks, which a change across the 64rem line leaves behind. True if the line was crossed. */
+    const clearMarks = (): boolean => {
+      if (laidOutWide === wide.matches) return false;
       laidOutWide = wide.matches;
       if (!wide.matches) {
         for (const name of ["--dock", "--dock-x", "--dock-w"]) dock.style.removeProperty(name);
@@ -280,6 +310,37 @@ export function useSearchDock({
       }
       memo = REVEAL_REST;
       lastP = -1;
+      return true;
+    };
+    /**
+     * Hands the focus of a field in use across the 64rem line to the field that is there (see the hook's notes).
+     * Called at the end of a frame, once the reveal is read from the scroll position: it is done there when the target
+     * is the one that has focus or can take it, waits a few frames for the bar's copy to be rendered reachable
+     * (its markup is `inert` until `heroAway` has reached it), and is dropped when focus has moved on by itself.
+     */
+    const settleCrossing = (heroAway: boolean) => {
+      const held = crossing;
+      if (!held) return;
+      const to = document.querySelector(`[data-search-input="${crossingTarget({ wide: wide.matches, heroAway })}"]`);
+      const active = document.activeElement;
+      // A field the browser had already let go of (orphan) leaves the focus on the body, which is not a move of its own.
+      const still = active === held.from || (held.orphan && (active === null || active === document.body));
+      if (!(to instanceof HTMLInputElement) || !held.from.isConnected || !still) {
+        crossing = null;
+        return;
+      }
+      if (to === held.from) {
+        crossing = null;
+        return;
+      }
+      if (to.closest("[inert]") || !to.checkVisibility()) {
+        // Not yet: the render of the reveal is on its way. Give up after a dozen frames rather than wait on for ever.
+        if (++held.frames > 12) crossing = null;
+        else schedule();
+        return;
+      }
+      crossing = null;
+      handFocus(held.from, to);
     };
     const frame = () => {
       raf = 0;
@@ -305,6 +366,7 @@ export function useSearchDock({
         memo = REVEAL_REST;
         anchor = null;
         store.set({ barShown: next.barShown, docked: next.docked, heroAway: false, revealed: false });
+        settleCrossing(false);
         return;
       }
       // The page got longer or shorter since it was last measured (a filter removed cards): the position it now has
@@ -325,17 +387,16 @@ export function useSearchDock({
       }
       if (quietScrolling()) rebase(y);
       // Focus in the bar's field shows it without a scroll (SearchInput, onFocus): take that up as a run going up.
-      if (prev.revealed && !memo.revealed && memo.heroAway) {
-        const at = clampScroll(y, maxScroll);
-        memo = { ...memo, revealed: true, dir: "up", pivot: at, lastY: at };
-      }
+      if (prev.revealed && !memo.revealed) memo = focusReveal(memo, clampScroll(y, maxScroll));
       // A scroll that is exactly the distance the board's anchor moved is the browser's scroll anchoring holding
       // the reader's place, not the reader: no direction (a scroll the reader makes moves the page, not the anchor).
       if (memo.heroAway && Math.abs(shift) >= 1 && Math.abs(clampScroll(y, maxScroll) - from - shift) < 1.5) rebase(y);
       const focused = document.activeElement;
+      // A field in use holds the rule where it is, except across the 64rem line: the reset that leaves is no state to
+      // hold, and the field is about to be handed to the one that is there.
       const latched =
         !armed ||
-        (focused instanceof Element && focused.hasAttribute("data-search-input")) ||
+        (!crossing && focused instanceof Element && focused.hasAttribute("data-search-input")) ||
         document.querySelector("dialog[open]") !== null;
       const wasAway = memo.heroAway;
       // Whether the page is where the reader took it, or where the layout left it. Read before the frame's own
@@ -355,6 +416,10 @@ export function useSearchDock({
       travelFrom = null;
       anchorShift = 0;
       memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep });
+      // The bar's copy is where the field in use is going, and it shows when a field in it has focus.
+      if (crossing && crossingTarget({ wide: false, heroAway: memo.heroAway }) === "bar") {
+        memo = focusReveal(memo, clampScroll(y, maxScroll));
+      }
       // The hero's field is back in view and the bar's copy, which still had focus, is inert from here: the bar
       // must not stay up over the hero for a focus it holds, and the two fields are never on screen together.
       if (wasAway && !memo.heroAway && barFocused) {
@@ -365,10 +430,7 @@ export function useSearchDock({
         } else {
           // The layout did (a filter shortened the board): the reader is still typing, so the focus, the text and
           // the caret go to the hero's field, which is in view.
-          const { selectionStart, selectionEnd, selectionDirection } = focused;
-          hero.focus();
-          if (selectionStart !== null && selectionEnd !== null)
-            hero.setSelectionRange(selectionStart, selectionEnd, selectionDirection ?? undefined);
+          handFocus(focused, hero);
         }
       }
       // The anchor is read while the bar's field can show, so that the next frame can tell how far it moved.
@@ -378,6 +440,7 @@ export function useSearchDock({
         if (element) anchor = { element, offset: element.getBoundingClientRect().top + window.scrollY };
       }
       store.set({ barShown: next.barShown, docked: false, heroAway: memo.heroAway, revealed: memo.revealed });
+      settleCrossing(memo.heroAway);
     };
     const schedule = () => {
       if (alive && !raf) raf = requestAnimationFrame(frame);
@@ -385,8 +448,16 @@ export function useSearchDock({
     pokeRef.current = schedule;
     const remeasure = () => {
       if (!alive) return;
+      // Before anything below lays the page out again: the media query and the resize event come before the browser
+      // lets go of the focus of a field that the new layout hides.
+      const inHand = searchFieldInHand();
+      const orphan = inHand ? null : dropped;
+      dropped = null;
       measure();
-      clearMarks();
+      if (clearMarks()) {
+        const from = inHand ?? orphan;
+        if (from) crossing = { from, frames: 0, orphan: from === orphan };
+      }
       rebase(window.scrollY);
       // Now, not on the next frame: a hero that has just grown (the board's answer names more services, the live
       // line wraps to another line) has moved its last line under a bar that is already up. This runs after the
@@ -413,7 +484,15 @@ export function useSearchDock({
       remeasure();
     };
     // A field losing focus ends the hold on the rule: the page may have moved while it had it (the keyboard).
-    const onFocusOut = () => {
+    const onFocusOut = (event: FocusEvent) => {
+      const { target, relatedTarget } = event;
+      if (
+        wide.matches !== laidOutWide &&
+        relatedTarget === null &&
+        target instanceof HTMLInputElement &&
+        target.hasAttribute("data-search-input")
+      )
+        dropped = target;
       rebase(window.scrollY);
       schedule();
     };
@@ -440,6 +519,7 @@ export function useSearchDock({
     }
     return () => {
       alive = false;
+      crossing = null;
       pokeRef.current = () => {};
       window.removeEventListener("load", arm);
       cancelAnimationFrame(armFrames);
@@ -465,6 +545,8 @@ export function useSearchDock({
  * until a scroll up reveals it (data-revealed, from the dock's state); the hero's
  * field is then ordinary content. From 64rem the slot is empty: the hero's own
  * field docks into it.
+ * A turn across 64rem with a field in use moves the focus to the field that is
+ * there (see useSearchDock), since the copy is not drawn from 64rem up.
  *
  * Hidden, it is `inert`, so Tab never lands on a control nobody can see
  * and the skip link stays the first stop. It stays put while keyboard
