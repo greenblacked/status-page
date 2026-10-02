@@ -5,18 +5,33 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CONSECUTIVE_RUNS,
+  PENDING_MAX_AGE_MS,
+  type Pending,
+  parseState,
+  planRun,
   probeReadyz,
   type ReadyzResult,
   type Result,
   recordPath,
   recordResponses,
+  renderState,
+  retryDelayMs,
   syncDeployHealth,
   syncIssues,
 } from "./source-health.ts";
 
 // A fake of the three GitHub issue endpoints the script uses, so the
 // open/update/close flow is tested before it ever runs against the real API.
-type FakeIssue = { number: number; state: string; labels: string[]; title: string; body: string; created_at: string };
+type FakeIssue = {
+  number: number;
+  state: string;
+  state_reason?: string;
+  labels: string[];
+  title: string;
+  body: string;
+  created_at: string;
+};
 let issues: FakeIssue[] = [];
 let comments: { issue: number; body: string }[] = [];
 let server: Server;
@@ -40,7 +55,11 @@ beforeAll(async () => {
       const wanted = (url.searchParams.get("labels") ?? "").split(",");
       return send(
         200,
-        issues.filter((i) => i.state === url.searchParams.get("state") && wanted.every((l) => i.labels.includes(l))),
+        issues.filter(
+          (i) =>
+            (url.searchParams.get("state") === "all" || i.state === url.searchParams.get("state")) &&
+            wanted.every((l) => i.labels.includes(l)),
+        ),
       );
     }
     if (req.method === "POST" && url.pathname.endsWith("/issues")) {
@@ -92,30 +111,174 @@ const broken: Result = {
 };
 const healthy: Result = { ...broken, ok: true, failure: undefined };
 
+const sourceIssues = () => issues.filter((i) => i.labels.includes("source-health"));
+const stateIssues = () => issues.filter((i) => i.labels.includes("source-health-state"));
+
 describe("source-health issue sync", () => {
-  it("opens one labelled issue for a failing source, then updates it instead of opening another", async () => {
+  it("holds a first failure back, then opens one labelled issue on the second and updates it on the third", async () => {
     await syncIssues([broken]);
+    expect(sourceIssues()).toHaveLength(0);
+
     await syncIssues([broken]);
-    expect(issues).toHaveLength(1);
-    expect(issues[0].title).toBe("Collector failure: Apple");
-    expect(issues[0].labels).toEqual(["source-health", "source:apple"]);
-    expect(issues[0].body).toContain("`parser`");
-    expect(issues[0].body).toContain("/owner/repo/actions/runs/42");
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].title).toBe("Collector failure: Apple");
+    expect(sourceIssues()[0].labels).toEqual(["source-health", "source:apple"]);
+    expect(sourceIssues()[0].body).toContain("`parser`");
+    expect(sourceIssues()[0].body).toContain("/owner/repo/actions/runs/42");
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+
+    await syncIssues([broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 3 |");
     expect(comments).toHaveLength(0);
+  });
+
+  it("dates the first failure from the run that saw it, not from when the issue opened", async () => {
+    const first = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await syncIssues([broken]);
+    const [state] = stateIssues();
+    state.body = renderState(new Map([["apple", { firstFailure: first, lastFailure: first, runs: 1 }]]));
+    await syncIssues([broken]);
+    expect(sourceIssues()[0].body).toContain(`| First failure | ${first} |`);
+    expect(sourceIssues()[0].body).not.toMatch(/First failure \| (.+) \|\n\| Latest failure \| \1 \|/);
+  });
+
+  it("opens nothing for a source that fails once and then reads cleanly", async () => {
+    await syncIssues([broken]);
+    await syncIssues([healthy]);
+    await syncIssues([broken]);
+    expect(sourceIssues()).toHaveLength(0);
+    expect(comments).toHaveLength(0);
+  });
+
+  it("keeps its memory in one closed state issue that is edited, never duplicated", async () => {
+    await syncIssues([broken]);
+    await syncIssues([broken]);
+    await syncIssues([healthy]);
+    expect(stateIssues()).toHaveLength(1);
+    expect(stateIssues()[0].state).toBe("closed");
+    expect(stateIssues()[0].state_reason).toBe("not_planned");
+    expect(parseState(stateIssues()[0].body).size).toBe(0);
   });
 
   it("comments and closes the issue once the source recovers", async () => {
     await syncIssues([broken]);
+    await syncIssues([broken]);
     await syncIssues([healthy]);
-    expect(issues[0].state).toBe("closed");
+    expect(sourceIssues()[0].state).toBe("closed");
     expect(comments).toHaveLength(1);
     expect(comments[0].body).toContain("Recovered");
+  });
+
+  it("starts the count over after a clean run", async () => {
+    await syncIssues([broken]);
+    await syncIssues([broken]);
+    await syncIssues([healthy]);
+    await syncIssues([broken]);
+    expect(sourceIssues().filter((i) => i.state === "open")).toHaveLength(0);
+  });
+
+  it("counts each source on its own", async () => {
+    const other: Result = { ...broken, id: "orange", name: "Orange" };
+    await syncIssues([broken, { ...other, ok: true, failure: undefined }]);
+    await syncIssues([broken, other]);
+    expect(sourceIssues().map((i) => i.title)).toEqual(["Collector failure: Apple"]);
   });
 
   it("does nothing for a healthy source with no open issue", async () => {
     await syncIssues([healthy]);
     expect(issues).toHaveLength(0);
     expect(comments).toHaveLength(0);
+  });
+});
+
+describe("planRun", () => {
+  const now = "2026-10-02T12:00:00.000Z";
+  const earlier = (ms: number) => new Date(Date.parse(now) - ms).toISOString();
+  const entry = (ago: number, runs = 1): Pending => ({ firstFailure: earlier(ago), lastFailure: earlier(ago), runs });
+  const source = (id: string, ok: boolean): Result => ({
+    ...broken,
+    id,
+    name: id,
+    ok,
+    failure: ok ? undefined : broken.failure,
+  });
+
+  it("remembers a first failure without allowing an issue", () => {
+    const { next, mayOpen } = planRun([source("a", false)], new Map(), now);
+    expect([...mayOpen]).toEqual([]);
+    expect(next.get("a")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
+  });
+
+  it("allows an issue once the source has failed in CONSECUTIVE_RUNS runs, keeping the first failure time", () => {
+    expect(CONSECUTIVE_RUNS).toBe(2);
+    const before = entry(60 * 60 * 1000);
+    const { next, mayOpen } = planRun([source("a", false)], new Map([["a", before]]), now);
+    expect([...mayOpen]).toEqual(["a"]);
+    expect(next.get("a")).toEqual({ firstFailure: before.firstFailure, lastFailure: now, runs: 2 });
+  });
+
+  it("forgets a source that read cleanly or left the catalog", () => {
+    const { next } = planRun(
+      [source("a", true)],
+      new Map([
+        ["a", entry(1000)],
+        ["gone", entry(1000)],
+      ]),
+      now,
+    );
+    expect(next.size).toBe(0);
+  });
+
+  it("treats a failure remembered longer ago than the maximum age as a new one", () => {
+    const { next, mayOpen } = planRun([source("a", false)], new Map([["a", entry(PENDING_MAX_AGE_MS + 1000, 5)]]), now);
+    expect(mayOpen.size).toBe(0);
+    expect(next.get("a")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
+  });
+
+  it("still counts a failure remembered exactly at the maximum age", () => {
+    const { mayOpen } = planRun([source("a", false)], new Map([["a", entry(PENDING_MAX_AGE_MS)]]), now);
+    expect(mayOpen.has("a")).toBe(true);
+  });
+});
+
+describe("failure memory", () => {
+  it("round-trips through the issue body", () => {
+    const state = new Map<string, Pending>([
+      ["a", { firstFailure: "2026-10-02T10:00:00.000Z", lastFailure: "2026-10-02T11:00:00.000Z", runs: 2 }],
+    ]);
+    expect(parseState(renderState(state))).toEqual(state);
+    expect(parseState(renderState(state).replaceAll("\n", "\r\n"))).toEqual(state);
+  });
+
+  it("reads anything unusable as no memory, and skips malformed entries", () => {
+    expect(parseState(undefined).size).toBe(0);
+    expect(parseState("no code block").size).toBe(0);
+    expect(parseState("```json\nnot json\n```").size).toBe(0);
+    expect(parseState("```json\n[1]\n```").size).toBe(0);
+    const body =
+      '```json\n{"bad":{"firstFailure":"x","lastFailure":"y","runs":1},"zero":{"firstFailure":"2026-10-02T10:00:00Z","lastFailure":"2026-10-02T10:00:00Z","runs":0},"__proto__":null,"ok":{"firstFailure":"2026-10-02T10:00:00Z","lastFailure":"2026-10-02T10:00:00Z","runs":3}}\n```';
+    expect([...parseState(body).keys()]).toEqual(["ok"]);
+  });
+});
+
+describe("retryDelayMs", () => {
+  const fail = (kind: "http" | "timeout" | "network" | "parser"): Result => ({
+    ...broken,
+    failure: { kind, message: "x" },
+  });
+
+  it("waits the short delay after the first attempt", () => {
+    expect(retryDelayMs(1, [fail("timeout")], 20, 90)).toBe(20);
+  });
+
+  it("waits the long delay after later attempts while a source times out or cannot connect", () => {
+    expect(retryDelayMs(2, [fail("timeout")], 20, 90)).toBe(90);
+    expect(retryDelayMs(2, [fail("parser"), fail("network")], 20, 90)).toBe(90);
+  });
+
+  it("keeps the short delay for failures that waiting does not clear", () => {
+    expect(retryDelayMs(2, [fail("parser"), fail("http")], 20, 90)).toBe(20);
   });
 });
 
@@ -149,7 +312,14 @@ describe("deploy-health issue sync", () => {
 
   it("leaves collector issues alone", async () => {
     await syncIssues([broken]);
+    await syncIssues([broken]);
     await syncDeployHealth(ready);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].state).toBe("open");
+  });
+
+  it("opens on the first failure, with no second run needed", async () => {
+    await syncDeployHealth(notReady);
     expect(issues).toHaveLength(1);
     expect(issues[0].state).toBe("open");
   });

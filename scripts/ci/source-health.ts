@@ -5,6 +5,12 @@
 // that fails, and, with --issues, keeps exactly one GitHub issue open per
 // broken source, closing it again when the source reads cleanly.
 //
+// A source gets an issue only after it has failed in two consecutive runs
+// (CONSECUTIVE_RUNS): vendor status pages time out from the runner for an
+// hour now and then, and an issue that opens and closes itself is noise. The
+// first failing run is remembered in a closed `source-health-state` issue
+// (see loadState), so no new permission or infrastructure is needed.
+//
 // Local:  node --experimental-strip-types scripts/ci/source-health.ts
 //         (exits 1 when any source fails)
 // CI:     ... scripts/ci/source-health.ts --issues
@@ -26,6 +32,15 @@ import type { ServiceSnapshot, SourceFailure } from "../../src/lib/status/types.
 
 const ATTEMPTS = Number(process.env.SOURCE_HEALTH_ATTEMPTS ?? 3);
 const RETRY_DELAY_MS = Number(process.env.SOURCE_HEALTH_RETRY_MS ?? 20_000);
+// A timeout or a network error is the failure that clears on its own, but
+// not within 20 seconds: from the third attempt on, wait this long instead.
+// Attempts at 0s, 20s and 110s span about two minutes of vendor trouble.
+const SLOW_RETRY_MS = Number(process.env.SOURCE_HEALTH_SLOW_RETRY_MS ?? 90_000);
+// A source must fail in this many consecutive runs before it gets an issue.
+export const CONSECUTIVE_RUNS = 2;
+// A remembered first failure older than this (runs start every few hours,
+// delayed by GitHub's cron) is stale: the next failure starts over.
+export const PENDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 // When this share of sources fails together, the runner's network is a far
 // likelier cause than a dozen vendors breaking in the same hour. Opening a
 // dozen issues would be noise, so fail the job instead.
@@ -42,6 +57,22 @@ export type Result = {
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * How long to wait after a failed attempt: RETRY_DELAY_MS after the first
+ * one, and SLOW_RETRY_MS after any later one while a failing source timed
+ * out or could not connect. A parser or HTTP error does not clear by
+ * waiting longer, so those keep the short delay.
+ */
+export function retryDelayMs(
+  attempt: number,
+  failing: Result[],
+  fastMs: number = RETRY_DELAY_MS,
+  slowMs: number = SLOW_RETRY_MS,
+): number {
+  const transient = failing.some((r) => r.failure?.kind === "timeout" || r.failure?.kind === "network");
+  return transient && attempt >= 2 ? slowMs : fastMs;
+}
 
 async function probe(): Promise<Result[]> {
   const results = new Map<string, Result>();
@@ -61,10 +92,11 @@ async function probe(): Promise<Result[]> {
     }
     const stillFailing = [...results.values()].filter((result) => !result.ok);
     if (stillFailing.length === 0 || attempt === ATTEMPTS) break;
+    const delayMs = retryDelayMs(attempt, stillFailing);
     console.log(
-      `attempt ${attempt}: ${stillFailing.map((r) => r.id).join(", ")} failed; retrying in ${RETRY_DELAY_MS / 1000}s`,
+      `attempt ${attempt}: ${stillFailing.map((r) => r.id).join(", ")} failed; retrying in ${delayMs / 1000}s`,
     );
-    await sleep(RETRY_DELAY_MS);
+    await sleep(delayMs);
   }
   return [...results.values()];
 }
@@ -165,7 +197,7 @@ export function recordResponses(dir: string): () => void {
 
 // ---------------------------------------------------------------- GitHub ---
 
-type Issue = { number: number; created_at: string; pull_request?: unknown };
+type Issue = { number: number; created_at: string; body?: string | null; pull_request?: unknown };
 
 function env(name: string): string {
   const value = process.env[name];
@@ -197,7 +229,7 @@ function runUrl(): string {
   return `${server}/${env("GITHUB_REPOSITORY")}/actions/runs/${env("GITHUB_RUN_ID")}`;
 }
 
-function issueBody(result: Result, firstFailure: string, now: string): string {
+function issueBody(result: Result, runs: number, firstFailure: string, now: string): string {
   const failure = result.failure;
   const parserNote =
     failure?.kind === "parser"
@@ -205,7 +237,7 @@ function issueBody(result: Result, firstFailure: string, now: string): string {
       : "`http`, `timeout` and `network` failures are often on the vendor's side and clear by themselves. If this stays open for hours, check whether the official endpoint moved.";
   return [
     `<!-- source-health:${result.id} -->`,
-    `The scheduled source-health check could not read the official status source for **${result.name}** in ${result.attempts} consecutive attempts.`,
+    `The scheduled source-health check could not read the official status source for **${result.name}** in ${runs} consecutive runs, and in all ${result.attempts} attempts of the latest one.`,
     "",
     "| | |",
     "| --- | --- |",
@@ -214,18 +246,127 @@ function issueBody(result: Result, firstFailure: string, now: string): string {
     `| Error | \`${inline(failure?.message ?? "none recorded")}\` |`,
     `| First failure | ${firstFailure} |`,
     `| Latest failure | ${now} |`,
+    `| Failing runs in a row | ${runs} |`,
     `| Latest run | ${runUrl()} |`,
     "",
     parserNote,
     "",
-    "This issue is maintained by `.github/workflows/source-health.yml`. It updates on each failing run and closes itself when the source reads cleanly again.",
+    `This issue is maintained by \`.github/workflows/source-health.yml\`. It opens only after the source has failed in ${CONSECUTIVE_RUNS} consecutive runs, updates on each failing run and closes itself when the source reads cleanly again.`,
   ].join("\n");
+}
+
+// ----------------------------------------------------- failing-run state ---
+
+// What a run remembers about a source that is failing but has no issue yet.
+export type Pending = {
+  /** The first run of this streak of failures. */
+  firstFailure: string;
+  /** The latest failing run. */
+  lastFailure: string;
+  /** How many consecutive runs have failed. */
+  runs: number;
+};
+
+/**
+ * Decides, from this run's results and what earlier runs remembered, which
+ * failing sources may now get an issue. Pure, so the rule is tested without
+ * GitHub. `next` is what to remember for the next run: one entry per source
+ * failing now, none for a source that read cleanly (its streak is over) or
+ * that has left the catalog. A remembered failure older than
+ * PENDING_MAX_AGE_MS starts a new streak.
+ */
+export function planRun(
+  results: Result[],
+  previous: ReadonlyMap<string, Pending>,
+  now: string,
+): { next: Map<string, Pending>; mayOpen: ReadonlySet<string> } {
+  const next = new Map<string, Pending>();
+  const mayOpen = new Set<string>();
+  for (const result of results) {
+    if (result.ok) continue;
+    const before = previous.get(result.id);
+    const fresh = before !== undefined && Date.parse(now) - Date.parse(before.lastFailure) <= PENDING_MAX_AGE_MS;
+    const runs = fresh ? before.runs + 1 : 1;
+    next.set(result.id, { firstFailure: fresh ? before.firstFailure : now, lastFailure: now, runs });
+    if (runs >= CONSECUTIVE_RUNS) mayOpen.add(result.id);
+  }
+  return { next, mayOpen };
+}
+
+// The memory lives in one issue labelled `source-health-state`, kept closed
+// so it never shows among the open ones. Its body carries the entries as JSON
+// in a code block. Issues are the one thing this job may already write, so
+// the workflow needs no new permission and nothing else to run or store.
+const STATE_LABEL = "source-health-state";
+const STATE_TITLE = "Source health: failures awaiting a second run";
+const STATE_INTRO = `<!-- ${STATE_LABEL} -->
+Bookkeeping for \`.github/workflows/source-health.yml\`, kept closed on purpose: a source that fails once is noted here, and gets its own issue only if the next run fails too. Do not edit by hand.`;
+
+export function renderState(state: ReadonlyMap<string, Pending>): string {
+  const json = JSON.stringify(Object.fromEntries(state), null, 2);
+  return `${STATE_INTRO}\n\n\`\`\`json\n${json}\n\`\`\`\n`;
+}
+
+/** Reads the entries back; anything unreadable counts as no memory. */
+export function parseState(body: string | null | undefined): Map<string, Pending> {
+  const state = new Map<string, Pending>();
+  const json = body?.match(/```json\r?\n([\s\S]*?)\r?\n```/)?.[1];
+  if (!json) return state;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return state;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return state;
+  for (const [id, value] of Object.entries(parsed)) {
+    const entry = value as Partial<Pending> | null;
+    if (
+      typeof entry?.firstFailure === "string" &&
+      typeof entry.lastFailure === "string" &&
+      Number.isFinite(Date.parse(entry.firstFailure)) &&
+      Number.isFinite(Date.parse(entry.lastFailure)) &&
+      Number.isInteger(entry.runs) &&
+      (entry.runs as number) > 0
+    ) {
+      state.set(id, { firstFailure: entry.firstFailure, lastFailure: entry.lastFailure, runs: entry.runs as number });
+    }
+  }
+  return state;
+}
+
+async function findStateIssue(repo: string): Promise<Issue | undefined> {
+  const found = await github<Issue[]>(
+    "GET",
+    `/repos/${repo}/issues?state=all&per_page=10&labels=${encodeURIComponent(STATE_LABEL)}`,
+  );
+  return found.find((issue) => !issue.pull_request);
+}
+
+async function saveState(repo: string, issue: Issue | undefined, state: ReadonlyMap<string, Pending>): Promise<void> {
+  const body = renderState(state);
+  if (issue) {
+    if (issue.body !== body) await github("PATCH", `/repos/${repo}/issues/${issue.number}`, { body });
+  } else if (state.size > 0) {
+    const created = await github<Issue>("POST", `/repos/${repo}/issues`, {
+      title: STATE_TITLE,
+      body,
+      labels: [STATE_LABEL],
+    });
+    await github("PATCH", `/repos/${repo}/issues/${created.number}`, { state: "closed", state_reason: "not_planned" });
+  }
 }
 
 export async function syncIssues(results: Result[]): Promise<void> {
   const repo = env("GITHUB_REPOSITORY");
   const now = new Date().toISOString();
+  const stateIssue = await findStateIssue(repo);
+  const { next, mayOpen } = planRun(results, parseState(stateIssue?.body), now);
+  // Remember the streaks first: if an issue call below fails, this run still
+  // counts and the next one opens what is due.
+  await saveState(repo, stateIssue, next);
   for (const result of results) {
+    const pending = next.get(result.id);
     await syncOneIssue(
       repo,
       {
@@ -233,7 +374,9 @@ export async function syncIssues(results: Result[]): Promise<void> {
         labels: [LABEL, `source:${result.id}`],
         title: `Collector failure: ${result.name}`,
         failing: !result.ok,
-        body: (firstFailure, at) => issueBody(result, firstFailure, at),
+        mayOpen: mayOpen.has(result.id),
+        since: pending?.firstFailure,
+        body: (firstFailure, at) => issueBody(result, pending?.runs ?? 1, firstFailure, at),
         recovered: (at) =>
           `✅ Recovered: **${result.name}** read cleanly at ${at} (${result.latencyMs}ms). ${runUrl()}`,
       },
@@ -242,20 +385,27 @@ export async function syncIssues(results: Result[]): Promise<void> {
   }
 }
 
-// One issue per problem, found by its labels: opened on the first failure,
-// its body rewritten on each later one (so an hourly outage is one issue,
-// not a thread of identical comments), and closed with a comment once the
-// check passes again. Shared by the per-collector issues above and the
-// deployment check below.
+// One issue per problem, found by its labels: opened on the first failure
+// (a collector's, on the second consecutive failing run: see planRun), its
+// body rewritten on each later one (so an hourly outage is one issue, not a
+// thread of identical comments), and closed with a comment once the check
+// passes again. Shared by the per-collector issues above and the deployment
+// check below.
 type IssueSpec = {
   /** Named in the log lines. */
   id: string;
   labels: string[];
   title: string;
   failing: boolean;
+  /** False holds a failing check back from opening an issue (default true). */
+  mayOpen?: boolean;
+  /** When the failure began, if that is earlier than the issue itself. */
+  since?: string;
   body: (firstFailure: string, now: string) => string;
   recovered: (now: string) => string;
 };
+
+const earliest = (a: string, b: string) => (Date.parse(a) <= Date.parse(b) ? a : b);
 
 async function syncOneIssue(repo: string, spec: IssueSpec, now: string): Promise<void> {
   const open = (
@@ -266,15 +416,18 @@ async function syncOneIssue(repo: string, spec: IssueSpec, now: string): Promise
   ).filter((issue) => !issue.pull_request);
   const existing = open[0];
 
-  if (spec.failing && !existing) {
+  if (spec.failing && !existing && spec.mayOpen === false) {
+    console.log(`${spec.id} failed; no issue until it fails in ${CONSECUTIVE_RUNS} consecutive runs`);
+  } else if (spec.failing && !existing) {
     const created = await github<Issue>("POST", `/repos/${repo}/issues`, {
       title: spec.title,
-      body: spec.body(now, now),
+      body: spec.body(spec.since ?? now, now),
       labels: spec.labels,
     });
     console.log(`opened #${created.number} for ${spec.id}`);
   } else if (spec.failing && existing) {
-    await github("PATCH", `/repos/${repo}/issues/${existing.number}`, { body: spec.body(existing.created_at, now) });
+    const first = spec.since ? earliest(spec.since, existing.created_at) : existing.created_at;
+    await github("PATCH", `/repos/${repo}/issues/${existing.number}`, { body: spec.body(first, now) });
     console.log(`updated #${existing.number} for ${spec.id}`);
   } else if (!spec.failing && existing) {
     await github("POST", `/repos/${repo}/issues/${existing.number}/comments`, { body: spec.recovered(now) });
@@ -421,7 +574,7 @@ async function main(): Promise<number> {
   const massFailure = results.length > 2 && failures.length >= Math.ceil(results.length * MASS_FAILURE_RATIO);
   if (massFailure) {
     console.error(
-      `::error::${failures.length} of ${results.length} sources failed at once. That points at the runner's network, not at the vendors, so no issues were opened or closed.`,
+      `::error::${failures.length} of ${results.length} sources failed at once. That points at the runner's network, not at the vendors, so no issues were opened or closed and the remembered failures are unchanged.`,
     );
     return 1;
   }
