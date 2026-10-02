@@ -1742,8 +1742,9 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       const started = performance.now();
       const azure = await collect("azure");
       expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
-      expect(azure.failure).toBeUndefined();
-      expect(azure.health).toBe("operational");
+      // The empty items are read and none has a date; had the dated ones past the bound been read, one would have.
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
       expect(azure.incidents).toEqual([]);
     });
 
@@ -1889,6 +1890,29 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.failure).toBeUndefined();
       expect(azure.health).toBe("operational");
       expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: items that are not over, none with a readable date, are unknown with a parser failure", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel><item><title>Virtual Machines - UK South - Service unavailable</title></item><item><title>Storage - East US</title><pubDate>not a date</pubDate></item></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: undated items that are over do not make the feed unreadable", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel><item><title>RESOLVED - Storage - East US</title></item></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
     });
 
     it("Azure feed.xml: a word in the description that suggests an outage does not make one", async () => {

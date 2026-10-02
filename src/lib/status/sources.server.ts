@@ -1786,6 +1786,12 @@ async function collectAzure(): Promise<ServiceSnapshot> {
     }
     const items = parseRssItems(value.body);
     const now = Date.now();
+    // Items that are not over, none of which has a readable date, cannot be
+    // told from current ones: a parser failure, not an all-clear.
+    const open = items.filter((item) => azureItemHealth(item.title) !== "operational");
+    if (open.length > 0 && !open.some((item) => Number.isFinite(Date.parse(item.pubDate ?? "")))) {
+      throw new PayloadError("Azure feed items have no readable date.");
+    }
     const active = items.filter((item) => azureItemActive(item, now));
     const health = active.reduce<Health>(
       (worst, item) => worseHealth(worst, azureItemHealth(item.title)),
