@@ -56,7 +56,9 @@ function flipFill(chrome: HTMLElement, change: () => void): void {
   chrome.style.transition = "none";
   chrome.style.transform = "";
   change();
-  const last = chrome.offsetWidth;
+  // The fractional width (--dock-w is in 1/64 px): offsetWidth is rounded, and scaleX(first / last) would then
+  // start the fill up to half a pixel off its rest box.
+  const last = chrome.getBoundingClientRect().width;
   if (first > 0 && last > 0 && Math.abs(first - last) > 0.5) {
     chrome.style.transform = `scaleX(${first / last})`;
     // The style as it is held, so the move below starts from it.
