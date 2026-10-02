@@ -227,11 +227,16 @@ async function pinToSlot(page: Page): Promise<void> {
  * from 40rem the line sits in the flow before the field's slot, so the slot's left edge and width move with it: a
  * docked field follows, a frame or more later. Anything that compares the field or its fill with the slot, or that
  * counts what the dock does, has to start after this and before the next refetch (see steadyBoard).
+ *
+ * The waits are long on purpose. The page loader serves a snapshot up to two minutes old and starts a vendor sweep
+ * behind it; when the page's clock calls that snapshot stale, the refetch on mount is a plain GET that waits for
+ * the same sweep, and vendor calls time out at 9 s, so the line can read "Checking…" for well over the default 5 s.
+ * pinToSlot moving the clock forward makes that more likely, not less. awayFromRefetch had the same 90 s.
  */
 async function leadSteady(page: Page): Promise<void> {
   const lead = page.locator("[data-bar-lead]");
-  await expect(lead).toHaveAttribute("data-state", "live");
-  await expect(lead).toContainText(/next in \d+:\d{2}/);
+  await expect(lead).toHaveAttribute("data-state", "live", { timeout: 90_000 });
+  await expect(lead).toContainText(/next in \d+:\d{2}/, { timeout: 90_000 });
 }
 
 /**
@@ -1996,6 +2001,7 @@ for (const [name, board, ready] of [
 }
 
 test("docks the search field inside the bar, between its dot and its buttons", async ({ page }) => {
+  test.slow();
   await steadyBoard(page);
   const bar = controlBar(page);
   const field = page.locator(".search-field");
