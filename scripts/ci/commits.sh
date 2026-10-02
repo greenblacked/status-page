@@ -13,7 +13,7 @@ fail=0
 check() {
   local label="$1" subject="$2" bad=0
 
-  if ! printf '%s' "$subject" | grep -qE "^($types)(\([a-z0-9._/-]+\))?!?: .+"; then
+  if ! grep -qE "^($types)(\([a-z0-9._/-]+\))?!?: .+" <<<"$subject"; then
     echo "::error::$label  not a Conventional Commit: $subject" >&2
     echo "         expected <type>(<optional scope>): <imperative summary>, type one of: ${types//|/, }" >&2
     fail=1
@@ -29,13 +29,13 @@ check() {
     fail=1; bad=1
   fi
 
-  if printf '%s' "$subject" | grep -qE '\.$'; then
+  if grep -qE '\.$' <<<"$subject"; then
     echo "::error::$label  subject ends with a period: $subject" >&2
     fail=1; bad=1
   fi
 
   # CONTRIBUTING.md: imperative mood ("add", not "added").
-  if printf '%s' "$subject" | grep -qiE "^($types)(\([a-z0-9._/-]+\))?!?: (added|fixed|updated|removed|changed|created|bumped) "; then
+  if grep -qiE "^($types)(\([a-z0-9._/-]+\))?!?: (added|fixed|updated|removed|changed|created|bumped) " <<<"$subject"; then
     echo "::error::$label  use imperative mood (add, not added): $subject" >&2
     fail=1; bad=1
   fi

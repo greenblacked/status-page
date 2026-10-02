@@ -31,7 +31,10 @@ outside() {
   awk '/^## \[/ { inside = ($0 ~ /^## \[Unreleased\]/); print; next } !inside' "$1"
 }
 
-blank() { ! grep -q '[^[:space:]]'; }
+# No -q: grep -q exits early and the writer dies of SIGPIPE under pipefail.
+# Relies on grep reading its input to the end when not -q (GNU grep; covered
+# by hygiene.test.ts).
+blank() { ! grep '[^[:space:]]' >/dev/null; }
 
 grep -q '^## \[Unreleased\]' "$main" || { echo "merge-changelog: main has no ## [Unreleased] heading" >&2; exit 1; }
 unreleased "$base" | blank || { echo "merge-changelog: the merge base has Unreleased lines; resolve by hand" >&2; exit 1; }

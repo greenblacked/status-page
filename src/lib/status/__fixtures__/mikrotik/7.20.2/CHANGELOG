@@ -1,0 +1,12 @@
+What's new in 7.20.2 (2026-Sep-15 09:30):
+
+!) lte - fixed a crash when a modem is removed during a firmware update;
+*) bridge - fixed VLAN filtering after a port is moved between bridges;
+*) dhcpv4-server - fixed lease expiry reported in the wrong unit;
+*) ipsec - improved rekeying with peers that change address;
+*) ospf - fixed an LSA refresh that was skipped under load;
+*) wifi - fixed a client being disconnected right after roaming;
+
+What's new in 7.20.1 (2026-Sep-02 10:00):
+
+*) bgp - fixed a memory leak when a peer flaps;

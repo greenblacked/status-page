@@ -9,13 +9,14 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Added
 
 - An **Android releases** card under Releases. I read Google's Android releases page and list the four newest versions (today Android 17, 16, 15 and 14), newest first. When Google adds the next one, it appears on its own, and a browser that already had the board sees "Android 18 released" in **Recent changes** (and gets an alert if alerts are on). The page gives no release dates, so the card never says "New release" (a first-time visitor sees only the list), and the quarterly platform releases are not listed because the page links only their betas. Google publishes no feed for this, so it is the second source read as HTML.
+- A **Details** pop-up on every Releases card, opened from the row or its button: each channel, OS or version it tracks with its version, build, release day and "New release" flag, a link to the vendor's notes, and for RouterOS the first lines of each version's changelog.
 - A **Windows 11** card under Releases. I read the versions table on Microsoft's release health page and show the four newest versions with their latest build, and "New release" when a new version became available in the last 14 days. When Microsoft adds the next version, it appears on its own. Microsoft publishes no feed for this, so it is one of two sources read as HTML.
 - A new look, quieter and more like a page than a dashboard. The top of the board is one sentence that says what needs a look, with the services it names linked to their cards, a pen line under the count and a loop around anything down; when all sixteen are up it says "Everything is up." and writes "all quiet" by hand. Below it, what needs a look is a card each, what could not be read has its own short list, and everything healthy is a compact row in a list per category.
 - **Background** in **Settings**: **Quiet** (the default) is flat paper, **Glass** brings back the frosted panels over a still glow, and **Full** adds the slow drift, the lenses, a light that wanders across the cards and the small period dial beside the live line. Reduce glass still turns any of them solid.
 - Times show in your own time zone once the page has loaded (UTC before that, and in the tooltip).
 - The live line under the headline reads "Checked 12:04 CET · next in 1:52", and says "Stale" when a check has been missed for too long.
 - Four glass lenses on the **Full** background that bend the glow and, with a mouse or trackpad, catch a slow highlight. They are not drawn on Quiet or Glass, they stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
-- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON, the Atom feed and the badges, and is signed "Made by [greenblacked](https://github.com/greenblacked)". It no longer explains how often the board is checked.
+- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON and the Atom feed, and is signed "Made by [greenblacked](https://github.com/greenblacked)". It no longer explains how often the board is checked.
 - A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
 - A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
@@ -26,6 +27,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 ### Changed
 
 - The thin bar beside a card that changed in the latest check now shows how serious it is: red for an outage, amber for degraded, green for a recovery, and the maintenance tone for maintenance. A new release keeps the neutral bar; a release tracker whose source came back with the same versions gets the green one.
+- The page footer no longer says what the site is built with, and no longer links the badges.
 - The name at the top of the page reads Status Page and sits in the middle.
 - Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until the search field takes its place). The settings button is called **Settings**.
 - The site is called **Status**, and the words are plainer and in the first person. The headline counts what needs a look ("Two things need a look.") or says "Everything is up."; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The line under the headline names one or two of them, linked ("I couldn't read Android."), and counts more than that ("I couldn't read three of them."). The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.
@@ -43,6 +45,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
 - A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.
 - Dates and times stay in English when the browser is set to another language; they still follow your time zone.
 - Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.

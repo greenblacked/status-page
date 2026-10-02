@@ -1182,9 +1182,16 @@ test("regression guard: keeps the dock docked through a rubber band below the en
 
 test("does not move the dock when only the viewport's height changes, as iOS's toolbar does", async ({ page }) => {
   test.slow();
+  // Pin the page clock well inside a slot. The turn of a slot adds a row to Recent changes, which grows the board
+  // body, and the dock measures again (rightly); the next turn and the wall-clock refetch are then 90 s or more away.
+  await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  // The refetch on mount of a snapshot past its TTL changes the live line's height, and with it the hero's: the dock
+  // measures again, rightly, and the count below would take that for a resize. Start only when that refetch is done,
+  // which the countdown having room for the whole test shows. Live vendors make its timing differ from run to run.
+  await awayFromRefetch(page);
   const { wide, moveStart, moveEnd } = await dockOffsets(page);
   const frames = (count: number) =>
     page.evaluate(
@@ -3240,7 +3247,9 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
   await expect(footer).not.toContainText("every two minutes");
   await expect(footer.getByRole("link", { name: "JSON" })).toHaveAttribute("href", "/api/status.json");
   await expect(footer.getByRole("link", { name: "Atom feed" })).toHaveAttribute("href", "/feed.xml");
-  await expect(footer.getByRole("link", { name: "Badges" })).toHaveAttribute("href", "/api/badge/board");
+  await expect(footer.getByRole("link", { name: "Badges" })).toHaveCount(0);
+  await expect(footer).not.toContainText("TanStack");
+  await expect(footer).not.toContainText("Cloudflare Workers");
 });
 
 test("puts the footer in a contentinfo landmark outside main, and names the recent changes", async ({ page }) => {

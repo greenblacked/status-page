@@ -1,5 +1,6 @@
 // tokens-allow: rounded-full (the accent dot on a fresh release)
 import { Tag as TagIcon } from "lucide-react";
+import { ReleaseDetails } from "@/components/status/release-details";
 import type { ServiceCardProps } from "@/components/status/service-card-shared";
 import { ChangedTag, ROW_LEAD, RowFrame, RowHeader } from "@/components/status/service-row";
 import { Tag } from "@/components/ui/tag";
@@ -54,7 +55,7 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
       lead={<TagIcon aria-hidden strokeWidth={1.7} className={cn("block size-5 text-subtle", ROW_LEAD)} />}
     >
       <div className="flex min-h-(--row-h) min-w-0 items-center">
-        <RowHeader name={service.name}>
+        <RowHeader name={service.name} className="relative">
           {fresh ? (
             <Tag className="mr-1.5 gap-1.5 text-fg">
               <span aria-hidden className="size-1.5 rounded-full bg-accent" />
@@ -68,6 +69,7 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
               <ChangedTag />
             </>
           ) : null}
+          <ReleaseDetails service={service} variant="inline" />
         </RowHeader>
       </div>
     </RowFrame>
