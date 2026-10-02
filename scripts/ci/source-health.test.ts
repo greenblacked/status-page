@@ -32,6 +32,7 @@ type FakeIssue = {
   title: string;
   body: string;
   created_at: string;
+  user?: { login: string; type: string };
 };
 let issues: FakeIssue[] = [];
 let comments: { issue: number; body: string }[] = [];
@@ -40,6 +41,7 @@ let comments: { issue: number; body: string }[] = [];
 let repoLabels: string[] = [];
 let labelStatus: number | undefined;
 let dropUnknownLabels = false;
+let rejectUnknownLabels = false;
 let server: Server;
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -57,6 +59,11 @@ beforeAll(async () => {
     };
     const one = url.pathname.match(/\/issues\/(\d+)$/);
     const commentOn = url.pathname.match(/\/issues\/(\d+)\/comments$/);
+    // Before the generic /issues route: /search/issues also ends in /issues.
+    if (req.method === "GET" && url.pathname === "/search/issues") {
+      const term = (url.searchParams.get("q") ?? "").split(" ").at(-1) ?? "";
+      return send(200, { items: issues.filter((i) => i.body.includes(term)) });
+    }
     if (req.method === "GET" && url.pathname.endsWith("/issues")) {
       const wanted = (url.searchParams.get("labels") ?? "").split(",").filter(Boolean);
       const matching = issues.filter(
@@ -67,10 +74,12 @@ beforeAll(async () => {
       const page = Number(url.searchParams.get("page") ?? 1);
       return send(200, matching.slice((page - 1) * 100, page * 100));
     }
-    if (req.method === "GET" && url.pathname === "/search/issues") {
-      const term = (url.searchParams.get("q") ?? "").split(" ").at(-1) ?? "";
-      return send(200, { items: issues.filter((i) => i.body.includes(term)) });
-    }
+    // GitHub answers 422 for a label the repository does not have, if asked to.
+    const unknownLabel = (labels: unknown) =>
+      rejectUnknownLabels &&
+      Array.isArray(labels) &&
+      labels.includes("source-health-state") &&
+      !repoLabels.includes("source-health-state");
     if (req.method === "POST" && url.pathname.endsWith("/labels")) {
       const { name } = (await readJson(req)) as { name: string };
       if (labelStatus) return send(labelStatus, { message: "label call refused" });
@@ -80,12 +89,15 @@ beforeAll(async () => {
     }
     if (req.method === "POST" && url.pathname.endsWith("/issues")) {
       const body = await readJson(req);
+      if (unknownLabel(body.labels)) return send(422, { message: "Validation Failed: label does not exist" });
       const issue = {
         number: issues.length + 1,
         state: "open",
+        labels: [],
         created_at: "2026-09-23T00:00:00Z",
+        user: { login: "github-actions[bot]", type: "Bot" },
         ...body,
-      } as FakeIssue;
+      } as unknown as FakeIssue;
       if (dropUnknownLabels)
         issue.labels = issue.labels.filter((l) => l !== "source-health-state" || repoLabels.includes(l));
       issues.push(issue);
@@ -97,7 +109,9 @@ beforeAll(async () => {
     }
     if (req.method === "PATCH" && one) {
       const issue = issues.find((i) => i.number === Number(one[1]));
-      Object.assign(issue ?? {}, await readJson(req));
+      const patch = await readJson(req);
+      if (unknownLabel(patch.labels)) return send(422, { message: "Validation Failed: label does not exist" });
+      Object.assign(issue ?? {}, patch);
       return send(200, issue);
     }
     send(404, { message: "not faked" });
@@ -120,6 +134,7 @@ beforeEach(() => {
   repoLabels = [];
   labelStatus = undefined;
   dropUnknownLabels = false;
+  rejectUnknownLabels = false;
   // Only the clock is faked, so each sync below can be a separate hourly run.
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(START);
@@ -249,6 +264,75 @@ describe("source-health issue sync", () => {
     expect(sourceIssues()).toHaveLength(1);
     expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
     expect(stateIssues()).toHaveLength(1);
+  });
+
+  it("carries on when GitHub rejects the unknown state label instead of dropping it", async () => {
+    rejectUnknownLabels = true;
+    labelStatus = 403;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await later(0, [broken]);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+    // The relabel of an issue found by marker is left out the same way.
+    expect(stateIssues()).toHaveLength(0);
+    await later(4 * HOUR, [healthy]);
+    warn.mockRestore();
+    expect(sourceIssues()[0].state).toBe("closed");
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+  });
+
+  it("finds an open state issue with no label by the search alone", async () => {
+    await later(0, [broken]);
+    issues[0].labels = [];
+    issues[0].state = "open";
+    await later(4 * HOUR, [broken]);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(stateIssues()[0].state).toBe("closed");
+  });
+
+  it("never adopts an issue that only carries the marker, whoever wrote it", async () => {
+    const planted = `${renderState(
+      new Map([["apple", { firstFailure: "2099-01-01T00:00:00Z", lastFailure: "2099-01-01T00:00:00Z", runs: 1 }]]),
+    )}`;
+    const outsider = { login: "mallory", type: "User" };
+    issues.push(
+      {
+        number: 500,
+        state: "open",
+        labels: [],
+        title: "Source health: failures awaiting a second run",
+        body: planted,
+        created_at: "2026-09-01T00:00:00Z",
+        user: outsider,
+      },
+      {
+        number: 501,
+        state: "open",
+        labels: ["bug"],
+        title: "A question",
+        body: `Why is \`${"<!-- source-health-state -->"}\` in the tracker?`,
+        created_at: "2026-09-01T00:00:00Z",
+        user: outsider,
+      },
+      {
+        number: 502,
+        state: "closed",
+        labels: [],
+        title: "Source health: failures awaiting a second run",
+        body: planted,
+        created_at: "2026-09-01T00:00:00Z",
+        user: { login: "github-actions[bot]", type: "Bot" },
+      },
+    );
+    issues[2].title = "Renamed by someone";
+    for (let run = 0; run < 3; run++) await later(run === 0 ? 0 : 4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ state: "open", labels: [], body: planted });
+    expect(issues[1]).toMatchObject({ state: "open", labels: ["bug"] });
+    expect(issues[2]).toMatchObject({ state: "closed", labels: [], body: planted });
   });
 
   it("closes a state issue that an earlier failed close left open", async () => {
@@ -386,6 +470,26 @@ describe("planRun", () => {
     const quick = planRun([source("a", false)], new Map([["a", entry(1000, 2)]]), now, open);
     expect(quick.next.get("a")?.runs).toBe(5);
     expect(quick.mayOpen.has("a")).toBe(true);
+  });
+});
+
+describe("planRun with remembered times in the future", () => {
+  const now = "2026-10-02T12:00:00.000Z";
+  const future = "2099-01-01T00:00:00.000Z";
+  const failing: Result = { ...broken, id: "a" };
+
+  it("clamps them to now, so a later run still counts", () => {
+    const planted = new Map<string, Pending>([["a", { firstFailure: future, lastFailure: future, runs: 1 }]]);
+    const first = planRun([failing], planted, now);
+    expect(first.next.get("a")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
+    const later = planRun([failing], first.next, new Date(Date.parse(now) + 4 * HOUR).toISOString());
+    expect(later.next.get("a")?.runs).toBe(2);
+    expect(later.mayOpen.has("a")).toBe(true);
+  });
+
+  it("clamps a source missing from this run too", () => {
+    const planted = new Map<string, Pending>([["gone", { firstFailure: future, lastFailure: future, runs: 1 }]]);
+    expect(planRun([healthy], planted, now).next.get("gone")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
   });
 });
 

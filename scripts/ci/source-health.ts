@@ -213,6 +213,8 @@ type Issue = {
   created_at: string;
   body?: string | null;
   pull_request?: unknown;
+  title?: string;
+  user?: { login?: string; type?: string } | null;
 };
 
 function env(name: string): string {
@@ -307,13 +309,22 @@ export function planRun(
   const next = new Map<string, Pending>();
   const mayOpen = new Set<string>();
   const age = (entry: Pending) => Date.parse(now) - Date.parse(entry.lastFailure);
+  // A remembered time later than this run is wrong (a hand-edited body, or
+  // clocks that disagree). Left alone it would give a negative age and hold
+  // the streak inside the minimum gap for good, so it is clamped to now.
+  const clamp = (entry: Pending): Pending => {
+    const last = Math.min(Date.parse(entry.lastFailure), Date.parse(now));
+    const first = Math.min(Date.parse(entry.firstFailure), last);
+    return { ...entry, firstFailure: new Date(first).toISOString(), lastFailure: new Date(last).toISOString() };
+  };
+  const remembered = new Map([...previous].map(([id, entry]) => [id, clamp(entry)]));
   const seen = new Set(results.map((result) => result.id));
-  for (const [id, entry] of previous) {
+  for (const [id, entry] of remembered) {
     if (!seen.has(id) && age(entry) <= PENDING_MAX_AGE_MS) next.set(id, entry);
   }
   for (const result of results) {
     if (result.ok) continue;
-    const before = previous.get(result.id);
+    const before = remembered.get(result.id);
     const fresh = before !== undefined && age(before) <= PENDING_MAX_AGE_MS;
     const known = Math.max(fresh ? before.runs : 0, open.get(result.id) ?? 0);
     if (fresh && age(before) < MIN_RUN_GAP_MS) {
@@ -375,21 +386,34 @@ export function parseState(body: string | null | undefined): Map<string, Pending
 /** The pages of closed issues the marker fallback reads at most (100 each). */
 const STATE_SCAN_PAGES = 3;
 
-const hasMarker = (issue: Issue) => !issue.pull_request && (issue.body ?? "").includes(STATE_MARKER);
+/** The login the workflow's own token acts as (github.token). */
+const STATE_AUTHOR = "github-actions[bot]";
+
+/**
+ * Only an issue this job wrote is the memory: authored by the workflow's bot,
+ * with the exact title and a body that opens with the marker. A marker quoted
+ * in someone else's issue, or planted in one, is never adopted (its body would
+ * be rewritten, its labels replaced and the issue closed).
+ */
+const isStateIssue = (issue: Issue) =>
+  !issue.pull_request &&
+  issue.user?.login === STATE_AUTHOR &&
+  issue.title === STATE_TITLE &&
+  (issue.body ?? "").startsWith(STATE_MARKER);
 
 async function findStateIssue(repo: string): Promise<Issue | undefined> {
   const labelled = await github<Issue[]>(
     "GET",
     `/repos/${repo}/issues?state=all&per_page=10&labels=${encodeURIComponent(STATE_LABEL)}`,
   );
-  const byLabel = labelled.find((issue) => !issue.pull_request);
+  const byLabel = labelled.find(isStateIssue);
   if (byLabel) return byLabel;
   // No labelled issue: the label may never have been created or applied, so
   // look for the marker in the body. Both lookups are bounded and best effort.
   try {
-    const query = encodeURIComponent(`repo:${repo} is:issue in:body ${STATE_LABEL}`);
+    const query = encodeURIComponent(`repo:${repo} is:issue in:body author:app/github-actions ${STATE_LABEL}`);
     const found = await github<{ items?: Issue[] }>("GET", `/search/issues?q=${query}&per_page=30`);
-    const hit = found.items?.find(hasMarker);
+    const hit = found.items?.find(isStateIssue);
     if (hit) return hit;
   } catch (error) {
     console.warn(`State issue search failed, scanning closed issues: ${(error as Error).message}`);
@@ -400,7 +424,7 @@ async function findStateIssue(repo: string): Promise<Issue | undefined> {
         "GET",
         `/repos/${repo}/issues?state=closed&per_page=100&sort=created&direction=asc&page=${page}`,
       );
-      const hit = closed.find(hasMarker);
+      const hit = closed.find(isStateIssue);
       if (hit) return hit;
       if (closed.length < 100) break;
     }
@@ -411,20 +435,25 @@ async function findStateIssue(repo: string): Promise<Issue | undefined> {
 }
 
 /**
- * Makes sure the state label exists before an issue is given it. An existing
- * label (422) is fine, and any other failure only costs the label: the issue
- * is still created and found again by its marker.
+ * Makes sure the state label exists before an issue is given it, and says
+ * whether it does. An existing label (422 already_exists) counts. On any
+ * other failure the label is left off the issue, because GitHub may reject an
+ * unknown label outright; the issue is still created and found again by its
+ * marker.
  */
-async function ensureStateLabel(repo: string): Promise<void> {
+async function ensureStateLabel(repo: string): Promise<boolean> {
   try {
     await github("POST", `/repos/${repo}/labels`, {
       name: STATE_LABEL,
       color: "ededed",
       description: "Bookkeeping for the source-health workflow",
     });
+    return true;
   } catch (error) {
     const message = (error as Error).message;
-    if (!/-> 422:/.test(message)) console.warn(`Could not create the ${STATE_LABEL} label: ${message}`);
+    if (/-> 422:/.test(message) && message.includes("already_exists")) return true;
+    console.warn(`Could not create the ${STATE_LABEL} label: ${message}`);
+    return false;
   }
 }
 
@@ -435,8 +464,7 @@ async function saveState(repo: string, issue: Issue | undefined, state: Readonly
   const body = renderState(state);
   if (issue) {
     // An issue found only by its marker gets the label back.
-    const relabel = hasStateLabel(issue) ? {} : { labels: [STATE_LABEL] };
-    if (relabel.labels) await ensureStateLabel(repo);
+    const relabel = hasStateLabel(issue) || !(await ensureStateLabel(repo)) ? {} : { labels: [STATE_LABEL] };
     // An issue left open by an earlier failed close is closed again here.
     if (issue.state === "open") {
       await github("PATCH", `/repos/${repo}/issues/${issue.number}`, {
@@ -449,12 +477,8 @@ async function saveState(repo: string, issue: Issue | undefined, state: Readonly
       await github("PATCH", `/repos/${repo}/issues/${issue.number}`, { body, ...relabel });
     }
   } else if (state.size > 0) {
-    await ensureStateLabel(repo);
-    const created = await github<Issue>("POST", `/repos/${repo}/issues`, {
-      title: STATE_TITLE,
-      body,
-      labels: [STATE_LABEL],
-    });
+    const labels = (await ensureStateLabel(repo)) ? { labels: [STATE_LABEL] } : {};
+    const created = await github<Issue>("POST", `/repos/${repo}/issues`, { title: STATE_TITLE, body, ...labels });
     await github("PATCH", `/repos/${repo}/issues/${created.number}`, { state: "closed", state_reason: "not_planned" });
   }
 }
