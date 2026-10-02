@@ -203,9 +203,10 @@ export function openDetailsFromCard(event: MouseEvent<HTMLElement>): void {
  * open-in-new-tab link beside it keep their own targets. The button is the one
  * thing Tab reaches, and Enter or Space opens it. In a card (`button`) it is a
  * plain 44px link-style button, and on a status card's release line (`line`) a
- * small button of its own, with no reach over the row. Focus goes back to the button when the pop-up
- * closes, because not every browser (Safari) focuses a button on click and
- * restores it by itself.
+ * small button of its own, with no reach over the row (a touch screen gets a
+ * 44px target around it). Focus goes back to the button when the pop-up closes,
+ * because not every browser (Safari) focuses a button on click and restores it
+ * by itself.
  */
 export function ReleaseDetails({
   service,
@@ -234,7 +235,12 @@ export function ReleaseDetails({
           "focus-ring inline-flex cursor-pointer items-center gap-0.5 rounded-md text-caption text-accent",
           variant === "inline" && "ml-1 align-baseline after:absolute after:inset-0 after:content-['']",
           // On a status card the button stays its own target: the row around it opens the components, not Details.
-          variant === "line" && "ml-1 min-h-6",
+          // A touch screen gets the 44px target the repo uses elsewhere, as an invisible extension of the 24px
+          // button (12px above, over the end of the health line, and 8px below, the row's own padding, which is
+          // as far down as the list that clips its rows allows), so the line keeps its height and the extension
+          // reaches no other row.
+          variant === "line" &&
+            "relative ml-1 min-h-6 shrink-0 pointer-coarse:after:absolute pointer-coarse:after:inset-x-0 pointer-coarse:after:-top-3 pointer-coarse:after:-bottom-2 pointer-coarse:after:content-['']",
           variant === "button" && "pressable min-h-11 text-caption",
         )}
       >

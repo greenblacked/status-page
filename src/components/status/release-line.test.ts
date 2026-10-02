@@ -54,15 +54,30 @@ describe("the release line of a status card", () => {
     expect(html).toContain('aria-label="Star GitLab"');
   });
 
-  it("keeps the title and the day as one item that does not break inside, and leaves the day whole", () => {
+  it("is one row that never wraps: only the title gives way, and the day and Details keep their size", () => {
     const line = lineOf(render("gitlab", { releaseFeed: feed("GitLab 18.4") }));
-    expect(line).toMatch(/data-release-item="true" class="[^"]*inline-flex/);
-    expect(line).toContain("line-clamp-1");
-    // Only the day is held together; the title may wrap (its one clamped line never widens the card).
+    // One flex row, not a wrapping one: Details cannot fall to a line of its own.
+    expect(line).toMatch(/^[^>]*class="flex items-center /);
+    expect(line).not.toContain("flex-wrap");
+    // The title and the day are one item; the title alone truncates, the day is held whole.
+    expect(line).toMatch(/data-release-item="true" class="flex min-w-0 items-baseline"/);
+    expect(line).toMatch(/data-release-title="true" class="line-clamp-1 min-w-0 \[overflow-wrap:anywhere\]"/);
     expect(line).toMatch(/<span class="shrink-0 whitespace-pre"> · <time/);
-    expect(line).not.toContain("whitespace-nowrap");
     expect(line).toMatch(/<time dateTime="2026-09-18T00:00:00.000Z"[^>]*>Sep 18<\/time>/);
-    expect(line).not.toContain("overflow-wrap");
+    // The day has no break rule of its own, so it cannot split; only the title may break anywhere.
+    expect(line).not.toMatch(/shrink-0 whitespace-pre[^"]*overflow-wrap/);
+    expect(line).not.toContain("truncate");
+  });
+
+  it("gives the Details button a 44px touch target without growing the line", () => {
+    const html = render("gitlab", { releaseFeed: feed("GitLab 18.4") });
+    const at = html.indexOf("data-release-details-trigger");
+    const button = html.slice(html.lastIndexOf("<button", at), html.indexOf("</button>", at));
+    expect(button).toContain("min-h-6");
+    expect(button).toContain("shrink-0");
+    expect(button).toContain("pointer-coarse:after:-top-3");
+    expect(button).toContain("pointer-coarse:after:-bottom-2");
+    expect(button).not.toContain("min-h-11");
   });
 
   it("shows only the title when the entry has no readable day", () => {
@@ -107,14 +122,35 @@ describe("the release line of a status card", () => {
     expect(text(lineOf(html))).toContain("GitLab 18.4");
   });
 
-  it("is under the list's summary, not in it: a button may not sit inside a summary", () => {
+  it("sits right after the summary of a row with a list, before the list and outside the summary", () => {
     const components: ComponentHealth[] = [{ name: "Git operations", health: "operational" }];
     const html = render("gitlab", { components, releaseFeed: feed("GitLab 18.4") });
-    expect(html).toContain("<details");
-    expect(html.indexOf("</summary>")).toBeLessThan(html.indexOf("data-release-line"));
-    expect(html.indexOf("</details>")).toBeLessThan(html.indexOf("data-release-line"));
+    const summary = html.slice(html.indexOf("<summary"), html.indexOf("</summary>"));
     expect(html.match(/<summary/g)).toHaveLength(1);
-    expect(html.slice(html.indexOf("<summary"), html.indexOf("</summary>"))).not.toContain("<button");
+    expect(html).toContain("row-details-feed");
+    expect(summary).toContain("Operational");
+    // A button inside a summary is a nested interactive control (axe), so the line is not in it.
+    expect(summary).not.toContain("data-release-line");
+    expect(summary).not.toContain("<button");
+    expect(html.indexOf("</summary>")).toBeLessThan(html.indexOf("data-release-line"));
+    // The component list comes after the line, and shuts itself while the row is shut.
+    expect(html.indexOf("data-release-line")).toBeLessThan(html.indexOf("Git operations"));
+    expect(html.slice(html.indexOf("</summary>"))).toContain("[details:not([open])&gt;&amp;]:hidden");
+    // The summary gives its bottom padding and its minimum height to the line under it.
+    expect(summary).toContain("pb-0");
+    expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).not.toContain(
+      "min-h-(--row-h)",
+    );
+  });
+
+  it("leaves a row with a list and no feed exactly as it was", () => {
+    const components: ComponentHealth[] = [{ name: "Git operations", health: "operational" }];
+    const html = render("gitlab", { components });
+    expect(html).not.toContain("row-details-feed");
+    expect(html).not.toContain("[details:not([open])");
+    expect(html.slice(html.indexOf("<summary"), html.indexOf(">", html.indexOf("<summary")))).toContain(
+      "min-h-(--row-h)",
+    );
   });
 
   it("is in the header of a row that has no list to open", () => {

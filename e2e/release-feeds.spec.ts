@@ -8,6 +8,8 @@ import { feedBoard, fixtureBoard, serveBoard } from "./fixture-board";
 // its items on a phone and never inside one: a date is never split ("Oct" / "1").
 
 const SERVICES = 20;
+/** Phone widths the wrap tests visit, from the narrowest phone to the widest. */
+const PHONES = [320, 335, 350, 360, 375, 390, 400, 412, 430];
 const WITH_FEED = ["aws", "gcp", "azure", "github", "gitlab", "cs2-europe"];
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const dialog = (page: Page) => page.locator("dialog[data-release-details]");
@@ -149,7 +151,8 @@ test("changes neither the health counts nor the order of the cards", async ({ pa
   expect(await order()).toEqual(without);
 });
 
-const DATE = /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}\b/g;
+// "Sep 29", and not the "Oct 00" of "3 Oct 00:05 UTC": a time of day wraps like any text.
+const DATE = /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}\b(?!:)/g;
 
 /**
  * Every day on a card's lines ("Sep 29") that is spread over more than one line of text, and every release item
@@ -162,7 +165,9 @@ async function splitDays(page: Page): Promise<string[]> {
     const split: string[] = [];
     // A text and a dot in two nodes make two rects on one row; it is only a split when they sit on two rows.
     const rows = (rects: DOMRectList) => new Set([...rects].map((rect) => Math.round(rect.top))).size;
-    for (const lineEl of document.querySelectorAll("article [data-card-header] p")) {
+    // The release line is read on its own as well as with the card's lines: it is part of the header now, but a
+    // regression that moved it out of the header must not take it out of this scan.
+    for (const lineEl of document.querySelectorAll("article [data-card-header] p, article [data-release-line]")) {
       const walker = document.createTreeWalker(lineEl, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         const text = node.textContent ?? "";
@@ -178,6 +183,10 @@ async function splitDays(page: Page): Promise<string[]> {
     }
     for (const item of document.querySelectorAll("[data-release-item]")) {
       if (rows(item.getClientRects()) > 1) split.push(`${item.closest("article")?.id}: an item is split`);
+      // A flex item is one box whatever it holds, so its parts are measured too: the title, the day.
+      for (const part of item.querySelectorAll(":scope > *")) {
+        if (rows(part.getClientRects()) > 1) split.push(`${item.closest("article")?.id}: a part of an item is split`);
+      }
     }
     return split;
   }, DATE.source);
@@ -185,7 +194,7 @@ async function splitDays(page: Page): Promise<string[]> {
 
 test("a day is never split across lines on a narrow phone, and Details stays on screen", async ({ page }) => {
   await openBoard(page);
-  for (const width of [320, 335, 350, 360, 375, 390, 400, 412, 430]) {
+  for (const width of PHONES) {
     await page.setViewportSize({ width, height: 900 });
     expect(await splitDays(page), `at ${width}px`).toEqual([]);
     // Nothing pushes the page wider than the phone: no card is wider than the screen, and no Details button is
@@ -208,6 +217,114 @@ test("a day is never split across lines on a narrow phone, and Details stays on 
       expect(box.right).toBeLessThanOrEqual(width);
     }
   }
+});
+
+test("Details stays on the line of the item it belongs to, and the line is one row, at every phone width", async ({
+  page,
+}) => {
+  await openBoard(page);
+  for (const width of PHONES) {
+    await page.setViewportSize({ width, height: 900 });
+    const apart = await page.evaluate(() => {
+      const found: string[] = [];
+      for (const lineEl of document.querySelectorAll("[data-release-line]")) {
+        const id = lineEl.closest("article")?.id;
+        const item = lineEl.querySelector("[data-release-item]");
+        const button = lineEl.querySelector("[data-release-details-trigger]");
+        if (!item || !button) {
+          found.push(`${id}: no item or no button`);
+          continue;
+        }
+        const middle = (element: Element) => {
+          const box = element.getBoundingClientRect();
+          return box.top + box.height / 2;
+        };
+        const parts = [...item.children, button].map(middle);
+        if (Math.max(...parts) - Math.min(...parts) > 3) found.push(`${id}: Details is on another line than its item`);
+        // One row of text and its button, not two lines.
+        if (lineEl.getBoundingClientRect().height > 30) found.push(`${id}: the line is more than one row`);
+      }
+      return found;
+    });
+    expect(apart, `at ${width}px`).toEqual([]);
+  }
+});
+
+test("the line stays directly under the health line when the component list is open", async ({ page }) => {
+  await openBoard(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  let withList = 0;
+  for (const id of WITH_FEED) {
+    // A row with a list: a card that needs a look has its own layout (the line is in its header).
+    const row = page.locator(`#service-${id} details.row-details-feed`);
+    if ((await row.count()) === 0) continue;
+    withList += 1;
+    const gap = async () => {
+      const health = await page.locator(`#service-${id} [data-card-header] p`).first().boundingBox();
+      const release = await line(page, id).boundingBox();
+      if (!health || !release) throw new Error(`${id} has no lines`);
+      return release.y - (health.y + health.height);
+    };
+    // The line is the first thing after the summary, not in it (a button in a summary is a nested control), and
+    // it is there while the row is shut.
+    await expect(page.locator(`#service-${id} summary [data-release-line]`)).toHaveCount(0);
+    await expect(row.locator("[data-release-line]")).toBeVisible();
+    await expect(row.locator("[data-release-details-trigger]")).toBeVisible();
+    const closed = await gap();
+    expect(closed).toBeGreaterThanOrEqual(-1);
+    expect(closed).toBeLessThan(8);
+    await page.locator(`#service-${id} summary h3`).click();
+    await expect(row).toHaveAttribute("open", "");
+    expect(Math.abs((await gap()) - closed), `${id} with its list open`).toBeLessThan(1);
+    // ...and the list begins below the line, not above it.
+    const release = await line(page, id).boundingBox();
+    const list = await row.locator("summary ~ div").last().boundingBox();
+    if (!release || !list) throw new Error(`${id} has no list`);
+    expect(list.y).toBeGreaterThanOrEqual(release.y + release.height - 1);
+  }
+  expect(withList).toBeGreaterThan(0);
+});
+
+test("on a touch screen the Details button has a 44px target and the line keeps its height", async ({ page }) => {
+  await openBoard(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  test.skip(
+    !(await page.evaluate(() => matchMedia("(pointer: coarse)").matches)),
+    "a fine pointer keeps the small button",
+  );
+  for (const id of WITH_FEED) {
+    const button = trigger(page, id);
+    await button.scrollIntoViewIfNeeded();
+    const box = await button.boundingBox();
+    if (!box) throw new Error(`${id} has no button`);
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const reached = await page.evaluate(
+      ([px, py]) => {
+        const hit = (dy: number) =>
+          Boolean(document.elementFromPoint(px, py + dy)?.closest("[data-release-details-trigger]"));
+        // The button is 24px tall: 12px of target above it and 8px below (the row's padding), 44px in all.
+        return { up: hit(-22), down: hit(18), beyond: hit(-28) };
+      },
+      [x, y] as const,
+    );
+    expect(reached.up, `${id} above`).toBe(true);
+    expect(reached.down, `${id} below`).toBe(true);
+    expect(reached.beyond, `${id} beyond 44px`).toBe(false);
+    expect((await line(page, id).boundingBox())?.height ?? 99).toBeLessThan(30);
+  }
+});
+
+test("Enter on the button opens Details and leaves the list shut", async ({ page }) => {
+  await openBoard(page);
+  const row = page.locator("#service-cs2-europe details.row-details");
+  await trigger(page, "cs2-europe").focus();
+  await page.keyboard.press("Enter");
+  await expect(dialog(page)).toBeVisible();
+  await expect(row).not.toHaveAttribute("open", "");
+  await page.keyboard.press("Escape");
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(row).not.toHaveAttribute("open", "");
 });
 
 test("a release tracker's line breaks between its items and keeps each whole", async ({ page }) => {

@@ -133,14 +133,16 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
         ? "Maintenance planned"
         : "Notice";
   const withDetails = !unread && (service.components.length > 0 || extras);
-  // The vendor's release line: inside the header while the row is a plain line, and under the row when the
-  // header is the <summary> of a list, because a button may not sit inside a summary (it is interactive itself).
+  // The vendor's release line is the third line of the row, under the health line. A plain row holds it in its
+  // header. A row with a list holds it right after the <summary>, in the <details>, because a button may not sit
+  // inside a summary (axe: nested-interactive); a closed row still shows it (styles.css, `row-details-feed`), and
+  // it stays put when the list opens, with the list below it.
   const feedLine = releaseFeedOf(service) ? <ReleaseFeedLine service={service} /> : null;
   const header = (
     <RowHeader
       name={service.name}
       after={withDetails ? undefined : feedLine}
-      // The release line follows the summary directly, so the summary gives up its bottom padding to it.
+      // The line follows the summary directly, so the summary gives up its bottom padding to it.
       className={withDetails && feedLine ? "pb-0" : undefined}
     >
       <StateWord health={service.health} />
@@ -179,13 +181,22 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
       <HistoryStrip days={days} nowMs={now} className="pt-1 pb-3" />
     ) : null;
 
-  const list = (
+  const body = withDetails ? (
     // The chevron (styles.css) sits at the summary's middle line, which is the row's, not its top.
-    <details className="row-details min-w-0 [&>summary]:after:top-[calc(50%-0.25rem)]!">
-      <summary className="focus-ring flex min-h-(--row-h) items-center rounded-md focus-visible:-outline-offset-2!">
+    <details
+      className={cn("row-details min-w-0 [&>summary]:after:top-[calc(50%-0.25rem)]!", feedLine && "row-details-feed")}
+    >
+      <summary
+        className={cn(
+          "focus-ring flex items-center rounded-md focus-visible:-outline-offset-2!",
+          // With the line under it the summary is as tall as its two lines, like a plain row's header.
+          !feedLine && "min-h-(--row-h)",
+        )}
+      >
         {header}
       </summary>
-      <div className="flex flex-col gap-3 pr-6 pb-3">
+      {feedLine ? <div className="pr-6 pb-2">{feedLine}</div> : null}
+      <div className={cn("flex flex-col gap-3 pr-6 pb-3", feedLine && "[details:not([open])>&]:hidden")}>
         <ServiceExtras service={service} now={now} />
         <HealthyComponents
           components={service.components}
@@ -194,16 +205,6 @@ export function ServiceRow({ service, emphasized, starred, onToggleStar, now }: 
         />
       </div>
     </details>
-  );
-  const body = withDetails ? (
-    feedLine ? (
-      <div className="min-w-0">
-        {list}
-        <div className="pb-2">{feedLine}</div>
-      </div>
-    ) : (
-      list
-    )
   ) : (
     <div className="flex min-h-(--row-h) min-w-0 items-center">{header}</div>
   );

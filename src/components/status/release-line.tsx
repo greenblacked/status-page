@@ -37,10 +37,14 @@ export function ReleaseTail({ children }: { children: ReactNode }) {
  * about the vendor's releases, not about whether the service is up, and a card
  * without a feed shows nothing here.
  *
- * One line that wraps between items only: the title and day are one item
- * (`data-release-item`) that never breaks inside, the title giving way to an
- * ellipsis (one clamped line, which can still wrap, so it never widens its
- * card) when it is longer than the line; the day never splits.
+ * It is one row that never wraps, so "Details ›" is always on the item's own
+ * line: the title is the only part that gives way (an ellipsis, when it is
+ * longer than the line), the day and the button keep their size. The title and
+ * day are one item (`data-release-item`), the day never splits, and the whole
+ * entry is a tap away in the Details. The title is one clamped line rather
+ * than `truncate`, whose unbreakable text would give the row (and the card
+ * around it) the width of the whole title when a parent sizes itself to its
+ * content.
  */
 export function ReleaseFeedLine({ service }: { service: ServiceSnapshot }) {
   const feed = releaseFeedOf(service);
@@ -49,9 +53,11 @@ export function ReleaseFeedLine({ service }: { service: ServiceSnapshot }) {
   const day = releaseDate(latest.release.releasedAt);
   const checkedAt = Date.parse(service.checkedAt);
   return (
-    <p data-release-line className="flex flex-wrap items-baseline text-caption text-subtle">
-      <span data-release-item className="inline-flex max-w-full min-w-0 items-baseline">
-        <span className="line-clamp-1 min-w-0">{latest.title}</span>
+    <p data-release-line className="flex items-center text-caption text-subtle">
+      <span data-release-item className="flex min-w-0 items-baseline">
+        <span data-release-title className="line-clamp-1 min-w-0 [overflow-wrap:anywhere]">
+          {latest.title}
+        </span>
         {day ? (
           <span className="shrink-0 whitespace-pre">
             {" · "}
