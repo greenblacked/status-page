@@ -9,7 +9,8 @@
 // (CONSECUTIVE_RUNS): vendor status pages time out from the runner for an
 // hour now and then, and an issue that opens and closes itself is noise. The
 // first failing run is remembered in a closed `source-health-state` issue
-// (see loadState), so no new permission or infrastructure is needed.
+// (see findStateIssue / parseState / saveState), so no new permission or
+// infrastructure is needed.
 //
 // Local:  node --experimental-strip-types scripts/ci/source-health.ts
 //         (exits 1 when any source fails)
@@ -34,13 +35,20 @@ const ATTEMPTS = Number(process.env.SOURCE_HEALTH_ATTEMPTS ?? 3);
 const RETRY_DELAY_MS = Number(process.env.SOURCE_HEALTH_RETRY_MS ?? 20_000);
 // A timeout or a network error is the failure that clears on its own, but
 // not within 20 seconds: from the third attempt on, wait this long instead.
-// Attempts at 0s, 20s and 110s span about two minutes of vendor trouble.
+// The waits start when an attempt ends, and a timed-out attempt takes about 9s,
+// so the attempts begin near 0s, 29s and 128s: about two minutes of trouble.
 const SLOW_RETRY_MS = Number(process.env.SOURCE_HEALTH_SLOW_RETRY_MS ?? 90_000);
 // A source must fail in this many consecutive runs before it gets an issue.
 export const CONSECUTIVE_RUNS = 2;
-// A remembered first failure older than this (runs start every few hours,
-// delayed by GitHub's cron) is stale: the next failure starts over.
-export const PENDING_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+// A run closer than this to the last counted one (a manual re-run minutes
+// after a scheduled run) does not count as another run: it would bring back
+// the open-then-close noise the two-run rule is there to stop.
+export const MIN_RUN_GAP_MS = 30 * 60 * 1000;
+// A remembered failure older than this is stale: the next failure starts a
+// new streak. Scheduled runs are hours apart (GitHub delays the hourly cron:
+// gaps of 4 to 9 hours were seen), so this is generous; a clean run ends a
+// streak anyway, the age only guards against very old entries.
+export const PENDING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // When this share of sources fails together, the runner's network is a far
 // likelier cause than a dozen vendors breaking in the same hour. Opening a
 // dozen issues would be noise, so fail the job instead.
@@ -197,7 +205,13 @@ export function recordResponses(dir: string): () => void {
 
 // ---------------------------------------------------------------- GitHub ---
 
-type Issue = { number: number; created_at: string; body?: string | null; pull_request?: unknown };
+type Issue = {
+  number: number;
+  state?: string;
+  created_at: string;
+  body?: string | null;
+  pull_request?: unknown;
+};
 
 function env(name: string): string {
   const value = process.env[name];
@@ -237,7 +251,7 @@ function issueBody(result: Result, runs: number, firstFailure: string, now: stri
       : "`http`, `timeout` and `network` failures are often on the vendor's side and clear by themselves. If this stays open for hours, check whether the official endpoint moved.";
   return [
     `<!-- source-health:${result.id} -->`,
-    `The scheduled source-health check could not read the official status source for **${result.name}** in ${runs} consecutive runs, and in all ${result.attempts} attempts of the latest one.`,
+    `The scheduled source-health check could not read the official status source for **${result.name}** in ${runs} consecutive ${runs === 1 ? "run" : "runs"}, and in ${result.attempts === 1 ? "its single attempt" : `all ${result.attempts} attempts`} of the latest one.`,
     "",
     "| | |",
     "| --- | --- |",
@@ -271,24 +285,41 @@ export type Pending = {
  * Decides, from this run's results and what earlier runs remembered, which
  * failing sources may now get an issue. Pure, so the rule is tested without
  * GitHub. `next` is what to remember for the next run: one entry per source
- * failing now, none for a source that read cleanly (its streak is over) or
- * that has left the catalog. A remembered failure older than
- * PENDING_MAX_AGE_MS starts a new streak.
+ * failing now, none for a source that read cleanly (its streak is over). A
+ * source missing from this run (another branch's catalog) keeps its entry
+ * until it ages out.
+ *
+ * A remembered failure older than PENDING_MAX_AGE_MS starts a new streak, and
+ * a run less than MIN_RUN_GAP_MS after the last counted one is not counted.
+ * `open` holds the run count stated by each source's open issue: an issue
+ * that is open means the streak is alive whatever the memory says (an issue
+ * from before this rule, a memory that went stale), so the count continues
+ * from it.
  */
 export function planRun(
   results: Result[],
   previous: ReadonlyMap<string, Pending>,
   now: string,
+  open: ReadonlyMap<string, number> = new Map(),
 ): { next: Map<string, Pending>; mayOpen: ReadonlySet<string> } {
   const next = new Map<string, Pending>();
   const mayOpen = new Set<string>();
+  const age = (entry: Pending) => Date.parse(now) - Date.parse(entry.lastFailure);
+  const seen = new Set(results.map((result) => result.id));
+  for (const [id, entry] of previous) {
+    if (!seen.has(id) && age(entry) <= PENDING_MAX_AGE_MS) next.set(id, entry);
+  }
   for (const result of results) {
     if (result.ok) continue;
     const before = previous.get(result.id);
-    const fresh = before !== undefined && Date.parse(now) - Date.parse(before.lastFailure) <= PENDING_MAX_AGE_MS;
-    const runs = fresh ? before.runs + 1 : 1;
-    next.set(result.id, { firstFailure: fresh ? before.firstFailure : now, lastFailure: now, runs });
-    if (runs >= CONSECUTIVE_RUNS) mayOpen.add(result.id);
+    const fresh = before !== undefined && age(before) <= PENDING_MAX_AGE_MS;
+    const known = Math.max(fresh ? before.runs : 0, open.get(result.id) ?? 0);
+    if (fresh && age(before) < MIN_RUN_GAP_MS) {
+      next.set(result.id, { ...before, runs: known });
+    } else {
+      next.set(result.id, { firstFailure: fresh ? before.firstFailure : now, lastFailure: now, runs: known + 1 });
+    }
+    if ((next.get(result.id)?.runs ?? 0) >= CONSECUTIVE_RUNS) mayOpen.add(result.id);
   }
   return { next, mayOpen };
 }
@@ -346,7 +377,16 @@ async function findStateIssue(repo: string): Promise<Issue | undefined> {
 async function saveState(repo: string, issue: Issue | undefined, state: ReadonlyMap<string, Pending>): Promise<void> {
   const body = renderState(state);
   if (issue) {
-    if (issue.body !== body) await github("PATCH", `/repos/${repo}/issues/${issue.number}`, { body });
+    // An issue left open by an earlier failed close is closed again here.
+    if (issue.state === "open") {
+      await github("PATCH", `/repos/${repo}/issues/${issue.number}`, {
+        body,
+        state: "closed",
+        state_reason: "not_planned",
+      });
+    } else if (issue.body !== body) {
+      await github("PATCH", `/repos/${repo}/issues/${issue.number}`, { body });
+    }
   } else if (state.size > 0) {
     const created = await github<Issue>("POST", `/repos/${repo}/issues`, {
       title: STATE_TITLE,
@@ -357,11 +397,28 @@ async function saveState(repo: string, issue: Issue | undefined, state: Readonly
   }
 }
 
+/** The run count each open source issue states, by source id. */
+async function openRunCounts(repo: string): Promise<Map<string, number>> {
+  const open = await github<Issue[]>(
+    "GET",
+    `/repos/${repo}/issues?state=open&per_page=100&labels=${encodeURIComponent(LABEL)}`,
+  );
+  const counts = new Map<string, number>();
+  for (const issue of open) {
+    if (issue.pull_request) continue;
+    const id = issue.body?.match(/<!-- source-health:(\S+) -->/)?.[1];
+    if (!id) continue;
+    const runs = Number(issue.body?.match(/\| Failing runs in a row \| (\d+) \|/)?.[1]);
+    counts.set(id, Number.isInteger(runs) && runs > 0 ? runs : 1);
+  }
+  return counts;
+}
+
 export async function syncIssues(results: Result[]): Promise<void> {
   const repo = env("GITHUB_REPOSITORY");
   const now = new Date().toISOString();
   const stateIssue = await findStateIssue(repo);
-  const { next, mayOpen } = planRun(results, parseState(stateIssue?.body), now);
+  const { next, mayOpen } = planRun(results, parseState(stateIssue?.body), now, await openRunCounts(repo));
   // Remember the streaks first: if an issue call below fails, this run still
   // counts and the next one opens what is due.
   await saveState(repo, stateIssue, next);

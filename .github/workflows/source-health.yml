@@ -6,13 +6,16 @@ name: Source health
 # quietly shows "Unknown".
 #
 # When an issue opens: a collector that cannot be read gets three attempts in
-# a run (20 s, then 90 s apart after a timeout or network error), and an issue
-# only after it has failed in two consecutive runs, so a vendor that is slow
-# for an hour does not open and close an issue by itself. The first failing
-# run is remembered in a closed `source-health-state` issue, which needs only
-# the `issues: write` below. A run where most sources fail at once (the
-# runner's network) changes nothing. The deploy-health issue below is
-# unchanged: it opens on the first failing run.
+# a run (20 s after the first, 90 s after the second when it timed out or could
+# not connect, counted from the end of each attempt), and an issue only after
+# it has failed in two consecutive runs at least 30 minutes apart (a manual
+# re-run right after a failing run does not count), so a vendor that is slow
+# for an hour does not open and close an issue by itself. A real outage
+# therefore reports one run later, hours later when the runs are delayed. The
+# first failing run is remembered in a closed `source-health-state` issue,
+# which needs only the `issues: write` below. A run where most sources fail at
+# once (the runner's network) changes nothing. The deploy-health issue below
+# is unchanged: it opens on the first failing run.
 
 on:
   schedule:
