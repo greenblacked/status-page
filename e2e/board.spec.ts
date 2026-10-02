@@ -1525,6 +1525,9 @@ test("moves the docking field with transform and opacity only, over the dock's o
   const { wide, moveStart } = await dockOffsets(page);
   test.skip(wide, "from 64rem the field follows the scroll instead of playing a transition");
 
+  // The first pose (data-instant) plays no transition, so wait for it to end before reading the delays.
+  await expect(page.locator("[data-instant]")).toHaveCount(0);
+
   // What the stylesheet says: of everything in the dock, only transform is timed, over the same time as the
   // stylesheet's token, which dock.ts names too; and on a narrow phone the bar's verdict fades by opacity alone.
   const css = await page.evaluate(() => {
@@ -1544,6 +1547,10 @@ test("moves the docking field with transform and opacity only, over the dock's o
       everything: [dock, ...dock.querySelectorAll("*")].flatMap(timed),
       verdict: timed(verdict),
       verdictDuration: getComputedStyle(verdict).transitionDuration,
+      lead: getComputedStyle(document.documentElement).getPropertyValue("--t-dock-lead").trim(),
+      fieldDelay: getComputedStyle(dock.querySelector(".search-field") as Element).transitionDelay,
+      chromeDelay: getComputedStyle(dock.querySelector(".search-chrome") as Element).transitionDelay,
+      verdictDelay: getComputedStyle(verdict).transitionDelay,
       narrow: matchMedia("(width < 40rem)").matches,
     };
   });
@@ -1552,10 +1559,16 @@ test("moves the docking field with transform and opacity only, over the dock's o
   expect(css.field).toEqual(["transform"]);
   expect(css.chrome).toEqual(["transform"]);
   expect(Number.parseFloat(css.fieldDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
+  // The lead: the token is DOCK_LEAD_MS (the settle timer counts on it), and the field, its fill and the
+  // verdict all wait it out, so none of them starts before the others (that would be the jump again).
+  expect(transitionMs(css.lead)).toBeCloseTo(DOCK_LEAD_MS, 5);
+  expect(Number.parseFloat(css.fieldDelay) * 1000, "the field's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
+  expect(Number.parseFloat(css.chromeDelay) * 1000, "the fill's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
   for (const property of css.everything) expect(["transform", "opacity"], "in the dock").toContain(property);
   if (css.narrow) {
     expect(css.verdict).toEqual(["opacity"]);
     expect(Number.parseFloat(css.verdictDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
+    expect(Number.parseFloat(css.verdictDelay) * 1000, "the verdict's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
   }
 
   // What the browser then runs when the field docks: transitions of those properties and no other.

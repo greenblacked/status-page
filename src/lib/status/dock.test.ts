@@ -293,7 +293,7 @@ describe("transitionMs", () => {
     expect(transitionMs(`${DOCK_MS}ms`)).toBe(DOCK_MS);
   });
 
-  it("agrees with the 50ms lead the stylesheet names", () => {
+  it("reads the 50ms lead as a transition time", () => {
     expect(DOCK_LEAD_MS).toBe(50);
     expect(transitionMs(`${DOCK_LEAD_MS}ms`)).toBe(DOCK_LEAD_MS);
   });
