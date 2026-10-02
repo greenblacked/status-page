@@ -8,6 +8,9 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- A quiet **release line** under the health line of the cards whose vendors publish an official release or changelog feed: **AWS** (What's New), **Google Cloud** (release notes), **Microsoft Azure** (Azure Updates), **GitHub** (Changelog), **GitLab** (the newest version, such as "GitLab 18.4 · Sep 18") and **CS2 Europe** (the latest update post on Steam). **Details** opens the vendor's recent entries with a few notes and a link to the vendor's own post. It never changes a card's health or anything derived from it, and a feed that cannot be read just leaves the line out. Each feed is read at most every 30 minutes.
+- The **source-health** check also probes each release feed and reports it apart ("GitLab releases").
+
 - Cards for **Microsoft Azure** (under Cloud), and **GitHub**, **GitLab** and **Atlassian Confluence** (under Platforms), each read from the vendor's own status page or feed (GitLab's page runs on Status.io, so it is read from there). The board now has twenty services.
 - An **Android releases** card under Releases. I read Google's Android releases page and list the four newest versions (today Android 17, 16, 15 and 14), newest first. When Google adds the next one, it appears on its own, and a browser that already had the board sees "Android 18 released" in **Recent changes** (and gets an alert if alerts are on). The page gives no release dates, so the card never says "New release" (a first-time visitor sees only the list), and the quarterly platform releases are not listed because the page links only their betas. Google publishes no feed for this, so it is the second source read as HTML.
 - A **Details** pop-up on every Releases card, opened from the row or its button: each channel, OS or version it tracks with its version, build, release day and "New release" flag, a link to the vendor's notes, and for RouterOS the first lines of each version's changelog.
@@ -47,6 +50,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- On a Releases card a date no longer breaks across two lines ("Sep" at the end of one, "28" at the start of the next, or "Oct" and "1 Details"). Each "version · date" stays whole, the line wraps between them, and **Details** stays with the last one.
 - A Statuspage reply with no status (Spotify, ChatGPT, Claude, Epic, Fortnite, and the new GitHub and Confluence cards) now reads No data instead of Operational.
 - Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
 - A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.

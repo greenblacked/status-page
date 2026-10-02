@@ -79,6 +79,19 @@ Twenty services, each read from one official source. This table is the contract:
 | Releases | Windows 11 | [Windows release health](https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information) (the table of versions, read as HTML: Microsoft publishes no feed for it) |
 | Releases | Android releases | [Android Developers releases](https://developer.android.com/about/versions) (the releases page, read as HTML: Google publishes no feed for it) |
 
+Six of these cards also read the vendor's own release or changelog feed, for the one quiet line under their health (see [below](#release-lines-on-status-cards)). These feeds are part of the contract too, and nothing else is read:
+
+| Service | Official release feed | The line shows |
+| --- | --- | --- |
+| AWS | [What's New](https://aws.amazon.com/new/) RSS, `https://aws.amazon.com/about-aws/whats-new/recent/feed/` | The latest post's title and day |
+| Google Cloud | [Release notes](https://cloud.google.com/release-notes) Atom, `https://cloud.google.com/feeds/gcp-release-notes.xml` (it redirects to `docs.cloud.google.com`, the one redirect the board follows there) | The products of the latest day's notes, and the day |
+| Microsoft Azure | [Azure Updates](https://azure.microsoft.com/en-us/updates) RSS, `https://www.microsoft.com/releasecommunications/api/v2/azure/rss` | The latest update's title and day |
+| GitHub | [GitHub Changelog](https://github.blog/changelog/) RSS, `https://github.blog/changelog/feed/` | The latest entry's title and day |
+| GitLab | [GitLab releases](https://about.gitlab.com/releases/) Atom, `https://about.gitlab.com/releases.xml` | The newest version ("GitLab 18.4", or "GitLab 18.4.1" for a patch release) and day |
+| CS2 Europe | Steam news for app `730`, `https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/` (community announcements) | The latest update post's title and day |
+
+Confluence, Claude, ChatGPT, Grok, Spotify, Epic, Fortnite, Apple, Android / Play and Steam publish no official machine-readable release feed that this board reads, so their cards have no such line.
+
 Missing a service? [Request it](https://github.com/greenblacked/status-page/issues/new?template=new-service.yml). It needs an official, machine-readable source.
 
 ## How it decides
@@ -98,6 +111,12 @@ The headline at the top of the page is one sentence about the board: **Everythin
 The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days (the Android page gives no dates, so that card never carries the tag; see below). A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
 Each Releases row has a **Details** button, and clicking the row's name or line opens it too (the star and the open-in-a-new-tab link keep their own targets). It is a small pop-up on a desktop and a sheet from the bottom edge on a phone; **Esc** or a click outside closes it. It lists every channel, OS or version the card tracks, not only the two in the row's line: the version and build, the day it came out (in your own time zone; Windows's table gives only a day, shown as is), **New release** while it is fresh, and a link to the vendor's page for it. MikroTik RouterOS also shows the first few lines of each version's official changelog. Apple's feed, Microsoft's table and Google's Android page have no notes text, so those say so and link the vendor's page (Apple's post about the release, Microsoft's release health page, the version's page on developer.android.com) instead of making something up. It adds nothing to `/api/status.json`, the feed, the badges or the metrics.
+
+### Release lines on status cards
+
+A status card whose vendor publishes an official release or changelog feed (the six in the second table above) has one extra quiet line under its health line, "GitLab 18.4 · Sep 18" or, for a vendor that does not number its releases, the latest entry's title and day, with a **Details** button that opens the vendor's recent entries (up to five: title or version, day, a few plain-text notes and a link to the vendor's own post). It is the same line and pop-up as the Releases cards.
+
+It is advisory and kept apart from health. It never changes a card's health, the headline, **Needs a look**, **Recent changes**, the counts, the order, the JSON API, the feed, the badges or the metrics. If a release feed cannot be read (the network, a size cap, a format change), the card keeps its real health and shows no line; the failure is logged as a `release_feed_failed` line and reported by the source-health check, never shown as No data. Release feeds change slowly, so each one is read at most once every 30 minutes per server process or isolate (and, after a failure, at most once every 5 minutes), beside the health checks and without delaying them. Entries are held to plain text and a few short lines, and links reach the page only as https on the vendor's own hosts.
 
 <details>
 <summary><strong>The rule behind every card</strong></summary>

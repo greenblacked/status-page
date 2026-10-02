@@ -353,6 +353,8 @@ Dependabot proposes npm (the project, and the pinned npm CLI in `tools/npm`) and
 
 Do not scrape unofficial aggregators.
 
+**A vendor's release or changelog feed** is not a new service. If the vendor also publishes an official RSS, Atom or JSON feed of its releases, add a source object to `RELEASE_SOURCES` in `src/lib/status/release-feeds.server.ts` (feed URL, the vendor's page, the hosts its links may be on, and how an entry becomes a title and notes), list it in the README's release feed table, and add a hand-built fixture, a test of the entry it yields, a malformed and an empty payload that must fail as a parser failure, and a case in `redos.test.ts` for any new regular expression. The feed adds one line to the card and never touches its health; to drop a feed, delete its object. A feed is read at most every 30 minutes per isolate, so count it against the subrequest budget in [SECURITY.md](SECURITY.md#release-feeds).
+
 ## Code style
 
 - [Biome](https://biomejs.dev/) formats, lints and sorts imports ([`biome.json`](biome.json)); `npm run lint:fix` applies it. A `biome-ignore` comment must say why
