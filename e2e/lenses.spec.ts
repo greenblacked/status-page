@@ -1,4 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
+import type { BoardSnapshot } from "../src/lib/status/types.ts";
+import { verdict } from "../src/lib/status/verdict.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
 
 // The bubble layer (src/components/status/lens-field.tsx and the .lens rules in
@@ -43,11 +45,26 @@ async function hydrated(page: Page): Promise<void> {
 
 /**
  * `serveBoard` only answers the client's server-function calls, and the first render comes from the server (live vendor data),
- * so press Refresh to bring the fixture in, and wait for its headline before measuring anything.
+ * so press Refresh to bring the fixture in, and wait for it before measuring anything.
+ *
+ * The wait does not depend on how the headline is worded, nor on what the vendors say today. Two things must hold:
+ *   - AWS and Steam show the fixture's own latencies (143 and 166 ms, from `latencyMs` in fixture-board.ts). The
+ *     server's board shows its vendors' real ones, or none at all for a source it could not read, so this is only
+ *     true once the fixture is in, whatever the server drew first (offline, calm or not).
+ *   - The <h1> is the headline `verdict()` makes of this very board, so the variant asked for (usual, calm,
+ *     longest hero) is the one on screen, not a board that merely loaded.
  */
-async function loadFixture(page: Page, headline: RegExp): Promise<void> {
+async function loadFixture(page: Page, build: (now: number) => BoardSnapshot): Promise<void> {
+  const board = build(Date.now());
   await page.getByRole("button", { name: "Refresh status now" }).first().click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(headline);
+  for (const id of ["aws", "steam"] as const) {
+    const latencyMs = board.services.find((service) => service.id === id)?.latencyMs;
+    // An attention card adds a screen-reader copy after the figure, so match the start.
+    await expect(page.locator(`#service-${id}`).getByTitle("How long the vendor took to answer")).toHaveText(
+      new RegExp(`^${latencyMs}\\s*ms`),
+    );
+  }
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(verdict(board).title);
 }
 
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
@@ -468,7 +485,7 @@ test.describe("styling", () => {
       await serveBoard(page, () => fixtureBoard(Date.now()));
       await page.goto("/");
       await hydrated(page);
-      await loadFixture(page, /Three things need a look\./);
+      await loadFixture(page, fixtureBoard);
       expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
       expect(await bubblesOnText(page)).toEqual([]);
     });
@@ -479,7 +496,7 @@ test.describe("styling", () => {
     await serveBoard(page, () => fixtureBoard(Date.now()));
     await page.goto("/");
     await hydrated(page);
-    await loadFixture(page, /Three things need a look\./);
+    await loadFixture(page, fixtureBoard);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     const boxes = await page.locator(".lens").evaluateAll((all) =>
       all.map((lens) => {
@@ -505,10 +522,10 @@ test.describe("styling", () => {
     [600, 900],
     [767, 1024],
   ] as const) {
-    for (const [shape, board, headline] of [
-      ["the usual board", fixtureBoard, /Three things need a look\./],
-      ["a calm board", calmBoard, /Everything is up\./],
-      ["the longest hero", longHeroBoard, /Eleven things need a look\./],
+    for (const [shape, board] of [
+      ["the usual board", fixtureBoard],
+      ["a calm board", calmBoard],
+      ["the longest hero", longHeroBoard],
     ] as const) {
       test(`at ${width}x${height} no bubble can reach any text, on ${shape}`, async ({ page }, testInfo) => {
         test.skip(testInfo.project.name !== "desktop", "one Chromium run covers the geometry");
@@ -516,7 +533,7 @@ test.describe("styling", () => {
         await serveBoard(page, () => board(Date.now()));
         await page.goto("/");
         await hydrated(page);
-        await loadFixture(page, headline);
+        await loadFixture(page, board);
         expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
         expect(await page.locator(".lens:visible").count()).toBe(6);
         expect(await bubblesOnText(page, true)).toEqual([]);
