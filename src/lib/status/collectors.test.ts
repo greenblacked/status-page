@@ -2713,7 +2713,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
 
     describe("AWS components", () => {
-      const at = Math.floor(Date.now() / 1000) - 3600;
+      // An hour before the clock this block pins (an event dated after it would not be current).
+      const at = Math.floor(Date.parse("2026-09-20T12:00:00.000Z") / 1000) - 3600;
       function awsEvent(overrides: Record<string, unknown> = {}) {
         return {
           date: String(at),

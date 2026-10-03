@@ -50,6 +50,16 @@ describe("grok feed", () => {
     assert.equal(grokItemActive(fresh, NOW), true);
   });
 
+  it("ignores an unresolved item dated in the future, but not one a feed clock's skew ahead", () => {
+    const at = (offset: number) => ({
+      description: "Investigating elevated errors",
+      pubDate: new Date(NOW + offset).toUTCString(),
+    });
+    assert.equal(grokItemActive(at(DAY), NOW), false);
+    assert.equal(grokItemActive(at(5 * 365 * DAY), NOW), false);
+    assert.equal(grokItemActive(at(2 * 60_000), NOW), true);
+  });
+
   it("ignores an item with no usable date", () => {
     assert.equal(grokItemActive({ description: "Investigating" }, NOW), false);
     assert.equal(grokItemActive({ description: "Investigating", pubDate: "not a date" }, NOW), false);
@@ -73,6 +83,14 @@ describe("aws health events", () => {
       awsEventActive({ event_log: [{ timestamp: recent, message: "The issue is resolved" }] } as never, NOW),
       false,
     );
+  });
+
+  it("ignores an event whose last update is dated in the future, but not one a clock's skew ahead", () => {
+    const at = (offset: number) =>
+      ({ event_log: [{ timestamp: Math.floor((NOW + offset) / 1000), message: "Elevated error rates" }] }) as never;
+    assert.equal(awsEventActive(at(DAY), NOW), false);
+    assert.equal(awsEventActive(at(5 * 365 * DAY), NOW), false);
+    assert.equal(awsEventActive(at(2 * 60_000), NOW), true);
   });
 
   it("does not read a negated or prefixed 'resolved' as a resolution", () => {
@@ -1033,6 +1051,16 @@ describe("azure feed", () => {
       const item = { title: wording, pubDate: new Date(NOW - DAY).toUTCString() };
       assert.equal(azureItemActive(item, NOW), true, wording);
     }
+  });
+
+  it("does not count an unresolved item dated in the future, but does one a feed clock's skew ahead", () => {
+    const item = (offset: number) => ({
+      title: "App Service - Degraded performance",
+      pubDate: new Date(NOW + offset).toUTCString(),
+    });
+    assert.equal(azureItemActive(item(DAY), NOW), false);
+    assert.equal(azureItemActive(item(5 * 365 * DAY), NOW), false);
+    assert.equal(azureItemActive(item(2 * 60_000), NOW), true);
   });
 
   it("counts an item as active when it is unresolved and dated within 14 days", () => {

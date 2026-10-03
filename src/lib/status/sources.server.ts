@@ -48,6 +48,14 @@ import { hostOf, vendorUrl } from "./vendor-url.ts";
 import { readHtmlTables, WINDOWS_NAME, windowsReleases, windowsShippedAt } from "./windows-release.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
+// How far ahead of this server's clock a vendor's timestamp may be and still be read as now: their clock can
+// lead ours by a few minutes. A date further ahead is not a moment that has happened, so it is no evidence of a
+// current incident (a 2030 stamp would otherwise keep an item active until 14 days after it).
+const FUTURE_SKEW_MS = 5 * 60 * 1000;
+// Whether a vendor timestamp (ms) is within the last STALE_MS, allowing FUTURE_SKEW_MS of clock skew.
+function isRecent(at: number, now: number): boolean {
+  return Number.isFinite(at) && now - at >= -FUTURE_SKEW_MS && now - at <= STALE_MS;
+}
 // Upper bound on components kept per card. The largest real vendor list is
 // Google Cloud (~215 products); the snapshot is cached and served as JSON, so a
 // runaway page must still not grow it without limit.
@@ -692,7 +700,7 @@ export function awsEventActive(event: AwsEvent, now: number): boolean {
   if (/^\[resolved\]/i.test(summary)) return false;
   const last = awsLatestLog(event);
   const lastTs = (Number(last?.timestamp ?? event.date ?? 0) || 0) * 1000;
-  if (!lastTs || now - lastTs > STALE_MS) return false;
+  if (!lastTs || !isRecent(lastTs, now)) return false;
   const lastMessage = `${last?.summary ?? ""} ${last?.message ?? ""}`.toLowerCase();
   // `Number(undefined)` is NaN and `NaN !== 0` is true, so an event missing
   // `status` used to count as active. Fall back to the update text instead.
@@ -1444,7 +1452,7 @@ export function grokItemHealth(description: string): Health {
 export function grokItemActive(item: { description: string; pubDate?: string }, now: number): boolean {
   if (grokItemHealth(item.description) === "operational") return false;
   const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
-  return Number.isFinite(at) && now - at <= STALE_MS;
+  return isRecent(at, now);
 }
 
 /**
@@ -1763,7 +1771,7 @@ export function azureItemHealth(title: string): Health {
 export function azureItemActive(item: { title: string; pubDate?: string }, now: number): boolean {
   if (azureItemHealth(item.title) === "operational") return false;
   const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
-  return Number.isFinite(at) && now - at <= STALE_MS;
+  return isRecent(at, now);
 }
 
 // The feed Microsoft documents for Azure status. Its host is a subdomain of
