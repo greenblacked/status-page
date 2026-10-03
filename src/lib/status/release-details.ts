@@ -1,5 +1,5 @@
 import { MAX_NOTE_CHARS, MAX_NOTE_LINES } from "./bounds.ts";
-import type { ComponentHealth, ServiceSnapshot } from "./types.ts";
+import type { ComponentHealth, ReleaseFeed, ReleaseFeedEntry, ReleaseInfo, ServiceSnapshot } from "./types.ts";
 import { vendorUrl } from "./vendor-url.ts";
 
 /** A date a release tracker gave: the moment, and whether the source gave only a day (then it is a UTC calendar day). */
@@ -41,11 +41,35 @@ const sameDay = (a: ReleaseDate, b: ReleaseDate) =>
 
 /**
  * Whether a service has Details to open: a release tracker (the Releases
- * category) that lists at least one channel, OS or version. A tracker that
- * could not be read lists none, and has nothing true to show.
+ * category) that lists at least one channel, OS or version, or a status card
+ * whose vendor's release feed was read. A tracker that could not be read lists
+ * none, and a feed that could not be read is absent: neither has a true thing
+ * to show.
  */
-export function hasReleaseDetails(service: Pick<ServiceSnapshot, "category" | "components">): boolean {
-  return service.category === "updates" && service.components.length > 0;
+export function hasReleaseDetails(service: Pick<ServiceSnapshot, "category" | "components" | "releaseFeed">): boolean {
+  if (service.category === "updates") return service.components.length > 0;
+  return (service.releaseFeed?.entries.length ?? 0) > 0;
+}
+
+/** The status card's release feed, when it has one to show: the Releases trackers never do. */
+export function releaseFeedOf(service: Pick<ServiceSnapshot, "category" | "releaseFeed">): ReleaseFeed | undefined {
+  return service.category !== "updates" && service.releaseFeed && service.releaseFeed.entries.length > 0
+    ? service.releaseFeed
+    : undefined;
+}
+
+/** Where the Details' entries come from, for their links and the "no notes" line: the feed's name, or the tracker's. */
+export function releaseSource(service: ServiceSnapshot): { name: string; url: string } {
+  const feed = releaseFeedOf(service);
+  return feed ? { name: feed.sourceName, url: feed.sourceUrl } : { name: service.sourceName, url: service.sourceUrl };
+}
+
+// Plain text, whatever came in: a few lines, each short.
+function noteLinesOf(release: ReleaseInfo): string[] {
+  return (Array.isArray(release.notes) ? release.notes : [])
+    .filter((line): line is string => typeof line === "string" && line.trim() !== "")
+    .slice(0, MAX_NOTE_LINES)
+    .map((line) => (line.length > MAX_NOTE_CHARS ? `${line.slice(0, MAX_NOTE_CHARS - 1).trimEnd()}…` : line));
 }
 
 function entryOf(service: ServiceSnapshot, component: ComponentHealth): ReleaseEntry {
@@ -70,15 +94,35 @@ function entryOf(service: ServiceSnapshot, component: ComponentHealth): ReleaseE
     linkLabel: typeof release.linkLabel === "string" && release.linkLabel.trim() ? release.linkLabel : undefined,
     releasedAt,
     updatedAt: updatedAt && (!releasedAt || !sameDay(updatedAt, releasedAt)) ? updatedAt : undefined,
-    // Plain text, whatever came in: a few lines, each short.
-    notes: (Array.isArray(release.notes) ? release.notes : [])
-      .filter((line): line is string => typeof line === "string" && line.trim() !== "")
-      .slice(0, MAX_NOTE_LINES)
-      .map((line) => (line.length > MAX_NOTE_CHARS ? `${line.slice(0, MAX_NOTE_CHARS - 1).trimEnd()}…` : line)),
+    notes: noteLinesOf(release),
   };
 }
 
-/** Everything a tracker lists, in the order its collector gives, for the Details pop-up. */
+// An entry of a vendor's feed: named by its title, never "New release" (that tag is the trackers' 14-day rule),
+// and its version shown only when the title does not already say it.
+function feedEntryOf(feed: ReleaseFeed, entry: ReleaseFeedEntry): ReleaseEntry {
+  const { release } = entry;
+  const url = vendorUrl(release.url, feed.sourceUrl);
+  return {
+    name: entry.title,
+    version: release.version && !entry.title.includes(release.version) ? release.version : undefined,
+    fresh: false,
+    url,
+    own: url !== feed.sourceUrl,
+    linkLabel: typeof release.linkLabel === "string" && release.linkLabel.trim() ? release.linkLabel : undefined,
+    releasedAt: releaseDate(release.releasedAt),
+    notes: noteLinesOf(release),
+  };
+}
+
+/**
+ * Everything the Details list: a tracker's channels, OS or versions in the
+ * order its collector gives them, or a status card's feed entries, newest
+ * first.
+ */
 export function releaseEntries(service: ServiceSnapshot): ReleaseEntry[] {
-  return hasReleaseDetails(service) ? service.components.map((component) => entryOf(service, component)) : [];
+  if (!hasReleaseDetails(service)) return [];
+  const feed = releaseFeedOf(service);
+  if (feed) return feed.entries.map((entry) => feedEntryOf(feed, entry));
+  return service.components.map((component) => entryOf(service, component));
 }

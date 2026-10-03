@@ -16,6 +16,7 @@ import {
   type Result,
   recordPath,
   recordResponses,
+  releaseFeedResult,
   renderState,
   retryDelayMs,
   syncDeployHealth,
@@ -388,6 +389,65 @@ describe("source-health issue sync", () => {
     await later(0, [healthy]);
     expect(issues).toHaveLength(0);
     expect(comments).toHaveLength(0);
+  });
+});
+
+describe("release feeds in the report", () => {
+  it("are rows of their own, named for the feed and keyed apart from their card", () => {
+    expect(
+      releaseFeedResult({ id: "gitlab", label: "GitLab releases", ok: true, latencyMs: 240, bytes: 10 }, 2),
+    ).toEqual({
+      id: "gitlab-releases",
+      name: "GitLab releases",
+      ok: true,
+      latencyMs: 240,
+      attempts: 2,
+      failure: undefined,
+    });
+    const failure = { kind: "parser" as const, message: "GitLab releases had no readable entries." };
+    expect(
+      releaseFeedResult({ id: "cs2-europe", label: "CS2 releases", ok: false, latencyMs: 12, bytes: 0, failure }, 3),
+    ).toMatchObject({ id: "cs2-europe-releases", name: "CS2 releases", ok: false, failure });
+  });
+
+  it("open an issue of their own that names the release feed reader and says the card keeps its health", async () => {
+    const result = releaseFeedResult(
+      {
+        id: "gitlab",
+        label: "GitLab releases",
+        ok: false,
+        latencyMs: 12,
+        bytes: 0,
+        failure: { kind: "parser", message: "GitLab releases was not an RSS or Atom feed." },
+      },
+      3,
+    );
+    const card = { ...healthy, id: "gitlab", name: "GitLab" };
+    await later(0, [result, card]);
+    expect(sourceIssues()).toHaveLength(0);
+    await later(4 * HOUR, [result, card]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].title).toBe("Collector failure: GitLab releases");
+    expect(sourceIssues()[0].labels).toEqual(["source-health", "source:gitlab-releases"]);
+    expect(sourceIssues()[0].body).toContain("release feed");
+    expect(sourceIssues()[0].body).toContain("release-feeds.server.ts");
+    expect(sourceIssues()[0].body).toContain("keeps its health");
+    expect(sourceIssues()[0].body).toContain("in 2 consecutive runs");
+  });
+
+  it("are held back until the second failing run, remembered in the state issue, and closed when they recover", async () => {
+    const feed: Result = { ...broken, id: "gitlab-releases", name: "GitLab releases" };
+    await later(0, [feed, { ...healthy, id: "gitlab", name: "GitLab" }]);
+    expect(sourceIssues()).toHaveLength(0);
+    expect(stateIssues()).toHaveLength(1);
+    expect([...parseState(stateIssues()[0].body).keys()]).toEqual(["gitlab-releases"]);
+
+    await later(4 * HOUR, [feed]);
+    expect(sourceIssues()).toHaveLength(1);
+    await later(4 * HOUR, [{ ...feed, ok: true, failure: undefined }]);
+    expect(sourceIssues()[0].state).toBe("closed");
+    expect(comments).toHaveLength(1);
+    expect(parseState(stateIssues()[0].body).size).toBe(0);
   });
 });
 

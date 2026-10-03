@@ -2,10 +2,15 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   boundId,
+  boundReleaseFeed,
   boundSnapshot,
   clip,
+  MAX_FEED_ENTRIES,
+  MAX_FEED_TITLE_CHARS,
   MAX_ID_CHARS,
   MAX_NAME_CHARS,
+  MAX_NOTE_CHARS,
+  MAX_NOTE_LINES,
   MAX_TEXT_CHARS,
   MAX_TITLE_CHARS,
 } from "./bounds.ts";
@@ -24,6 +29,17 @@ import {
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
 import { PayloadError, unwrapJsonp } from "./http.ts";
+import {
+  decodeHtmlNames,
+  dropScripts,
+  gitlabVersion,
+  htmlBlocks,
+  jsonEntries,
+  parseFeedItems,
+  RELEASE_SOURCES,
+  steamNoteLines,
+  type xmlEntries,
+} from "./release-feeds.server.ts";
 import {
   awsEventActive,
   awsLatestLog,
@@ -906,6 +922,231 @@ describe("feeds and payloads", () => {
   });
 });
 
+// The vendors' release and changelog feeds are the same kind of untrusted text as
+// the status feeds: whatever they hold, a card gets bounded plain text and a safe
+// link, or no release line at all.
+const FEED_MARKUP = [
+  ...MARKUP,
+  "<entry>",
+  "</entry>",
+  "<updated>",
+  "<published>",
+  '<content type="html">',
+  "</content>",
+  "<summary>",
+  '<link rel="alternate" href="https://about.gitlab.com/releases/a/"/>',
+  "<link href='",
+  "<rss>",
+  "<channel>",
+  "<feed>",
+  "<h2>",
+  "<li>",
+  '<div class="x">',
+  "[b]",
+  "[/b]",
+  "[url=",
+  "{STEAM_CLAN_IMAGE}/",
+  "GitLab 18.4 released",
+  "GitLab 19.4 release notes",
+  "GitLab Patch Release: 18.4.1, 18.3.3",
+  "Thu, 01 Oct 2026 16:00:00 +0000",
+  "2026-10-01T00:00:00Z",
+  "javascript:",
+  "https://",
+  "http://",
+];
+const feedMarkup = fc
+  .array(
+    fc.oneof(
+      { weight: 5, arbitrary: fc.constantFrom(...FEED_MARKUP) },
+      { weight: 1, arbitrary: fc.string({ maxLength: 8 }) },
+    ),
+    { maxLength: 300 },
+  )
+  .map((parts) => parts.join(""));
+const TAG_LIKE = /<\/?[a-zA-Z][^<>]*>/;
+
+describe("release feeds", () => {
+  it("parseFeedItems with any markup gives a handful of entries, all text, with a real ISO date or none", () => {
+    fc.assert(
+      fc.property(feedMarkup, fc.constantFrom("item", "entry"), (xml, kind) => {
+        const items = parseFeedItems(xml, kind);
+        expect(items.length).toBeLessThanOrEqual(12);
+        for (const item of items) {
+          expect(typeof item.title).toBe("string");
+          expect(typeof item.body).toBe("string");
+          if (item.at !== undefined) expect(item.at).toMatch(ISO);
+        }
+      }),
+      run(),
+    );
+  });
+
+  it.each(RELEASE_SOURCES.filter((candidate) => candidate.id !== "cs2-europe"))(
+    "$id: whatever the markup is a parser failure or at most five entries of bounded text and a safe link",
+    (candidate) => {
+      fc.assert(
+        fc.property(feedMarkup, (xml) => {
+          let entries: ReturnType<typeof xmlEntries>;
+          try {
+            entries = candidate.read(candidate, xml);
+          } catch (error) {
+            expect(error).toBeInstanceOf(PayloadError);
+            return;
+          }
+          expect(entries.length).toBeGreaterThan(0);
+          expect(entries.length).toBeLessThanOrEqual(MAX_FEED_ENTRIES);
+          for (const entry of entries) {
+            expect(entry.title.trim()).not.toBe("");
+            expect(entry.title.length).toBeLessThanOrEqual(MAX_FEED_TITLE_CHARS);
+            expect(entry.title).not.toMatch(TAG_LIKE);
+            const { releasedAt, notes = [], url } = entry.release;
+            if (releasedAt !== undefined) expect(releasedAt).toMatch(ISO);
+            expect(notes.length).toBeLessThanOrEqual(MAX_NOTE_LINES);
+            for (const note of notes) expect(note.length).toBeLessThanOrEqual(MAX_NOTE_CHARS);
+            const link = new URL(url ?? "");
+            expect(link.protocol).toBe("https:");
+            expect(link.username + link.password).toBe("");
+            expect(candidate.hosts.some((host) => link.hostname === host || link.hostname.endsWith(`.${host}`))).toBe(
+              true,
+            );
+          }
+        }),
+        run(),
+      );
+    },
+  );
+
+  it("CS2: every news payload is a parser failure or at most five posts whose links are built, not taken", () => {
+    const steam = RELEASE_SOURCES.find((candidate) => candidate.id === "cs2-europe");
+    if (!steam) throw new Error("no CS2 source");
+    const post = fc.record(
+      {
+        gid: fc.oneof(fc.string({ maxLength: 12 }), fc.integer(), fc.constant(null)),
+        title: fc.oneof(wellFormed, fc.integer(), fc.constant(null)),
+        url: fc.oneof(wellFormed, fc.constant("https://evil.example/x")),
+        date: fc.oneof(fc.integer({ min: -1e12, max: 1e13 }), fc.string({ maxLength: 12 }), fc.constant(null)),
+        contents: fc.oneof(feedMarkup, fc.integer()),
+      },
+      { requiredKeys: [] },
+    );
+    const payload = fc.oneof(
+      fc.jsonValue(),
+      fc.array(post, { maxLength: 30 }).map((newsitems) => ({ appnews: { newsitems } })),
+    );
+    fc.assert(
+      fc.property(payload, (value) => {
+        let entries: ReturnType<typeof jsonEntries>;
+        try {
+          entries = jsonEntries(steam, JSON.stringify(value));
+        } catch (error) {
+          expect(error).toBeInstanceOf(PayloadError);
+          return;
+        }
+        expect(entries.length).toBeGreaterThan(0);
+        expect(entries.length).toBeLessThanOrEqual(MAX_FEED_ENTRIES);
+        for (const entry of entries) {
+          expect(entry.title).not.toMatch(TAG_LIKE);
+          expect(entry.release.url).toMatch(
+            /^https:\/\/store\.steampowered\.com\/news\/app\/730(?:\/view\/\d{1,24})?$/,
+          );
+          expect(entry.release.notes?.length ?? 0).toBeLessThanOrEqual(MAX_NOTE_LINES);
+        }
+      }),
+      run(),
+    );
+  });
+
+  it("gitlabVersion: a dotted version found in the title, or nothing", () => {
+    fc.assert(
+      fc.property(fc.oneof(feedMarkup, anyText), (title) => {
+        const version = gitlabVersion(title);
+        if (version !== undefined) {
+          expect(version).toMatch(/^\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/);
+          expect(title).toContain(version);
+        }
+      }),
+      run(),
+    );
+  });
+
+  it("gitlabVersion: the newest of the versions a patch release lists, compared number by number", () => {
+    const version = fc.tuple(fc.nat(30), fc.nat(30), fc.nat(30));
+    fc.assert(
+      fc.property(fc.array(version, { minLength: 1, maxLength: 6 }), (versions) => {
+        const names = versions.map((parts) => parts.join("."));
+        const newest = [...versions].sort((a, b) => b[0] - a[0] || b[1] - a[1] || b[2] - a[2])[0]?.join(".");
+        expect(gitlabVersion(`GitLab Patch Release: ${names.join(", ")}`)).toBe(newest);
+      }),
+      run(),
+    );
+  });
+
+  it("htmlBlocks, steamNoteLines and dropScripts: bounded plain text for any markup", () => {
+    fc.assert(
+      fc.property(fc.oneof(feedMarkup, anyText), (input) => {
+        const blocks = htmlBlocks(input);
+        expect(blocks.length).toBeLessThanOrEqual(60);
+        for (const block of blocks) {
+          expect(block.text).toBe(block.text.trim());
+          expect(block.text).not.toBe("");
+        }
+        const notes = steamNoteLines(input, "title");
+        expect(notes.length).toBeLessThanOrEqual(MAX_NOTE_LINES);
+        for (const note of notes) expect(note.length).toBeLessThanOrEqual(MAX_NOTE_CHARS);
+        expect(dropScripts(input).length).toBeLessThanOrEqual(input.length);
+      }),
+      run(),
+    );
+  });
+
+  it("decodeHtmlNames: never longer than its input, never throws, and leaves text with no '&' alone", () => {
+    fc.assert(
+      fc.property(fc.oneof(fc.string(), fc.stringMatching(/^[&a-z;#0-9 ]{0,60}$/)), (input) => {
+        const out = decodeHtmlNames(input);
+        expect(out.length).toBeLessThanOrEqual(input.length);
+        if (!input.includes("&")) expect(out).toBe(input);
+        // A second pass finds nothing the first did not: what it writes is never a reference itself.
+        expect(decodeHtmlNames(out)).toBe(out);
+      }),
+      run(),
+    );
+  });
+
+  it("boundReleaseFeed: nothing, or at most five titled entries, whatever the feed holds", () => {
+    const entry = fc.record(
+      {
+        title: fc.oneof(maybeLong, fc.integer(), fc.constant(null)),
+        release: fc.oneof(fc.object(), fc.constant(null)),
+      },
+      { requiredKeys: [] },
+    );
+    fc.assert(
+      fc.property(
+        fc.record(
+          {
+            sourceName: maybeLong,
+            sourceUrl: fc.oneof(wellFormed, fc.constant("https://example.com/")),
+            entries: fc.oneof(fc.array(entry, { maxLength: 12 }), fc.string()),
+          },
+          { requiredKeys: [] },
+        ),
+        (feed) => {
+          const out = boundReleaseFeed(feed as never);
+          if (out === undefined) return;
+          expect(out.entries.length).toBeGreaterThan(0);
+          expect(out.entries.length).toBeLessThanOrEqual(MAX_FEED_ENTRIES);
+          for (const item of out.entries) {
+            expect(item.title.trim()).not.toBe("");
+            expect(item.title.length).toBeLessThanOrEqual(MAX_FEED_TITLE_CHARS);
+          }
+        },
+      ),
+      run(),
+    );
+  });
+});
+
 // A parser that is quadratic on crafted input is a denial of service on the
 // Worker, and the case that finds it is rarely one anybody would write by
 // hand. Each run repeats a few fuzz-chosen fragments up to a size at which a
@@ -939,6 +1180,13 @@ describe("parsers stay linear", () => {
     ["parseVersionMap", parseVersionMap],
     ["clip", (input: string) => clip(input, 300)],
     ["boundId", boundId],
+    ["parseFeedItems (items)", (input: string) => parseFeedItems(input, "item")],
+    ["parseFeedItems (entries)", (input: string) => parseFeedItems(input, "entry")],
+    ["htmlBlocks", htmlBlocks],
+    ["dropScripts", dropScripts],
+    ["gitlabVersion", gitlabVersion],
+    ["steamNoteLines", (input: string) => steamNoteLines(input, "title")],
+    ["decodeHtmlNames", decodeHtmlNames],
   ];
 
   it.each(parsers)("%s: crafted input is read in linear time", (_name, parse) => {

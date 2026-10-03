@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Titles that carry markup</title>
+    <link>https://aws.amazon.com/new/</link>
+    <item>
+      <title><![CDATA[<b>Bold</b> and <i>italic</i> title <script>alert(1)</script>]]></title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/10/markup-1/</link>
+      <description><![CDATA[<p>First paragraph with <strong>strong</strong> text &amp; an entity.</p><p>Second paragraph.<br/>After a break.</p><script>alert(2)</script>]]></description>
+      <pubDate>Thu, 01 Oct 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>&lt;img src=x onerror=alert(3)&gt; Escaped markup &amp;amp; ampersand</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/10/markup-2/</link>
+      <description>&lt;p&gt;Escaped paragraph one.&lt;/p&gt;&lt;p&gt;Escaped paragraph two.&lt;/p&gt;</description>
+      <pubDate>Wed, 30 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>   Spaces
+        and     newlines   in a title   </title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/markup-3/</link>
+      <description>Plain text, no markup at all.</description>
+      <pubDate>Tue, 29 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title><![CDATA[<p></p>]]></title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/markup-4/</link>
+      <pubDate>Mon, 28 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

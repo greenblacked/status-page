@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
+import { visibleText } from "../../test/markup";
 import { ServiceCard } from "./service-card";
 
 const noop = () => {};
@@ -33,6 +34,9 @@ const rows = (html: string) => html.match(/data-component-row/g) ?? [];
 /** The header of a card or row: from the marker to the end of the name and its line. */
 const header = (html: string) =>
   html.slice(html.indexOf("data-card-header"), html.indexOf("</p>", html.indexOf("data-card-header")));
+
+/** What the header line reads as text: its items are separate elements, so the markup is left out. */
+const headerText = (html: string) => visibleText(header(html));
 
 describe("healthy service row", () => {
   it("is one article with a glyph, the name, the word and the latency, and no summary line", () => {
@@ -376,7 +380,7 @@ describe("release row", () => {
   it("says New release when a channel is fresh, and names the newest two versions", () => {
     const html = render("apple-os", { category: "updates", components: fresh });
     expect(header(html)).toContain("New release");
-    expect(header(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
+    expect(headerText(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
     expect(header(html)).not.toContain("Testing");
   });
 
@@ -386,7 +390,7 @@ describe("release row", () => {
       components: fresh.map((c) => ({ ...c, health: "operational" })),
     });
     expect(html).not.toContain("New release");
-    expect(header(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
+    expect(headerText(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
   });
 
   it("says No new release when the tracker lists no versions", () => {

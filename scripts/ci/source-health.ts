@@ -5,6 +5,11 @@
 // that fails, and, with --issues, keeps exactly one GitHub issue open per
 // broken source, closing it again when the source reads cleanly.
 //
+// It probes two kinds of source, reported apart: every card's health collector
+// ("GitLab.com") and each vendor's release or changelog feed ("GitLab releases",
+// id "gitlab-releases"), which only adds a quiet line to a card and never decides
+// its health. The feeds are read directly here, never from the board's cache.
+//
 // A source gets an issue only after it has failed in two consecutive runs
 // (CONSECUTIVE_RUNS): vendor status pages time out from the runner for an
 // hour now and then, and an issue that opens and closes itself is noise. The
@@ -29,6 +34,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { probeReleaseFeeds, type ReleaseFeedResult } from "../../src/lib/status/release-feeds.server.ts";
 import { collectAllServices } from "../../src/lib/status/sources.server.ts";
 import type { ServiceSnapshot, SourceFailure } from "../../src/lib/status/types.ts";
 
@@ -67,6 +73,18 @@ export type Result = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** A release feed's reading as a row of the report, apart from its card: "GitLab releases", id "gitlab-releases". */
+export function releaseFeedResult(read: ReleaseFeedResult, attempt: number): Result {
+  return {
+    id: `${read.id}-releases`,
+    name: read.label,
+    ok: read.ok,
+    latencyMs: read.latencyMs,
+    attempts: attempt,
+    failure: read.failure,
+  };
+}
+
 /**
  * How long to wait after a failed attempt: RETRY_DELAY_MS after the first
  * one, and SLOW_RETRY_MS after any later one while a failing source timed
@@ -86,7 +104,10 @@ export function retryDelayMs(
 async function probe(): Promise<Result[]> {
   const results = new Map<string, Result>();
   for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
-    const snapshots: ServiceSnapshot[] = await collectAllServices();
+    const [snapshots, feeds]: [ServiceSnapshot[], ReleaseFeedResult[]] = await Promise.all([
+      collectAllServices(),
+      probeReleaseFeeds(),
+    ]);
     for (const snapshot of snapshots) {
       const previous = results.get(snapshot.id);
       if (previous?.ok) continue;
@@ -98,6 +119,10 @@ async function probe(): Promise<Result[]> {
         attempts: attempt,
         failure: snapshot.failure,
       });
+    }
+    for (const read of feeds) {
+      const result = releaseFeedResult(read, attempt);
+      if (!results.get(result.id)?.ok) results.set(result.id, result);
     }
     const stillFailing = [...results.values()].filter((result) => !result.ok);
     if (stillFailing.length === 0 || attempt === ATTEMPTS) break;
@@ -249,13 +274,14 @@ function runUrl(): string {
 
 function issueBody(result: Result, runs: number, firstFailure: string, now: string): string {
   const failure = result.failure;
+  const release = result.id.endsWith("-releases");
   const parserNote =
     failure?.kind === "parser"
-      ? "A **parser** failure means the vendor answered, but the payload no longer matches what the collector in `src/lib/status/sources.server.ts` expects. That needs a code change."
+      ? `A **parser** failure means the vendor answered, but the payload no longer matches what the ${release ? "release feed reader in `src/lib/status/release-feeds.server.ts`" : "collector in `src/lib/status/sources.server.ts`"} expects. That needs a code change.${release ? " The card keeps its health and shows no release line meanwhile." : ""}`
       : "`http`, `timeout` and `network` failures are often on the vendor's side and clear by themselves. If this stays open for hours, check whether the official endpoint moved.";
   return [
     `<!-- source-health:${result.id} -->`,
-    `The scheduled source-health check could not read the official status source for **${result.name}** in ${runs} consecutive ${runs === 1 ? "run" : "runs"}, and in ${result.attempts === 1 ? "its single attempt" : `all ${result.attempts} attempts`} of the latest one.`,
+    `The scheduled source-health check could not read the official ${release ? "release feed" : "status source"} for **${result.name}** in ${runs} consecutive ${runs === 1 ? "run" : "runs"}, and in ${result.attempts === 1 ? "its single attempt" : `all ${result.attempts} attempts`} of the latest one.`,
     "",
     "| | |",
     "| --- | --- |",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { service } from "../../test/fixtures.ts";
-import { hasReleaseDetails, releaseDate, releaseEntries } from "./release-details.ts";
-import type { ComponentHealth } from "./types.ts";
+import { hasReleaseDetails, releaseDate, releaseEntries, releaseFeedOf, releaseSource } from "./release-details.ts";
+import type { ComponentHealth, ReleaseFeed } from "./types.ts";
 
 const SOURCE = "https://example.com/releases";
 
@@ -159,5 +159,67 @@ describe("releaseEntries", () => {
     });
     expect(entry.releasedAt).toBeUndefined();
     expect(releaseEntries(service("gcp", { components: [{ name: "a", health: "operational" }] }))).toEqual([]);
+  });
+});
+
+describe("a status card's release feed", () => {
+  const feed: ReleaseFeed = {
+    sourceName: "GitLab releases",
+    sourceUrl: "https://docs.gitlab.com/releases/",
+    entries: [
+      {
+        title: "GitLab 18.4.1",
+        release: {
+          version: "18.4.1",
+          releasedAt: "2026-09-24T00:00:00.000Z",
+          url: "https://docs.gitlab.com/releases/2026/09/24/patch/",
+          linkLabel: "Release post",
+          notes: ["GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7", "", "Fixes."],
+        },
+      },
+      { title: "Counter-Strike 2 Update", release: { version: "", url: "http://about.gitlab.com/not-https" } },
+      { title: "GitLab 18.4", release: { version: "18.4", releasedAt: "nonsense" } },
+    ],
+  };
+  const card = (overrides = {}) =>
+    service("gitlab", { sourceName: "GitLab.com Status", releaseFeed: feed, ...overrides });
+
+  it("has Details when it carries entries, and not when it carries none or is not a status card", () => {
+    expect(hasReleaseDetails(card())).toBe(true);
+    expect(hasReleaseDetails(card({ releaseFeed: undefined }))).toBe(false);
+    expect(hasReleaseDetails(card({ releaseFeed: { ...feed, entries: [] } }))).toBe(false);
+    // A tracker has Details of its own, whatever a snapshot says about a feed.
+    expect(hasReleaseDetails(service("mikrotik", { category: "updates", releaseFeed: feed }))).toBe(false);
+    expect(releaseFeedOf(service("mikrotik", { category: "updates", releaseFeed: feed }))).toBeUndefined();
+    expect(releaseFeedOf(card())).toBe(feed);
+  });
+
+  it("names the feed, not the health source, as where the entries come from", () => {
+    expect(releaseSource(card())).toEqual({ name: "GitLab releases", url: "https://docs.gitlab.com/releases/" });
+    expect(releaseSource(card({ releaseFeed: undefined }))).toEqual({
+      name: "GitLab.com Status",
+      url: "https://status.example.com/gitlab",
+    });
+  });
+
+  it("lists the feed's entries newest first as the collector gave them, never marked as a new release", () => {
+    const entries = releaseEntries(card());
+    expect(entries.map((entry) => entry.name)).toEqual(["GitLab 18.4.1", "Counter-Strike 2 Update", "GitLab 18.4"]);
+    expect(entries.every((entry) => entry.fresh === false)).toBe(true);
+    expect(entries[0]).toMatchObject({
+      url: "https://docs.gitlab.com/releases/2026/09/24/patch/",
+      own: true,
+      linkLabel: "Release post",
+      releasedAt: { at: Date.parse("2026-09-24T00:00:00Z"), dayOnly: false },
+      // The version is not repeated when the title already says it.
+      version: undefined,
+      notes: ["GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7", "Fixes."],
+    });
+  });
+
+  it("links the feed's page for an entry whose link is not https, and drops a date nobody can read", () => {
+    const [, second, third] = releaseEntries(card());
+    expect(second).toMatchObject({ url: "https://docs.gitlab.com/releases/", own: false, version: undefined });
+    expect(third?.releasedAt).toBeUndefined();
   });
 });
