@@ -49,7 +49,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
-- The headline and the sentence under it no longer jump when the web font arrives, on a phone, a tablet or a desktop that has no Apple system font. The stand-in text is now sized to Inter's real widths for each weight, size and kind of character, so the sentence wraps at the same words before and after the swap and the service links in it stay where they were. On the longest headline the shift went from 0.34 to under 0.001.
+- The headline and the sentence under it no longer jump when the web font arrives, on a phone, a tablet or a desktop that has no Apple system font. The stand-in text is now sized to Inter's real widths for each weight, size and kind of character, so the sentence wraps at the same words before and after the swap and the service links in it stay where they were. On the longest headline the shift went from about 0.34 to about 0.025 on a phone, and to under 0.001 on a tablet or a desktop.
 - On a Releases card a date no longer breaks across two lines ("Sep" at the end of one, "28" at the start of the next, or "Oct" and "1 Details"). Each "version · date" stays whole, the line wraps between them, and **Details** stays with the last one.
 - A Statuspage reply with no status (Spotify, ChatGPT, Claude, Epic, Fortnite, and the new GitHub and Confluence cards) now reads No data instead of Operational.
 - Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
