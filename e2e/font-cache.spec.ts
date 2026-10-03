@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BrowserContext, chromium, expect, type Page, test } from "@playwright/test";
+import { upstreamUrl } from "../scripts/ci/upstream-url.ts";
 
 // A return visit draws the page in the self-hosted Inter only if the browser can use its copy of the font without
 // asking the network: Inter is font-display: optional (src/styles.css), and Chromium uses an optional font that was
@@ -57,10 +58,16 @@ async function serveLikeProduction(origin: string, shipped: boolean) {
   const fontRequests: string[] = [];
   const server = createServer(async (request, response) => {
     try {
-      const target = new URL(request.url ?? "/", origin);
+      // The host is the test's own preview, never the request's: anything but an origin-relative path is refused.
+      const upstreamHref = upstreamUrl(origin, request.url ?? "/");
+      if (upstreamHref === null) {
+        response.writeHead(400).end();
+        return;
+      }
+      const target = new URL(upstreamHref);
       const isFont = target.pathname.startsWith("/assets/inter-var");
       if (isFont) fontRequests.push(request.headers["if-none-match"] ? "conditional" : "full");
-      const upstream = await fetch(target, {
+      const upstream = await fetch(upstreamHref, {
         headers: Object.fromEntries(
           ["accept", "if-none-match", "if-modified-since"].flatMap((name) => {
             const value = request.headers[name];
