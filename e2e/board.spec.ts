@@ -176,6 +176,14 @@ async function openFixture(
   await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  await refreshIntoServedBoard(page, ready);
+}
+
+/** On a loaded page that has a board served (serveBoard), presses Refresh so the board replaces the server's first render. */
+async function refreshIntoServedBoard(
+  page: Page,
+  ready: { id: string; label: string } = { id: "aws", label: "Outage" },
+): Promise<void> {
   // The cards are in the server's markup already; Refresh answers only once hydrated.
   await hydrated(page);
   await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
@@ -283,19 +291,26 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
   expect(
     await page.evaluate(() => document.getAnimations().some((a) => (a as CSSAnimation).animationName === "rise-in")),
   ).toBe(false);
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-    .analyze();
-  // Every failing node with axe's own summary (colours and ratio for
-  // contrast), so a failure in CI can be read from the log alone.
-  const blocking = results.violations
-    .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
-    .flatMap((violation) =>
-      violation.nodes.map(
-        (node) => `${violation.id} ${node.target.join(" ")}: ${node.failureSummary ?? violation.help}`,
-      ),
-    );
-  expect(blocking).toEqual([]);
+  const audit = async () => {
+    const results = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+      .analyze();
+    // Every failing node with axe's own summary (colours and ratio for
+    // contrast), so a failure in CI can be read from the log alone.
+    return results.violations
+      .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+      .flatMap((violation) =>
+        violation.nodes.map(
+          (node) => `${violation.id} ${node.target.join(" ")}: ${node.failureSummary ?? violation.help}`,
+        ),
+      );
+  };
+  // The page as the server renders it (every card Unknown, whatever the vendors say) ...
+  expect(await audit()).toEqual([]);
+  // ... and with every state a card can be in: outage, degraded, maintenance, unknown, operational.
+  await serveBoard(page, () => fixtureBoard(Date.now()));
+  await refreshIntoServedBoard(page);
+  expect(await audit()).toEqual([]);
 });
 
 test("starts the tab order with a skip link that moves focus to the board", async ({ page, isMobile, browserName }) => {
@@ -347,8 +362,12 @@ test("opens with the search from the address and announces a new result count", 
 test("fits the viewport without horizontal scrolling", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-  expect(overflow).toBeLessThanOrEqual(0);
+  const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(await overflow()).toBeLessThanOrEqual(0);
+  // The longest cards come with a board that has every state, long summaries and component lists.
+  await serveBoard(page, () => fixtureBoard(Date.now()));
+  await refreshIntoServedBoard(page);
+  expect(await overflow()).toBeLessThanOrEqual(0);
 });
 
 test("carries the Apple device head tags, with the icon and manifest served", async ({ page, request }) => {
