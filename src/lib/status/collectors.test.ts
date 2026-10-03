@@ -1914,6 +1914,45 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         });
       });
 
+      it("a notice published weeks ahead is dated by its window start, not its publication", async () => {
+        const start = Date.now() - HOUR;
+        stubFetch({
+          [URLS.azure]: feed([
+            `<item><title>Planned maintenance - Key Vault</title><pubDate>${new Date(Date.now() - 40 * 24 * HOUR).toUTCString()}</pubDate><description>Starting at ${clock(start)}. Ending at ${clock(Date.now() + 2 * HOUR)}.</description></item>`,
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("maintenance");
+        expect(azure.incidents[0].startedAt).toBe(minute(start));
+      });
+
+      it("prose with an end word ahead of an ended window does not keep the notice active", async () => {
+        const start = Date.now() - 50 * HOUR;
+        stubFetch({
+          [URLS.azure]: feed([
+            item(
+              "Planned maintenance - Key Vault",
+              `Our end users may notice. Starting at ${clock(start)} until ${clock(start + 4 * HOUR)}.`,
+            ),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("operational");
+        expect(azure.incidents).toEqual([]);
+      });
+
+      it("prose with 'unable to start' ahead of a started window does not drop it", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item(
+              "Planned maintenance - Key Vault",
+              `Customers may be unable to start or allocate VMs. Starting at ${clock(Date.now() - HOUR)} until ${clock(Date.now() + 2 * HOUR)}.`,
+            ),
+          ]),
+        });
+        expect((await collect("azure")).health).toBe("maintenance");
+      });
+
       it("a started window with no end is maintenance while it is recent, and a window that has ended is not", async () => {
         stubFetch({
           [URLS.azure]: feed([item("Maintenance impacting Key Vault", `Starting at ${clock(Date.now() - HOUR)}.`)]),

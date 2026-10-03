@@ -1099,6 +1099,51 @@ describe("azure feed", () => {
     assert.deepEqual(azureMaintenanceWindow("Starting soon. Ending at 05:30 UTC on 05 Oct 2026"), { end });
   });
 
+  it("reads the window past ordinary prose that holds a start or end word", () => {
+    const at = Date.UTC(2026, 9, 5, 1, 0);
+    const end = Date.UTC(2026, 9, 5, 5, 30);
+    // "end users" ahead of the window does not take the end.
+    assert.deepEqual(
+      azureMaintenanceWindow(
+        "End users may notice. Starting at 01:00 UTC on 05 Oct 2026 until 05:30 UTC on 05 Oct 2026.",
+      ),
+      { start: at, end },
+    );
+    assert.deepEqual(
+      azureMaintenanceWindow("This is end-to-end work. Start: 2026-10-05 01:00 UTC. End: 2026-10-05 05:30 UTC."),
+      { start: at, end },
+    );
+    // "unable to start" ahead of the window does not hide the start.
+    assert.deepEqual(
+      azureMaintenanceWindow(
+        "Customers may be unable to start or allocate Virtual Machines. Starting at 01:00 UTC on 05 Oct 2026.",
+      ),
+      { start: at },
+    );
+    // An end listed before the start is still read.
+    assert.deepEqual(azureMaintenanceWindow("End: 2026-10-05 05:30 UTC. Start: 2026-10-05 01:00 UTC."), {
+      start: at,
+      end,
+    });
+  });
+
+  it("does not read a time with an offset after its zone as UTC", () => {
+    assert.deepEqual(azureMaintenanceWindow("Start: 01:00 UTC+02:00 on 05 Oct 2026"), {});
+    assert.deepEqual(azureMaintenanceWindow("Starting 2026-10-05 01:00 GMT+5:30"), {});
+    assert.deepEqual(azureMaintenanceWindow("Starting 2026-10-05 01:00 UTC-5"), {});
+    // A range written with a spaced dash still reads.
+    assert.deepEqual(azureMaintenanceWindow("Starting 2026-10-05 01:00 UTC - 05:30 UTC"), {
+      start: Date.UTC(2026, 9, 5, 1, 0),
+    });
+  });
+
+  it("counts a short ended window as over despite prose with an end word before it", () => {
+    const stated = "Our end users may notice. Starting at 01:00 UTC on 01 Oct 2026 until 05:00 UTC on 01 Oct 2026.";
+    const item = { title: "Planned maintenance - X", pubDate: "Thu, 01 Oct 2026 00:00:00 GMT", description: stated };
+    assert.equal(azureItemActive(item, Date.UTC(2026, 9, 3, 12, 0)), false);
+    assert.equal(azureItemActive(item, Date.UTC(2026, 9, 1, 3, 0)), true);
+  });
+
   it("counts maintenance only once its window has started and not ended", () => {
     const clock = (ms: number) => {
       const d = new Date(ms).toISOString();

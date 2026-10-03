@@ -1767,11 +1767,14 @@ export function azureItemHealth(title: string): Health {
 }
 
 const AZURE_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-// The words a window's start and end follow in an item's text. Only the first
-// of each is read, and only the 60 characters after it.
+// The words a window's start and end follow in an item's text. Each is read
+// from the 60 characters after the first of its words that is followed by a
+// moment; ordinary prose ("end users", "unable to start") is skipped past.
 const AZURE_START = /\b(?:start(?:s|ing)?(?: time)?|begin(?:s|ning)?)\b/i;
 const AZURE_END = /\b(?:end(?:s|ing)?(?: time)?|until|finish(?:es|ing)?)\b/i;
-const AZURE_CLOCK = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s?(?:utc|gmt|z)\b/i;
+// A zone with an offset after it ("UTC+02:00", "GMT+5:30") is not UTC, and the
+// offset is not applied, so it reads as no moment.
+const AZURE_CLOCK = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s?(?:utc|gmt|z)\b(?![+\-\u2212]\s?\d)/i;
 const AZURE_DAY_FIRST = /\b(\d{1,2})(?:st|nd|rd|th)?\s([a-z]{3,9})\.?,?\s(\d{4})\b/i;
 const AZURE_MONTH_FIRST = /\b([a-z]{3,9})\.?\s(\d{1,2})(?:st|nd|rd|th)?,?\s(\d{4})\b/i;
 const AZURE_ISO_DAY = /\b(\d{4})-(\d{2})-(\d{2})\b/;
@@ -1826,16 +1829,37 @@ function azureMoment(snippet: string): number | undefined {
  */
 export function azureMaintenanceWindow(description: string | undefined): { start?: number; end?: number } {
   const body = stripHtml(description ?? "");
-  const startAt = AZURE_START.exec(body);
-  const endAt = AZURE_END.exec(body);
-  const snippet = (found: RegExpExecArray | null, stop?: RegExpExecArray | null) => {
-    if (!found) return "";
-    const from = found.index + found[0].length;
-    const to = stop && stop.index > from ? Math.min(stop.index, from + 60) : from + 60;
-    return body.slice(from, to);
+  // The moment in the 60 characters after a keyword match, up to the other
+  // keyword. A match whose text names none gives way to the next match.
+  const momentAfter = (found: RegExpMatchArray, other: RegExp): number | undefined => {
+    const from = (found.index ?? 0) + found[0].length;
+    const snippet = body.slice(from, from + 60);
+    const cut = snippet.search(other);
+    return azureMoment(cut > 0 ? snippet.slice(0, cut) : snippet);
   };
-  const start = azureMoment(snippet(startAt, endAt));
-  const end = azureMoment(snippet(endAt, startAt && endAt && startAt.index > endAt.index ? startAt : null));
+  const startWords = [...body.matchAll(new RegExp(AZURE_START.source, "gi"))];
+  const endWords = [...body.matchAll(new RegExp(AZURE_END.source, "gi"))];
+  let startedAt = -1;
+  let start: number | undefined;
+  for (const found of startWords) {
+    start = momentAfter(found, AZURE_END);
+    if (start !== undefined) {
+      startedAt = (found.index ?? 0) + found[0].length;
+      break;
+    }
+  }
+  // The end is looked for after the start, so a word in the prose ahead of the
+  // window ("end users") cannot take it; one listed before the start is the
+  // fallback, for an item that gives the end first.
+  const ordered = [
+    ...endWords.filter((found) => (found.index ?? 0) >= startedAt),
+    ...endWords.filter((found) => (found.index ?? 0) < startedAt),
+  ];
+  let end: number | undefined;
+  for (const found of ordered) {
+    end = momentAfter(found, AZURE_START);
+    if (end !== undefined) break;
+  }
   return { ...(start !== undefined ? { start } : {}), ...(end !== undefined ? { end } : {}) };
 }
 
@@ -1911,13 +1935,20 @@ async function collectAzure(): Promise<ServiceSnapshot> {
       MAX_UPCOMING_MAINTENANCE,
     );
     const { incidents, problems, incidentCount } = listIncidents(
-      active.map((item, index) => ({
-        id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
-        title: item.title || "Azure incident",
-        health: azureItemHealth(item.title),
-        startedAt: isoTimestamp(item.pubDate),
-        url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
-      })),
+      active.map((item, index) => {
+        const health = azureItemHealth(item.title);
+        // Maintenance is dated by its window: the notice went out ahead of the
+        // work, and its own date would put the start weeks too early.
+        const windowStart = health === "maintenance" ? azureMaintenanceWindow(item.description).start : undefined;
+        const startedAt = windowStart !== undefined ? new Date(windowStart).toISOString() : isoTimestamp(item.pubDate);
+        return {
+          id: item.link || `azure-${fingerprint(`${item.title}|${startedAt ?? ""}|${index}`)}`,
+          title: item.title || "Azure incident",
+          health,
+          startedAt,
+          url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
+        };
+      }),
     );
     return {
       ...base("azure", new Date().toISOString(), ms),
