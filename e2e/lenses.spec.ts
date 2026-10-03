@@ -1,7 +1,8 @@
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { verdict } from "../src/lib/status/verdict.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
+import { expect, test } from "./test";
 
 // The bubble layer (src/components/status/lens-field.tsx and the .lens rules in
 // src/background.css; the class is still "lens"): its markup and asset, the rules

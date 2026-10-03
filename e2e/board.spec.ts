@@ -1,10 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
 import { BAR_RISE, DOCK_HYSTERESIS, HIDE_DOWN_PX, REVEAL_UP_PX, WIDE_RANGE } from "../src/lib/status/dock.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
+import { expect, test } from "./test";
 
 const SERVICES = 20;
 const cards = (page: Page) => page.locator('article[id^="service-"]');

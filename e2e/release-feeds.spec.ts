@@ -1,7 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { feedBoard, fixtureBoard, serveBoard } from "./fixture-board";
+import { expect, test } from "./test";
 
 // The quiet release line of a status card whose vendor publishes an official release or changelog feed, and the
 // Details it opens. It is advisory: it sits beside a card's health and changes none of it. A line wraps between
