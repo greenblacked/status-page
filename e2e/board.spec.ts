@@ -4885,16 +4885,42 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
 // fallback faces in styles.css are sized so that Inter, arriving, leaves the lines where they were; this holds Inter
 // back, lets the board draw, then releases it and counts the shift on a board with no such line, a short one and the
 // longest one. The page is a phone, a tablet and a desktop in turn: the wrap differs with the width.
-for (const [name, makeBoard, ready] of [
-  ["a calm board", calmBoard, { id: "aws", label: "Operational" }],
-  ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }],
-  ["the longest hero", longHeroBoard, { id: "aws", label: "Outage" }],
+//
+// The calm board is also held to 360px and 834px on the desktop project, in a viewport as tall as the whole page (a
+// layout shift only counts where it is on screen), with a tight limit: with no incident to move, the swap has
+// nothing to shift but the 12-13px text of the cards, which the fallback draws narrower than Inter, and it
+// shifted almost nothing before the faces were cut. The limit keeps that from growing.
+const SWAP_LIMIT = 0.1;
+const CALM_SWAP_LIMIT = 0.02;
+for (const [name, makeBoard, ready, size, limit] of [
+  ["a calm board", calmBoard, { id: "aws", label: "Operational" }, undefined, SWAP_LIMIT],
+  ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }, undefined, SWAP_LIMIT],
+  ["the longest hero", longHeroBoard, { id: "aws", label: "Outage" }, undefined, SWAP_LIMIT],
+  [
+    "a calm board at 360px",
+    calmBoard,
+    { id: "aws", label: "Operational" },
+    { width: 360, height: 6000 },
+    CALM_SWAP_LIMIT,
+  ],
+  [
+    "a calm board at 834px",
+    calmBoard,
+    { id: "aws", label: "Operational" },
+    { width: 834, height: 6000 },
+    CALM_SWAP_LIMIT,
+  ],
 ] as const) {
   test(`keeps the hero in place when the self-hosted Inter replaces its fallback on ${name}`, async ({
     page,
     browserName,
-  }) => {
+  }, testInfo) => {
     test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
+    test.skip(
+      Boolean(size) && testInfo.project.name !== "desktop",
+      "a set width is measured once, on the desktop project",
+    );
+    if (size) await page.setViewportSize(size);
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -4944,7 +4970,7 @@ for (const [name, makeBoard, ready] of [
     );
     await page.waitForTimeout(500);
     const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
-    expect(shift, "cumulative layout shift of the font swap").toBeLessThan(0.1);
+    expect(shift, "cumulative layout shift of the font swap").toBeLessThan(limit);
   });
 }
 
