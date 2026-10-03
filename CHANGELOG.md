@@ -6,6 +6,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
 ### Added
 
 - A quiet **release line** under the health line of the cards whose vendors publish an official release or changelog feed: **AWS** (What's New), **Google Cloud** (release notes), **Microsoft Azure** (Azure Updates), **GitHub** (Changelog), **GitLab** (the newest version, such as "GitLab 18.4 · Sep 18") and **CS2 Europe** (the latest update post on Steam). **Details** opens the vendor's recent entries with a few notes and a link to the vendor's own post. It never changes a card's health or anything derived from it, and a feed that cannot be read just leaves the line out. Each feed is read at most every 30 minutes, after the health checks have finished so it can never slow one, and the board never waits for one.
@@ -213,7 +215,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/greenblacked/status-page/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/greenblacked/status-page/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/greenblacked/status-page/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/greenblacked/status-page/compare/v0.2.0...v0.3.0
