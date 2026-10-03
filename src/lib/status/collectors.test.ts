@@ -1901,6 +1901,32 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         expect(azure.health).toBe("outage");
         expect(azure.incidents.map((incident) => incident.title)).toEqual(["Maintenance overran: service unavailable"]);
       });
+
+      it("an undated item beside a dated incident is dropped quietly, not a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Storage - East US - Increased latency"),
+            "<item><title>Undated incident</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("degraded");
+        expect(azure.incidents.map((incident) => incident.title)).toEqual(["Storage - East US - Increased latency"]);
+      });
+
+      it("a dated notice does not make an undated incident readable: unknown with a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault"),
+            "<item><title>Undated incident</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("unknown");
+        expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
+        expect(azure.incidents).toEqual([]);
+      });
     });
 
     it("Azure feed.xml: resolution words inside an active item do not end the incident", async () => {
