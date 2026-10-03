@@ -11,7 +11,7 @@
 // The mark is the board's own operational glyph (an outline ring and a check, see
 // src/components/status/status-glyph.tsx), in the operational green on paper. The
 // PNGs and the JPEG are screenshots of SVG and HTML made with Chromium through
-// Playwright, so the fonts come from public/fonts and nothing is fetched. Point
+// Playwright, so the fonts come from src/fonts and nothing is fetched. Point
 // PLAYWRIGHT_CHROMIUM_EXECUTABLE at a browser Playwright did not download, as
 // playwright.config.ts does.
 import { writeFileSync } from "node:fs";
@@ -81,7 +81,7 @@ try {
     await page.close();
   }
 
-  // The preview image is a page of its own, so its fonts load from public/fonts by relative URL.
+  // The preview image is a page of its own, so its fonts load from src/fonts by relative URL.
   const page = await browser.newPage({ viewport: { width: 1200, height: 630 }, deviceScaleFactor: 1 });
   await page.goto(pathToFileURL(`${root}docs/og-image.html`).href);
   await page.evaluate(() => document.fonts.ready);
