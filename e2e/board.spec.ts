@@ -5047,7 +5047,7 @@ for (const width of [1024, 1440]) {
           const src = (rule as CSSFontFaceRule).style.getPropertyValue("src");
           const style = document.createElement("style");
           style.textContent = `@font-face { font-family: "Inter"; src: ${src}; font-weight: 400 700; font-display: block; }`;
-          document.head.append(style);
+          document.head.appendChild(style);
           await Promise.all([document.fonts.load("400 16px Inter"), document.fonts.load("600 16px Inter")]);
         });
         await expect
