@@ -5016,12 +5016,13 @@ function busyBoard(): BoardSnapshot {
 // and "Inter" re-declares the face with font-display: block (what the cached case draws in, without the race
 // optional has with a file that arrives within the first 100ms). The last two cases stress the guarantee itself:
 // the row's text spaced out far past either face, which must scroll the segments and keep the toggles beside them,
-// not drop the toggles below.
+// not drop the toggles below. The first two cases also assert that every category is visible (the segments do not
+// scroll), since the toggles cannot wrap and a row too wide would otherwise pass with its last option clipped.
 const FILTER_ROW_CASES = [
   { face: "fallback", spacing: "", note: "" },
   { face: "Inter", spacing: "", note: "" },
-  { face: "fallback", spacing: "0.6px", note: " with the text spaced out" },
-  { face: "Inter", spacing: "0.6px", note: " with the text spaced out" },
+  { face: "fallback", spacing: "1px", note: " with the text spaced out" },
+  { face: "Inter", spacing: "1px", note: " with the text spaced out" },
 ] as const;
 
 for (const width of [1024, 1440]) {
@@ -5074,6 +5075,8 @@ for (const width of [1024, 1440]) {
           return {
             segmentsBottom: box(segments).bottom,
             segmentsRight: box(segments).right,
+            segmentsScrollWidth: segments.scrollWidth,
+            segmentsClientWidth: segments.clientWidth,
             togglesTop: box(toggles).top,
             togglesLeft: box(toggles).left,
             togglesRight: box(toggles).right,
@@ -5085,13 +5088,22 @@ for (const width of [1024, 1440]) {
           };
         });
       await stress();
+      /**
+       * Unspaced, the row has to fit with every category visible (the toggles cannot wrap, so a face too wide
+       * for it would only show as clipped segments).
+       */
+      const expectFits = (state: Awaited<ReturnType<typeof row>>) => {
+        if (!spacing) expect(state.segmentsScrollWidth).toBeLessThanOrEqual(state.segmentsClientWidth + 0.5);
+      };
       const bare = await row();
+      expectFits(bare);
       // Not vacuous: two digits on Issues only.
       expect(bare.togglesText).toMatch(/Issues only\s*1\d/);
 
       const one = page.getByRole("button", { name: /^Star / }).first();
       await toggleStar(page, () => one.click());
       const starred = await row();
+      expectFits(starred);
       expect(starred.togglesText).toMatch(/Starred\s*1$/);
       // The toggles stay beside the segments: their top is not below the segments' bottom.
       expect(starred.togglesTop).toBeLessThan(starred.segmentsBottom);
@@ -5116,6 +5128,9 @@ for (const width of [1024, 1440]) {
       expect(drawn.some(isInter), `the toggles are drawn in ${drawn}`).toBe(face === "Inter");
       await stress();
       const many = await row();
+      expectFits(many);
+      // Spaced out, the widest state (two digits on both toggles) has to have overflowed the segments.
+      if (spacing) expect(many.segmentsScrollWidth).toBeGreaterThan(many.segmentsClientWidth);
       expect(many.togglesText).toMatch(/Starred\s*11$/);
       expect(many.togglesTop).toBeLessThan(many.segmentsBottom);
       expect(many.togglesLeft).toBeGreaterThanOrEqual(many.segmentsRight);
