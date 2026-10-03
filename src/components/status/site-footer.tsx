@@ -8,8 +8,8 @@ import { cn } from "@/lib/utils";
  * owner's voice. Nothing here explains how the machinery works.
  *
  *   Not affiliated with any of these vendors. I only read their public status pages.
- *   Source on GitHub · MIT License · JSON · Atom feed · Badges · Settings (press ?)
- *   Built with TanStack Start on Cloudflare Workers.            Made and kept by Serhii.
+ *   Source on GitHub · MIT License · JSON · Atom feed · Settings (press ?)
+ *                                                                  Made by greenblacked.
  */
 const LINK =
   "focus-ring pressable inline-block rounded-sm underline decoration-hairline underline-offset-4 hover:text-fg pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center";
@@ -70,8 +70,6 @@ export function SiteFooter({
           {SEPARATOR}
           <Link href="/feed.xml">Atom feed</Link>
           {SEPARATOR}
-          <Link href="/api/badge/board">Badges</Link>
-          {SEPARATOR}
           {/*
             On every screen width: with the single-key shortcuts off, ? no
             longer opens the list, and this button is the way back to the
@@ -89,10 +87,13 @@ export function SiteFooter({
           ) : null}
         </p>
       </div>
-      <div className="flex flex-col gap-x-8 gap-y-1 text-footnote md:flex-row md:items-baseline md:justify-between">
-        <p>Built with TanStack Start on Cloudflare Workers.</p>
-        <p>Made and kept by Serhii.</p>
-      </div>
+      <p className="text-footnote md:text-right">
+        Made by{" "}
+        <Link href="https://github.com/greenblacked" external>
+          greenblacked
+        </Link>
+        .
+      </p>
     </footer>
   );
 }

@@ -42,16 +42,21 @@ function categorize(workflow, _jobName, stepName) {
       : "dependency review: a high or critical vulnerability, or a disallowed change";
   }
   // Step names from ci.yml. A failure inside .github/actions/setup shows
-  // as its step in the job, "Set up the toolchain (npm ci)".
+  // as its step in the job, "Set up the toolchain (pnpm install)".
   const rules = [
+    [/initialize containers/, "infrastructure"],
+    [
+      /check the browser/,
+      "browser build missing: the Playwright image and @playwright/test differ, or the install failed",
+    ],
     [/set up job|checkout|setup-node|download-artifact|upload-artifact|post /, "infrastructure"],
-    [/pin npm|declared toolchain/, "toolchain version"],
-    [/npm ci/, "dependency install, toolchain version or npm signature check"],
-    [/biome/, "lint or formatting: run `npm run lint:fix`"],
+    [/pin pnpm|check pnpm|pnpm pin|declared toolchain/, "toolchain version"],
+    [/pnpm install|verify registry signatures/, "dependency install, toolchain version or registry signature check"],
+    [/biome/, "lint or formatting: run `pnpm run lint:fix`"],
     [/typecheck/, "type error"],
-    [/npm (run )?test/, "unit test failure, or coverage under its threshold"],
+    [/pnpm (run )?test/, "unit test failure, or coverage under its threshold"],
     [/playwright/, "browser test failure: the playwright-report artifact has traces"],
-    [/npm run build/, "build"],
+    [/pnpm run build/, "build"],
     [/smoke/, "SSR smoke test: the built app did not serve"],
     [/hygiene/, "repository hygiene"],
     [/documentation links/, "broken documentation link"],

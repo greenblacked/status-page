@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Check a branch name against CONTRIBUTING.md#branches:
-# <prefix>/<short-kebab-description>, prefix one of fb, fix, chore, docs, ci.
+# <prefix>/<short-kebab-description>, prefix one of feature, fix, docs, ci,
+# chore, refactor, test, perf, build.
 # Given the pull request's base branch too, also check which branches may open
 # a pull request into stage and main.
 # Run locally: ./scripts/ci/branch.sh "$(git branch --show-current)" [base]
@@ -10,18 +11,18 @@
 set -euo pipefail
 
 # While dev is paused (CONTRIBUTING.md#branches), feature branches open pull
-# requests into stage; set to false when dev is back. This default is the one
-# switch: DEV_PAUSED in the environment overrides it, which the tests use to
-# check both modes.
-DEV_PAUSED="${DEV_PAUSED:-true}"
+# requests into stage. dev-paused.sh is the one switch, shared with
+# release.yml: it reads scripts/ci/dev-paused, and DEV_PAUSED in the
+# environment overrides it, which the tests use to check both modes.
+DEV_PAUSED="$("$(dirname "${BASH_SOURCE[0]}")/dev-paused.sh")"
 
 name="${1:?usage: branch.sh <branch-name> [<base-branch>]}"
 base="${2:-}"
-prefixes='fb|fix|chore|docs|ci'
+prefixes='feature|fix|docs|ci|chore|refactor|test|perf|build'
 max=50
 
-# The branch that takes pull requests from feature, fix, chore, docs and ci
-# branches, and from Dependabot.
+# The branch that takes pull requests from every <prefix>/ branch, and from
+# Dependabot.
 feature_base=dev
 if [[ "$DEV_PAUSED" == true ]]; then
   feature_base=stage

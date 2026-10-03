@@ -8,7 +8,7 @@
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --ready-wait 300
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
-# (14 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
+# (20 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
 # unless --require-ready: CI and sandboxes cannot always reach the vendors,
 # and an all-Unknown board is a correct answer there, not a broken build.
 #
@@ -28,7 +28,7 @@
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
 
-SERVICES=14
+SERVICES=20
 TITLE='<title>Status</title>'
 FOOTER='Not affiliated with any of these vendors. I only read their public status pages.'
 usage() {
@@ -134,7 +134,9 @@ run_checks() {
     grep -aqF "$TITLE" "$work/body" || fail "/: no $TITLE"
     # React's server renderer separates adjacent text nodes with <!-- -->; the
     # sentence is still one sentence to a reader, so match it without them.
-    sed 's/<!-- -->//g' "$work/body" | grep -aqF "$FOOTER" || fail "/: no footer line \"$FOOTER\""
+    # No -q: grep -q exits at the footer and sed, still writing the rest of the
+    # page, dies of SIGPIPE; under pipefail that fails the check on a good page.
+    sed 's/<!-- -->//g' "$work/body" | grep -aF "$FOOTER" >/dev/null || fail "/: no footer line \"$FOOTER\""
     [ -n "$(header Content-Security-Policy)" ] || fail "/: no Content-Security-Policy header"
     [ -n "$(header X-Frame-Options)" ] || fail "/: no X-Frame-Options header"
   fi

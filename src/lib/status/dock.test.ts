@@ -1,27 +1,40 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BAR_RISE,
+  clampScroll,
   createDockStore,
+  crossingTarget,
   DOCK_HYSTERESIS,
-  DOCK_MS,
   DOCK_REST,
   type DockGeometry,
   type DockState,
   dockFrame,
   dockGeometry,
-  PHONE_GAP,
-  transitionMs,
+  focusReveal,
+  HIDE_DOWN_PX,
+  quietScroll,
+  quietScrolling,
+  REVEAL_REST,
+  REVEAL_UP_PX,
+  type RevealMemo,
+  readerMoved,
+  revealFrame,
   WIDE_BAR_AT,
   WIDE_RANGE,
 } from "./dock";
 
-/** A state as the store holds it: `settled` follows `docked` unless a test says the move is still on. */
-const state = (barShown: boolean, docked: boolean, settled = docked): DockState => ({ barShown, docked, settled });
+/** A state as the store holds it. The field's reveal is off unless a test says the hero's field is behind the bar. */
+const state = (barShown: boolean, docked: boolean, heroAway = false, revealed = false): DockState => ({
+  barShown,
+  docked,
+  heroAway,
+  revealed,
+});
 
 describe("createDockStore", () => {
-  it("starts at rest: no bar, the field still in the hero", () => {
-    expect(createDockStore().get()).toEqual({ barShown: false, docked: false, settled: false });
-    expect(DOCK_REST).toEqual({ barShown: false, docked: false, settled: false });
+  it("starts at rest: no bar, the field in the hero, nothing revealed", () => {
+    expect(createDockStore().get()).toEqual({ barShown: false, docked: false, heroAway: false, revealed: false });
+    expect(DOCK_REST).toEqual({ barShown: false, docked: false, heroAway: false, revealed: false });
   });
 
   it("returns what was set and tells its listeners once per change", () => {
@@ -74,14 +87,18 @@ describe("createDockStore", () => {
     expect(later).toHaveBeenCalledTimes(2);
   });
 
-  it("tells its listeners when only `settled` changes, which is the placeholder's cue", () => {
+  it("tells its listeners when only `heroAway` or only `revealed` changes", () => {
     const store = createDockStore();
     const listener = vi.fn();
-    store.set(state(true, true, false));
+    store.set(state(true, false));
     store.subscribe(listener);
-    store.set(state(true, true, true));
+    store.set(state(true, false, true));
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(store.get()).toEqual(state(true, true, true));
+    store.set(state(true, false, true, true));
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(store.get()).toEqual(state(true, false, true, true));
+    store.set(state(true, false, true, false));
+    expect(listener).toHaveBeenCalledTimes(3);
   });
 
   it("keeps separate stores independent", () => {
@@ -93,7 +110,7 @@ describe("createDockStore", () => {
 });
 
 describe("dockGeometry", () => {
-  const measured = { end: 1000, pin: 10, barTop: 8, barHeight: 48 };
+  const measured = { end: 1000, barTop: 8, barHeight: 48 };
 
   it("on a wide screen, makes one move of WIDE_RANGE that ends at `end`", () => {
     const g = dockGeometry({ ...measured, wide: true, reduce: false });
@@ -115,181 +132,67 @@ describe("dockGeometry", () => {
     expect(g).toMatchObject({ start: 952, range: 48, barStart: 1000, hysteresis: 0 });
   });
 
-  it("on a phone, raises the bar early and alone, then docks the field where it reaches the bar's bottom edge", () => {
-    const g = dockGeometry({ ...measured, wide: false, reduce: false });
-    // The bar at 1000 - (48 + 24 - 2); the field docks when its top (pin + end - y) meets the bar's bottom (56): y = 954.
-    expect(g).toEqual({
-      wide: false,
-      start: 954,
-      range: 46,
-      barStart: 930,
-      hysteresis: 8,
-      dockAt: 954,
-      undockAt: 946,
-    });
-    expect(PHONE_GAP).toBe(24);
-    // Alone for PHONE_GAP px of scrolling, then the field has at least 46px left to rise to its pin.
-    expect(g.start - g.barStart).toBe(PHONE_GAP);
-    expect(g.range).toBeGreaterThanOrEqual(46);
+  it("on a wide screen, never reaches the bar's field: it is not there", () => {
+    expect(dockGeometry({ ...measured, wide: true, reduce: false }).revealFrom).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it("on a phone, docks at a position and releases DOCK_HYSTERESIS px short of it, never above it", () => {
-    const g = dockGeometry({ ...measured, wide: false, reduce: false });
-    expect(DOCK_HYSTERESIS).toBe(8);
-    expect(g.dockAt - g.undockAt).toBe(DOCK_HYSTERESIS);
-    // A docked field is released with the bar still up: the bar's own hysteresis is not shorter.
-    expect(g.undockAt).toBeGreaterThanOrEqual(g.barStart - g.hysteresis);
-  });
-
-  it("on a phone, the bar comes up earlier the taller it is", () => {
-    const short = dockGeometry({ ...measured, wide: false, reduce: false, barHeight: 40 });
-    const tall = dockGeometry({ ...measured, wide: false, reduce: false, barHeight: 64 });
-    expect(short.barStart).toBe(938);
-    expect(tall.barStart).toBe(914);
-  });
-
-  it("on a phone, the gap counts from where the field pins relative to the bar's own top", () => {
-    const g = dockGeometry({ end: 500, wide: false, reduce: false, pin: 16, barTop: 4, barHeight: 48 });
-    // 500 - (48 + 24 - (16 - 4))
-    expect(g.barStart).toBe(440);
-  });
-
-  it("on a phone, keeps the usual moment while the hero's last line ends well above the field", () => {
-    // The line clears the bar (top 8, less the 8 it slides down) at 920 - 0 = 920, before the usual 930.
-    const roomy = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 920 });
-    expect(roomy).toMatchObject({ start: 954, range: 46, barStart: 930, hysteresis: 8 });
-  });
-
-  it("on a phone, holds the bar back until the hero's last line has scrolled clear of where it slides in", () => {
-    // The line ends at 986, so it is clear of the bar (top 8, less the 8 it slides down) at 986, after the usual 930.
-    const g = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 986 });
-    expect(BAR_RISE).toBe(8);
-    expect(g.barStart).toBe(986);
-    // The field docks with the bar, over the scrolling that is left.
-    expect(g.start).toBe(986);
-    expect(g.dockAt).toBe(986);
-    expect(g.range).toBe(14);
-    expect(g.hysteresis).toBe(8);
-  });
-
-  it("on a phone, with the spacing the page gives it, the bar and the dock each get their own stretch", () => {
-    // The live line ends barHeight + BAR_RISE + PHONE_GAP above the field (its top is end + pin), on a phone
-    // 375, 390, 412 or 430 wide alike: the geometry depends on none of the width.
-    const fieldTop = measured.end + measured.pin;
-    const contentBottom = fieldTop - (measured.barHeight + BAR_RISE + PHONE_GAP);
-    const g = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom });
-    // The line clears the bar exactly when the field is PHONE_GAP under the bar's bottom edge: nothing waits.
-    expect(g.barStart).toBe(measured.end - (measured.barHeight + PHONE_GAP - (measured.pin - measured.barTop)));
-    expect(g).toEqual(dockGeometry({ ...measured, wide: false, reduce: false }));
-    // The bar is up alone for PHONE_GAP px of scrolling, then the field docks as it reaches the bar.
-    expect(g.start - g.barStart).toBe(PHONE_GAP);
-    expect(g.dockAt).toBe(measured.end - (measured.barHeight - (measured.pin - measured.barTop)));
-    expect(g.range).toBe(46);
-    // On an iPhone with a notch, the bar and the pin both move down by the safe area, and nothing changes.
-    const notch = { ...measured, pin: measured.pin + 47, barTop: measured.barTop + 47 };
-    const withNotch = dockGeometry({
-      ...notch,
-      wide: false,
-      reduce: false,
-      contentBottom: notch.end + notch.pin - (notch.barHeight + BAR_RISE + PHONE_GAP),
-    });
-    expect(withNotch).toEqual(g);
-  });
-
-  it("on a phone, the field is a clear PHONE_GAP under the bar's bottom edge where the bar comes up, and level with the page until then", () => {
-    const g = dockGeometry({ ...measured, wide: false, reduce: false });
-    // The field's top in the viewport at scroll y is (end + pin) - y until it pins.
-    const fieldTopAt = (y: number) => measured.end + measured.pin - y;
-    const barBottom = measured.barTop + measured.barHeight;
-    expect(fieldTopAt(g.barStart) - barBottom).toBe(PHONE_GAP);
-    // The field docks with its top just at the bar's bottom edge, and has the rest of the way to its pin.
-    expect(fieldTopAt(g.dockAt)).toBe(barBottom);
-    expect(fieldTopAt(g.start + g.range)).toBe(measured.pin);
-    // Bar first: at every scroll before the dock the frame has the bar up (past barStart) and the field not docked.
-    for (let y = g.barStart; y < g.dockAt; y += 1) {
-      const frame = dockFrame(y, g, false, state(false, false));
-      expect(frame.barShown).toBe(true);
-      expect(frame.docked).toBe(false);
-    }
-    expect(dockFrame(g.barStart - 1, g, false, state(false, false)).barShown).toBe(false);
-  });
-
-  it("on a phone at a larger text size, the dock still happens below the bar, and the bar still has PHONE_GAP px to itself", () => {
-    // A 32px root: the bar is 96px tall and 16px from the top, the field (88px) pins 2px under that.
-    const big = { end: 1000, pin: 18, barTop: 16, barHeight: 96, fieldHeight: 88 };
-    const g = dockGeometry({ ...big, wide: false, reduce: false });
-    expect(g.start - g.barStart).toBe(PHONE_GAP);
-    const fieldTopAt = (y: number) => big.end + big.pin - y;
-    expect(fieldTopAt(g.barStart) - (big.barTop + big.barHeight)).toBe(PHONE_GAP);
-    expect(fieldTopAt(g.dockAt)).toBe(big.barTop + big.barHeight);
-    expect(g.range).toBe(94);
-  });
-
-  it("on a phone, never docks before the bar is up, nor lets its range reach zero", () => {
-    const late = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 1100 });
-    expect(late.start).toBe(late.barStart);
-    expect(late.dockAt).toBe(late.barStart);
-    expect(late.range).toBe(1);
-  });
-
-  it("on a wide screen, ignores the hero's last line", () => {
-    expect(dockGeometry({ ...measured, wide: true, reduce: false, contentBottom: 990 })).toEqual(
+  it("on a wide screen, ignores the hero's last line and the field's place in the page", () => {
+    expect(dockGeometry({ ...measured, wide: true, reduce: false, contentBottom: 990, fieldBottom: 1200 })).toEqual(
       dockGeometry({ ...measured, wide: true, reduce: false }),
     );
   });
 
-  it("on a phone under Reduce Motion, docks where the field reaches its pin, and holds only as far as the bar has room", () => {
-    const g = dockGeometry({ ...measured, wide: false, reduce: true });
-    // The bar is 48 high, the field 44, and the field pins 2 under the bar's top: 2px of room.
-    expect(g).toMatchObject({ barStart: 930, hysteresis: 8, dockAt: 1000, undockAt: 998 });
-    // The bar comes up as it does with motion; only the dock waits for the pin.
-    expect(g.barStart).toBe(dockGeometry({ ...measured, wide: false, reduce: false }).barStart);
+  it("below 64rem, brings the bar up when the hero's last line has scrolled clear of where it slides in from", () => {
+    // The sliding bar's highest point is its top (8) less the 8 it slides down: the line is clear at its bottom edge.
+    const g = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 920, fieldBottom: 1000 });
+    expect(BAR_RISE).toBe(8);
+    expect(g.barStart).toBe(920);
+    expect(g.hysteresis).toBe(8);
   });
 
-  it("on a phone under Reduce Motion, the hold is the bar's height less the field's and its inset, never negative", () => {
-    const hold = (over: Partial<Parameters<typeof dockGeometry>[0]>) => {
-      const g = dockGeometry({ ...measured, wide: false, reduce: true, ...over });
-      return g.dockAt - g.undockAt;
-    };
-    expect(hold({})).toBe(2);
-    expect(hold({ barHeight: 64 })).toBe(18);
-    expect(hold({ pin: 12 })).toBe(0);
-    expect(hold({ fieldHeight: 40 })).toBe(6);
-    // A field taller than the room the bar has around it: nothing to hold, not a negative hold.
-    expect(hold({ barHeight: 40 })).toBe(0);
-    expect(hold({ fieldHeight: 90 })).toBe(0);
+  it("below 64rem, has the bar's field usable once the hero's field has its bottom edge at the bar's", () => {
+    // The field's bottom is at page position 1000; the bar's bottom (8 + 48) is at the viewport's 56: y = 944.
+    const g = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 920, fieldBottom: 1000 });
+    expect(g.revealFrom).toBe(944);
+    // The bar is up alone for a stretch before that.
+    expect(g.revealFrom).toBeGreaterThan(g.barStart);
   });
 
-  it("on a phone under Reduce Motion, a released field has not left the bar yet", () => {
-    for (const over of [{}, { barHeight: 64 }, { pin: 12 }, { fieldHeight: 40 }, { barHeight: 40 }]) {
-      const input = { ...measured, fieldHeight: 44, ...over };
-      const g = dockGeometry({ ...input, wide: false, reduce: true });
-      // Just short of the release, the field's bottom edge is as far below its pinned one as the page has moved.
-      const bottomAtRelease = input.pin + input.fieldHeight + (input.end - g.undockAt);
-      const barBottom = input.barTop + input.barHeight;
-      // Within the bar, unless the bar is too short for the pinned field in the first place.
-      if (input.pin + input.fieldHeight <= barBottom) expect(bottomAtRelease).toBeLessThanOrEqual(barBottom);
-    }
-  });
-});
-
-describe("transitionMs", () => {
-  it("reads seconds and milliseconds, and the longest of a list", () => {
-    expect(transitionMs("0.18s")).toBeCloseTo(180, 5);
-    expect(transitionMs("180ms")).toBe(180);
-    expect(transitionMs("0s, 0.25s")).toBe(250);
-    expect(transitionMs("150ms, 0.1s")).toBe(150);
+  it("below 64rem, moves both thresholds with the bar's top, as the safe area does on a notch", () => {
+    const flat = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 920, fieldBottom: 1000 });
+    const notch = dockGeometry({
+      ...measured,
+      barTop: measured.barTop + 47,
+      wide: false,
+      reduce: false,
+      contentBottom: 920,
+      fieldBottom: 1000,
+    });
+    expect(notch.barStart).toBe(flat.barStart - 47);
+    expect(notch.revealFrom).toBe(flat.revealFrom - 47);
   });
 
-  it("is 0 for no transition", () => {
-    expect(transitionMs("0s")).toBe(0);
-    expect(transitionMs("0s, 0ms")).toBe(0);
-    expect(transitionMs("")).toBe(0);
+  it("below 64rem, makes the bar's field usable later the taller the bar is", () => {
+    const short = dockGeometry({ ...measured, wide: false, reduce: false, barHeight: 40, fieldBottom: 1000 });
+    const tall = dockGeometry({ ...measured, wide: false, reduce: false, barHeight: 64, fieldBottom: 1000 });
+    expect(short.revealFrom).toBe(952);
+    expect(tall.revealFrom).toBe(928);
   });
 
-  it("agrees with the 180ms the stylesheet names", () => {
-    expect(DOCK_MS).toBe(180);
-    expect(transitionMs(`${DOCK_MS}ms`)).toBe(DOCK_MS);
+  it("below 64rem, has no move to time: Reduce Motion changes nothing", () => {
+    const input = { ...measured, wide: false, contentBottom: 920, fieldBottom: 1000 };
+    expect(dockGeometry({ ...input, reduce: true })).toEqual(dockGeometry({ ...input, reduce: false }));
+  });
+
+  it("below 64rem, brings the bar up at the top of a page with no hero line to wait for", () => {
+    expect(dockGeometry({ ...measured, wide: false, reduce: false, fieldBottom: 1000 }).barStart).toBe(0);
+  });
+
+  it("below 64rem, keeps the bar down while the hero's last line is under where it slides in", () => {
+    const early = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 500, fieldBottom: 600 });
+    const late = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 986, fieldBottom: 1050 });
+    expect(early.barStart).toBe(500);
+    expect(late.barStart).toBe(986);
   });
 });
 
@@ -300,8 +203,7 @@ describe("dockFrame, on a wide screen", () => {
     range: 48,
     barStart: 420,
     hysteresis: 8,
-    dockAt: 448,
-    undockAt: 448,
+    revealFrom: Number.POSITIVE_INFINITY,
   };
   const rest = state(false, false);
 
@@ -376,114 +278,51 @@ describe("dockFrame, on a wide screen", () => {
       store.set(state(next.barShown, next.docked));
     }
     expect(seen).toEqual([
-      '{"barShown":true,"docked":false,"settled":false}',
-      '{"barShown":true,"docked":true,"settled":true}',
-      '{"barShown":false,"docked":true,"settled":true}',
-      '{"barShown":false,"docked":false,"settled":false}',
+      '{"barShown":true,"docked":false,"heroAway":false,"revealed":false}',
+      '{"barShown":true,"docked":true,"heroAway":false,"revealed":false}',
+      '{"barShown":false,"docked":true,"heroAway":false,"revealed":false}',
+      '{"barShown":false,"docked":false,"heroAway":false,"revealed":false}',
     ]);
   });
 });
 
-describe("dockFrame, on a phone", () => {
-  // The bar up at 420, the field docked from 448 (where it reaches the bar), released below 440.
+describe("dockFrame, below 64rem", () => {
+  // The bar up from 420, kept up through 8px short of that.
   const geometry: DockGeometry = {
     wide: false,
-    start: 448,
-    range: 46,
+    start: 420,
+    range: 1,
     barStart: 420,
     hysteresis: 8,
-    dockAt: 448,
-    undockAt: 440,
+    revealFrom: 470,
   };
   const rest = state(false, false);
 
-  it("rests at the top of the page: no bar, not docked", () => {
+  it("rests at the top of the page: no bar, nothing docked", () => {
     expect(dockFrame(0, geometry, false, rest)).toEqual({ p: 0, barShown: false, docked: false });
   });
 
-  it("brings the bar up first and alone, then docks the field", () => {
-    expect(dockFrame(430, geometry, false, rest)).toEqual({ p: 0, barShown: true, docked: false });
-    expect(dockFrame(447.9, geometry, false, state(true, false)).docked).toBe(false);
-    expect(dockFrame(448, geometry, false, state(true, false))).toEqual({ p: 1, barShown: true, docked: true });
-  });
-
-  it("does not follow the scroll once docked: past the threshold there is only the one pose", () => {
-    for (const y of [448, 460, 494, 800, 5000]) {
-      expect(dockFrame(y, geometry, false, rest)).toMatchObject({ p: 1, docked: true });
+  it("brings the bar up where the hero's last line has cleared it, and never docks the field", () => {
+    expect(dockFrame(419.9, geometry, false, rest)).toEqual({ p: 0, barShown: false, docked: false });
+    for (const y of [420, 430, 470, 800, 5000]) {
+      expect(dockFrame(y, geometry, false, rest)).toEqual({ p: 0, barShown: true, docked: false });
     }
   });
 
-  it("has no part-way pose: p is 0 or 1 whatever the position", () => {
+  it("has no part-way pose and no docked pose, whatever the position or the state before", () => {
     for (let y = -50; y <= 600; y += 3.3) {
-      expect([0, 1]).toContain(dockFrame(y, geometry, false, rest).p);
-      expect([0, 1]).toContain(dockFrame(y, geometry, false, state(true, true)).p);
+      for (const prev of [rest, state(true, false, true, true)]) {
+        const frame = dockFrame(y, geometry, false, prev);
+        expect(frame.p).toBe(0);
+        expect(frame.docked).toBe(false);
+      }
     }
   });
 
-  it("releases a docked field only DOCK_HYSTERESIS px short of where it docked", () => {
-    const docked = state(true, true);
-    expect(dockFrame(440, geometry, false, docked).docked).toBe(true);
-    expect(dockFrame(439.9, geometry, false, docked).docked).toBe(false);
-    // And a field that is not docked does not dock short of the threshold, whatever the hysteresis.
-    expect(dockFrame(447.9, geometry, false, state(true, false)).docked).toBe(false);
-  });
-
-  it("does not flicker the field when a finger rests within a few px of where it docks", () => {
-    const store = createDockStore();
-    const listener = vi.fn();
-    store.subscribe(listener);
-    for (const y of [447, 448, 447.5, 448.4, 446, 449, 444, 448, 441, 442, 440]) {
-      const next = dockFrame(y, geometry, false, store.get());
-      store.set(state(next.barShown, next.docked));
+  it("is the same under Reduce Motion: there is no move to snap", () => {
+    for (const y of [0, 419, 420, 430, 470, 900]) {
+      expect(dockFrame(y, geometry, true, rest)).toEqual(dockFrame(y, geometry, false, rest));
     }
-    // The bar once (the first stop is already past 420), the dock once: nothing after.
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(store.get()).toEqual(state(true, true));
-  });
-
-  it("docks once and releases once over a flick down and back, however few frames it was seen in", () => {
-    const store = createDockStore();
-    const seen: string[] = [];
-    store.subscribe(() => seen.push(JSON.stringify(store.get())));
-    // One frame sees the page far past the dock; the next, far back above the bar.
-    for (const y of [0, 900, 900, 5, 0]) {
-      const next = dockFrame(y, geometry, false, store.get());
-      store.set(state(next.barShown, next.docked));
-    }
-    expect(seen).toEqual([
-      '{"barShown":true,"docked":true,"settled":true}',
-      '{"barShown":false,"docked":false,"settled":false}',
-    ]);
-  });
-
-  it("reads a rubber band above the top as the top, whatever the state before", () => {
-    for (const prev of [rest, state(true, true)]) {
-      const frame = dockFrame(-300, geometry, false, prev);
-      expect(frame).toEqual({ p: 0, barShown: false, docked: false });
-    }
-  });
-
-  it("reads a rubber band below the bottom as the bottom: docked, bar up, and nothing flips", () => {
-    const store = createDockStore();
-    const seen: string[] = [];
-    store.subscribe(() => seen.push(JSON.stringify(store.get())));
-    // A fling down to the bottom (2000), the bounce back past it, and the settle.
-    for (const y of [300, 460, 1200, 2000, 2060, 2110, 2060, 2000, 1990]) {
-      const next = dockFrame(y, geometry, false, store.get());
-      store.set(state(next.barShown, next.docked));
-    }
-    expect(seen).toEqual(['{"barShown":true,"docked":true,"settled":true}']);
-  });
-
-  it("does not flip the bar or the field while a bounce at the top swings across 0", () => {
-    const store = createDockStore();
-    const listener = vi.fn();
-    store.subscribe(listener);
-    for (const y of [0, -60, -4, -90, 0, -30, 0]) {
-      const next = dockFrame(y, geometry, false, store.get());
-      store.set(state(next.barShown, next.docked));
-    }
-    expect(listener).not.toHaveBeenCalled();
   });
 
   it("does not flicker the bar when a finger rests within a pixel of where it comes up", () => {
@@ -496,38 +335,375 @@ describe("dockFrame, on a phone", () => {
     }
     // Up once at 420 and held through the hysteresis: 412 is as low as it goes.
     expect(listener).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("dockFrame, on a phone under Reduce Motion", () => {
-  // Docks where the field pins (448), and is released 2px short of that.
-  const geometry: DockGeometry = {
-    wide: false,
-    start: 400,
-    range: 48,
-    barStart: 420,
-    hysteresis: 8,
-    dockAt: 448,
-    undockAt: 446,
-  };
-
-  it("keeps the bar's phase and steps the field in only at the pin", () => {
-    expect(dockFrame(430, geometry, true, state(false, false))).toEqual({ p: 0, barShown: true, docked: false });
-    expect(dockFrame(447.9, geometry, true, state(true, false)).docked).toBe(false);
-    expect(dockFrame(448, geometry, true, state(true, false))).toEqual({ p: 1, barShown: true, docked: true });
+    expect(dockFrame(411.9, geometry, false, state(true, false)).barShown).toBe(false);
   });
 
-  it("holds the dock through the hold, so a finger at the pin cannot flip the field, and no further", () => {
+  it("does not flip the bar while a bounce at the top swings across 0", () => {
     const store = createDockStore();
     const listener = vi.fn();
     store.subscribe(listener);
-    for (const y of [447, 448, 447.5, 448.4, 446.5, 449, 446, 448, 447]) {
-      const next = dockFrame(y, geometry, true, store.get());
+    for (const y of [0, -60, -4, -90, 0, -30, 0]) {
+      const next = dockFrame(y, geometry, false, store.get());
       store.set(state(next.barShown, next.docked));
     }
-    // The bar, then docked once at 448 and held down to 446.
-    expect(listener).toHaveBeenCalledTimes(2);
-    expect(store.get()).toEqual(state(true, true));
-    expect(dockFrame(445.9, geometry, true, store.get()).docked).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("reads a rubber band below the bottom as the bottom: the bar stays up", () => {
+    const store = createDockStore();
+    const seen: string[] = [];
+    store.subscribe(() => seen.push(JSON.stringify(store.get())));
+    for (const y of [300, 460, 1200, 2000, 2060, 2110, 2060, 2000, 1990]) {
+      const next = dockFrame(y, geometry, false, store.get());
+      store.set(state(next.barShown, next.docked));
+    }
+    expect(seen).toEqual(['{"barShown":true,"docked":false,"heroAway":false,"revealed":false}']);
+  });
+});
+
+describe("clampScroll", () => {
+  it("holds a position to the page, from 0 to what it can scroll", () => {
+    expect(clampScroll(120, 2000)).toBe(120);
+    expect(clampScroll(-30, 2000)).toBe(0);
+    expect(clampScroll(2040, 2000)).toBe(2000);
+    expect(clampScroll(2000, 2000)).toBe(2000);
+    // A page that cannot scroll (or has not been measured) is only its top.
+    expect(clampScroll(40, 0)).toBe(0);
+    expect(clampScroll(40, -5)).toBe(0);
+  });
+});
+
+describe("revealFrame", () => {
+  // The hero's field is behind the bar from 500 (usable from 508 going down), on a page that scrolls to 2000.
+  const geometry: DockGeometry = {
+    wide: false,
+    start: 420,
+    range: 1,
+    barStart: 420,
+    hysteresis: 8,
+    revealFrom: 500,
+  };
+  const LIMIT = 2000;
+  const up = { barShown: true, latched: false };
+
+  /** Runs the frames from a memo, one position each, and returns every memo along the way. */
+  const run = (positions: number[], from: RevealMemo = REVEAL_REST, context = up): RevealMemo[] => {
+    const seen: RevealMemo[] = [];
+    let memo = from;
+    for (const y of positions) {
+      memo = revealFrame(y, LIMIT, geometry, memo, context);
+      seen.push(memo);
+    }
+    return seen;
+  };
+  /** A memo of a field that is behind the bar and showing (or not), the run having reached `at`. */
+  const behind = (at: number, revealed: boolean): RevealMemo => ({
+    heroAway: true,
+    revealed,
+    dir: revealed ? "up" : "down",
+    pivot: at,
+    lastY: at,
+  });
+
+  it("stays hidden and rebases above the hero-away line", () => {
+    const frames = run([0, 100, 400, 507.9]);
+    for (const [index, memo] of frames.entries()) {
+      expect(memo.heroAway, `frame ${index}`).toBe(false);
+      expect(memo.revealed, `frame ${index}`).toBe(false);
+    }
+    // The baseline follows the page, so a run that starts later counts from where it is.
+    expect(frames.at(-1)).toMatchObject({ dir: "down", pivot: 507.9, lastY: 507.9 });
+  });
+
+  it("turns heroAway on at revealFrom plus the hysteresis and off at revealFrom", () => {
+    expect(DOCK_HYSTERESIS).toBe(8);
+    expect(revealFrame(507.9, LIMIT, geometry, REVEAL_REST, up).heroAway).toBe(false);
+    expect(revealFrame(508, LIMIT, geometry, REVEAL_REST, up).heroAway).toBe(true);
+    expect(revealFrame(500, LIMIT, geometry, behind(520, false), up).heroAway).toBe(true);
+    expect(revealFrame(499.9, LIMIT, geometry, behind(520, false), up).heroAway).toBe(false);
+  });
+
+  it("starts hidden when the page opens part way down, whatever the direction after", () => {
+    const [first] = run([900]);
+    expect(first).toMatchObject({ heroAway: true, revealed: false, dir: "down", pivot: 900, lastY: 900 });
+  });
+
+  it("never shows heroAway while the bar is down", () => {
+    const down = { barShown: false, latched: false };
+    for (const memo of run([0, 300, 508, 900, 1500], REVEAL_REST, down)) expect(memo.heroAway).toBe(false);
+    expect(revealFrame(900, LIMIT, geometry, behind(900, true), down)).toMatchObject({
+      heroAway: false,
+      revealed: false,
+    });
+  });
+
+  it("reveals at exactly REVEAL_UP_PX of upward travel and not one px less", () => {
+    expect(REVEAL_UP_PX).toBe(24);
+    expect(revealFrame(1000 - (REVEAL_UP_PX - 0.5), LIMIT, geometry, behind(1000, false), up).revealed).toBe(false);
+    expect(revealFrame(1000 - REVEAL_UP_PX, LIMIT, geometry, behind(1000, false), up)).toMatchObject({
+      revealed: true,
+      dir: "up",
+      pivot: 1000 - REVEAL_UP_PX,
+    });
+  });
+
+  it("hides at exactly HIDE_DOWN_PX of downward travel and not one px less", () => {
+    expect(HIDE_DOWN_PX).toBe(12);
+    expect(revealFrame(1000 + (HIDE_DOWN_PX - 0.5), LIMIT, geometry, behind(1000, true), up).revealed).toBe(true);
+    expect(revealFrame(1000 + HIDE_DOWN_PX, LIMIT, geometry, behind(1000, true), up)).toMatchObject({
+      revealed: false,
+      dir: "down",
+      pivot: 1000 + HIDE_DOWN_PX,
+    });
+  });
+
+  it("counts the travel from the lowest point of the run, so a small step up after a long way down is not a reveal", () => {
+    const frames = run([1000, 1400, 1380, 1390, 1378, 1370]);
+    expect(frames.map((memo) => memo.revealed)).toEqual([false, false, false, false, false, true]);
+    // 22px short of the lowest point (1400) is not enough, 30px is.
+    expect(frames[4].pivot).toBe(1400);
+    expect(frames[5]).toMatchObject({ dir: "up", pivot: 1370 });
+  });
+
+  it("restarts the count on a reversal, and jitter changes nothing", () => {
+    // Up 20 (short of 24), a nudge down to a new high point, up 22 from there: still hidden. Then 25: shown.
+    const hidden = run([1000, 980, 1010, 988, 985]);
+    expect(hidden.map((memo) => memo.revealed)).toEqual([false, false, false, false, true]);
+    expect(hidden[2].pivot).toBe(1010);
+    // Shown, jitter of up to 11px down and up does not hide it, and a real 12px down does.
+    const shown = run([1000, 970, 975, 981, 972, 975, 981], REVEAL_REST);
+    expect(shown.map((memo) => memo.revealed)).toEqual([false, true, true, true, true, true, true]);
+    expect(run([982], behind(970, true))[0].revealed).toBe(false);
+  });
+
+  it("goes round once for a flick down and one back up: one reveal and one hide", () => {
+    const frames = run([600, 900, 1500, 1200, 1100, 1180, 1300]);
+    const flips = frames.filter((memo, index) => index > 0 && memo.revealed !== frames[index - 1].revealed);
+    expect(flips).toHaveLength(2);
+    expect(frames.map((memo) => memo.revealed)).toEqual([false, false, false, true, true, false, false]);
+  });
+
+  it("hides again, and starts a new run, once the page is back above the hero-away line", () => {
+    const frames = run([900, 860, 520, 499, 700, 650]);
+    expect(frames.map((memo) => memo.heroAway)).toEqual([true, true, true, false, true, true]);
+    expect(frames.map((memo) => memo.revealed)).toEqual([false, true, true, false, false, true]);
+  });
+
+  it("reveals nothing for a bottom overshoot and its recoil, which read as the end of the page", () => {
+    const frames = run([1900, LIMIT, LIMIT + 60, LIMIT + 120, LIMIT + 60, LIMIT, LIMIT + 6, LIMIT - 1]);
+    for (const memo of frames) expect(memo.revealed).toBe(false);
+    expect(frames.at(-2)).toMatchObject({ pivot: LIMIT, lastY: LIMIT });
+  });
+
+  it("reveals nothing when the baseline was taken at an overshoot and the next frame is at or past the end", () => {
+    // A rebase (a toolbar returning, a focus leaving) during a bottom rubber band, held to the page as the hook does.
+    const at = clampScroll(LIMIT + 40, LIMIT);
+    expect(at).toBe(LIMIT);
+    const baseline: RevealMemo = { ...behind(1500, false), pivot: at, lastY: at };
+    for (const y of [LIMIT, LIMIT + 40, LIMIT + 120]) {
+      const next = revealFrame(y, LIMIT, geometry, baseline, up);
+      expect(next.revealed, `at ${y}`).toBe(false);
+      expect(next).toMatchObject({ dir: "down", pivot: LIMIT, lastY: LIMIT });
+    }
+    // The raw number as a baseline is what read as 40px of travel up: the reason the hook holds it to the page.
+    const raw: RevealMemo = { ...baseline, pivot: LIMIT + 40, lastY: LIMIT + 40 };
+    expect(revealFrame(LIMIT, LIMIT, geometry, raw, up).revealed).toBe(true);
+  });
+
+  it("reads a negative scroll as 0", () => {
+    expect(revealFrame(-300, LIMIT, geometry, REVEAL_REST, up)).toEqual(REVEAL_REST);
+    expect(revealFrame(-4, LIMIT, geometry, behind(900, true), up)).toMatchObject({
+      heroAway: false,
+      revealed: false,
+      lastY: 0,
+    });
+  });
+
+  it("keeps the state and rebases on a latched frame", () => {
+    const latched = { barShown: true, latched: true };
+    const before = behind(1000, true);
+    expect(revealFrame(1400, LIMIT, geometry, before, latched)).toEqual({ ...before, lastY: 1400, pivot: 1400 });
+    // Not even a long way up reveals anything while latched, and nothing is counted afterwards.
+    const frames = run([1100, 1000, 700], before, latched);
+    for (const memo of frames) expect(memo.revealed).toBe(true);
+    const hidden = run([900, 700, 690], behind(1000, false), latched);
+    for (const memo of hidden) expect(memo.revealed).toBe(false);
+    // The run that follows counts from where the latch left the page.
+    expect(revealFrame(690 - 10, LIMIT, geometry, hidden.at(-1) as RevealMemo, up).revealed).toBe(false);
+    expect(revealFrame(690 - REVEAL_UP_PX, LIMIT, geometry, hidden.at(-1) as RevealMemo, up).revealed).toBe(true);
+  });
+
+  it("lets a latch go once the page is back above the hero-away line, so only one field is on screen", () => {
+    const latched = { barShown: true, latched: true };
+    const shown = behind(900, true);
+    // Still behind the bar (at the line, going up, and with the bar's hysteresis): the latch holds.
+    expect(revealFrame(500, LIMIT, geometry, shown, latched)).toMatchObject({ heroAway: true, revealed: true });
+    // Above it the hero's field is in view: nothing is away, nothing is revealed, whoever has focus.
+    expect(revealFrame(499.9, LIMIT, geometry, shown, latched)).toEqual({
+      heroAway: false,
+      revealed: false,
+      dir: "down",
+      pivot: 499.9,
+      lastY: 499.9,
+    });
+    expect(revealFrame(0, LIMIT, geometry, shown, latched)).toMatchObject({ heroAway: false, revealed: false });
+    // The bar going down ends it too.
+    expect(revealFrame(900, LIMIT, geometry, shown, { barShown: false, latched: true })).toMatchObject({
+      heroAway: false,
+      revealed: false,
+    });
+    // A latch with the hero's field in view never turns heroAway on (a hero field in use is not hidden).
+    expect(revealFrame(1200, LIMIT, geometry, REVEAL_REST, latched)).toMatchObject({ heroAway: false });
+  });
+
+  it("returns the same object for an unchanged frame", () => {
+    const hidden = behind(1000, false);
+    expect(revealFrame(1000, LIMIT, geometry, hidden, up)).toBe(hidden);
+    const shown = behind(1000, true);
+    expect(revealFrame(1000, LIMIT, geometry, shown, up)).toBe(shown);
+    expect(revealFrame(0, LIMIT, geometry, REVEAL_REST, up)).toBe(REVEAL_REST);
+    const latched = { barShown: true, latched: true };
+    expect(revealFrame(1000, LIMIT, geometry, shown, latched)).toBe(shown);
+  });
+
+  it("holds the field showing for as long as a search is written, however far the page goes down", () => {
+    const keep = { barShown: true, latched: false, keep: true };
+    const frames = run([900, 1000, 1500, 1800, 1100], REVEAL_REST, keep);
+    for (const memo of frames) expect(memo).toMatchObject({ heroAway: true, revealed: true });
+    // Above the hero-away line there is only the hero's field.
+    expect(revealFrame(300, LIMIT, geometry, frames.at(-1) as RevealMemo, keep)).toMatchObject({
+      heroAway: false,
+      revealed: false,
+    });
+  });
+
+  it("lets the rule resume from where the search was cleared, without flipping at once", () => {
+    const keep = { barShown: true, latched: false, keep: true };
+    const kept = run([900, 1500], REVEAL_REST, keep).at(-1) as RevealMemo;
+    // Cleared at 1500: the next frame, at the same place or a little on, does not hide it...
+    expect(revealFrame(1500, LIMIT, geometry, kept, up).revealed).toBe(true);
+    expect(revealFrame(1500 + HIDE_DOWN_PX - 1, LIMIT, geometry, kept, up).revealed).toBe(true);
+    // ...and HIDE_DOWN_PX of travel down from there does.
+    expect(revealFrame(1500 + HIDE_DOWN_PX, LIMIT, geometry, kept, up).revealed).toBe(false);
+  });
+
+  it("returns the same object for an unchanged frame with a search kept", () => {
+    const keep = { barShown: true, latched: false, keep: true };
+    const kept = revealFrame(900, LIMIT, geometry, REVEAL_REST, keep);
+    expect(revealFrame(900, LIMIT, geometry, kept, keep)).toBe(kept);
+  });
+});
+
+describe("focusReveal", () => {
+  const away: RevealMemo = { heroAway: true, revealed: false, dir: "down", pivot: 900, lastY: 880 };
+
+  it("shows the bar's field as a run going up from the position, once the hero's field is behind the bar", () => {
+    expect(focusReveal(away, 700)).toEqual({ heroAway: true, revealed: true, dir: "up", pivot: 700, lastY: 700 });
+  });
+
+  it("changes nothing while the hero's field is in view, or when the bar's is showing already", () => {
+    const home: RevealMemo = { ...REVEAL_REST, lastY: 40, pivot: 40 };
+    expect(focusReveal(home, 40)).toBe(home);
+    const showing: RevealMemo = { heroAway: true, revealed: true, dir: "up", pivot: 700, lastY: 710 };
+    expect(focusReveal(showing, 705)).toBe(showing);
+  });
+});
+
+describe("crossingTarget", () => {
+  it("is the hero's field from 64rem, whatever the scroll position says", () => {
+    expect(crossingTarget({ wide: true, heroAway: false })).toBe("hero");
+    expect(crossingTarget({ wide: true, heroAway: true })).toBe("hero");
+  });
+
+  it("is the hero's field below 64rem while it is in view, and the bar's copy once it is behind the bar", () => {
+    expect(crossingTarget({ wide: false, heroAway: false })).toBe("hero");
+    expect(crossingTarget({ wide: false, heroAway: true })).toBe("bar");
+  });
+});
+
+describe("quietScroll", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("runs the scroll once, reads as quiet for two frames, and then clears", () => {
+    const frames: Array<() => void> = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: () => void) => frames.push(callback));
+    const scroll = vi.fn();
+    expect(quietScrolling()).toBe(false);
+    quietScroll(scroll);
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(quietScrolling()).toBe(true);
+    // The first frame queues the second; the flag clears when that one has run.
+    frames.shift()?.();
+    expect(quietScrolling()).toBe(true);
+    frames.shift()?.();
+    expect(quietScrolling()).toBe(false);
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet until the last of overlapping scrolls has had its two frames", () => {
+    const frames: Array<() => void> = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: () => void) => frames.push(callback));
+    quietScroll(() => {});
+    quietScroll(() => {});
+    // The first scroll's frames run out; the second's are still to come.
+    frames.shift()?.();
+    frames.shift()?.();
+    expect(quietScrolling()).toBe(true);
+    for (let frame = frames.shift(); frame; frame = frames.shift()) frame();
+    expect(quietScrolling()).toBe(false);
+  });
+});
+
+describe("readerMoved", () => {
+  const base = { from: 292, scrollY: 292, limit: 800, lastLimit: 800 };
+
+  it("reads no travel under a pixel as no move", () => {
+    expect(readerMoved(base)).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 292.6 })).toBe(false);
+  });
+
+  it("reads travel nothing else accounts for as the reader's, up or down", () => {
+    expect(readerMoved({ ...base, scrollY: 222 })).toBe(true);
+    expect(readerMoved({ ...base, scrollY: 340 })).toBe(true);
+  });
+
+  it("reads a page held to a nearer end as the layout's", () => {
+    // The page shortened to 0 and the position went with it, to the new end.
+    expect(readerMoved({ ...base, scrollY: 0, limit: 0 })).toBe(false);
+    // The end is 150 now and the browser left the page there.
+    expect(readerMoved({ ...base, scrollY: 150, limit: 150 })).toBe(false);
+    // Still short of the new end and further than the anchor or the end can say: the reader's.
+    expect(readerMoved({ ...base, scrollY: 40, limit: 150 })).toBe(true);
+  });
+
+  it("reads travel equal to what the anchor moved as scroll anchoring", () => {
+    expect(readerMoved({ ...base, scrollY: 222, anchorMoved: -70 })).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 223, anchorMoved: -70 })).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 218, anchorMoved: -70 })).toBe(true);
+  });
+
+  it("reads travel equal to how far the end of the page moved as the layout's", () => {
+    // Content above the reader's place went, and the page followed it up.
+    expect(readerMoved({ ...base, scrollY: 222, limit: 730 })).toBe(false);
+    expect(readerMoved({ ...base, scrollY: 222, limit: 800 + 3 })).toBe(true);
+  });
+
+  it("does not let a small change of the page hide the reader's own scroll", () => {
+    // The page got 2px longer in the frame the reader scrolled 70px up.
+    expect(readerMoved({ ...base, scrollY: 222, limit: 802 })).toBe(true);
+  });
+
+  it("reads a scroll the page made itself as the layout's", () => {
+    expect(readerMoved({ ...base, scrollY: 100, quiet: true })).toBe(false);
+  });
+
+  it("holds the position to the page, so an overshoot is no travel", () => {
+    // iOS reports 40px past the end that the last frame was clamped to.
+    expect(readerMoved({ from: 800, scrollY: 840, limit: 800, lastLimit: 800 })).toBe(false);
+    expect(readerMoved({ from: 0, scrollY: -30, limit: 800, lastLimit: 800 })).toBe(false);
+    // And one past a nearer end is the layout's clamp.
+    expect(readerMoved({ from: 600, scrollY: 640, limit: 560, lastLimit: 800 })).toBe(false);
   });
 });

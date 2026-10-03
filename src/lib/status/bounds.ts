@@ -1,5 +1,5 @@
 import { fingerprint } from "./fingerprint.ts";
-import type { ServiceSnapshot } from "./types.ts";
+import type { ReleaseFeed, ReleaseInfo, ServiceSnapshot } from "./types.ts";
 
 /**
  * Longest text a snapshot may carry, per kind. A vendor payload is bounded
@@ -13,6 +13,13 @@ export const MAX_TITLE_CHARS = 300;
 export const MAX_TEXT_CHARS = 500;
 export const MAX_ID_CHARS = 200;
 export const MAX_URL_CHARS = 2000;
+/** A release's version, build and dates are a few words each; its notes a few short lines. */
+export const MAX_RELEASE_FIELD_CHARS = 64;
+export const MAX_NOTE_LINES = 5;
+export const MAX_NOTE_CHARS = 200;
+/** A status card's release feed: a handful of entries, each headed by a title short enough for one line. */
+export const MAX_FEED_ENTRIES = 5;
+export const MAX_FEED_TITLE_CHARS = 140;
 
 // Meta values that hold a title (the newest release's headline); the rest of
 // meta (version maps, counters) gets the general text limit.
@@ -90,14 +97,60 @@ function boundSummary(snapshot: ServiceSnapshot): string {
   return clip(summary, MAX_TEXT_CHARS);
 }
 
+// A release's strings come from vendor text too. Dates and the build are cut like any field; a notes list keeps
+// its first MAX_NOTE_LINES text lines, each cut, and is dropped when none is left.
+function boundRelease(release: ReleaseInfo): ReleaseInfo {
+  const next: ReleaseInfo = { ...release, version: bound(release.version, MAX_RELEASE_FIELD_CHARS) };
+  for (const key of ["build", "releasedAt", "updatedAt"] as const) {
+    if (release[key] !== undefined) next[key] = bound(release[key], MAX_RELEASE_FIELD_CHARS);
+  }
+  if (release.url !== undefined) next.url = boundUrl(release.url);
+  if (release.linkLabel !== undefined) next.linkLabel = bound(release.linkLabel, MAX_RELEASE_FIELD_CHARS);
+  if (release.notes !== undefined) {
+    const lines = Array.isArray(release.notes)
+      ? release.notes
+          .filter((line): line is string => typeof line === "string" && line.trim() !== "")
+          .slice(0, MAX_NOTE_LINES)
+          .map((line) => clip(line, MAX_NOTE_CHARS))
+      : [];
+    if (lines.length > 0) next.notes = lines;
+    else delete next.notes;
+  }
+  return next;
+}
+
+/**
+ * A release feed with every vendor string held to its limit: at most
+ * MAX_FEED_ENTRIES entries, each title cut to MAX_FEED_TITLE_CHARS and each
+ * release held as a tracker's is. A feed left with no entry is dropped (it
+ * has nothing true to show).
+ */
+export function boundReleaseFeed(feed: ReleaseFeed): ReleaseFeed | undefined {
+  const entries = (Array.isArray(feed.entries) ? feed.entries : [])
+    .filter((entry) => typeof entry?.title === "string" && entry.title.trim() !== "" && entry.release)
+    .slice(0, MAX_FEED_ENTRIES)
+    .map((entry) => ({ title: clip(entry.title, MAX_FEED_TITLE_CHARS), release: boundRelease(entry.release) }));
+  const sourceUrl = boundUrl(feed.sourceUrl);
+  if (entries.length === 0 || !sourceUrl) return undefined;
+  return { sourceName: bound(feed.sourceName, MAX_NAME_CHARS), sourceUrl, entries };
+}
+
+function boundedFeed(feed: ReleaseFeed): { releaseFeed?: ReleaseFeed } {
+  const next = boundReleaseFeed(feed);
+  return next ? { releaseFeed: next } : {};
+}
+
 /** The snapshot with every vendor-sourced string held to its limit. */
 export function boundSnapshot(snapshot: ServiceSnapshot): ServiceSnapshot {
+  // The feed is bounded below, and dropped when nothing is left of it, so it is not carried over as it came.
+  const { releaseFeed, ...rest } = snapshot;
   return {
-    ...snapshot,
+    ...rest,
     summary: boundSummary(snapshot),
     components: snapshot.components.map((component) => {
       const next = { ...component, name: bound(component.name, MAX_NAME_CHARS) };
       if (component.detail !== undefined) next.detail = bound(component.detail, MAX_TEXT_CHARS);
+      if (component.release !== undefined) next.release = boundRelease(component.release);
       return next;
     }),
     incidents: snapshot.incidents.map((incident) => {
@@ -115,6 +168,7 @@ export function boundSnapshot(snapshot: ServiceSnapshot): ServiceSnapshot {
         }
       : {}),
     ...(snapshot.meta ? { meta: boundMeta(snapshot.meta) } : {}),
+    ...(releaseFeed ? boundedFeed(releaseFeed) : {}),
     ...(snapshot.failure
       ? { failure: { ...snapshot.failure, message: bound(snapshot.failure.message, MAX_TEXT_CHARS) } }
       : {}),

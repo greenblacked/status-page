@@ -152,22 +152,23 @@ describe("boardHeadline", () => {
     });
   });
 
-  it("counts what needs a look, in words, with one shape", () => {
-    expect(boardHeadline(board([service("apple", "outage", "platforms", "Apple")])).title).toBe(
-      "One thing needs a look.",
-    );
+  it("says what is wrong, in words, with the count first", () => {
+    expect(boardHeadline(board([service("apple", "outage", "platforms", "Apple")])).title).toBe("One service is down.");
     expect(boardHeadline(board([service("gcp", "degraded"), service("aws", "degraded")])).title).toBe(
-      "Two things need a look.",
+      "Two services are degraded.",
     );
     expect(
       boardHeadline(board([service("gcp", "degraded"), service("aws", "degraded"), service("steam", "degraded")]))
         .title,
-    ).toBe("Three things need a look.");
+    ).toBe("Three services are degraded.");
+    expect(boardHeadline(board([service("gcp", "outage"), service("aws", "degraded")])).title).toBe(
+      "One is down, one is degraded.",
+    );
   });
 
   it("takes its tone from the worst thing that needs a look, and never from an unreadable source", () => {
     const headline = boardHeadline(board([service("grok", "unknown", "ai"), service("gcp", "degraded")]));
-    expect(headline).toEqual({ tone: "degraded", title: "One thing needs a look." });
+    expect(headline).toEqual({ tone: "degraded", title: "One service is degraded." });
     expect(
       boardHeadline(board([service("gcp", "maintenance"), service("aws", "unknown"), service("steam", "outage")])).tone,
     ).toBe("outage");
@@ -183,7 +184,7 @@ describe("boardHeadline", () => {
   it("counts maintenance as something to look at", () => {
     expect(boardHeadline(board([service("claude", "maintenance", "ai", "Claude")]))).toEqual({
       tone: "maintenance",
-      title: "One thing needs a look.",
+      title: "One service is in maintenance.",
     });
   });
 });

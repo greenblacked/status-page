@@ -6,7 +6,7 @@
 #       major  a `!` after the type, or a BREAKING CHANGE footer
 #       minor  feat
 #       patch  fix, perf, revert
-#       none   anything else (docs, ci, build, chore, refactor, test, style)
+#       none   anything else (docs, ci, build, chore, refactor, test, style, release)
 #   ./scripts/release/next.sh notes v0.3.0..HEAD
 #     Prints changelog lines built from those commits' subjects, for a
 #     release whose pull requests added nothing under ## [Unreleased].
@@ -14,7 +14,8 @@
 # release.yml runs `level` on every push to main, so merging stage into main
 # (in a merge commit) releases every feat, fix or breaking change that came
 # through dev and stage since the last tag, as one version. Merge commits never count.
-# chore(release) commits are the bumps themselves and never count.
+# release commits are the bumps themselves and never count, nor do the
+# chore(release) commits that history since older tags still holds.
 set -euo pipefail
 
 die() { echo "next: $*" >&2; exit 1; }
@@ -33,6 +34,13 @@ type_re='^([a-z]+)(\([a-z0-9._/-]+\))?(!?): (.+)$'
 # -z keeps git from also putting a newline between records.
 commits() { git log -z --no-merges --format='%s%x1f%b' "$range"; }
 
+# A release commit is the bump itself: "release: X.Y.Z", or the older
+# "chore(release): X.Y.Z" that history since older tags still holds.
+is_release_commit() {
+  local type="$1" scope="$2"
+  [ "$type" = release ] || { [ "$type" = chore ] && [ "$scope" = "(release)" ]; }
+}
+
 case "$mode" in
   level)
     level=none
@@ -41,13 +49,13 @@ case "$mode" in
       [[ "$subject" =~ $type_re ]] || continue
       type="${BASH_REMATCH[1]}"
       bang="${BASH_REMATCH[3]}"
-      [ "$type" = chore ] && [ "${BASH_REMATCH[2]}" = "(release)" ] && continue
+      is_release_commit "$type" "${BASH_REMATCH[2]}" && continue
       this=none
       case "$type" in
         feat) this="minor" ;;
         fix | perf | revert) this="patch" ;;
       esac
-      if [ -n "$bang" ] || printf '%s\n' "$body" | grep -qE '^BREAKING[ -]CHANGE: '; then
+      if [ -n "$bang" ] || grep -qE '^BREAKING[ -]CHANGE: ' <<<"$body"; then
         this="major"
       fi
       if [ "$(rank "$this")" -gt "$(rank "$level")" ]; then
@@ -64,7 +72,7 @@ case "$mode" in
     while IFS=$'\x1f' read -r -d '' subject _body; do
       [[ "$subject" =~ $type_re ]] || continue
       type="${BASH_REMATCH[1]}"
-      [ "$type" = chore ] && [ "${BASH_REMATCH[2]}" = "(release)" ] && continue
+      is_release_commit "$type" "${BASH_REMATCH[2]}" && continue
       text="${BASH_REMATCH[4]}"
       text="$(printf '%s' "${text:0:1}" | tr '[:lower:]' '[:upper:]')${text:1}"
       case "$type" in

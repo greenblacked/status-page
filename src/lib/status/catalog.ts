@@ -2,6 +2,9 @@ import type { CategoryId, ServiceId } from "./types.ts";
 
 export const APP_NAME = "Status";
 
+/** The name in the page's top row. The tab title, manifest, feed and badges keep APP_NAME. */
+export const WORDMARK = "Status Page";
+
 /** The deployed origin, for the absolute URLs a link preview needs (og:url, og:image, the canonical link). */
 export const SITE_ORIGIN = "https://status.szolotov.com";
 
@@ -38,6 +41,14 @@ export const CATALOG: CatalogEntry[] = [
     category: "cloud",
     sourceName: "AWS Health Dashboard",
     sourceUrl: "https://health.aws.amazon.com/health/status",
+  },
+  {
+    id: "azure",
+    name: "Microsoft Azure",
+    shortName: "Azure",
+    category: "cloud",
+    sourceName: "Azure status",
+    sourceUrl: "https://azure.status.microsoft/en-us/status/",
   },
   {
     id: "steam",
@@ -96,6 +107,30 @@ export const CATALOG: CatalogEntry[] = [
     sourceUrl: "https://status.play.google.com/summary",
   },
   {
+    id: "github",
+    name: "GitHub",
+    shortName: "GitHub",
+    category: "platforms",
+    sourceName: "GitHub Status",
+    sourceUrl: "https://www.githubstatus.com/",
+  },
+  {
+    id: "gitlab",
+    name: "GitLab",
+    shortName: "GitLab",
+    category: "platforms",
+    sourceName: "GitLab.com Status",
+    sourceUrl: "https://status.gitlab.com/",
+  },
+  {
+    id: "confluence",
+    name: "Atlassian Confluence",
+    shortName: "Confluence",
+    category: "platforms",
+    sourceName: "Confluence Cloud Status",
+    sourceUrl: "https://confluence.status.atlassian.com/",
+  },
+  {
     id: "grok",
     name: "Grok",
     shortName: "Grok",
@@ -134,6 +169,22 @@ export const CATALOG: CatalogEntry[] = [
     category: "updates",
     sourceName: "Apple Developer Releases",
     sourceUrl: "https://developer.apple.com/news/releases/",
+  },
+  {
+    id: "windows",
+    name: "Windows 11",
+    shortName: "Windows 11",
+    category: "updates",
+    sourceName: "Windows release health",
+    sourceUrl: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
+  },
+  {
+    id: "android-os",
+    name: "Android releases",
+    shortName: "Android OS",
+    category: "updates",
+    sourceName: "Android Developers releases",
+    sourceUrl: "https://developer.android.com/about/versions",
   },
 ];
 

@@ -1,4 +1,6 @@
 node_modules
+# pnpm's fallback package store, when it cannot hardlink from its home store
+.pnpm-store
 .vercel
 .output
 .nitro
@@ -19,3 +21,6 @@ screenshots
 # Cloudflare: wrangler local state, and local secrets that must never be committed
 .wrangler
 .dev.vars*
+
+# Local tool installs (e.g. a downloaded zizmor wheel) belong outside the repository
+*.whl

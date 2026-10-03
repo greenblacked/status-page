@@ -3,6 +3,8 @@ import { useId, useState } from "react";
 import { useServiceHistoryDays } from "@/components/status/board-history-provider";
 import { HistoryStrip } from "@/components/status/history-strip";
 import { PenLoop } from "@/components/status/pen";
+import { openDetailsFromCard, ReleaseDetails } from "@/components/status/release-details";
+import { ReleaseFeedLine } from "@/components/status/release-line";
 import {
   ComponentRow,
   HealthyComponents,
@@ -16,9 +18,10 @@ import {
   StarButton,
   StateWord,
 } from "@/components/status/service-card-shared";
-import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
+import { CHANGED_BAR, STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { Tag } from "@/components/ui/tag";
 import { incidentLink, serviceAnchor } from "@/lib/status/layout";
+import { hasReleaseDetails } from "@/lib/status/release-details";
 import { parseTimestamp } from "@/lib/status/schedule";
 import type { ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
@@ -61,6 +64,8 @@ export function AttentionCard({
 }: ServiceCardProps) {
   const days = useServiceHistoryDays(service.id);
   const changelog = service.category === "updates";
+  // A tracker's Details button sits in its footer; a status card's release line has its own (ReleaseFeedLine).
+  const details = changelog && hasReleaseDetails(service);
   const summary = norm(service.summary);
   const outage = service.health === "outage";
 
@@ -105,12 +110,16 @@ export function AttentionCard({
       className="surface spotlight focus-ring relative scroll-mt-6 p-4"
     >
       {emphasized ? (
-        // Changed: a 2px accent bar on the inline-start edge, fading in once. It has no hue of its own. A real
+        // Changed: a 2px bar on the inline-start edge, fading in once, in the colour of the state: red for an
+        // outage, amber for degraded, the maintenance tone for maintenance. A real
         // element, not a pseudo-element: ::before and ::after carry the Glass and Full sheen and glint. The
         // important position outweighs the Glass rule that makes a panel's children relative.
         <span
           aria-hidden
-          className="absolute! inset-y-4 left-0 w-0.5 bg-accent opacity-100 transition-opacity duration-(--t-reveal) ease-(--ease-out) starting:opacity-0 motion-reduce:transition-none"
+          className={cn(
+            "absolute! inset-y-4 left-0 w-0.5 opacity-100 transition-opacity duration-(--t-reveal) ease-(--ease-out) starting:opacity-0 motion-reduce:transition-none forced-colors:bg-[CanvasText] forced-colors:forced-color-adjust-none",
+            CHANGED_BAR.card[service.health],
+          )}
         />
       ) : null}
       <div data-card-header className="flex items-start gap-3">
@@ -118,7 +127,11 @@ export function AttentionCard({
           <StatusGlyph health={service.health} size={22} className={cn("block", STATUS_TEXT[service.health])} />
           {outage ? <PenLoop seed={penSeed(service.id)} /> : null}
         </span>
-        <div className="min-w-0 flex-1">
+        {/* biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: a pointer's shortcut to the Details button below, which is what a keyboard and a screen reader use. */}
+        <div
+          className={cn("min-w-0 flex-1", details && "cursor-pointer")}
+          onClick={details ? openDetailsFromCard : undefined}
+        >
           <h3 className="text-row text-balance">{service.name}</h3>
           <p className="text-caption">
             {fresh ? <span className="font-semibold text-fg">New release</span> : <StateWord health={service.health} />}
@@ -142,6 +155,7 @@ export function AttentionCard({
               </>
             ) : null}
           </p>
+          <ReleaseFeedLine service={service} />
         </div>
         <StarButton
           name={service.name}
@@ -203,18 +217,21 @@ export function AttentionCard({
       ) : null}
 
       <div className="mt-1 -mb-2 ml-[34px] flex items-center justify-between gap-3 text-caption">
-        <a
-          href={incidentUrl ?? service.sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="focus-ring pressable inline-flex min-h-11 min-w-0 items-center gap-1 text-accent"
-        >
-          <span className="min-w-0 [overflow-wrap:anywhere]">
-            {incidentUrl ? "Incident details" : hostOf(service.sourceUrl, service.sourceName)}
-          </span>
-          <span className="sr-only"> for {service.name}</span>
-          <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
-        </a>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4">
+          <a
+            href={incidentUrl ?? service.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="focus-ring pressable inline-flex min-h-11 min-w-0 items-center gap-1 text-accent"
+          >
+            <span className="min-w-0 [overflow-wrap:anywhere]">
+              {incidentUrl ? "Incident details" : hostOf(service.sourceUrl, service.sourceName)}
+            </span>
+            <span className="sr-only"> for {service.name}</span>
+            <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
+          </a>
+          {details ? <ReleaseDetails service={service} variant="button" /> : null}
+        </div>
         <span className="whitespace-nowrap tabular-nums text-subtle" title="How long the vendor took to answer">
           <span aria-hidden>{`${service.latencyMs}\u202fms`}</span>
           <span className="sr-only">answered in {service.latencyMs} ms</span>

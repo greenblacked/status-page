@@ -7,6 +7,8 @@ import {
   awsEventSubject,
   awsIncidentTitle,
   awsLatestLog,
+  azureItemActive,
+  azureItemHealth,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
@@ -17,6 +19,7 @@ import {
   grokItemHealth,
   grokTitleService,
   isoTimestamp,
+  MAX_RSS_SCANNED,
   parseGoogleProducts,
   parseInstatusComponents,
   parseRssItems,
@@ -47,6 +50,16 @@ describe("grok feed", () => {
     assert.equal(grokItemActive(fresh, NOW), true);
   });
 
+  it("ignores an unresolved item dated in the future, but not one a feed clock's skew ahead", () => {
+    const at = (offset: number) => ({
+      description: "Investigating elevated errors",
+      pubDate: new Date(NOW + offset).toUTCString(),
+    });
+    assert.equal(grokItemActive(at(DAY), NOW), false);
+    assert.equal(grokItemActive(at(5 * 365 * DAY), NOW), false);
+    assert.equal(grokItemActive(at(2 * 60_000), NOW), true);
+  });
+
   it("ignores an item with no usable date", () => {
     assert.equal(grokItemActive({ description: "Investigating" }, NOW), false);
     assert.equal(grokItemActive({ description: "Investigating", pubDate: "not a date" }, NOW), false);
@@ -70,6 +83,14 @@ describe("aws health events", () => {
       awsEventActive({ event_log: [{ timestamp: recent, message: "The issue is resolved" }] } as never, NOW),
       false,
     );
+  });
+
+  it("ignores an event whose last update is dated in the future, but not one a clock's skew ahead", () => {
+    const at = (offset: number) =>
+      ({ event_log: [{ timestamp: Math.floor((NOW + offset) / 1000), message: "Elevated error rates" }] }) as never;
+    assert.equal(awsEventActive(at(DAY), NOW), false);
+    assert.equal(awsEventActive(at(5 * 365 * DAY), NOW), false);
+    assert.equal(awsEventActive(at(2 * 60_000), NOW), true);
   });
 
   it("does not read a negated or prefixed 'resolved' as a resolution", () => {
@@ -290,6 +311,21 @@ describe("grok feed html stripping end to end", () => {
     assert.equal(grokItemHealth("<!-- <p>Status:&nbsp;Resolved</p>"), "operational");
     assert.equal(grokItemHealth("<p <b>Status: Resolved</b>"), "operational");
     assert.equal(grokItemHealth("Latency < 500ms. Status: Resolved. Errors > 1%"), "operational");
+  });
+});
+
+describe("parseRssItems scan cap", () => {
+  const item = (n: number) => `<item><title>t${n}</title></item>`;
+
+  it("reads a feed of exactly MAX_RSS_SCANNED items", () => {
+    const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, n) => item(n)).join("")}</channel></rss>`;
+    assert.equal(parseRssItems(xml).length, 200);
+  });
+
+  it("fails a feed with even one item past the cap instead of ignoring it", () => {
+    // Nothing says which end of the feed is newest, so an item past the cap could be the current incident.
+    const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED + 1 }, (_, n) => item(n)).join("")}</channel></rss>`;
+    assert.throws(() => parseRssItems(xml), PayloadError);
   });
 });
 
@@ -966,5 +1002,83 @@ describe("AWS event severity", () => {
     // Nothing named: still not the bare placeholder.
     assert.equal(awsEventSubject({ service_name: "Multiple services" }), "Multiple AWS services");
     assert.equal(awsEventSubject({}), "AWS");
+  });
+});
+
+describe("azure feed", () => {
+  it("reads an item's health from its title", () => {
+    assert.equal(azureItemHealth("Storage - East US - Increased latency"), "degraded");
+    assert.equal(azureItemHealth("Virtual Machines - Service unavailable"), "outage");
+    assert.equal(azureItemHealth("Regional OUTAGE"), "outage");
+    assert.equal(azureItemHealth("Preliminary Post Incident Review (PIR) – Azure Front Door – Outage"), "operational");
+    assert.equal(azureItemHealth("Final Post Incident Review (PIR) – Networking"), "operational");
+    assert.equal(azureItemHealth("Preliminary findings: Storage - East US"), "degraded");
+    assert.equal(azureItemHealth("Planned maintenance - Key Vault"), "maintenance");
+    // An outage wording beats maintenance: the service is down while it is worked on.
+    assert.equal(azureItemHealth("Maintenance overran: service unavailable"), "outage");
+  });
+
+  it("does not make an outage of a word that only suggests one", () => {
+    assert.equal(azureItemHealth("Requests may be intermittently unavailable in one region"), "degraded");
+    assert.equal(azureItemHealth("Drill down in Service Health"), "degraded");
+    assert.equal(azureItemHealth("Networking - Services down in West US"), "degraded");
+  });
+
+  it("calls an item over only when its title begins with a resolution or a review", () => {
+    assert.equal(azureItemHealth("RESOLVED - Storage"), "operational");
+    assert.equal(azureItemHealth("  Resolved: SQL"), "operational");
+    assert.equal(azureItemHealth("[Resolved] SQL"), "operational");
+    assert.equal(azureItemHealth("Mitigated - SQL"), "operational");
+    assert.equal(azureItemHealth("Post Incident Review (PIR) - Networking"), "operational");
+    assert.equal(azureItemHealth("Post-incident review - Networking"), "operational");
+    assert.equal(azureItemHealth("PIR - Networking"), "operational");
+    // A word later in the title, or one that only starts with it, does not end it.
+    assert.equal(azureItemHealth("SQL issue resolved in East US only"), "degraded");
+    assert.equal(azureItemHealth("Unresolved - SQL"), "degraded");
+    assert.equal(azureItemHealth("Pirate Cove Storage"), "degraded");
+  });
+
+  it("does not read an active item as over from the words of its text", () => {
+    // The four wordings a live incident can carry in its body or title.
+    const wordings = [
+      "We have partially mitigated the issue and are continuing to restore service.",
+      "The issue has not been fully mitigated.",
+      "Services have been restored in East US; West Europe remains impacted.",
+      "We will provide a root cause analysis once mitigated.",
+    ];
+    for (const wording of wordings) {
+      assert.notEqual(azureItemHealth(wording), "operational", wording);
+      const item = { title: wording, pubDate: new Date(NOW - DAY).toUTCString() };
+      assert.equal(azureItemActive(item, NOW), true, wording);
+    }
+  });
+
+  it("does not count an unresolved item dated in the future, but does one a feed clock's skew ahead", () => {
+    const item = (offset: number) => ({
+      title: "App Service - Degraded performance",
+      pubDate: new Date(NOW + offset).toUTCString(),
+    });
+    assert.equal(azureItemActive(item(DAY), NOW), false);
+    assert.equal(azureItemActive(item(5 * 365 * DAY), NOW), false);
+    assert.equal(azureItemActive(item(2 * 60_000), NOW), true);
+  });
+
+  it("counts an item as active when it is unresolved and dated within 14 days", () => {
+    const item = (pubDate?: string, title = "App Service - Degraded performance") => ({ title, pubDate });
+    assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString()), NOW), true);
+    assert.equal(azureItemActive(item(new Date(NOW - 15 * DAY).toUTCString()), NOW), false);
+    assert.equal(azureItemActive(item(undefined), NOW), false);
+    assert.equal(azureItemActive(item("not a date"), NOW), false);
+    assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString(), "RESOLVED - App Service"), NOW), false);
+  });
+
+  it("never counts a maintenance notice as active, however recent, but does an outage-worded title", () => {
+    const item = (title: string, ago = 60_000) => ({ title, pubDate: new Date(NOW - ago).toUTCString() });
+    assert.equal(azureItemActive(item("Planned maintenance - Key Vault"), NOW), false);
+    assert.equal(azureItemActive(item("Maintenance impacting Key Vault", DAY), NOW), false);
+    assert.equal(azureItemActive(item("Planned maintenance - Key Vault", -DAY), NOW), false);
+    assert.equal(azureItemActive({ title: "Planned maintenance - Key Vault" }, NOW), false);
+    assert.equal(azureItemActive(item("Service unavailable - maintenance overran"), NOW), true);
+    assert.equal(azureItemActive(item("Maintenance in West US: outage"), NOW), true);
   });
 });

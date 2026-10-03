@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>GitHub Changelog</title>
+    <atom:link href="https://github.blog/changelog/feed/" rel="self" type="application/rss+xml"/>
+    <link>https://github.blog/changelog/</link>
+    <description>Updates, ideas, and inspiration from GitHub to help developers build and design software.</description>
+    <lastBuildDate>Thu, 01 Oct 2026 18:12:00 +0000</lastBuildDate>
+    <item>
+      <title>Copilot code review is now generally available for all plans</title>
+      <link>https://github.blog/changelog/2026-10-01-copilot-code-review-is-now-generally-available-for-all-plans/</link>
+      <dc:creator><![CDATA[Allison]]></dc:creator>
+      <pubDate>Thu, 01 Oct 2026 18:00:00 +0000</pubDate>
+      <category><![CDATA[Improvement]]></category>
+      <guid isPermaLink="false">https://github.blog/changelog/?p=91001</guid>
+      <description><![CDATA[<p>Copilot code review is now generally available for every GitHub plan.</p>
+<p>The post <a href="https://github.blog/changelog/2026-10-01-copilot-code-review-is-now-generally-available-for-all-plans/">Copilot code review is now generally available for all plans</a> appeared first on <a href="https://github.blog">The GitHub Blog</a>.</p>
+]]></description>
+      <content:encoded><![CDATA[<p>Copilot code review is now generally available for every GitHub plan.</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>Actions: larger runners get Windows Server 2025 images</title>
+      <link>https://github.blog/changelog/2026-09-30-actions-larger-runners-get-windows-server-2025-images/</link>
+      <pubDate>Wed, 30 Sep 2026 17:00:00 +0000</pubDate>
+      <guid isPermaLink="false">https://github.blog/changelog/?p=90990</guid>
+      <description><![CDATA[<p>Larger runners now offer Windows Server 2025 images.</p>
+<p>The post <a href="https://github.blog/changelog/2026-09-30-actions-larger-runners-get-windows-server-2025-images/">Actions: larger runners get Windows Server 2025 images</a> appeared first on <a href="https://github.blog">The GitHub Blog</a>.</p>
+]]></description>
+    </item>
+    <item>
+      <title>Dependabot version updates support Bun lockfiles</title>
+      <link>https://github.blog/changelog/2026-09-28-dependabot-version-updates-support-bun-lockfiles/</link>
+      <pubDate>Mon, 28 Sep 2026 16:30:00 +0000</pubDate>
+      <guid isPermaLink="false">https://github.blog/changelog/?p=90950</guid>
+      <description><![CDATA[<p>Dependabot can now update dependencies in repositories that use Bun's text lockfile.</p>]]></description>
+    </item>
+    <item>
+      <title>Secret scanning push protection covers more token types</title>
+      <link>https://github.blog/changelog/2026-09-25-secret-scanning-push-protection-covers-more-token-types/</link>
+      <pubDate>Fri, 25 Sep 2026 15:00:00 +0000</pubDate>
+      <guid isPermaLink="false">https://github.blog/changelog/?p=90900</guid>
+      <description><![CDATA[<p>Push protection now blocks 14 additional token types.</p>]]></description>
+    </item>
+  </channel>
+</rss>

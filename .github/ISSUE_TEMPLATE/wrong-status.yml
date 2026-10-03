@@ -14,6 +14,7 @@ body:
       options:
         - Google Cloud (gcp)
         - AWS (aws)
+        - Microsoft Azure (azure)
         - Steam (steam)
         - CS2 Europe (cs2-europe)
         - Epic Games (epic)
@@ -21,11 +22,16 @@ body:
         - Spotify (spotify)
         - Apple (apple)
         - Android / Google Play (android)
+        - GitHub (github)
+        - GitLab (gitlab)
+        - Atlassian Confluence (confluence)
         - Grok (grok)
         - ChatGPT (chatgpt)
         - Claude (claude)
         - MikroTik RouterOS (mikrotik)
         - Apple OS (apple-os)
+        - Windows 11 (windows)
+        - Android releases (android-os)
     validations:
       required: true
   - type: input

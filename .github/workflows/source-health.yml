@@ -4,6 +4,19 @@ name: Source health
 # deterministic; this is the one place that calls the real vendor endpoints,
 # so a changed payload shape shows up as an issue instead of as a board that
 # quietly shows "Unknown".
+#
+# When an issue opens: a collector that cannot be read gets three attempts in
+# a run (20 s after the first, 90 s after the second when it timed out or could
+# not connect, counted from the end of each attempt), and an issue only after
+# it has failed in two consecutive runs at least 30 minutes apart (a manual
+# re-run right after a failing run does not count), so a vendor that is slow
+# for an hour does not open and close an issue by itself. A real outage
+# therefore reports one run later, hours later when the runs are delayed. The
+# first failing run is remembered in a closed `source-health-state` issue,
+# which needs only the `issues: write` below (the label is created on first
+# use, and the issue is also found by a marker in its body). A run where most sources fail at
+# once (the runner's network) changes nothing. The deploy-health issue below
+# is unchanged: it opens on the first failing run.
 
 on:
   schedule:
@@ -32,13 +45,13 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          # setup-node caches npm automatically because package.json names
-          # npm in packageManager. This job installs nothing, so skip it.
+          # This job installs nothing, so it needs no package cache, and
+          # setup-node must not start one on its own.
           package-manager-cache: false
       # The collectors use only Node built-ins (fetch, TextDecoder), and the
       # script runs on Node's own TypeScript stripping, so there is no
-      # `npm ci`: nothing from the lockfile executes in a job that can write
-      # issues.
+      # `pnpm install`: nothing from the lockfile executes in a job that can
+      # write issues.
       - name: Probe vendor sources
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -69,7 +82,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      # Same as the probe above: Node built-ins only, no `npm ci`.
+      # Same as the probe above: Node built-ins only, no `pnpm install`.
       - name: Check the production deployment
         if: vars.PRODUCTION_URL != ''
         env:

@@ -2,7 +2,16 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bytes, type Handler, json, networkError, stubFetch, text, utf16 } from "../../test/stub-fetch.ts";
 import { CATALOG } from "./catalog.ts";
-import { collectAllServices } from "./sources.server.ts";
+import { assembleBoard } from "./collect-board.ts";
+import { diffBoards, releaseChange } from "./diff.ts";
+import { MAX_BODY_BYTES } from "./http.ts";
+import {
+  collectAllServices,
+  MAX_NESTED_ROWS,
+  MAX_RSS_ITEMS,
+  MAX_RSS_SCANNED,
+  MAX_SCANNED_ROWS,
+} from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
@@ -19,6 +28,10 @@ const URLS = {
   cs2Players: "https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid=730",
   epicFortnite: "https://status.epicgames.com/api/v2/summary.json",
   spotify: "https://spotify.statuspage.io/api/v2/summary.json",
+  github: "https://www.githubstatus.com/api/v2/summary.json",
+  gitlab: "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7",
+  confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+  azure: "https://rssfeed.azure.status.microsoft/en-us/status/feed/",
   apple: "https://www.apple.com/support/systemstatus/data/system_status_en_US.js",
   android: "https://status.play.google.com/incidents.json",
   chatgpt: "https://status.openai.com/api/v2/summary.json",
@@ -28,6 +41,8 @@ const URLS = {
   mikrotikUpgrade: "https://upgrade.mikrotik.com/routeros/",
   mikrotikDownload: "https://download.mikrotik.com/routeros/",
   appleOs: "https://developer.apple.com/news/releases/rss/releases.rss",
+  windows: "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information",
+  androidOs: "https://developer.android.com/about/versions",
 };
 
 const FIXTURES = new URL("./__fixtures__/", import.meta.url);
@@ -264,6 +279,111 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       detail: "503 Service Unavailable from store.steampowered.com",
     });
     expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("operational");
+  });
+
+  it.each([
+    [403, "Forbidden"],
+    [429, "Too Many Requests"],
+  ])(
+    "Steam: a %i from the store is not a failure: card operational, Store unknown with an honest detail",
+    async (status, statusText) => {
+      stubFetch({
+        [URLS.steamServerInfo]: json({ servertime: 1758000000 }),
+        [URLS.steamFeatured]: text("refused", { status, statusText }),
+      });
+      const services = await collectAllServices();
+      const snapshot = services.find((s) => s.id === "steam")!;
+      expect(snapshot.health).toBe("operational");
+      expect(snapshot.failure).toBeUndefined();
+      expect(snapshot.components.find((c) => c.name === "Steam Store")).toEqual({
+        name: "Steam Store",
+        health: "unknown",
+        detail: `Store refused the check (${status})`,
+      });
+      expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("operational");
+    },
+  );
+
+  it("Steam: a Web API answering with the wrong shape while the store is fine is degraded", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: "not-a-number" }),
+      [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("degraded");
+    expect(snapshot.components.find((c) => c.name === "Steam Web API")?.health).toBe("outage");
+  });
+
+  it("Steam: a refused store does not make a failing Web API look fine: nothing usable is unknown, with the real fault", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("service unavailable", { status: 503, statusText: "Service Unavailable" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+  });
+
+  it("Steam: a refused Web API with the store fine is operational, Web API unknown", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: json({ featured_win: [{ id: 1 }] }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("operational");
+    expect(snapshot.components.find((c) => c.name === "Steam Web API")).toEqual({
+      name: "Steam Web API",
+      health: "unknown",
+      detail: "Web API refused the check (403)",
+    });
+  });
+
+  it("Steam: a refused Web API and a store that failed is unknown, with the store's real fault", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: text("service unavailable", { status: 503, statusText: "Service Unavailable" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+  });
+
+  it("Steam: a wrong-shape Web API and a refused store is unknown with a parser failure", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: "not-a-number" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure?.kind).toBe("parser");
+  });
+
+  it("Steam: both endpoints refusing the check is unknown", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: text("refused", { status: 403, statusText: "Forbidden" }),
+      [URLS.steamFeatured]: text("refused", { status: 403, statusText: "Forbidden" }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("unknown");
+    expect(snapshot.failure).toMatchObject({ kind: "http", status: 403 });
+  });
+
+  it("Steam: a Cloudflare bot challenge on the store is a refusal, whatever its status", async () => {
+    stubFetch({
+      [URLS.steamServerInfo]: json({ servertime: 1758000000 }),
+      [URLS.steamFeatured]: () =>
+        new Response("challenge", {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "cf-mitigated": "challenge" },
+        }),
+    });
+    const snapshot = (await collectAllServices()).find((s) => s.id === "steam")!;
+    expect(snapshot.health).toBe("operational");
+    expect(snapshot.components.find((c) => c.name === "Steam Store")).toMatchObject({
+      health: "unknown",
+      detail: "Store refused the check (503)",
+    });
   });
 
   it("Steam: a network error on one endpoint is degraded, with that endpoint's component non-operational", async () => {
@@ -799,6 +919,139 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       ]);
     });
 
+    // Trimmed from the live Claude page: every component Operational, the page indicator "none", and
+    // one open incident that the vendor has not tied to any component.
+    const claudeWithIncident = (incident: Record<string, unknown>) =>
+      statuspageSummary({
+        indicator: "none",
+        components: [
+          { id: "c1", name: "claude.ai", status: "operational" },
+          { id: "c2", name: "Claude API (api.anthropic.com)", status: "operational" },
+          { id: "c3", name: "Claude Code", status: "operational" },
+        ],
+        incidents: [
+          {
+            id: "credits",
+            name: "Delayed credits on the Claude Platform",
+            status: "monitoring",
+            started_at: "2026-10-01T19:20:00Z",
+            components: [],
+            ...incident,
+          },
+        ],
+      });
+
+    it.each([
+      ["minor", "degraded"],
+      ["major", "outage"],
+      ["critical", "outage"],
+    ])("an active %s incident makes the card %s, though every component is Operational", async (impact, health) => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe(health);
+      expect(claude.summary).toBe("Delayed credits on the Claude Platform");
+      expect(claude.components.every((component) => component.health === "operational")).toBe(true);
+      expect(claude.incidents).toHaveLength(1);
+      expect(claude.incidents[0]).toMatchObject({ health, title: "Delayed credits on the Claude Platform" });
+      expect(claude.incidents[0].informational).toBeUndefined();
+    });
+
+    it("an active impact-none notice leaves the same Claude page Operational, with the notice listed", async () => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact: "none" })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.summary).toBe("Nothing reported.");
+      expect(claude.incidents[0]).toMatchObject({ health: "operational", informational: true });
+    });
+
+    it.each([[{ impact: undefined }], [{ impact: "" }]])(
+      "an active incident with no impact is a problem: Degraded, not No data",
+      async (incident) => {
+        stubFetch({ [URLS.claude]: json(claudeWithIncident(incident)) });
+        const claude = await claudeOf();
+        expect(claude.health).toBe("degraded");
+        expect(claude.summary).toBe("Delayed credits on the Claude Platform");
+        expect(claude.failure).toBeUndefined();
+        expect(claude.incidents[0].informational).toBeUndefined();
+      },
+    );
+
+    it("a resolved incident does not raise the card", async () => {
+      stubFetch({ [URLS.claude]: json(claudeWithIncident({ impact: "major", status: "resolved" })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("operational");
+      expect(claude.incidents).toEqual([]);
+    });
+
+    it("an incident is never masked by a notice, and never lowers a worse component or indicator", async () => {
+      const summary = claudeWithIncident({ impact: "minor" });
+      summary.incidents.push({ id: "n", name: "FYI", status: "monitoring", impact: "none" });
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("degraded");
+
+      const worse = statuspageSummary({
+        indicator: "major",
+        components: [{ id: "c1", name: "claude.ai", status: "major_outage" }],
+        incidents: [{ id: "i", name: "Slow", status: "investigating", impact: "minor" }],
+      });
+      stubFetch({ [URLS.claude]: json(worse) });
+      expect((await claudeOf()).health).toBe("outage");
+    });
+
+    it("an active incident outranks maintenance in progress, which still sets maintenance when otherwise up", async () => {
+      const summary = claudeWithIncident({ impact: "minor" });
+      summary.scheduled_maintenances = [{ id: "m", name: "Database upgrade", status: "in_progress" }];
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("degraded");
+
+      summary.incidents = [];
+      stubFetch({ [URLS.claude]: json(summary) });
+      expect((await claudeOf()).health).toBe("maintenance");
+    });
+
+    it("a problem incident among many notices sets the card and is listed first", async () => {
+      const incidents = Array.from({ length: 12 }, (_, i) => ({
+        id: `n${i}`,
+        name: `Notice ${i}`,
+        status: "monitoring",
+        impact: "none",
+        started_at: `2026-10-01T10:${String(i).padStart(2, "0")}:00Z`,
+      }));
+      incidents.push({
+        id: "bad",
+        name: "Real problem",
+        status: "identified",
+        impact: "major",
+        started_at: "2026-09-01T00:00:00Z",
+      });
+      stubFetch({ [URLS.claude]: json(statuspageSummary({ incidents })) });
+      const claude = await claudeOf();
+      expect(claude.health).toBe("outage");
+      expect(claude.incidents[0].id).toBe("bad");
+    });
+
+    it("an Epic/Fortnite incident raises only the card it belongs to", async () => {
+      const components = [
+        { id: "g1", name: "Fortnite", status: "operational", group: true },
+        { id: "1", name: "Login", status: "operational", group_id: "g1" },
+        { id: "g2", name: "Epic Games Store", status: "operational", group: true },
+        { id: "3", name: "Login", status: "operational", group_id: "g2" },
+      ];
+      stubFetch({
+        [URLS.epicFortnite]: json(
+          statuspageSummary({
+            components,
+            incidents: [
+              { id: "b", name: "Login failures", status: "investigating", impact: "major", components: [{ id: "1" }] },
+            ],
+          }),
+        ),
+      });
+      const services = await collectAllServices();
+      expect(services.find((s) => s.id === "fortnite")!.health).toBe("outage");
+      expect(services.find((s) => s.id === "epic")!.health).toBe("operational");
+    });
+
     it("sorts incidents by urgency, then recency, and names the worst one in the summary", async () => {
       stubFetch({
         [URLS.claude]: json(
@@ -1184,20 +1437,609 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(grok.incidents).toEqual([]);
     });
 
-    it("MikroTik: every channel becomes a component, and the newest release's CHANGELOG is the summary", async () => {
+    it("GitHub summary.json: a degraded and a partly-out component, an active incident and upcoming maintenance", async () => {
+      stubFetch({ [URLS.github]: json(JSON.parse(fixture("github/summary.json"))) });
+      const github = await collect("github");
+      expect(github.failure).toBeUndefined();
+      // Minor indicator, a partial outage on Actions and a minor incident: degraded.
+      expect(github.health).toBe("degraded");
+      expect(github.summary).toBe("Disruption with some GitHub services");
+      expect(github.components.map((c) => [c.name, c.health, c.detail])).toEqual([
+        ["Pull Requests", "degraded", undefined],
+        ["Actions", "degraded", "Partial outage"],
+        ["Git Operations", "operational", undefined],
+        ["API Requests", "operational", undefined],
+        ["Webhooks", "operational", undefined],
+        ["Issues", "operational", undefined],
+        ["Packages", "operational", undefined],
+        ["Pages", "operational", undefined],
+        ["Codespaces", "operational", undefined],
+        ["Copilot", "operational", undefined],
+      ]);
+      // The resolved webhook incident is not listed.
+      expect(github.incidents).toEqual([
+        {
+          id: "q2zmv0t6k8x1",
+          title: "Disruption with some GitHub services",
+          health: "degraded",
+          startedAt: "2026-09-20T09:41:00.000Z",
+          updatedAt: "2026-09-20T11:30:00.000Z",
+          url: "https://stspg.io/q2zmv0t6k8x1",
+        },
+      ]);
+      expect(github.upcomingMaintenance).toEqual([
+        {
+          id: "m4w9t2x7b1qa",
+          title: "Scheduled maintenance for Codespaces",
+          scheduledFor: "2026-09-24T02:00:00.000Z",
+          scheduledUntil: "2026-09-24T04:00:00.000Z",
+          url: "https://stspg.io/m4w9t2x7b1qa",
+        },
+      ]);
+      expect(github.sourceUrl).toBe("https://www.githubstatus.com/");
+    });
+
+    it("GitHub summary.json: the page's own pointer to itself is not a service", async () => {
+      stubFetch({ [URLS.github]: json(JSON.parse(fixture("github/summary.json"))) });
+      const github = await collect("github");
+      expect(github.components.some((c) => c.name.startsWith("Visit "))).toBe(false);
+      expect(github.components).toHaveLength(10);
+    });
+
+    it("GitLab status.json (Status.io): a partial disruption, its components with the affected containers, an incident and upcoming maintenance", async () => {
+      stubFetch({ [URLS.gitlab]: json(JSON.parse(fixture("gitlab/status.json"))) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.failure).toBeUndefined();
+      expect(gitlab.health).toBe("degraded");
+      expect(gitlab.summary).toBe("Elevated errors on Git over SSH");
+      expect(gitlab.components).toEqual([
+        { name: "Git Operations", health: "degraded", detail: "Partial Service Disruption (SSH)" },
+        { name: "Container Registry", health: "degraded", detail: "Degraded Performance (Primary)" },
+        { name: "Website", health: "operational" },
+        { name: "API", health: "operational" },
+        { name: "GitLab Pages", health: "operational" },
+      ]);
+      // The newest message's status (400), not the first (300), is the incident's.
+      expect(gitlab.incidents).toEqual([
+        {
+          id: "65f1c0de0000000000000001",
+          title: "Elevated errors on Git over SSH",
+          health: "degraded",
+          startedAt: "2026-09-20T10:05:00.000Z",
+          updatedAt: "2026-09-20T10:12:00.000Z",
+          url: "https://status.gitlab.com/pages/incident/5b36dc6502d06804c08349f7/65f1c0de0000000000000001",
+        },
+      ]);
+      expect(gitlab.upcomingMaintenance).toEqual([
+        {
+          id: "65f1c0de0000000000000002",
+          title: "Database upgrade",
+          scheduledFor: "2026-09-27T01:00:00.000Z",
+          scheduledUntil: "2026-09-27T03:00:00.000Z",
+          url: "https://status.gitlab.com/pages/maintenance/5b36dc6502d06804c08349f7/65f1c0de0000000000000002",
+        },
+      ]);
+      expect(gitlab.sourceUrl).toBe("https://status.gitlab.com/");
+    });
+
+    it.each([
+      [100, "operational"],
+      [200, "maintenance"],
+      [300, "degraded"],
+      [400, "degraded"],
+      [500, "outage"],
+      [600, "degraded"],
+    ])("GitLab: the page's status_code %i is %s", async (code, expected) => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = code;
+      // Only the page's own code is under test: no incident to raise it.
+      status.result.incidents = [];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.failure).toBeUndefined();
+      expect(gitlab.health).toBe(expected);
+    });
+
+    it.each([[undefined], [null], ["100"], [0], [700], [150]])(
+      "GitLab: a status_code of %j is unknown with a parser failure, not an all-clear",
+      async (code) => {
+        const status = JSON.parse(fixture("gitlab/status.json"));
+        status.result.status_overall.status_code = code;
+        stubFetch({ [URLS.gitlab]: json(status) });
+        const gitlab = await collect("gitlab");
+        expect(gitlab.health).toBe("unknown");
+        expect(gitlab.failure).toEqual({ kind: "parser", message: "Status.io reply has no readable overall status." });
+      },
+    );
+
+    it("GitLab: active maintenance on an otherwise operational page is maintenance, and names the window", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = 100;
+      status.result.incidents = [];
+      status.result.maintenance.active = [{ name: "Registry maintenance", _id: "m1" }];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("maintenance");
+      expect(gitlab.summary).toBe("Registry maintenance");
+    });
+
+    it("GitLab: an open incident raises an operational page, and one with no status still counts as degraded", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = 100;
+      status.result.incidents = [
+        { name: "Pipelines delayed", _id: "i1", datetime_open: "2026-09-20T10:00:00.000Z", messages: [] },
+      ];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("degraded");
+      expect(gitlab.incidents[0]).toMatchObject({ title: "Pipelines delayed", health: "unknown" });
+    });
+
+    it("GitLab: an open incident whose newest update says operational is a notice, not a problem", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status_overall.status_code = 100;
+      status.result.status_overall.status = "Operational";
+      status.result.incidents = [
+        {
+          name: "Pipelines delayed",
+          _id: "i1",
+          datetime_open: "2026-09-20T10:00:00.000Z",
+          messages: [
+            { state: 100, status: 300, datetime: "2026-09-20T10:00:00.000Z" },
+            { state: 300, status: 100, datetime: "2026-09-20T11:00:00.000Z" },
+          ],
+        },
+      ];
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("operational");
+      expect(gitlab.incidents).toHaveLength(1);
+      expect(gitlab.incidents[0]).toMatchObject({
+        title: "Pipelines delayed",
+        health: "operational",
+        informational: true,
+      });
+      // Listed, but not counted: the card does not read "Up. 1 resolved recently."
+      expect(gitlab.summary).not.toMatch(/resolved|1 incident/i);
+    });
+
+    it("GitLab: a service disruption in a component is an outage", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.status[2].status_code = 500;
+      status.result.status[2].status = "Service Disruption";
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.components[0]).toMatchObject({ name: "Git Operations", health: "outage" });
+    });
+
+    it("GitLab: an incident link that would leave the vendor's host falls back to the card's page", async () => {
+      const status = JSON.parse(fixture("gitlab/status.json"));
+      status.result.incidents[0]._id = "../../..//evil.example/x";
+      stubFetch({ [URLS.gitlab]: json(status) });
+      const url = (await collect("gitlab")).incidents[0].url ?? "";
+      expect(new URL(url).host).toBe("status.gitlab.com");
+    });
+
+    it("Confluence summary.json: a major outage leads, with its incidents worst first; groups are not rows", async () => {
+      stubFetch({ [URLS.confluence]: json(JSON.parse(fixture("confluence/summary.json"))) });
+      const confluence = await collect("confluence");
+      expect(confluence.failure).toBeUndefined();
+      expect(confluence.health).toBe("outage");
+      expect(confluence.summary).toBe("Users cannot edit pages in Confluence Cloud");
+      expect(confluence.components.map((c) => [c.name, c.health])).toEqual([
+        ["Editor", "outage"],
+        ["Notifications", "degraded"],
+        ["Search", "operational"],
+        ["Marketplace Apps", "operational"],
+      ]);
+      expect(confluence.incidents.map((i) => [i.title, i.health])).toEqual([
+        ["Users cannot edit pages in Confluence Cloud", "outage"],
+        ["Delayed email notifications", "degraded"],
+      ]);
+      expect(confluence.upcomingMaintenance).toBeUndefined();
+    });
+
+    it.each(["github", "confluence"] as const)(
+      "%s: a JSON body that is not a Statuspage summary is unknown with a parser failure",
+      async (id) => {
+        stubFetch({ [URLS[id]]: json(JSON.parse(fixture(`${id}/summary-malformed.json`))) });
+        const snapshot = await collect(id);
+        expect(snapshot.health).toBe("unknown");
+        expect(snapshot.failure).toEqual({ kind: "parser", message: "Statuspage summary has no status." });
+        expect(snapshot.incidents).toEqual([]);
+        expect(snapshot.components).toEqual([]);
+      },
+    );
+
+    it("GitLab: a JSON body that is not a Status.io status is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.gitlab]: json(JSON.parse(fixture("gitlab/status-malformed.json"))) });
+      const gitlab = await collect("gitlab");
+      expect(gitlab.health).toBe("unknown");
+      expect(gitlab.failure).toEqual({ kind: "parser", message: "Status.io reply has no result." });
+      expect(gitlab.incidents).toEqual([]);
+      expect(gitlab.components).toEqual([]);
+    });
+
+    // Dense payloads: the largest bodies the 4 MiB cap lets through, made of the
+    // smallest entries (`{}`, three bytes with its comma), so an array holds the
+    // most rows a body can. Reading such a body once mapped every row before
+    // any cap applied (about 190 MiB of heap for a million components, fatal
+    // under a 128 MiB heap); the arrays are now cut first, so the work is
+    // bounded by MAX_SCANNED_ROWS, not by the body.
+    const DENSE_BUDGET_MS = 5000;
+    const dense = (rows: number, row = "{}") => `[${Array.from({ length: rows }, () => row).join(",")}]`;
+    const raw = (body: string): Handler => {
+      expect(body.length).toBeLessThan(MAX_BODY_BYTES);
+      return () => new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    it("GitLab: a dense Status.io body (900,000 components, 200,000 incidents, 200,000 maintenance) is cut before it is mapped", async () => {
+      const body = `{"result":{"status_overall":{"status":"Operational","status_code":100},"status":${dense(900_000)},"incidents":${dense(200_000)},"maintenance":{"active":${dense(100_000)},"upcoming":${dense(100_000)}}}}`;
+      stubFetch({ [URLS.gitlab]: raw(body) });
+      const started = performance.now();
+      const gitlab = await collect("gitlab");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(gitlab.failure).toBeUndefined();
+      // Counts are of what was read: the first MAX_SCANNED_ROWS of each array, never the body's millions.
+      expect(gitlab.components).toHaveLength(300);
+      expect(gitlab.componentCount).toBe(MAX_SCANNED_ROWS);
+      expect(gitlab.incidents).toHaveLength(50);
+      expect(gitlab.incidentCount).toBe(MAX_SCANNED_ROWS);
+      expect(gitlab.upcomingMaintenance?.length ?? 0).toBeLessThanOrEqual(3);
+    });
+
+    it("GitLab: a component with 50,000 containers and an incident with 100,000 messages are cut to the nested bound", async () => {
+      // The first MAX_NESTED_ROWS containers are fine; every one past them is down.
+      const fine = dense(MAX_NESTED_ROWS, '{"name":"ok","status_code":100}').slice(1, -1);
+      const down = dense(50_000, '{"name":"late","status_code":300}').slice(1, -1);
+      const containers = `[${fine},${down}]`;
+      const message = '{"status":300}';
+      const body = `{"result":{"status_overall":{"status":"Operational","status_code":100},"status":[{"name":"Git","status_code":300,"status":"Degraded","containers":${containers}}],"incidents":[{"_id":"a","name":"Slow","messages":${dense(100_000, message)}}]}}`;
+      stubFetch({ [URLS.gitlab]: raw(body) });
+      const started = performance.now();
+      const gitlab = await collect("gitlab");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(gitlab.failure).toBeUndefined();
+      // The containers past the bound are not read, so none is named as affected.
+      expect(gitlab.components[0]).toEqual({ name: "Git", health: "degraded", detail: "Degraded" });
+      expect(gitlab.incidents[0]).toMatchObject({ id: "a", title: "Slow", health: "degraded" });
+    });
+
+    it.each(["github", "confluence"] as const)(
+      "%s: a dense Statuspage body (900,000 components, 300,000 incidents, 100,000 maintenance) is cut before it is mapped",
+      async (id) => {
+        const body = `{"status":{"indicator":"none","description":"All Systems Operational"},"components":${dense(900_000)},"incidents":${dense(300_000)},"scheduled_maintenances":${dense(100_000)}}`;
+        stubFetch({ [URLS[id]]: raw(body) });
+        const started = performance.now();
+        const snapshot = await collect(id);
+        expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+        expect(snapshot.failure).toBeUndefined();
+        expect(snapshot.components).toHaveLength(300);
+        expect(snapshot.componentCount).toBe(MAX_SCANNED_ROWS);
+        expect(snapshot.incidents).toHaveLength(50);
+        expect(snapshot.incidentCount).toBe(MAX_SCANNED_ROWS);
+      },
+    );
+
+    const azureItem = (i: number) =>
+      `<item><title>Outage ${i}</title><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
+
+    it("Azure: a dense feed past the scan bound is unknown with a parser failure, never an all-clear", async () => {
+      const xml = `<rss><channel>${Array.from({ length: 40_000 }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const started = performance.now();
+      const azure = await collect("azure");
+      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({
+        kind: "parser",
+        message: `RSS feed has more than ${MAX_RSS_SCANNED} items.`,
+      });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure: a feed of exactly the scan bound is read, and keeps MAX_RSS_ITEMS", async () => {
+      const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.incidents).toHaveLength(50);
+      expect(azure.incidentCount).toBe(MAX_RSS_ITEMS);
+    });
+
+    it("Grok: an oldest-first feed with its current outage past the scan bound is unknown, not operational", async () => {
+      const old = (i: number) =>
+        `<item><title>Old ${i}</title><description>Status: Resolved</description><pubDate>Sun, 01 Mar 2026 10:00:00 GMT</pubDate></item>`;
+      const current = `<item><title>Major outage</title><description>Major outage</description><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
+      const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, i) => old(i)).join("")}${current}</channel></rss>`;
+      stubFetch({ [URLS.grok]: raw(xml) });
+      const grok = await collect("grok");
+      expect(grok.health).toBe("unknown");
+      expect(grok.failure?.kind).toBe("parser");
+      expect(grok.incidents).toEqual([]);
+    });
+
+    it("Azure: an Atom document (feed-malformed.xml) is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.azure]: text(fixture("azure/feed-malformed.xml")) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed was not an RSS channel." });
+      expect(azure.incidents).toEqual([]);
+      expect(azure.components).toEqual([]);
+    });
+
+    it.each(["github", "confluence", "gitlab"] as const)(
+      "%s: a body that is not JSON, and a null body, are parser failures",
+      async (id) => {
+        stubFetch({ [URLS[id]]: text("<html>Attention Required</html>") });
+        expect((await collect(id)).failure?.kind).toBe("parser");
+        stubFetch({ [URLS[id]]: json(null) });
+        expect((await collect(id)).failure?.kind).toBe("parser");
+      },
+    );
+
+    it.each(["github", "confluence", "gitlab"] as const)("%s: a 503 is unknown with an http failure", async (id) => {
+      stubFetch({ [URLS[id]]: text("down", { status: 503 }) });
+      const snapshot = await collect(id);
+      expect(snapshot.health).toBe("unknown");
+      expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+    });
+
+    it("GitHub: an incident link off Statuspage's and the vendor's hosts falls back to the card's page", async () => {
+      const summary = JSON.parse(fixture("github/summary.json"));
+      summary.incidents[0].shortlink = "https://evil.example/q2zmv0t6k8x1";
+      stubFetch({ [URLS.github]: json(summary) });
+      expect((await collect("github")).incidents[0].url).toBe("https://www.githubstatus.com/");
+    });
+
+    it("Azure feed.xml: unresolved recent items are incidents, worst first; resolved, review and stale items are not", async () => {
+      stubFetch({ [URLS.azure]: text(fixture("azure/feed.xml")) });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("outage");
+      expect(azure.summary).toBe("Virtual Machines - UK South - Service unavailable");
+      expect(azure.components).toEqual([]);
+      expect(azure.incidents).toEqual([
+        {
+          id: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-vm-uk-south",
+          title: "Virtual Machines - UK South - Service unavailable",
+          health: "outage",
+          startedAt: "2026-09-20T07:05:00.000Z",
+          url: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-vm-uk-south",
+        },
+        {
+          id: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-sql-west-europe",
+          title: "Azure SQL Database - West Europe - Investigating degraded connectivity",
+          health: "degraded",
+          startedAt: "2026-09-20T10:20:00.000Z",
+          url: "https://azure.status.microsoft/en-us/status/#azure-2026-09-20-sql-west-europe",
+        },
+      ]);
+      expect(azure.sourceUrl).toBe("https://azure.status.microsoft/en-us/status/");
+    });
+
+    it("Azure feed.xml: a channel with no items is operational, not a failure", async () => {
       stubFetch({
-        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
+        [URLS.azure]: text(
+          '<?xml version="1.0"?><rss version="2.0"><channel><title>Azure Status</title></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: only resolved items leave the card operational", async () => {
+      const feed = fixture("azure/feed.xml");
+      const resolvedOnly =
+        feed.slice(0, feed.indexOf("<item>")) +
+        feed.slice(feed.indexOf("<item>", feed.indexOf("azure-2026-09-19-storage-resolved") - 80));
+      stubFetch({ [URLS.azure]: text(resolvedOnly) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    describe("Azure maintenance notices", () => {
+      // The feed has no machine-readable window, so a notice's own date says
+      // nothing about when the work runs: it never affects health.
+      const when = () => new Date(Date.now() - 3_600_000).toUTCString();
+      const item = (title: string, extra = "") =>
+        `<item><title>${title}</title><pubDate>${when()}</pubDate>${extra}<description>Impact.</description></item>`;
+      const feed = (items: string[]) => text(`<rss version="2.0"><channel>${items.join("")}</channel></rss>`);
+
+      it("a recent maintenance notice leaves the card operational, with no incident or upcoming maintenance", async () => {
+        stubFetch({ [URLS.azure]: feed([item("Planned maintenance - Key Vault")]) });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("operational");
+        expect(azure.incidents).toEqual([]);
+        expect(azure.incidentCount).toBeUndefined();
+        expect(azure.upcomingMaintenance).toBeUndefined();
+      });
+
+      it("a maintenance notice with no date is left out too, and is not a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            "<item><title>Planned maintenance - Key Vault</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("operational");
+        expect(azure.incidents).toEqual([]);
+      });
+
+      it("beside a real incident, health follows the incident alone and the notice is not listed", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault"),
+            item("Storage - East US - Increased latency", "<link>https://evil.example/x</link>"),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("degraded");
+        expect(azure.incidents).toHaveLength(1);
+        // A foreign link is replaced by the card's page.
+        expect(azure.incidents[0]).toMatchObject({
+          title: "Storage - East US - Increased latency",
+          health: "degraded",
+          url: "https://azure.status.microsoft/en-us/status/",
+        });
+        expect(azure.upcomingMaintenance).toBeUndefined();
+      });
+
+      it("a maintenance-titled item that says outage or service unavailable is still an outage", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault"),
+            item("Maintenance overran: service unavailable"),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("outage");
+        expect(azure.incidents.map((incident) => incident.title)).toEqual(["Maintenance overran: service unavailable"]);
+      });
+
+      it("an undated item beside a dated incident is dropped quietly, not a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Storage - East US - Increased latency"),
+            "<item><title>Undated incident</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("degraded");
+        expect(azure.incidents.map((incident) => incident.title)).toEqual(["Storage - East US - Increased latency"]);
+      });
+
+      it("a dated notice does not make an undated incident readable: unknown with a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault"),
+            "<item><title>Undated incident</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("unknown");
+        expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
+        expect(azure.incidents).toEqual([]);
+      });
+    });
+
+    it("Azure feed.xml: resolution words inside an active item do not end the incident", async () => {
+      const when = new Date(Date.now() - 3_600_000).toUTCString();
+      const item = (title: string, description: string) =>
+        `<item><title>${title}</title><pubDate>${when}</pubDate><description>${description}</description></item>`;
+      stubFetch({
+        [URLS.azure]: text(
+          `<rss version="2.0"><channel>${[
+            item("Storage - East US", "We have partially mitigated the issue and are continuing to restore service."),
+            item("Networking - Global", "The issue has not been fully mitigated."),
+            item("SQL - West Europe", "Services have been restored in East US; West Europe remains impacted."),
+            item("App Service - Central US", "We will provide a root cause analysis once mitigated."),
+          ].join("")}</channel></rss>`,
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("degraded");
+      expect(azure.incidents).toHaveLength(4);
+    });
+
+    it.each([
+      "Preliminary Post Incident Review (PIR) – Azure Front Door – Outage across multiple regions",
+      "Final Post Incident Review (PIR) – Azure Front Door – Outage across multiple regions",
+      "Final-PIR – Storage – East US",
+    ])("Azure feed.xml: %j is over, so the card stays operational", async (title) => {
+      const when = new Date(Date.now() - 3_600_000).toUTCString();
+      stubFetch({
+        [URLS.azure]: text(
+          `<rss version="2.0"><channel><item><title>${title}</title><pubDate>${when}</pubDate></item></channel></rss>`,
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: items that are not over, none with a readable date, are unknown with a parser failure", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel><item><title>Virtual Machines - UK South - Service unavailable</title></item><item><title>Storage - East US</title><pubDate>not a date</pubDate></item></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed.xml: undated items that are over do not make the feed unreadable", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<rss version="2.0"><channel><item><title>RESOLVED - Storage - East US</title></item></channel></rss>',
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("operational");
+    });
+
+    it("Azure feed.xml: a word in the description that suggests an outage does not make one", async () => {
+      const when = new Date(Date.now() - 3_600_000).toUTCString();
+      stubFetch({
+        [URLS.azure]: text(
+          `<rss version="2.0"><channel><item><title>Storage - East US - Increased latency</title><pubDate>${when}</pubDate><description>Requests may be intermittently unavailable in one region. Drill down in Service Health.</description></item></channel></rss>`,
+        ),
+      });
+      expect((await collect("azure")).health).toBe("degraded");
+    });
+
+    it.each([
+      [
+        "an Atom feed",
+        '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><entry><title>x</title></entry></feed>',
+      ],
+      ["an HTML page", "<html><body>Service Unavailable</body></html>"],
+      ["an empty body", ""],
+    ])("Azure feed: %s is unknown with a parser failure", async (_name, body) => {
+      stubFetch({ [URLS.azure]: text(body) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed was not an RSS channel." });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure feed: a 403 is unknown with an http failure naming the vendor host", async () => {
+      stubFetch({ [URLS.azure]: text("Forbidden", { status: 403 }) });
+      const azure = await collect("azure");
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toMatchObject({ kind: "http", status: 403 });
+      expect(azure.summary).toContain("azure.status.microsoft");
+    });
+
+    it("MikroTik: every channel becomes a component, and the collector reads the version channels only", async () => {
+      const asked: string[] = [];
+      const routes = mikrotikChannels((file) => fixture(`mikrotik/${file}`));
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.startsWith(URLS.mikrotikDownload)) asked.push(url);
+        return routes[url]?.() ?? new Response("not found", { status: 404 });
       });
       const mikrotik = await collect("mikrotik");
       expect(mikrotik.failure).toBeUndefined();
       expect(mikrotik.health).toBe("operational");
-      expect(mikrotik.summary).toBe(
-        "What's new in 7.21beta4 (2026-Sep-19 12:00) — bgp - fixed route refresh handling when the peer restarts",
-      );
+      // The changelogs are the board's business, after the sweep (mikrotik-notes.server.ts): the collector
+      // never asks for one, so its result cannot depend on how fast or whether the changelog host answers.
+      expect(asked).toEqual([]);
+      expect(mikrotik.summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
       // Released within 14 days reads as "maintenance": a fresh release is
       // worth a look, not an all-clear.
-      expect(mikrotik.components).toEqual([
+      expect(mikrotik.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
         { name: "RouterOS 7 stable", health: "maintenance", detail: "7.20.2 · Sep 15" },
         { name: "RouterOS 7 long-term", health: "operational", detail: "7.18.4 · Jul 22" },
         { name: "RouterOS 7 testing", health: "maintenance", detail: "7.21beta3 · Sep 17" },
@@ -1211,6 +2053,30 @@ describe("collectAllServices against stubbed vendor payloads", () => {
           "RouterOS 7 stable=7.20.2|RouterOS 7 long-term=7.18.4|RouterOS 7 testing=7.21beta3|" +
           "RouterOS 7 development=7.21beta4|RouterOS 6 long-term=6.49.19",
       });
+    });
+
+    it("MikroTik: each channel's Details carry its version, date and changelog link, and no notes yet", async () => {
+      stubFetch(mikrotikChannels((file) => fixture(`mikrotik/${file}`)));
+      const mikrotik = await collect("mikrotik");
+      const release = (name: string) => mikrotik.components.find((component) => component.name === name)?.release;
+      expect(release("RouterOS 7 stable")).toEqual({
+        version: "7.20.2",
+        releasedAt: "2026-09-15T12:00:00.000Z",
+        url: "https://download.mikrotik.com/routeros/7.20.2/CHANGELOG",
+        linkLabel: "Release notes",
+      });
+      expect(mikrotik.components.every((component) => component.release?.notes === undefined)).toBe(true);
+    });
+
+    it("MikroTik: the headline pairs the displayed channel's version with its own date", async () => {
+      // Stable (7.20.2, Sep 15) is shown even though development (7.21beta4) is newer, Sep 19.
+      stubFetch(mikrotikChannels((file) => fixture(`mikrotik/${file}`)));
+      expect((await collect("mikrotik")).summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
+      // Without a stable channel the newest one is displayed, with its own date.
+      const routes = mikrotikChannels((file) => fixture(`mikrotik/${file}`));
+      delete routes[`${URLS.mikrotikUpgrade}NEWESTa7.stable`];
+      stubFetch(routes);
+      expect((await collect("mikrotik")).summary).toBe("Latest RouterOS 7.21beta4 · Sep 19");
     });
 
     it("MikroTik: channel files that answer but hold no version are unknown with a parser failure", async () => {
@@ -1237,7 +2103,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       // TestFlight and Xcode are not OS releases and are skipped; iOS 27.0
       // loses to the beta listed above it; visionOS's newest item is the
       // Sep 14 release, now older than 14 days.
-      expect(appleOs.components).toEqual([
+      expect(appleOs.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
         { name: "iOS", health: "maintenance", detail: "27.2 beta 2 (24B5089g) · Sep 21" },
         { name: "iPadOS", health: "maintenance", detail: "27.2 beta 2 (24B5089g) · Sep 21" },
         { name: "macOS", health: "maintenance", detail: "27.2 beta 2 (26B5091g) · Sep 21" },
@@ -1245,6 +2111,18 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         { name: "tvOS", health: "maintenance", detail: "27.2 beta 2 (24K5093g) · Sep 21" },
         { name: "visionOS", health: "operational", detail: "27.0 (24M362) · Sep 14" },
       ]);
+      // The Details: the build apart from the version, the feed's own date and the release's page on apple.com;
+      // the feed has no notes text, so there is none.
+      expect(appleOs.components[0].release).toEqual({
+        version: "27.2 beta 2",
+        build: "24B5089g",
+        releasedAt: "2026-09-21T17:00:00.000Z",
+        url: "https://developer.apple.com/news/releases/?id=09212026a",
+        // The post links the downloads and the notes; it is not the notes.
+        linkLabel: "Apple Developer post",
+      });
+      expect(appleOs.components[5].release).toMatchObject({ version: "27.0", build: "24M362" });
+      expect(appleOs.components.some((component) => component.release?.notes !== undefined)).toBe(false);
       expect(appleOs.incidents).toEqual([]);
       expect(appleOs.meta).toEqual({
         latest: "iOS 27.2 beta 2 (24B5089g)",
@@ -1264,6 +2142,264 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(appleOs.health).toBe("unknown");
       expect(appleOs.failure).toEqual({ kind: "parser", message: "Apple OS release feed had no OS items." });
       expect(appleOs.components).toEqual([]);
+    });
+
+    it("Windows release health: the newest versions, headed by the newest one", async () => {
+      // Hand-built from the page's known layout (see the fixtures README). The
+      // clock puts only 26H2's availability (Sep 29) inside the 14-day window:
+      // 26H1's Sep 22 update is a revision, not a new release. 23H2 is the
+      // fifth row and is not kept.
+      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+      stubFetch({ [URLS.windows]: text(fixture("windows/windows11-release-information.html")) });
+      const windows = await collect("windows");
+      expect(windows.failure).toBeUndefined();
+      expect(windows.health).toBe("operational");
+      expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1000) · Sep 29");
+      expect(windows.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
+        { name: "26H2", health: "maintenance", detail: "26300.1000 · Sep 29" },
+        { name: "26H1", health: "operational", detail: "28000.1575 · Sep 22" },
+        { name: "25H2", health: "operational", detail: "26200.8100 · Sep 8" },
+        { name: "24H2", health: "operational", detail: "26100.8100 · Sep 8" },
+      ]);
+      // The Details: bare UTC days (the table has no times), a later update only when it differs, and the page
+      // itself as the link, since it has no notes text.
+      const page = "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information";
+      expect(windows.components[0].release).toEqual({
+        version: "26H2",
+        build: "26300.1000",
+        releasedAt: "2026-09-29",
+        url: page,
+      });
+      expect(windows.components[1].release).toEqual({
+        version: "26H1",
+        build: "28000.1575",
+        releasedAt: "2026-02-10",
+        updatedAt: "2026-09-22",
+        url: page,
+      });
+      expect(windows.incidents).toEqual([]);
+      expect(windows.meta).toEqual({
+        latest: "Windows 11 26H2 (build 26300.1000)",
+        // The release fingerprint names each feature version, not its build: a monthly build bump must not
+        // read as a new release. The build stays in the component details above.
+        versions: "Windows 11 26H2=released|Windows 11 26H1=released|Windows 11 25H2=released|Windows 11 24H2=released",
+      });
+    });
+
+    it.each(["America/Los_Angeles", "Pacific/Kiritimati"])(
+      "Windows release health: the days read the same on a host in %s",
+      async (tz) => {
+        const zone = process.env.TZ;
+        process.env.TZ = tz;
+        try {
+          vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+          stubFetch({ [URLS.windows]: text(fixture("windows/windows11-release-information.html")) });
+          const windows = await collect("windows");
+          expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1000) · Sep 29");
+          expect(windows.components[0].detail).toBe("26300.1000 · Sep 29");
+        } finally {
+          process.env.TZ = zone;
+        }
+      },
+    );
+
+    it("Windows release health: a version the page adds later becomes the headline and a fresh release", async () => {
+      vi.setSystemTime(new Date("2027-09-30T12:00:00.000Z"));
+      const page = fixture("windows/windows11-release-information.html").replace(
+        '<tbody>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+        '<tbody>\n<tr><td>27H2</td><td>General Availability Channel</td><td>2027-09-28</td><td>2027-09-28</td><td>27500.1</td></tr>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+      );
+      expect(page).toContain("27H2");
+      stubFetch({ [URLS.windows]: text(page) });
+      const windows = await collect("windows");
+      expect(windows.failure).toBeUndefined();
+      expect(windows.summary).toBe("Latest: Windows 11 27H2 (build 27500.1) · Sep 28");
+      expect(windows.components.map((component) => [component.name, component.health])).toEqual([
+        ["27H2", "maintenance"],
+        ["26H2", "operational"],
+        ["26H1", "operational"],
+        ["25H2", "operational"],
+      ]);
+      expect(String(windows.meta?.versions).startsWith("Windows 11 27H2=released|Windows 11 26H2=released|")).toBe(
+        true,
+      );
+    });
+
+    it("Windows release health: a monthly build bump is no new release, a new feature version is", async () => {
+      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+      const original = fixture("windows/windows11-release-information.html");
+      const board = async (page: string) => {
+        stubFetch({ [URLS.windows]: text(page) });
+        return assembleBoard([await collect("windows")], 0);
+      };
+      const before = await board(original);
+      // Microsoft's monthly cumulative update: 26H2 moves from build 26300.1000 to 26300.1100.
+      const bumped = original.replaceAll("26300.1000", "26300.1100");
+      expect(bumped).not.toBe(original);
+      const after = await board(bumped);
+      const windows = after.services[0];
+      // The build is on the card and in its Details...
+      expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1100) · Sep 29");
+      expect(windows.components[0].release?.build).toBe("26300.1100");
+      // ...and is no release: no change, no Changed bar, no Recent changes entry.
+      expect(diffBoards(before, after)).toEqual([]);
+      expect(releaseChange(before.services[0], windows)).toBe("");
+      // A feature version the page adds is one.
+      const added = original.replace(
+        '<tbody>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+        '<tbody>\n<tr><td>27H2</td><td>General Availability Channel</td><td>2026-09-30</td><td>2026-09-30</td><td>27500.1</td></tr>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+      );
+      expect(added).toContain("27H2");
+      const next = await board(added);
+      expect(diffBoards(after, next)).toEqual([
+        expect.objectContaining({ id: "windows", release: true, summary: "Windows 11 27H2 released" }),
+      ]);
+    });
+
+    it("Windows release health: a page without the versions table is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.windows]: text("<!DOCTYPE html><html><body><h1>Service unavailable</h1></body></html>") });
+      const windows = await collect("windows");
+      expect(windows.health).toBe("unknown");
+      expect(windows.failure).toEqual({
+        kind: "parser",
+        message: "Windows release page had no readable version table.",
+      });
+      expect(windows.components).toEqual([]);
+      expect(windows.meta).toBeUndefined();
+    });
+
+    it("Windows release health: a versions table whose rows hold no version or date is unknown too", async () => {
+      stubFetch({
+        [URLS.windows]: text(
+          "<table><tr><th>Version</th><th>Availability date</th></tr><tr><td>coming soon</td><td>TBA</td></tr></table>",
+        ),
+      });
+      const windows = await collect("windows");
+      expect(windows.health).toBe("unknown");
+      expect(windows.failure?.kind).toBe("parser");
+    });
+
+    it("Windows release health: a page over the size limit is unknown, not parsed", async () => {
+      stubFetch({ [URLS.windows]: text(`<table>${"<tr><td>26H2</td></tr>".repeat(200_000)}</table>`) });
+      const windows = await collect("windows");
+      expect(windows.health).toBe("unknown");
+      expect(windows.failure).toEqual({
+        kind: "parser",
+        message: "Response from learn.microsoft.com is larger than 4 MiB",
+      });
+    });
+
+    it("Android releases page: the newest versions, headed by the newest one, with no date to mark one fresh", async () => {
+      // A trimmed real capture of https://developer.android.com/about/versions
+      // (2026-10-01). The page gives versions and no dates, so nothing is ever
+      // "New release" here; a version that joins the list reaches the change
+      // feed through the version map instead (see diff.test.ts).
+      stubFetch({ [URLS.androidOs]: text(fixture("android-os/versions.html")) });
+      const android = await collect("android-os");
+      expect(android.failure).toBeUndefined();
+      expect(android.health).toBe("operational");
+      expect(android.summary).toBe("Latest: Android 17");
+      // The page gives no date and no notes, so the Details have each version's own page and nothing else: the
+      // version is the name (printed once) and "released" is not a version.
+      expect(android.components).toEqual(
+        [17, 16, 15, 14].map((version) => ({
+          name: `Android ${version}`,
+          health: "operational",
+          detail: "released",
+          release: {
+            version: `Android ${version}`,
+            url: `https://developer.android.com/about/versions/${version}`,
+            linkLabel: `Android ${version} page`,
+          },
+        })),
+      );
+      expect(android.incidents).toEqual([]);
+      expect(android.meta).toEqual({
+        latest: "Android 17",
+        versions: "Android 17=released|Android 16=released|Android 15=released|Android 14=released",
+      });
+    });
+
+    it("Android releases page: a major version the page adds later becomes the headline on its own", async () => {
+      const page = fixture("android-os/versions.html").replace(
+        '<li class="devsite-nav-item"><a href="/about/versions/17"',
+        '<li class="devsite-nav-item"><a href="/about/versions/18"\n        class="devsite-nav-title"\n      ><span class="devsite-nav-text" tooltip>Android 18</span></a></li>\n\n  <li class="devsite-nav-item"><a href="/about/versions/17"',
+      );
+      stubFetch({ [URLS.androidOs]: text(page) });
+      const android = await collect("android-os");
+      expect(android.failure).toBeUndefined();
+      expect(android.summary).toBe("Latest: Android 18");
+      expect(android.components.map((component) => component.name)).toEqual([
+        "Android 18",
+        "Android 17",
+        "Android 16",
+        "Android 15",
+      ]);
+      expect(String(android.meta?.versions).startsWith("Android 18=released|Android 17=released|")).toBe(true);
+    });
+
+    it("Android releases page: the footer alone is enough, and a repeated link counts once", async () => {
+      const link = (n: number) => `<a href="/about/versions/${n}" class="x">\n  Android ${n}\n</a>`;
+      stubFetch({ [URLS.androidOs]: text(`<ul>${link(16)}${link(16)}${link(17)}</ul>`) });
+      const android = await collect("android-os");
+      expect(android.components.map((component) => component.name)).toEqual(["Android 17", "Android 16"]);
+    });
+
+    it("Android releases page: a page without the version links is unknown with a parser failure", async () => {
+      stubFetch({ [URLS.androidOs]: text("<!DOCTYPE html><html><body><h1>We'll be right back</h1></body></html>") });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure).toEqual({
+        kind: "parser",
+        message: "Android releases page had no readable version list.",
+      });
+      expect(android.components).toEqual([]);
+      expect(android.meta).toBeUndefined();
+    });
+
+    it("Android releases page: links to other pages or with other text are not versions", async () => {
+      const page =
+        '<a href="/about/versions/17/qpr1">Android 17</a><a href="/about/versions/17">Android Beta</a>' +
+        '<a href="https://example.com/about/versions/17">Android 17</a><a href="/about/versions/pie">Android 9</a>' +
+        '<a href="/about/versions/16"><img alt="Android 16"></a><a href="/about/versions/123">Android 123</a>';
+      stubFetch({ [URLS.androidOs]: text(page) });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure?.kind).toBe("parser");
+    });
+
+    it("Android releases page: a page over the size limit is unknown, not parsed", async () => {
+      stubFetch({
+        [URLS.androidOs]: text(`<ul>${'<a href="/about/versions/17">Android 17</a>'.repeat(120_000)}</ul>`),
+      });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure).toEqual({
+        kind: "parser",
+        message: "Response from developer.android.com is larger than 4 MiB",
+      });
+    });
+
+    it("Android releases page: a redirect off the vendor's host is refused", async () => {
+      stubFetch({
+        [URLS.androidOs]: () =>
+          new Response(null, { status: 302, headers: { location: "https://example.com/about/versions" } }),
+      });
+      const android = await collect("android-os");
+      expect(android.health).toBe("unknown");
+      expect(android.failure?.kind).toBe("network");
+      expect(android.failure?.message).toContain("off the vendor's host");
+    });
+
+    it("Android releases page: a redirect within the vendor's host is followed", async () => {
+      stubFetch({
+        [URLS.androidOs]: () =>
+          new Response(null, { status: 301, headers: { location: "https://developer.android.com/about/versions/" } }),
+        "https://developer.android.com/about/versions/": text(fixture("android-os/versions.html")),
+      });
+      const android = await collect("android-os");
+      expect(android.failure).toBeUndefined();
+      expect(android.summary).toBe("Latest: Android 17");
     });
   });
 
@@ -1657,7 +2793,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
 
     describe("AWS components", () => {
-      const at = Math.floor(Date.now() / 1000) - 3600;
+      // An hour before the clock this block pins (an event dated after it would not be current).
+      const at = Math.floor(Date.parse("2026-09-20T12:00:00.000Z") / 1000) - 3600;
       function awsEvent(overrides: Record<string, unknown> = {}) {
         return {
           date: String(at),
@@ -1850,7 +2987,7 @@ describe("collectors bound vendor text and counts", () => {
     expect(claude.incidents.some((incident) => incident.informational)).toBe(false);
   });
 
-  it("Statuspage: the summary counts every incident, not only the 50 listed", async () => {
+  it("Statuspage: the card counts every incident, not only the 50 listed", async () => {
     stubFetch({
       [URLS.claude]: json(
         statuspageSummary({
@@ -1866,7 +3003,29 @@ describe("collectors bound vendor text and counts", () => {
     const claude = await collect("claude");
     expect(claude.incidents).toHaveLength(50);
     expect(claude.incidentCount).toBe(60);
-    expect(claude.summary).toBe("Up. 60 resolved recently.");
+    // Sixty open problems are a degraded card that names one of them, never "Up".
+    expect(claude.health).toBe("degraded");
+    expect(claude.summary).toBe("Minor 0");
+  });
+
+  it("Statuspage: sixty notices with no impact leave the card up and say nothing is reported", async () => {
+    stubFetch({
+      [URLS.claude]: json(
+        statuspageSummary({
+          incidents: Array.from({ length: 60 }, (_, i) => ({
+            id: `n-${i}`,
+            name: `Notice ${i}`,
+            status: "monitoring",
+            impact: "none",
+          })),
+        }),
+      ),
+    });
+    const claude = await collect("claude");
+    expect(claude.incidents).toHaveLength(50);
+    expect(claude.incidentCount).toBe(60);
+    expect(claude.health).toBe("operational");
+    expect(claude.summary).toBe("Nothing reported.");
   });
 
   it("an uncapped list carries no incidentCount", async () => {
@@ -1949,6 +3108,19 @@ describe("collectors bound vendor text and counts", () => {
     expect(String(appleOs.meta?.versions)).toMatch(/^iOS=9{63}…\|/);
   });
 
+  it("Android releases page: runaway link text or a runaway tag cannot reach the summary, names or meta", async () => {
+    const page =
+      `<a href="/about/versions/17">Android 17${" ".repeat(20_000)}</a>` +
+      `<a href="/about/versions/15" ${'data-x="y" '.repeat(5_000)}>Android 15</a>` +
+      `<a href="/about/versions/16">Android 16</a>`;
+    stubFetch({ [URLS.androidOs]: text(page) });
+    const android = await collect("android-os");
+    expect(android.failure).toBeUndefined();
+    expect(android.summary).toBe("Latest: Android 16");
+    expect(android.components.map((component) => component.name)).toEqual(["Android 16"]);
+    expect(String(android.meta?.versions).length).toBeLessThanOrEqual(500);
+  });
+
   it("Apple: an event id built from a long message stays short, and the same on every sweep", async () => {
     const payload = {
       services: [
@@ -1993,7 +3165,7 @@ describe("collectors bound vendor text and counts", () => {
       title: string,
     ) => `<item><title>${title}</title><link>https://status.x.ai/incidents/${i}</link>
       <pubDate>Sun, 20 Sep 2026 09:30:00 GMT</pubDate><description>Status: Identified</description></item>`;
-    const feed = `<rss version="2.0"><channel>${item(0, `[Grok] ${HUGE}`)}${Array.from({ length: 5000 }, (_, i) => item(i + 1, `[Svc ${i}] issue`)).join("")}</channel></rss>`;
+    const feed = `<rss version="2.0"><channel>${item(0, `[Grok] ${HUGE}`)}${Array.from({ length: MAX_RSS_SCANNED - 1 }, (_, i) => item(i + 1, `[Svc ${i}] issue`)).join("")}</channel></rss>`;
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
     try {

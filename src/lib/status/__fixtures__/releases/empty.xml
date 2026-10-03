@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>What's New with AWS</title>
+    <link>https://aws.amazon.com/new/</link>
+    <description>Announcements of new AWS services and features.</description>
+  </channel>
+</rss>

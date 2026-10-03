@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { afterEach, describe, it } from "vitest";
 import {
+  appleOsReleases,
   describeVersionChanges,
+  formatReleaseAge,
   formatVersionMap,
   isFreshRelease,
   latestAppleOsByFamily,
+  mikrotikChangelogIsFor,
+  mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   parseAppleOsTitle,
   parseMikrotikNewest,
+  splitAppleBuild,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
 
@@ -32,6 +37,27 @@ describe("parseMikrotikNewest", () => {
   });
 });
 
+describe("a date no Date can hold", () => {
+  it("leaves a MikroTik release without a time instead of throwing", () => {
+    // A 17-digit stamp is finite, but x1000 is far past the Date range.
+    assert.deepEqual(parseMikrotikNewest("7.24.4 99999999999999999"), { version: "7.24.4", releasedAt: undefined });
+  });
+
+  it("leaves an Apple release without a time and keeps the others", () => {
+    const releases = appleOsReleases([
+      { title: "iOS 27.2 (24B5089g)", pubDate: "not a date" },
+      { title: "macOS 27.2 (26B5091g)", pubDate: "Mon, 21 Sep 2026 10:00:00 PDT" },
+    ]);
+    assert.deepEqual(
+      releases.map((release) => [release.family, release.publishedAt]),
+      [
+        ["iOS", undefined],
+        ["macOS", "2026-09-21T17:00:00.000Z"],
+      ],
+    );
+  });
+});
+
 describe("mikrotikChangelogUrl", () => {
   it("builds the official changelog URL for a valid version", () => {
     assert.equal(mikrotikChangelogUrl("7.24.4"), "https://download.mikrotik.com/routeros/7.24.4/CHANGELOG");
@@ -51,6 +77,77 @@ describe("summarizeMikrotikChangelog", () => {
     );
     assert.match(summary, /7\.24\.4/);
     assert.match(summary, /lte/);
+  });
+});
+
+describe("mikrotikChangelogNotes", () => {
+  const changelog = [
+    "What's new in 7.21beta4 (2026-Sep-19 12:00):",
+    "",
+    "!) lte - fixed a crash;",
+    "*) bgp - fixed route refresh handling when the peer restarts;",
+    "*) bridge - improved MAC learning;",
+    "continuation text that is not a bullet",
+    "*) console - added export verbose;",
+    "*) wifi - fixed roaming;",
+    "*) one bullet too many;",
+    "",
+    "What's new in 7.21beta3 (2026-Sep-17 12:00):",
+    "*) dhcpv6-server - an older release's note;",
+  ].join("\n");
+
+  it("keeps the first four bullets of the newest section, without markers or the trailing semicolon", () => {
+    assert.deepEqual(mikrotikChangelogNotes(changelog), [
+      "lte - fixed a crash",
+      "bgp - fixed route refresh handling when the peer restarts",
+      "bridge - improved MAC learning",
+      "console - added export verbose",
+    ]);
+    assert.deepEqual(mikrotikChangelogNotes(changelog, 2), [
+      "lte - fixed a crash",
+      "bgp - fixed route refresh handling when the peer restarts",
+    ]);
+  });
+
+  it("stops at the next heading, so an older release's notes are never shown for this one", () => {
+    const short = "What's new in 7.2:\n*) one;\n\nWhat's new in 7.1:\n*) two;\n";
+    assert.deepEqual(mikrotikChangelogNotes(short), ["one"]);
+  });
+
+  it("reads CRLF files and cuts a long note", () => {
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\r\n*) a - b;\r\n"), ["a - b"]);
+    const [note] = mikrotikChangelogNotes(`What's new in 7.2:\n*) ${"x".repeat(1000)};\n`);
+    assert.equal(note.length, 200);
+    assert.ok(note.endsWith("…"));
+  });
+
+  it("gives nothing for text that is not a changelog, or a section with no bullets", () => {
+    assert.deepEqual(mikrotikChangelogNotes(""), []);
+    assert.deepEqual(mikrotikChangelogNotes("<html>Not found</html>"), []);
+    assert.deepEqual(mikrotikChangelogNotes("*) a bullet before any heading;\n"), []);
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\n\n"), []);
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\n*)\n*) ;\n"), []);
+  });
+
+  it("returns plain text: markup in a note stays text for the card to print as text", () => {
+    assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\n*) <img src=x onerror=alert(1)>;\n"), [
+      "<img src=x onerror=alert(1)>",
+    ]);
+  });
+});
+
+describe("splitAppleBuild", () => {
+  it("splits a trailing build number from the version", () => {
+    assert.deepEqual(splitAppleBuild("27.2 beta 2 (24B5089g)"), { version: "27.2 beta 2", build: "24B5089g" });
+    assert.deepEqual(splitAppleBuild("27.0 (24M362)"), { version: "27.0", build: "24M362" });
+  });
+
+  it("leaves a version without a build whole", () => {
+    assert.deepEqual(splitAppleBuild("27.1"), { version: "27.1" });
+    assert.deepEqual(splitAppleBuild("27.1 beta (see notes)"), { version: "27.1 beta (see notes)" });
+    assert.deepEqual(splitAppleBuild("(24B5089g)"), { version: "(24B5089g)" });
+    assert.deepEqual(splitAppleBuild("27.1 (1)"), { version: "27.1 (1)" });
+    assert.deepEqual(splitAppleBuild("27.1 )"), { version: "27.1 )" });
   });
 });
 
@@ -108,6 +205,30 @@ describe("isFreshRelease", () => {
   });
 });
 
+describe("formatReleaseAge", () => {
+  // The day is the one in UTC, whatever zone the host runs in: a calendar day the vendor gave as midnight UTC
+  // (a Windows release) must not slip to the day before west of Greenwich, nor an evening one to the next day east.
+  const zone = process.env.TZ;
+  afterEach(() => {
+    process.env.TZ = zone;
+  });
+
+  it.each(["UTC", "America/Los_Angeles", "Pacific/Kiritimati", "Pacific/Pago_Pago"])(
+    "names the UTC day in %s",
+    (tz) => {
+      process.env.TZ = tz;
+      assert.equal(formatReleaseAge("2026-09-29T00:00:00.000Z"), "Sep 29");
+      assert.equal(formatReleaseAge("2026-09-29T23:59:00.000Z"), "Sep 29");
+      assert.equal(formatReleaseAge("2026-09-29"), "Sep 29");
+    },
+  );
+
+  it("is empty for a missing or unreadable date", () => {
+    assert.equal(formatReleaseAge(undefined), "");
+    assert.equal(formatReleaseAge("not a date"), "");
+  });
+});
+
 describe("version maps", () => {
   it("names each channel or OS that changed", () => {
     const previous = formatVersionMap([
@@ -119,5 +240,23 @@ describe("version maps", () => {
       { name: "macOS", version: "27.2 beta 2 (26B5091g)" },
     ]);
     assert.equal(describeVersionChanges(previous, next), "iOS 27.2 beta 3 (24B5090a)");
+  });
+});
+
+describe("mikrotikChangelogIsFor", () => {
+  it("accepts the heading of exactly this version, case-insensitively", () => {
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2 (2026-Sep-19 12:00):\n*) a;", "7.2"), true);
+    assert.equal(mikrotikChangelogIsFor("\n  WHAT'S NEW IN 7.21BETA4:\r\n*) a;", "7.21beta4"), true);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2", "7.2"), true);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2 ", "7.2"), true);
+  });
+
+  it("refuses another version, a longer one, or no heading first", () => {
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.21 (2026-Sep-19):\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.2.1:\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("What's new in 7.21beta4:\n*) a;", "7.20.2"), false);
+    assert.equal(mikrotikChangelogIsFor("Changelog\nWhat's new in 7.2:\n*) a;", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("", "7.2"), false);
+    assert.equal(mikrotikChangelogIsFor("<html>Not found</html>", "7.2"), false);
   });
 });

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ComponentHealth, ServiceSnapshot } from "@/lib/status/types";
 import { service } from "../../test/fixtures";
+import { visibleText } from "../../test/markup";
 import { ServiceCard } from "./service-card";
 
 const noop = () => {};
@@ -11,7 +12,7 @@ const NOW = Date.parse("2026-09-27T12:00:00.000Z");
 function render(
   id: ServiceSnapshot["id"],
   overrides: Partial<ServiceSnapshot> = {},
-  props: { highlight?: boolean; emphasized?: boolean; starred?: boolean } = {},
+  props: { highlight?: boolean; emphasized?: boolean; released?: boolean; starred?: boolean } = {},
 ): string {
   return renderToStaticMarkup(
     createElement(ServiceCard, {
@@ -33,6 +34,9 @@ const rows = (html: string) => html.match(/data-component-row/g) ?? [];
 /** The header of a card or row: from the marker to the end of the name and its line. */
 const header = (html: string) =>
   html.slice(html.indexOf("data-card-header"), html.indexOf("</p>", html.indexOf("data-card-header")));
+
+/** What the header line reads as text: its items are separate elements, so the markup is left out. */
+const headerText = (html: string) => visibleText(header(html));
 
 describe("healthy service row", () => {
   it("is one article with a glyph, the name, the word and the latency, and no summary line", () => {
@@ -145,6 +149,24 @@ describe("healthy service row", () => {
     expect(header(planned)).toContain(" · Maintenance planned");
     expect(planned).toContain("data-upcoming-maintenance");
   });
+
+  it("never calls an incident that is a problem a notice", () => {
+    const one = render("claude", {
+      incidents: [{ id: "i", title: "Delayed credits", health: "degraded" }],
+    });
+    expect(header(one)).toContain(" · Incident");
+    expect(header(one)).not.toContain("Notice");
+
+    const two = render("claude", {
+      incidents: [
+        { id: "a", title: "Delayed credits", health: "degraded" },
+        { id: "b", title: "Database upgrade", health: "operational", informational: true },
+        { id: "c", title: "Login errors", health: "outage" },
+      ],
+    });
+    expect(header(two)).toContain(" · 2 incidents");
+    expect(header(two)).not.toContain("Notice");
+  });
 });
 
 describe("row that could not be read", () => {
@@ -256,6 +278,70 @@ describe("degraded service card", () => {
   });
 });
 
+describe("the Changed bar", () => {
+  const BARS = {
+    outage: "bg-down",
+    degraded: "bg-warn",
+    maintenance: "bg-muted",
+    operational: "bg-ok",
+    unknown: "bg-accent",
+  } as const;
+
+  // A card for what needs a look, a row for the rest: the bar is an element in the first and the row's ::after in the second.
+  it("takes the colour of the state on a card", () => {
+    for (const health of ["outage", "degraded", "maintenance"] as const) {
+      const html = render("aws", { health }, { emphasized: true });
+      const bar = html.slice(
+        html.indexOf("<span aria-hidden"),
+        html.indexOf("</span>", html.indexOf("<span aria-hidden")),
+      );
+      expect(bar).toMatch(new RegExp(`class="[^"]* ${BARS[health]}( |")`));
+      expect(bar).not.toContain("bg-accent");
+      expect(bar).toContain("forced-colors:bg-[CanvasText]");
+      expect(bar).toContain("starting:opacity-0");
+      expect(bar).toContain("motion-reduce:transition-none");
+    }
+  });
+
+  it("takes the colour of the state on a row, green for a recovery and the accent for unknown", () => {
+    for (const health of ["operational", "unknown"] as const) {
+      const html = render("aws", { health }, { emphasized: true });
+      const article = html.slice(0, html.indexOf(">"));
+      expect(article).toContain(`after:${BARS[health]}`);
+      expect(article).toContain("forced-colors:after:bg-[CanvasText]");
+      expect(article).toContain("after:starting:opacity-0");
+      expect(article).toContain("motion-reduce:after:transition-none");
+      for (const other of Object.values(BARS)) {
+        if (other !== BARS[health]) expect(article).not.toContain(`after:${other}`);
+      }
+    }
+  });
+
+  it("keeps the neutral accent on a release tracker whose change is a new release", () => {
+    const html = render("aws", { category: "updates", health: "operational" }, { emphasized: true, released: true });
+    const article = html.slice(0, html.indexOf(">"));
+    expect(article).toContain("after:bg-accent");
+    expect(article).not.toContain("after:bg-ok");
+    expect(article).toContain("forced-colors:after:bg-[CanvasText]");
+  });
+
+  it("turns a release tracker green when its source recovered with the same versions", () => {
+    const html = render("aws", { category: "updates", health: "operational" }, { emphasized: true });
+    const article = html.slice(0, html.indexOf(">"));
+    expect(article).toContain("after:bg-ok");
+    expect(article).not.toContain("after:bg-accent");
+    expect(article).toContain("forced-colors:after:bg-[CanvasText]");
+  });
+
+  it("draws no bar, in any colour, on a service that did not change", () => {
+    for (const health of Object.keys(BARS) as (keyof typeof BARS)[]) {
+      const html = render("aws", { health });
+      for (const bar of Object.values(BARS)) expect(html).not.toContain(`after:${bar}`);
+      expect(html).not.toContain("inset-y-4 left-0 w-0.5");
+    }
+  });
+});
+
 describe("release trackers and CS2 relays", () => {
   it("keep every component as a row on a card that needs a look, up or not", () => {
     const changelog = render("aws", { category: "updates", health: "maintenance", components: up(3) });
@@ -294,7 +380,7 @@ describe("release row", () => {
   it("says New release when a channel is fresh, and names the newest two versions", () => {
     const html = render("apple-os", { category: "updates", components: fresh });
     expect(header(html)).toContain("New release");
-    expect(header(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
+    expect(headerText(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
     expect(header(html)).not.toContain("Testing");
   });
 
@@ -304,7 +390,7 @@ describe("release row", () => {
       components: fresh.map((c) => ({ ...c, health: "operational" })),
     });
     expect(html).not.toContain("New release");
-    expect(header(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
+    expect(headerText(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
   });
 
   it("says No new release when the tracker lists no versions", () => {

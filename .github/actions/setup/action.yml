@@ -1,7 +1,8 @@
 name: Set up Node and dependencies
 description: >
-  Node from .nvmrc (or the version given), npm pinned to package.json's
-  packageManager, then `npm ci` and a registry signature check. The one
+  Node from .nvmrc (or the version given), pnpm pinned by the hash in
+  package.json's packageManager and installed by Corepack, then
+  `pnpm install --frozen-lockfile` and a registry signature check. The one
   place every CI job gets its toolchain, so the jobs cannot drift apart.
   Check out the repository before using it.
 
@@ -11,7 +12,7 @@ inputs:
     required: false
     default: ''
   install:
-    description: Run `npm ci` and `npm audit signatures`. `false` sets up the toolchain only.
+    description: Run `pnpm install --frozen-lockfile` and the registry signature check. `false` sets up the toolchain only.
     required: false
     default: 'true'
 
@@ -22,38 +23,51 @@ runs:
       with:
         node-version-file: ${{ inputs.node-version == '' && '.nvmrc' || '' }}
         node-version: ${{ inputs.node-version }}
-        cache: npm
+        # pnpm is not installed yet, and the package cache needs it: the
+        # second setup-node below turns the cache on.
+        package-manager-cache: false
 
-    # npm is pinned to the exact version package.json names, installed from
-    # tools/npm's lockfile, which records the tarball's hash, so this is as
-    # reproducible as the root lockfile itself.
-    - name: Pin npm
+    # pnpm at the exact version package.json names, installed by Corepack
+    # (shipped with Node), which refuses a download whose sha512 is not the
+    # one in packageManager. Not `npm install --global pnpm`, which trusts
+    # whatever the registry serves for a name.
+    - name: Pin pnpm
       shell: bash
-      run: ./scripts/ci/npm-pin.sh install
+      run: ./scripts/ci/pnpm-pin.sh install
+
+    # The same Node again, now that pnpm is on PATH: setup-node caches
+    # pnpm's package store, keyed on pnpm-lock.yaml. Only for jobs that ship
+    # nothing and hold no token: a store restored from the cache is installed
+    # without its files being checked against the lockfile, so deploy.yml
+    # restores none.
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version-file: ${{ inputs.node-version == '' && '.nvmrc' || '' }}
+        node-version: ${{ inputs.node-version }}
+        cache: pnpm
 
     - name: Check the declared toolchain
       shell: bash
       env:
         WANT_NODE: ${{ inputs.node-version }}
       run: |
-        want_npm="$(node -p "require('./package.json').packageManager.split('@')[1]")"
         if [ -z "$WANT_NODE" ]; then
           test "$(node --version)" = "v$(cat .nvmrc)" || { echo "::error::expected Node $(cat .nvmrc), got $(node --version)"; exit 1; }
         else
           case "$(node --version)" in "v$WANT_NODE".*) ;; *) echo "::error::expected Node $WANT_NODE, got $(node --version)"; exit 1 ;; esac
         fi
-        test "$(npm --version)" = "$want_npm" || { echo "::error::expected npm $want_npm, got $(npm --version)"; exit 1; }
-        echo "Node $(node --version), npm $(npm --version)"
+        ./scripts/ci/pnpm-pin.sh verify
+        echo "Node $(node --version), pnpm $(pnpm --version)"
 
-    - name: Install dependencies (npm ci)
+    - name: Install dependencies (pnpm install)
       if: inputs.install == 'true'
       shell: bash
-      run: npm ci
+      run: pnpm install --frozen-lockfile
 
-    # Checks every installed tarball against the registry's signature (and
-    # provenance attestation, where one is published), so a package altered
-    # in a cache or on the way in fails before it is tested or built.
-    - name: Verify npm registry signatures
+    # Checks every locked package against the registry's signature, and that
+    # the lockfile's integrity carries a valid signature, so a package
+    # altered on the way in fails before it is tested or built.
+    - name: Verify registry signatures
       if: inputs.install == 'true'
       shell: bash
       run: ./scripts/ci/audit-signatures.sh

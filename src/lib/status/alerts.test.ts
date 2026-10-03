@@ -125,6 +125,29 @@ describe("alertChanges", () => {
     ]);
   });
 
+  it("does not announce the listed versions as new when a one-check blip recovers", () => {
+    const tracker = (health: Health, withVersions: boolean) =>
+      service("android-os", {
+        health,
+        summary: withVersions ? "Latest: Android 17" : "",
+        ...(withVersions
+          ? { meta: { latest: "Android 17", versions: "Android 17=released|Android 16=released" } }
+          : {}),
+      });
+    const blip = alertChanges(
+      emptyAlertDebounce(),
+      board([tracker("operational", true)]),
+      board([tracker("unknown", false)]),
+    );
+    expect(blip.changes).toEqual([]);
+    const recovered = alertChanges(
+      blip.state,
+      board([tracker("unknown", false)]),
+      board([tracker("operational", true)]),
+    );
+    expect(recovered.changes).toEqual([]);
+  });
+
   it("ignores a service the previous board did not have", () => {
     const step = alertChanges(emptyAlertDebounce(), board([]), board([service("gcp", { health: "outage" })]));
     expect(step.changes).toEqual([]);

@@ -58,11 +58,11 @@ describe("BoardSections", () => {
     expect(headings(html)).toEqual([
       "Needs a look 2",
       "Couldn&#x27;t read 1",
-      "Cloud 1",
+      "Cloud 2",
       "Gaming 3",
-      "Platforms 2",
+      "Platforms 5",
       "AI 3",
-      "Releases 2",
+      "Releases 4",
     ]);
   });
 

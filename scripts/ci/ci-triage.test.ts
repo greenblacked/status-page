@@ -107,8 +107,8 @@ describe("ci triage", () => {
         conclusion: "failure",
         html_url: "https://gh/job/9",
         steps: [
-          { name: "Run npm ci", number: 5, conclusion: "success" },
-          { name: "Run npm test", number: 7, conclusion: "failure" },
+          { name: "Run pnpm install", number: 5, conclusion: "success" },
+          { name: "Run pnpm test", number: 7, conclusion: "failure" },
         ],
       },
     ];
@@ -116,7 +116,7 @@ describe("ci triage", () => {
     expect(comments).toHaveLength(1);
     expect(comments[0].body.startsWith(MARKER)).toBe(true);
     expect(comments[0].body).toContain(
-      "`verify (node 24)` → `Run npm test`: unit test failure, or coverage under its threshold",
+      "`verify (node 24)` → `Run pnpm test`: unit test failure, or coverage under its threshold",
     );
     expect(comments[0].body).toContain("https://gh/job/9#step:7:1");
     expect(labels).toEqual(["ci-failed"]);
@@ -219,21 +219,26 @@ describe("ci triage", () => {
   });
 
   it("categorizes the steps this repository actually has", () => {
-    expect(categorize("CI", "verify (node pinned)", "Run npm run typecheck")).toBe("type error");
+    expect(categorize("CI", "verify (node pinned)", "Run pnpm run typecheck")).toBe("type error");
     expect(categorize("CI", "verify (node pinned)", "Smoke-test built preview")).toMatch(/SSR smoke/);
     expect(categorize("CI", "commit messages", "Check Conventional Commits")).toBe("commit message format");
     expect(categorize("Dependency review", "dependency-review", "Review dependency changes")).toMatch(/vulnerability/);
     expect(categorize("CI", "verify", undefined)).toMatch(/^infrastructure/);
     // The step names ci.yml uses.
-    expect(categorize("CI", "lint", "Set up the toolchain (npm ci)")).toMatch(/^dependency install/);
+    expect(categorize("CI", "lint", "Set up the toolchain (pnpm install)")).toMatch(/^dependency install/);
+    expect(categorize("CI", "lint", "Verify registry signatures")).toMatch(/^dependency install.*signature check/);
+    expect(categorize("CI", "lint", "pnpm pin in sync")).toBe("toolchain version");
+    expect(categorize("Deploy", "build worker", "Pin pnpm")).toBe("toolchain version");
     expect(categorize("CI", "lint", "Lint and format (Biome)")).toMatch(/^lint or formatting/);
     expect(categorize("CI", "typecheck", "Typecheck")).toBe("type error");
-    expect(categorize("CI", "test (node pinned)", "Unit tests with coverage (npm run test:coverage)")).toMatch(
+    expect(categorize("CI", "test (node pinned)", "Unit tests with coverage (pnpm run test:coverage)")).toMatch(
       /^unit test failure/,
     );
-    expect(categorize("CI", "test (node 24)", "Unit tests (npm test)")).toMatch(/^unit test failure/);
-    expect(categorize("CI", "build (node pinned)", "Build (npm run build)")).toBe("build");
+    expect(categorize("CI", "test (node 24)", "Unit tests (pnpm test)")).toMatch(/^unit test failure/);
+    expect(categorize("CI", "build (node pinned)", "Build (pnpm run build)")).toBe("build");
     expect(categorize("CI", "browser tests", "Browser tests (Playwright)")).toMatch(/^browser test failure/);
+    expect(categorize("CI", "browser tests (iphone)", "Initialize containers")).toBe("infrastructure");
+    expect(categorize("CI", "browser tests (iphone)", "Check the browser")).toMatch(/^browser build missing/);
     expect(categorize("CI", "lint", "Changelog covers package.json version")).toMatch(/^CHANGELOG/);
     expect(categorize("CI", "branch name", "Check the branch naming convention")).toBe("branch name");
     expect(categorize("CI", "workflow lint", "zizmor")).toBe("workflow security");
