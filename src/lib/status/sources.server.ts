@@ -1359,10 +1359,12 @@ export function decodeXmlField(raw: string): string {
 /** Most `<item>`s kept from a feed: the newest by pubDate. Real feeds carry tens. */
 export const MAX_RSS_ITEMS = 200;
 /**
- * Most `<item>`s looked at in one feed, in document order. status.x.ai serves
- * its whole history and nothing says which end is newest, so every item up to
- * this bound is dated before the newest MAX_RSS_ITEMS are chosen. The bound
- * is for memory: a feed with more items than this is not a feed.
+ * Most `<item>`s read in one feed. status.x.ai serves its whole history and
+ * nothing says which end is newest, so every item up to this bound is dated
+ * before the newest MAX_RSS_ITEMS are chosen. The bound is for memory, and a
+ * feed with more items than this is refused (a PayloadError, so its card is
+ * unknown): the items past it could be the current incident, and reading only
+ * the others would be an all-clear built on a guess.
  */
 export const MAX_RSS_SCANNED = 5000;
 
@@ -1409,6 +1411,7 @@ export function parseRssItems(
     scanned.push({ chunk, at: Number.isFinite(date) ? date : Number.NEGATIVE_INFINITY, index: scanned.length });
     open = next;
   }
+  if (open) throw new PayloadError(`RSS feed has more than ${MAX_RSS_SCANNED} items.`);
   const kept =
     scanned.length > MAX_RSS_ITEMS
       ? scanned

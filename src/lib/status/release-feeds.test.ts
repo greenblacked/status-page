@@ -506,16 +506,18 @@ describe("dates from a vendor feed", () => {
     expect(times).toEqual([...times].sort((a, b) => b - a));
   });
 
-  it("a huge feed is read in bounded work, and an entry past the scan bound is never looked at", () => {
+  it("a feed with more entries than the scan bound is a parser failure, not a quietly shortened feed", () => {
     const item = (n: number, day: string) =>
       `<item><title>Entry ${n}</title><pubDate>${day}</pubDate><description>x</description></item>`;
     const early = Array.from({ length: MAX_RSS_SCANNED }, (_, n) => item(n, "Mon, 01 Jun 2026 00:00:00 +0000"));
-    const xml = `<rss><channel>${early.join("")}${item(MAX_RSS_SCANNED + 1, "Thu, 01 Oct 2026 00:00:00 +0000")}</channel></rss>`;
+    const within = `<rss><channel>${early.join("")}</channel></rss>`;
     const started = performance.now();
-    const entries = entriesOf("aws", xml);
+    expect(entriesOf("aws", within)).toHaveLength(MAX_FEED_ENTRIES);
     expect(performance.now() - started).toBeLessThan(2000);
-    expect(entries).toHaveLength(MAX_FEED_ENTRIES);
-    expect(entries.map((entry) => entry.title)).not.toContain(`Entry ${MAX_RSS_SCANNED + 1}`);
+    // An oldest-first feed puts its newest entry last: reading only the first MAX_RSS_SCANNED would show a stale
+    // "latest" release, so the feed fails instead.
+    const over = `<rss><channel>${early.join("")}${item(MAX_RSS_SCANNED + 1, "Thu, 01 Oct 2026 00:00:00 +0000")}</channel></rss>`;
+    expect(() => entriesOf("aws", over)).toThrow(PayloadError);
   });
 });
 

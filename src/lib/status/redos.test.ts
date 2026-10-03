@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
-import { unwrapJsonp } from "./http.ts";
+import { PayloadError, unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
   decodeHtmlNames,
@@ -36,9 +36,15 @@ import { readHtmlTables, windowsReleases } from "./windows-release.ts";
 const SIZE = 200_000;
 const BUDGET_MS = 200;
 
+// A parser may refuse crafted input (a PayloadError, as for a feed past the scan bound): the time it took to
+// decide is what is measured, so that refusal is not a failure here.
 function elapsed(run: () => unknown): number {
   const started = performance.now();
-  run();
+  try {
+    run();
+  } catch (error) {
+    if (!(error instanceof PayloadError)) throw error;
+  }
   return performance.now() - started;
 }
 
@@ -112,11 +118,9 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(items.map((item) => item.title)).toEqual(Array.from({ length: MAX_RSS_ITEMS }, (_, i) => `d${i + 50}`));
   });
 
-  it("parseRssItems: a feed past the scan bound is still read in linear time and capped", () => {
+  it("parseRssItems: a feed past the scan bound is refused in linear time", () => {
     const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
-    let items: ReturnType<typeof parseRssItems> = [];
-    expect(elapsed(() => (items = parseRssItems(xml)))).toBeLessThan(BUDGET_MS * 2);
-    expect(items).toHaveLength(MAX_RSS_ITEMS);
+    expect(elapsed(() => expect(() => parseRssItems(xml)).toThrow(PayloadError))).toBeLessThan(BUDGET_MS * 2);
   });
 
   it("decodeXmlField: a repeated unclosed CDATA opener", () => {
@@ -259,11 +263,11 @@ describe("parsers stay linear on crafted vendor input", () => {
       for (const xml of cases) expect(elapsed(() => parseFeedItems(xml, "entry"))).toBeLessThan(BUDGET_MS);
     });
 
-    it("parseFeedItems: a feed past the scan bound is read in linear time and capped", () => {
+    it("parseFeedItems: a feed past the scan bound is refused in linear time", () => {
       const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
-      let items: ReturnType<typeof parseFeedItems> = [];
-      expect(elapsed(() => (items = parseFeedItems(xml, "item")))).toBeLessThan(BUDGET_MS * 4);
-      expect(items.length).toBeLessThanOrEqual(12);
+      expect(elapsed(() => expect(() => parseFeedItems(xml, "item")).toThrow(PayloadError))).toBeLessThan(
+        BUDGET_MS * 4,
+      );
     });
 
     it("htmlBlocks: repeated block tags, unclosed tags, comments and a tag that never ends", () => {

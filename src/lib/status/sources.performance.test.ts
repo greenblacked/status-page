@@ -69,12 +69,13 @@ describe("bounded vendor payload parsing", () => {
     `);
   }, 12_000);
 
-  it("caps a feed of many items at the scan and keep bounds", () => {
+  it("refuses a feed past the scan bound and caps one within it at the keep bound", () => {
     runBounded(`
       import assert from "node:assert/strict";
       import { parseRssItems, MAX_RSS_ITEMS, MAX_RSS_SCANNED } from ${JSON.stringify(moduleUrl)};
-      const xml = Array.from({ length: MAX_RSS_SCANNED * 4 }, (_, i) => "<item><title>t" + i + "</title></item>").join("");
-      const rows = parseRssItems(xml);
+      const feed = (count) => Array.from({ length: count }, (_, i) => "<item><title>t" + i + "</title></item>").join("");
+      assert.throws(() => parseRssItems(feed(MAX_RSS_SCANNED * 4)), { name: "PayloadError" });
+      const rows = parseRssItems(feed(MAX_RSS_SCANNED));
       assert.equal(rows.length, MAX_RSS_ITEMS);
       assert.equal(rows[0].title, "t0");
     `);

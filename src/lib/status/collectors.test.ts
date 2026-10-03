@@ -5,7 +5,13 @@ import { CATALOG } from "./catalog.ts";
 import { assembleBoard } from "./collect-board.ts";
 import { diffBoards, releaseChange } from "./diff.ts";
 import { MAX_BODY_BYTES } from "./http.ts";
-import { collectAllServices, MAX_NESTED_ROWS, MAX_RSS_ITEMS, MAX_SCANNED_ROWS } from "./sources.server.ts";
+import {
+  collectAllServices,
+  MAX_NESTED_ROWS,
+  MAX_RSS_ITEMS,
+  MAX_RSS_SCANNED,
+  MAX_SCANNED_ROWS,
+} from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
 
 // Vendor endpoints used by src/lib/status/sources.server.ts collectors.
@@ -1718,28 +1724,39 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     const azureItem = (i: number) =>
       `<item><title>Outage ${i}</title><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
 
-    it("Azure: a dense feed of 40,000 dated items is scanned to the bound and keeps MAX_RSS_ITEMS", async () => {
+    it("Azure: a dense feed past the scan bound is unknown with a parser failure, never an all-clear", async () => {
       const xml = `<rss><channel>${Array.from({ length: 40_000 }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
       stubFetch({ [URLS.azure]: raw(xml) });
       const started = performance.now();
       const azure = await collect("azure");
       expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({
+        kind: "parser",
+        message: `RSS feed has more than ${MAX_RSS_SCANNED} items.`,
+      });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure: a feed of exactly the scan bound is read, and keeps MAX_RSS_ITEMS", async () => {
+      const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const azure = await collect("azure");
       expect(azure.failure).toBeUndefined();
       expect(azure.incidents).toHaveLength(50);
       expect(azure.incidentCount).toBe(MAX_RSS_ITEMS);
     });
 
-    it("Azure: items past the scan bound are not read, however many empty ones come first", async () => {
-      const dated = Array.from({ length: 15_000 }, (_, i) => azureItem(i)).join("");
-      const xml = `<rss><channel>${"<item></item>".repeat(200_000)}${dated}</channel></rss>`;
-      stubFetch({ [URLS.azure]: raw(xml) });
-      const started = performance.now();
-      const azure = await collect("azure");
-      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
-      // The empty items are read and none has a date; had the dated ones past the bound been read, one would have.
-      expect(azure.health).toBe("unknown");
-      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
-      expect(azure.incidents).toEqual([]);
+    it("Grok: an oldest-first feed with its current outage past the scan bound is unknown, not operational", async () => {
+      const old = (i: number) =>
+        `<item><title>Old ${i}</title><description>Status: Resolved</description><pubDate>Sun, 01 Mar 2026 10:00:00 GMT</pubDate></item>`;
+      const current = `<item><title>Major outage</title><description>Major outage</description><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
+      const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, i) => old(i)).join("")}${current}</channel></rss>`;
+      stubFetch({ [URLS.grok]: raw(xml) });
+      const grok = await collect("grok");
+      expect(grok.health).toBe("unknown");
+      expect(grok.failure?.kind).toBe("parser");
+      expect(grok.incidents).toEqual([]);
     });
 
     it("Azure: an Atom document (feed-malformed.xml) is unknown with a parser failure", async () => {
@@ -3067,7 +3084,7 @@ describe("collectors bound vendor text and counts", () => {
       title: string,
     ) => `<item><title>${title}</title><link>https://status.x.ai/incidents/${i}</link>
       <pubDate>Sun, 20 Sep 2026 09:30:00 GMT</pubDate><description>Status: Identified</description></item>`;
-    const feed = `<rss version="2.0"><channel>${item(0, `[Grok] ${HUGE}`)}${Array.from({ length: 5000 }, (_, i) => item(i + 1, `[Svc ${i}] issue`)).join("")}</channel></rss>`;
+    const feed = `<rss version="2.0"><channel>${item(0, `[Grok] ${HUGE}`)}${Array.from({ length: MAX_RSS_SCANNED - 1 }, (_, i) => item(i + 1, `[Svc ${i}] issue`)).join("")}</channel></rss>`;
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
     try {

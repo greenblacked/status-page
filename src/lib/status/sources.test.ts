@@ -19,6 +19,7 @@ import {
   grokItemHealth,
   grokTitleService,
   isoTimestamp,
+  MAX_RSS_SCANNED,
   parseGoogleProducts,
   parseInstatusComponents,
   parseRssItems,
@@ -292,6 +293,21 @@ describe("grok feed html stripping end to end", () => {
     assert.equal(grokItemHealth("<!-- <p>Status:&nbsp;Resolved</p>"), "operational");
     assert.equal(grokItemHealth("<p <b>Status: Resolved</b>"), "operational");
     assert.equal(grokItemHealth("Latency < 500ms. Status: Resolved. Errors > 1%"), "operational");
+  });
+});
+
+describe("parseRssItems scan cap", () => {
+  const item = (n: number) => `<item><title>t${n}</title></item>`;
+
+  it("reads a feed of exactly MAX_RSS_SCANNED items", () => {
+    const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, n) => item(n)).join("")}</channel></rss>`;
+    assert.equal(parseRssItems(xml).length, 200);
+  });
+
+  it("fails a feed with even one item past the cap instead of ignoring it", () => {
+    // Nothing says which end of the feed is newest, so an item past the cap could be the current incident.
+    const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED + 1 }, (_, n) => item(n)).join("")}</channel></rss>`;
+    assert.throws(() => parseRssItems(xml), PayloadError);
   });
 });
 

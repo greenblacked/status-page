@@ -136,6 +136,8 @@ function dateOf(chunk: string): string | undefined {
  * The newest entries of an RSS or Atom feed, newest first (at most
  * MAX_ENTRIES_READ). Every entry up to MAX_RSS_SCANNED is dated, because a
  * feed does not say which end is newest; only the newest are read in full.
+ * A feed with more entries than MAX_RSS_SCANNED throws a PayloadError rather
+ * than be read from one end.
  * An entry with no readable date ranks last and ties keep the feed's order.
  * Linear: each field is found by literal searches inside its own entry.
  */
@@ -153,6 +155,8 @@ export function parseFeedItems(xml: string, kind: "item" | "entry"): FeedItem[] 
     scanned.push({ chunk, at, time: at ? Date.parse(at) : Number.NEGATIVE_INFINITY, index: scanned.length });
     match = next;
   }
+  // Nothing says which end of a feed is newest: an entry past the bound could be the latest release.
+  if (match) throw new PayloadError(`Feed has more than ${MAX_RSS_SCANNED} entries.`);
   return scanned
     .sort((a, b) => (a.time === b.time ? a.index - b.index : a.time > b.time ? -1 : 1))
     .slice(0, MAX_ENTRIES_READ)

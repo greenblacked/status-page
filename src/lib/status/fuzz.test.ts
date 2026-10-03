@@ -1193,7 +1193,12 @@ describe("parsers stay linear", () => {
     fc.assert(
       fc.property(crafted, (input) => {
         const started = performance.now();
-        parse(input);
+        try {
+          parse(input);
+        } catch (error) {
+          // A refusal (a feed past the scan bound) is an answer; only the time it took is checked.
+          if (!(error instanceof PayloadError)) throw error;
+        }
         expect(performance.now() - started).toBeLessThan(BUDGET_MS);
       }),
       run(12),
