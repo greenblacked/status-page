@@ -28,8 +28,9 @@ name: Release
 # into stage and then dev (not while dev is paused: scripts/ci/dev-paused), so
 # both carry the release commit and any fix merged into main directly. A push
 # to main, stage or dev that fails fails the run, naming the cause, unless the
-# branch really moved meanwhile (scripts/release/push.sh); a ruleset that does
-# not let GitHub Actions bypass it is the usual cause (CONTRIBUTING.md#branch-protection).
+# branch really moved meanwhile (scripts/release/push.sh); a ruleset that
+# refuses GitHub Actions' push is the usual cause, and the release then goes
+# through bump.sh and a pull request into main (CONTRIBUTING.md#releases).
 # Those merges are pushed with GITHUB_TOKEN, which
 # starts no workflow of its own, so when one actually moved stage this also
 # starts deploy.yml on stage by hand, or the stage preview would keep running

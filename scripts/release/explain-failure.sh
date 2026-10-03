@@ -11,7 +11,17 @@ ref="${2:?usage: explain-failure.sh <what> <ref>}"
 output="$(cat)"
 
 if grep -qiE 'GH013|Repository rule violations' <<<"$output"; then
-  echo "::error::$what: ${ref}'s ruleset blocks GitHub Actions; add GitHub Actions (integration 15368) to its bypass list - CONTRIBUTING.md#branch-protection"
+  case "$ref" in
+    main)
+      echo "::error::$what: main's ruleset refused GitHub Actions' push; nothing was released. Release with ./scripts/release/bump.sh <level|X.Y.Z> on release/vX.Y.Z and a pull request into main (merge commit) - CONTRIBUTING.md#releases. Adding GitHub Actions to the bypass list is an alternative only where the GitHub settings offer it (organisation repositories, or via the API)"
+      ;;
+    stage | dev)
+      echo "::error::$what: ${ref}'s ruleset refused GitHub Actions' push; bring main in through a chore/sync-main branch and a pull request (merge commit) - CONTRIBUTING.md#releases"
+      ;;
+    *)
+      echo "::error::$what: a ruleset refused GitHub Actions' request for ${ref}; check the rulesets that cover it - CONTRIBUTING.md#branch-protection"
+      ;;
+  esac
 else
   echo "::error::$what failed for a reason other than a ruleset or a newer push; the git output above says why (CONTRIBUTING.md#releases)"
 fi

@@ -342,7 +342,7 @@ The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search en
 
 `dev` is paused for now: pull requests go into `stage` (squash-merged) instead, and `stage` → `main` is unchanged. [CONTRIBUTING.md](CONTRIBUTING.md#branches) says how `dev` comes back.
 
-Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request, and the rulesets require `CI OK` to pass. The owner and the release workflow can bypass them. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
+Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request, and the rulesets require `CI OK` to pass. The owner can bypass the `dev` and `stage` rulesets, and `main`'s has no bypass: a release is a pull request into `main` ([CONTRIBUTING.md#releases](CONTRIBUTING.md#releases)). [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
 
 ## FAQ
 

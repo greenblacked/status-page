@@ -101,9 +101,12 @@ describe("push.sh", () => {
     const result = push("main", planned);
     expect(result.status).toBe(1);
     expect(result.output).toContain("GH013");
-    expect(result.output).toContain("::error::push to main: main's ruleset blocks GitHub Actions");
-    expect(result.output).toContain("integration 15368");
-    expect(result.output).toContain("CONTRIBUTING.md#branch-protection");
+    expect(result.output).toContain("::error::push to main: main's ruleset refused GitHub Actions' push");
+    expect(result.output).toContain("nothing was released");
+    expect(result.output).toContain("./scripts/release/bump.sh <level|X.Y.Z> on release/vX.Y.Z");
+    expect(result.output).toContain("pull request into main (merge commit)");
+    expect(result.output).toContain("CONTRIBUTING.md#releases");
+    expect(result.output).not.toContain("integration 15368");
     expect(result.output).not.toContain("moved");
     expect(git(remote, "rev-parse", "main")).toBe(planned);
   });
@@ -115,7 +118,8 @@ describe("push.sh", () => {
     commit(work, "merge main");
     const result = push("stage", planned);
     expect(result.status).toBe(1);
-    expect(result.output).toContain("push to stage: stage's ruleset blocks GitHub Actions");
+    expect(result.output).toContain("push to stage: stage's ruleset refused GitHub Actions' push");
+    expect(result.output).toContain("chore/sync-main");
   });
 
   it("fails with a generic error for any other rejection, still not reporting a move", () => {
@@ -168,13 +172,23 @@ describe("explain-failure.sh", () => {
   it("recognizes a ruleset rejection from a tag creation", () => {
     const result = explain("gh: Repository rule violations found (HTTP 422)");
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("creating tag v0.6.0: v0.6.0's ruleset blocks GitHub Actions");
+    expect(result.stdout).toContain("creating tag v0.6.0: a ruleset refused GitHub Actions' request for v0.6.0");
+  });
+
+  it("points a refused push to main at bump.sh and a release pull request", () => {
+    const result = spawnSync(EXPLAIN, ["push to main", "main"], {
+      input: "error: GH013: Repository rule violations found for refs/heads/main.",
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("release/vX.Y.Z");
+    expect(result.stdout).toContain("only where the GitHub settings offer it");
   });
 
   it("does not treat other errors as a ruleset", () => {
     const result = explain("HTTP 500");
     expect(result.status).toBe(0);
-    expect(result.stdout).not.toContain("ruleset blocks");
+    expect(result.stdout).not.toContain("refused GitHub Actions");
   });
 });
 
@@ -312,8 +326,8 @@ describe("release.yml: merge main into stage and dev", () => {
     const stageBefore = remoteTip("stage");
     const result = run();
     expect(result.status).toBe(1);
-    expect(result.output).toContain("push to stage: stage's ruleset blocks GitHub Actions");
-    expect(result.output).toContain("integration 15368");
+    expect(result.output).toContain("push to stage: stage's ruleset refused GitHub Actions' push");
+    expect(result.output).toContain("chore/sync-main");
     expect(result.output).not.toContain("moved");
     expect(result.output).not.toContain("trying again");
     expect(remoteTip("stage")).toBe(stageBefore);
