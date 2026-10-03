@@ -1,4 +1,3 @@
-import { pathToFileURL } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
 import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 
@@ -6,14 +5,20 @@ import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 // test serves it: run `npm run build` first. `npm run test:e2e` runs them.
 //
 // The board reads vendors on the server, which the tests must not depend on:
-// the preview is started with e2e/support/no-vendors.mjs, which refuses every
-// request to a host other than this machine. The page's first render is then
-// the same all-Unknown board wherever the suite runs, and a test that needs a
-// particular state serves a fixture board (e2e/fixture-board.ts). The setup
-// proves the cut-off before the first test and reports it after the last.
+// the preview is started with e2e/support/no-vendors.mjs, which answers a
+// vendor's URL from the canned payload the collector unit tests read and
+// refuses every other host. The page's first render is then the same board
+// wherever the suite runs, and a test that needs a particular state serves a
+// fixture board (e2e/fixture-board.ts). The setup proves the cut-off before
+// the first test and reports it after the last.
 // PLAYWRIGHT_PORT moves the preview off 4173 when something else holds it.
 const port = Number(process.env.PLAYWRIGHT_PORT) || 4173;
 const baseURL = `http://127.0.0.1:${port}`;
+
+// One nonce per run for the preview's vendor log (e2e/support/vendor-log.ts). The config is loaded again in
+// every worker, so the first load puts it in the environment, which the workers inherit.
+process.env.E2E_RUN ||= `${process.pid}-${Date.now()}`;
+const run = process.env.E2E_RUN;
 
 // A browser Playwright did not download, such as a preinstalled Chromium in
 // a container: PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome. It applies to
@@ -67,8 +72,10 @@ export default defineConfig({
     // Always its own: a server that was started by hand does not have the vendors cut off.
     reuseExistingServer: false,
     env: {
-      NODE_OPTIONS: `--import=${pathToFileURL("./e2e/support/no-vendors.mjs").href}`,
-      E2E_VENDOR_LOG: vendorLogPath(port),
+      // Added to any NODE_OPTIONS already set (a memory limit, a CA bundle), and found from this file, not the cwd.
+      NODE_OPTIONS:
+        `${process.env.NODE_OPTIONS ?? ""} --import=${new URL("./e2e/support/no-vendors.mjs", import.meta.url).href}`.trim(),
+      E2E_VENDOR_LOG: vendorLogPath(port, run),
     },
     timeout: 60_000,
   },
