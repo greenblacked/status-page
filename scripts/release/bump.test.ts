@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,17 @@ const CHANGELOG = `# Changelog
 
 [Unreleased]: https://github.com/example/repo/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/example/repo/releases/tag/v0.5.0
+`;
+
+const LOCKFILE = `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      clsx:
+        specifier: 2.1.1
+        version: 2.1.1
 `;
 
 let root: string;
@@ -58,10 +69,8 @@ beforeEach(() => {
   cpSync(join(SCRIPTS, "release", "bump.sh"), join(work, "scripts", "release", "bump.sh"));
   cpSync(join(SCRIPTS, "ci", "release-notes.sh"), join(work, "scripts", "ci", "release-notes.sh"));
   writeFileSync(join(work, "package.json"), `${JSON.stringify({ name: "x", version: "0.5.0" }, null, 2)}\n`);
-  writeFileSync(
-    join(work, "package-lock.json"),
-    `${JSON.stringify({ name: "x", version: "0.5.0", lockfileVersion: 3, requires: true, packages: { "": { name: "x", version: "0.5.0" } } }, null, 2)}\n`,
-  );
+  // pnpm-lock.yaml records no version for the root project, so a bump must leave it alone.
+  writeFileSync(join(work, "pnpm-lock.yaml"), LOCKFILE);
   writeFileSync(join(work, "CHANGELOG.md"), CHANGELOG);
   git(work, "add", "-A");
   git(work, "commit", "--quiet", "-m", "chore: start");
@@ -79,6 +88,16 @@ describe("bump.sh (local)", () => {
     expect(result.status).toBe(0);
     expect(git(work, "branch", "--show-current")).toBe("release/v0.5.1");
     expect(git(work, "log", "-1", "--format=%s")).toBe("chore(release): 0.5.1");
+  });
+
+  it("changes only the version line of package.json, and leaves pnpm-lock.yaml alone", () => {
+    const result = bump("patch");
+    expect(result.status).toBe(0);
+    expect(git(work, "show", "--name-only", "--format=", "HEAD").split("\n")).toEqual(["CHANGELOG.md", "package.json"]);
+    expect(git(work, "diff", "-U0", "HEAD~1", "HEAD", "--", "package.json")).toMatch(
+      /- {2}"version": "0\.5\.0"\n\+ {2}"version": "0\.5\.1"/,
+    );
+    expect(readFileSync(join(work, "pnpm-lock.yaml"), "utf8")).toBe(LOCKFILE);
   });
 
   it("releases from the tip of origin/stage when it contains main", () => {

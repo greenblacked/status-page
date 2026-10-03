@@ -29,7 +29,7 @@ import { vendorUrl } from "./vendor-url.ts";
 // connection slot from a health request) and never waited for (a board takes
 // the feeds the cache already holds when its sweep ends, and a feed read
 // after it joins the next board), a feed that cannot be read is logged
-// (`release_feed_failed`), reported by `npm run source-health`, and leaves the
+// (`release_feed_failed`), reported by `pnpm run source-health`, and leaves the
 // card exactly as it was.
 //
 // Release feeds change slowly, so they are not part of every sweep. Each one is
@@ -696,7 +696,7 @@ export function readReleaseFeed(source: ReleaseSource): Promise<ReleaseFeedResul
   });
 }
 
-/** Every release feed, read now and not from the cache: what `npm run source-health` probes. */
+/** Every release feed, read now and not from the cache: what `pnpm run source-health` probes. */
 export function probeReleaseFeeds(): Promise<ReleaseFeedResult[]> {
   return Promise.all(RELEASE_SOURCES.map(readReleaseFeed));
 }

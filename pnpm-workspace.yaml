@@ -1,0 +1,35 @@
+# pnpm's settings for this repository (CONTRIBUTING.md#dependencies). There
+# is no .npmrc and no hoisting setting: pnpm's strict node_modules is enough
+# for Vite, TanStack Start, wrangler, workerd and Playwright.
+
+# Corepack alone pins and checks pnpm (the hash in packageManager). Without
+# this, pnpm 12 also records itself in a first YAML document of
+# pnpm-lock.yaml, and OSV-Scanner (OpenSSF Scorecard's Vulnerabilities check)
+# reads only that first document: it would scan pnpm and none of the
+# dependencies. One document keeps every dependency scanned.
+pmOnFail: ignore
+
+# pnpm 12 runs no dependency's install script unless it is listed here as
+# true. These three only check or swap in the prebuilt binary that their
+# platform package already ships, so they stay off. When `pnpm install`
+# reports another ignored build script, decide it here.
+allowBuilds:
+  esbuild: false
+  fsevents: false
+  workerd: false
+
+# Fail an install, frozen lockfile included, when a locked version carries
+# less publisher evidence (provenance attestation, trusted publisher) than
+# an earlier version of the same package. This stands in for the Sigstore
+# provenance check that `npm audit signatures` ran and pnpm 12 does not.
+trustPolicy: no-downgrade
+# Exact versions that really were published without the evidence an earlier
+# release had. A later version of any of them is checked again. Add nothing
+# here without looking at why the version lost its evidence.
+trustPolicyExclude:
+  # The 6.x backport release (2023-07-10) has no attestation; 7.5.1 and later do.
+  - semver@6.3.1
+  # The 6.x line of Node's undici types has no attestation; 7.1.0 and later do.
+  - undici-types@6.21.0
+  # 3.2.2 has no attestation; 3.2.0 and 3.2.1 had one.
+  - why-is-node-running@3.2.2

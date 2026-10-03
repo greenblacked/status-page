@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // Browser tests against the production build, served the way CI's smoke
-// test serves it: run `npm run build` first. `npm run test:e2e` runs them.
+// test serves it: run `pnpm run build` first. `pnpm run test:e2e` runs them.
 //
 // The board reads live vendors on the server, so what the cards say varies
 // from run to run (and is all Unknown without network access). The tests
@@ -38,7 +38,7 @@ export default defineConfig({
   },
   // The board is built for Apple devices first, so Safari's engine runs
   // every test too: a Mac, an iPhone and an iPad, alongside Chromium on a
-  // desktop, an Android phone and an iPad-sized tablet. `npx playwright install chromium webkit`.
+  // desktop, an Android phone and an iPad-sized tablet. `pnpm exec playwright install chromium webkit`.
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], launchOptions: { executablePath } } },
     { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: { executablePath } } },
@@ -56,7 +56,7 @@ export default defineConfig({
     { name: "iPad Pro 11", use: { ...devices["iPad Pro 11"] } },
   ],
   webServer: {
-    command: `npm run preview -- --port ${port} --strictPort`,
+    command: `pnpm run preview --port ${port} --strictPort`,
     // /healthz never reads the board, so the server is up before any vendor answers.
     url: `${baseURL}/healthz`,
     reuseExistingServer: !process.env.CI,
