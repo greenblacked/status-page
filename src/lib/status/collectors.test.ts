@@ -1841,28 +1841,125 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.incidents).toEqual([]);
     });
 
-    it("Azure feed.xml: maintenance is maintenance, and an item without a date or with a foreign link is handled", async () => {
-      const item = (title: string, extra: string) =>
-        `<item><title>${title}</title>${extra}<description>Impact.</description></item>`;
-      stubFetch({
-        [URLS.azure]: text(
-          '<rss version="2.0"><channel>' +
+    describe("Azure planned maintenance", () => {
+      const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const two = (n: number) => String(n).padStart(2, "0");
+      // "01:00 UTC on 05 Oct 2026", the wording an item's text carries a window in.
+      const clock = (ms: number) => {
+        const d = new Date(ms);
+        return `${two(d.getUTCHours())}:${two(d.getUTCMinutes())} UTC on ${two(d.getUTCDate())} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+      };
+      const minute = (ms: number) => new Date(Math.floor(ms / 60_000) * 60_000).toISOString();
+      const feed = (items: string[]) => text(`<rss version="2.0"><channel>${items.join("")}</channel></rss>`);
+      const item = (title: string, description: string, extra = "") =>
+        `<item><title>${title}</title><pubDate>${new Date(Date.now() - 3_600_000).toUTCString()}</pubDate>${extra}<description>${description}</description></item>`;
+      const HOUR = 3_600_000;
+
+      it("a recent notice with no window is kept out of health and out of the incidents", async () => {
+        stubFetch({ [URLS.azure]: feed([item("Planned maintenance - Key Vault", "Impact.")]) });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("operational");
+        expect(azure.incidents).toEqual([]);
+        expect(azure.upcomingMaintenance).toBeUndefined();
+      });
+
+      it("a window that has not started is upcoming, never a health", async () => {
+        const start = Date.now() + 26 * HOUR;
+        const end = start + 4 * HOUR;
+        stubFetch({
+          [URLS.azure]: feed([
             item(
               "Planned maintenance - Key Vault",
-              "<pubDate>Sun, 20 Sep 2026 08:00:00 GMT</pubDate><link>https://evil.example/x</link>",
-            ) +
-            item("Undated incident", "") +
-            "</channel></rss>",
-        ),
+              `<p>Starting at ${clock(start)}. Ending at ${clock(end)}.</p>`,
+              "<link>https://azure.status.microsoft/en-us/status/#kv</link>",
+            ),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("operational");
+        expect(azure.incidents).toEqual([]);
+        expect(azure.upcomingMaintenance).toEqual([
+          {
+            id: "https://azure.status.microsoft/en-us/status/#kv",
+            title: "Planned maintenance - Key Vault",
+            scheduledFor: minute(start),
+            scheduledUntil: minute(end),
+            url: "https://azure.status.microsoft/en-us/status/#kv",
+          },
+        ]);
       });
-      const azure = await collect("azure");
-      expect(azure.health).toBe("maintenance");
-      // The undated item cannot be shown to be current; the foreign link is replaced by the card's page.
-      expect(azure.incidents).toHaveLength(1);
-      expect(azure.incidents[0]).toMatchObject({
-        title: "Planned maintenance - Key Vault",
-        health: "maintenance",
-        url: "https://azure.status.microsoft/en-us/status/",
+
+      it("a window that has started and not ended is maintenance, and a foreign link is replaced by the card's page", async () => {
+        const start = Date.now() - HOUR;
+        const end = Date.now() + 2 * HOUR;
+        stubFetch({
+          [URLS.azure]: feed([
+            item(
+              "Planned maintenance - Key Vault",
+              `Start time: ${clock(start)}. End time: ${clock(end)}.`,
+              "<link>https://evil.example/x</link>",
+            ),
+            "<item><title>Undated incident</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("maintenance");
+        expect(azure.upcomingMaintenance).toBeUndefined();
+        expect(azure.incidents).toHaveLength(1);
+        expect(azure.incidents[0]).toMatchObject({
+          title: "Planned maintenance - Key Vault",
+          health: "maintenance",
+          url: "https://azure.status.microsoft/en-us/status/",
+        });
+      });
+
+      it("a started window with no end is maintenance while it is recent, and a window that has ended is not", async () => {
+        stubFetch({
+          [URLS.azure]: feed([item("Maintenance impacting Key Vault", `Starting at ${clock(Date.now() - HOUR)}.`)]),
+        });
+        expect((await collect("azure")).health).toBe("maintenance");
+        stubFetch({
+          [URLS.azure]: feed([
+            item(
+              "Maintenance impacting Key Vault",
+              `Starting at ${clock(Date.now() - 5 * HOUR)}. Ending at ${clock(Date.now() - HOUR)}.`,
+            ),
+          ]),
+        });
+        const ended = await collect("azure");
+        expect(ended.health).toBe("operational");
+        expect(ended.incidents).toEqual([]);
+      });
+
+      it("an unreadable or zoneless window is not guessed, and an incident beside it is unaffected", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault", "Starting soon, 05 Oct 2026 01:00 local time."),
+            item("Storage - East US - Increased latency", "Customers may see slow responses."),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("degraded");
+        expect(azure.incidents.map((incident) => incident.title)).toEqual(["Storage - East US - Increased latency"]);
+        expect(azure.upcomingMaintenance).toBeUndefined();
+      });
+
+      it("maintenance upcoming is the soonest three, and an outage-worded title is still an outage", async () => {
+        const at = (n: number) => Date.now() + n * 24 * HOUR;
+        stubFetch({
+          [URLS.azure]: feed([
+            ...[5, 2, 4, 3].map((n) => item(`Planned maintenance - Service ${n}`, `Starting at ${clock(at(n))}.`)),
+            item("Maintenance overran: service unavailable", "Impact."),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("outage");
+        expect(azure.upcomingMaintenance?.map((m) => m.title)).toEqual([
+          "Planned maintenance - Service 2",
+          "Planned maintenance - Service 3",
+          "Planned maintenance - Service 4",
+        ]);
       });
     });
 

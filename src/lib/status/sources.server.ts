@@ -1766,12 +1766,103 @@ export function azureItemHealth(title: string): Health {
   return "degraded";
 }
 
+const AZURE_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+// The words a window's start and end follow in an item's text. Only the first
+// of each is read, and only the 60 characters after it.
+const AZURE_START = /\b(?:start(?:s|ing)?(?: time)?|begin(?:s|ning)?)\b/i;
+const AZURE_END = /\b(?:end(?:s|ing)?(?: time)?|until|finish(?:es|ing)?)\b/i;
+const AZURE_CLOCK = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s?(?:utc|gmt|z)\b/i;
+const AZURE_DAY_FIRST = /\b(\d{1,2})(?:st|nd|rd|th)?\s([a-z]{3,9})\.?,?\s(\d{4})\b/i;
+const AZURE_MONTH_FIRST = /\b([a-z]{3,9})\.?\s(\d{1,2})(?:st|nd|rd|th)?,?\s(\d{4})\b/i;
+const AZURE_ISO_DAY = /\b(\d{4})-(\d{2})-(\d{2})\b/;
+
+/**
+ * The moment a snippet of an Azure item's text names, in ms, or undefined. It
+ * needs a clock time with an explicit UTC, GMT or Z zone and a calendar day
+ * ("01:00 UTC on 05 Oct 2026", "2026-10-05 01:00 UTC", "October 5, 2026 01:00
+ * UTC"); a day with no zone, or a zone-less time, is left unread, since a guess
+ * would put a time on the card the vendor never gave. Bounded patterns on a
+ * snippet of at most 60 characters, so the cost is constant.
+ */
+function azureMoment(snippet: string): number | undefined {
+  const clock = AZURE_CLOCK.exec(snippet);
+  if (!clock) return undefined;
+  let year: number;
+  let month: number;
+  let day: number;
+  const iso = AZURE_ISO_DAY.exec(snippet);
+  const dayFirst = AZURE_DAY_FIRST.exec(snippet);
+  const monthFirst = AZURE_MONTH_FIRST.exec(snippet);
+  if (iso) {
+    [year, month, day] = [Number(iso[1]), Number(iso[2]) - 1, Number(iso[3])];
+  } else if (dayFirst && AZURE_MONTHS.includes(dayFirst[2].slice(0, 3).toLowerCase())) {
+    [year, month, day] = [
+      Number(dayFirst[3]),
+      AZURE_MONTHS.indexOf(dayFirst[2].slice(0, 3).toLowerCase()),
+      Number(dayFirst[1]),
+    ];
+  } else if (monthFirst && AZURE_MONTHS.includes(monthFirst[1].slice(0, 3).toLowerCase())) {
+    [year, month, day] = [
+      Number(monthFirst[3]),
+      AZURE_MONTHS.indexOf(monthFirst[1].slice(0, 3).toLowerCase()),
+      Number(monthFirst[2]),
+    ];
+  } else {
+    return undefined;
+  }
+  const hour = Number(clock[1]);
+  const minute = Number(clock[2]);
+  if (hour > 23 || minute > 59 || month < 0 || month > 11 || day < 1 || day > 31) return undefined;
+  const at = Date.UTC(year, month, day, hour, minute);
+  // Date.UTC rolls 31 Feb into March; a day that is not on the calendar is unread.
+  return new Date(at).getUTCDate() === day ? at : undefined;
+}
+
+/**
+ * The window an Azure item's text gives, in ms: when it starts and, if it
+ * says, when it ends. The feed has no field for it, so it is read from the
+ * item's text ("Starting at 01:00 UTC on 05 Oct 2026"), and only the start is
+ * required. Nothing found is an empty window, never a guessed one.
+ */
+export function azureMaintenanceWindow(description: string | undefined): { start?: number; end?: number } {
+  const body = stripHtml(description ?? "");
+  const startAt = AZURE_START.exec(body);
+  const endAt = AZURE_END.exec(body);
+  const snippet = (found: RegExpExecArray | null, stop?: RegExpExecArray | null) => {
+    if (!found) return "";
+    const from = found.index + found[0].length;
+    const to = stop && stop.index > from ? Math.min(stop.index, from + 60) : from + 60;
+    return body.slice(from, to);
+  };
+  const start = azureMoment(snippet(startAt, endAt));
+  const end = azureMoment(snippet(endAt, startAt && endAt && startAt.index > endAt.index ? startAt : null));
+  return { ...(start !== undefined ? { start } : {}), ...(end !== undefined ? { end } : {}) };
+}
+
 // Like Grok's feed, an item is evidence about right now only when it is
 // unresolved and recent; one with no readable date cannot be shown to be.
-export function azureItemActive(item: { title: string; pubDate?: string }, now: number): boolean {
-  if (azureItemHealth(item.title) === "operational") return false;
+// Maintenance is different: a notice is published ahead of the work, so it
+// counts only once its window, read from the item's text, has started and not
+// ended. One with no readable window stays out of health rather than be
+// guessed at, and the notice's own date says nothing about it.
+export function azureItemActive(item: { title: string; pubDate?: string; description?: string }, now: number): boolean {
+  const health = azureItemHealth(item.title);
+  if (health === "operational") return false;
+  if (health === "maintenance") {
+    const { start, end } = azureMaintenanceWindow(item.description);
+    if (start === undefined || start - now > FUTURE_SKEW_MS) return false;
+    return end !== undefined ? end > now && end > start : isRecent(start, now);
+  }
   const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
   return isRecent(at, now);
+}
+
+// A maintenance notice whose window is read and has not started: listed as
+// upcoming, never as a health.
+function azureItemUpcoming(item: { title: string; description?: string }, now: number): boolean {
+  if (azureItemHealth(item.title) !== "maintenance") return false;
+  const { start } = azureMaintenanceWindow(item.description);
+  return start !== undefined && start - now > FUTURE_SKEW_MS;
 }
 
 // The feed Microsoft documents for Azure status. Its host is a subdomain of
@@ -1803,6 +1894,22 @@ async function collectAzure(): Promise<ServiceSnapshot> {
       "operational",
     );
     const { sourceUrl } = CATALOG_BY_ID.azure;
+    const upcoming: UpcomingMaintenance[] = soonest(
+      items
+        .filter((item) => azureItemUpcoming(item, now))
+        .map((item, index) => {
+          const { start, end } = azureMaintenanceWindow(item.description);
+          return {
+            id: item.link || `azure-${fingerprint(`${item.title}|${start ?? ""}|${index}`)}`,
+            title: item.title || "Planned maintenance",
+            scheduledFor: start !== undefined ? new Date(start).toISOString() : undefined,
+            scheduledUntil:
+              end !== undefined && start !== undefined && end > start ? new Date(end).toISOString() : undefined,
+            url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
+          };
+        }),
+      MAX_UPCOMING_MAINTENANCE,
+    );
     const { incidents, problems, incidentCount } = listIncidents(
       active.map((item, index) => ({
         id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
@@ -1819,6 +1926,7 @@ async function collectAzure(): Promise<ServiceSnapshot> {
       components: [],
       incidents,
       ...(incidentCount ? { incidentCount } : {}),
+      ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),
     };
   } catch (error) {
     return failed("azure", started, error);

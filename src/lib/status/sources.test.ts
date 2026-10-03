@@ -9,6 +9,7 @@ import {
   awsLatestLog,
   azureItemActive,
   azureItemHealth,
+  azureMaintenanceWindow,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
@@ -1070,5 +1071,61 @@ describe("azure feed", () => {
     assert.equal(azureItemActive(item(undefined), NOW), false);
     assert.equal(azureItemActive(item("not a date"), NOW), false);
     assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString(), "RESOLVED - App Service"), NOW), false);
+  });
+
+  it("reads a maintenance window only from a time with a UTC zone and a calendar day", () => {
+    const at = Date.UTC(2026, 9, 5, 1, 0);
+    const end = Date.UTC(2026, 9, 5, 5, 30);
+    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 UTC on 05 Oct 2026."), { start: at });
+    assert.deepEqual(
+      azureMaintenanceWindow("<p>Start time: 2026-10-05 01:00 UTC</p><p>End time: 2026-10-05 05:30 GMT</p>"),
+      {
+        start: at,
+        end,
+      },
+    );
+    assert.deepEqual(azureMaintenanceWindow("Begins October 5th, 2026 01:00 UTC until 05:30 UTC on 5 October 2026"), {
+      start: at,
+      end,
+    });
+    // No zone, no day, a day not on the calendar, or no start word: nothing is read.
+    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 on 05 Oct 2026"), {});
+    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 UTC"), {});
+    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 UTC on 31 Feb 2026"), {});
+    assert.deepEqual(azureMaintenanceWindow("Starting at 25:00 UTC on 05 Oct 2026"), {});
+    assert.deepEqual(azureMaintenanceWindow("Planned for 01:00 UTC on 05 Oct 2026"), {});
+    assert.deepEqual(azureMaintenanceWindow(undefined), {});
+    // An end is not mistaken for the start when the start has no time of its own.
+    assert.deepEqual(azureMaintenanceWindow("Starting soon. Ending at 05:30 UTC on 05 Oct 2026"), { end });
+  });
+
+  it("counts maintenance only once its window has started and not ended", () => {
+    const clock = (ms: number) => {
+      const d = new Date(ms).toISOString();
+      return `${d.slice(0, 10)} ${d.slice(11, 16)} UTC`;
+    };
+    const item = (description?: string, title = "Planned maintenance - Key Vault") => ({
+      title,
+      pubDate: new Date(NOW - 60_000).toUTCString(),
+      description,
+    });
+    // Recent, but no window: out of health.
+    assert.equal(azureItemActive(item(), NOW), false);
+    assert.equal(azureItemActive(item("Impact."), NOW), false);
+    // Announced, not started.
+    assert.equal(azureItemActive(item(`Starting at ${clock(NOW + DAY)}`), NOW), false);
+    // Started, no end yet; started and not ended; ended.
+    assert.equal(azureItemActive(item(`Starting at ${clock(NOW - DAY)}`), NOW), true);
+    assert.equal(azureItemActive(item(`Start: ${clock(NOW - DAY)} End: ${clock(NOW + DAY)}`), NOW), true);
+    assert.equal(azureItemActive(item(`Start: ${clock(NOW - 2 * DAY)} End: ${clock(NOW - DAY)}`), NOW), false);
+    // Started long ago with no end is stale, like any other item.
+    assert.equal(azureItemActive(item(`Starting at ${clock(NOW - 30 * DAY)}`), NOW), false);
+    // A notice published weeks ahead of work that has now started still counts.
+    const early = { ...item(`Starting at ${clock(NOW - 60_000)}`), pubDate: new Date(NOW - 40 * DAY).toUTCString() };
+    assert.equal(azureItemActive(early, NOW), true);
+    // Other items ignore the text: an incident is active on its date alone.
+    const incident = { title: "Storage - East US", pubDate: new Date(NOW - DAY).toUTCString(), description: "Impact." };
+    assert.equal(azureItemActive(incident, NOW), true);
+    assert.equal(azureItemActive({ ...incident, title: "Service unavailable - maintenance overran" }, NOW), true);
   });
 });
