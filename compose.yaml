@@ -80,7 +80,7 @@ services:
       - -c
       - |
         set -euo pipefail
-        trivy fs --cache-dir /cache/trivy --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 1 --skip-dirs node_modules --ignorefile .trivyignore.yaml .
+        trivy fs --cache-dir /cache/trivy --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 1 --skip-dirs node_modules .
         gitleaks git --redact --exit-code 1 .
     volumes:
       - .:/workspace:ro

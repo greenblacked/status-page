@@ -80,7 +80,7 @@ import {
 //
 // The seed is fixed, so a run is the same on every machine and a red run can
 // be replayed: a failure prints the shrunk counterexample and its seed, and
-// FUZZ_SEED=<seed> FUZZ_RUNS=<n> npx vitest run src/lib/status/fuzz.test.ts
+// FUZZ_SEED=<seed> FUZZ_RUNS=<n> pnpm exec vitest run src/lib/status/fuzz.test.ts
 // explores other inputs (a longer search before a release, say). Nothing is
 // written to disk: when a search finds a bug, add the counterexample to the
 // matching *.test.ts as a plain case.

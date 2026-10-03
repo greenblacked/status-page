@@ -193,10 +193,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      # The commit that started this run, in full: its npm pin (npm-pin.sh,
-      # the audit-signatures.sh it runs, tools/npm, packageManager) and its
-      # .nvmrc. A backfill releases an older commit, which may predate those
-      # files, so the pin cannot come from the commit being released. The
+      # The commit that started this run, in full: its pnpm pin (pnpm-pin.sh,
+      # packageManager and its hash) and its .nvmrc. A backfill releases an older commit, which
+      # may predate those files, so the pin cannot come from the commit being
+      # released. The
       # whole history comes with it (plan checked that the release commit is
       # on main), so that commit is already here and needs no second fetch.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,40 +210,41 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      # npm at the packageManager version, from a lockfile that records its
-      # hash (tools/npm), not installed by name. No install scripts.
-      - name: Pin npm
-        run: ./scripts/ci/npm-pin.sh install
-      - name: Check npm
-        run: ./scripts/ci/npm-pin.sh verify
+      # pnpm at the packageManager version, installed by Corepack, which
+      # refuses it unless it matches the sha512 in packageManager. Not
+      # installed by name, and no install scripts.
+      - name: Pin pnpm
+        run: ./scripts/ci/pnpm-pin.sh install
+      - name: Check pnpm
+        run: ./scripts/ci/pnpm-pin.sh verify
       # The code being released, last and into release/: before any bump
       # commit, which changes only the version and the changelog. It comes
       # from the history above with git, not from a second actions/checkout
       # of a ref chosen at run time (CodeQL flags that as an untrusted
       # checkout that can poison the default branch's cache, although plan
       # only ever picks a commit already on main). After this step the job
-      # runs only the project's own npm commands: no script of this run's
+      # runs only the project's own pnpm commands: no script of this run's
       # commit and no cache action.
       - name: Check out the release commit
         env:
           RELEASE_SHA: ${{ needs.plan.outputs.sha }}
         run: git worktree add --detach release "$RELEASE_SHA"
-      # The pinned npm should be the one the release commit itself names.
-      - name: Check the npm pin matches the release
+      # The pinned pnpm should be the one the release commit itself names.
+      - name: Check the pnpm pin matches the release
         run: |
           release="$(node -p "require('./release/package.json').packageManager")"
           pinned="$(node -p "require('./package.json').packageManager")"
           if [ "$release" != "$pinned" ]; then
-            echo "::error::the commit being released names $release, but the npm pin in this run's commit is $pinned; backfill from a ref whose packageManager matches"
+            echo "::error::the commit being released names $release, but the pnpm pin in this run's commit is $pinned; backfill from a ref whose packageManager matches"
             exit 1
           fi
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
         working-directory: release
-      - run: npm run typecheck
+      - run: pnpm run typecheck
         working-directory: release
-      - run: npm test
+      - run: pnpm test
         working-directory: release
-      - run: npm run build
+      - run: pnpm run build
         working-directory: release
 
   publish:
@@ -252,7 +253,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # The only job with write access. It installs no dependencies and runs
-    # no project code: only the release scripts, npm version and gh.
+    # no project code: only the release scripts and gh.
     permissions:
       contents: write # push the bump commit and the tag, create the draft GitHub Release
     outputs:

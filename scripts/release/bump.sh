@@ -128,23 +128,32 @@ awk -v next_version="$next" -v current="$current" -v today="$today" -v url="$rep
 ' CHANGELOG.md >"$changelog"
 cat "$changelog" >CHANGELOG.md
 
-npm version "$next" --no-git-tag-version --ignore-scripts >/dev/null
+# Only package.json carries the version: pnpm-lock.yaml records none for the
+# root project, so the lockfile does not change and is not committed. Written
+# the way `npm version` did (two-space indent, trailing newline), so the diff
+# is the one line. No package manager runs.
+node -e '
+  const fs = require("node:fs");
+  const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  pkg.version = process.argv[1];
+  fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+' "$next"
 ./scripts/ci/release-notes.sh "$next" >/dev/null
 
 if [ "$ci" = true ]; then
-  git commit --quiet -m "chore(release): $next" -- package.json package-lock.json CHANGELOG.md
+  git commit --quiet -m "release: $next" -- package.json CHANGELOG.md
   echo "Prepared $tag ($current -> $next) on $(git rev-parse --short HEAD)."
   exit 0
 fi
 
 git switch --quiet -c "$branch"
-git commit --quiet -m "chore(release): $next" -- package.json package-lock.json CHANGELOG.md
+git commit --quiet -m "release: $next" -- package.json CHANGELOG.md
 
 cat <<EOF
 Prepared $tag on branch $branch ($current -> $next).
 
 Next:
   git push -u origin $branch
-  then open a pull request into main. When it merges, release.yml tags
+  then open a pull request into main titled "release: v$next". When it merges, release.yml tags
   the merge commit $tag and publishes the GitHub Release.
 EOF
