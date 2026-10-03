@@ -180,6 +180,9 @@ async function getJson(url: string, options: Options): Promise<{ body?: unknown;
 
 const base = (registry: string) => registry.replace(/\/$/, "");
 
+/** A package name as one registry path segment: every `/` of a scoped name is encoded (`@scope%2Fname`). */
+export const registryPath = (name: string) => name.replaceAll("/", "%2F");
+
 /** npm's registry signing keys (https://registry.npmjs.org/-/npm/v1/keys), pinned: see the header. */
 export const NPM_REGISTRY = "https://registry.npmjs.org";
 export const NPM_KEYS: Keys = new Map([
@@ -228,7 +231,7 @@ export async function registryVersion(
   entry: Entry,
   options: Options = {},
 ): Promise<{ integrity?: string; signatures?: Signature[]; error?: string }> {
-  const url = `${base(registry)}/${entry.name.replace("/", "%2F")}/${entry.version}`;
+  const url = `${base(registry)}/${registryPath(entry.name)}/${entry.version}`;
   const { body, error } = await getJson(url, options);
   if (error) return { error };
   const dist = (body as { dist?: { integrity?: unknown; signatures?: unknown } } | undefined)?.dist;
@@ -275,7 +278,7 @@ function publishTimes(registry: string, options: Options) {
   return (name: string) => {
     let pending = cache.get(name);
     if (!pending) {
-      pending = getJson(`${base(registry)}/${name.replace("/", "%2F")}`, options).then(({ body, error }) => {
+      pending = getJson(`${base(registry)}/${registryPath(name)}`, options).then(({ body, error }) => {
         if (error) return { error };
         const time = (body as { time?: unknown } | undefined)?.time;
         return typeof time === "object" && time !== null

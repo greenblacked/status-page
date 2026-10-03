@@ -15,6 +15,7 @@ import {
   NPM_KEYS,
   parseLockfile,
   registryKeys,
+  registryPath,
   registryVersion,
 } from "./lockfile-integrity.ts";
 
@@ -399,10 +400,21 @@ describe("isSigned", () => {
   });
 });
 
+describe("registryPath", () => {
+  it("encodes the slash of a scoped name and leaves a plain name alone", () => {
+    expect(registryPath("@scope/name")).toBe("@scope%2Fname");
+    expect(registryPath("name")).toBe("name");
+  });
+
+  it("encodes every slash, not just the first", () => {
+    expect(registryPath("@a/b/c")).toBe("@a%2Fb%2Fc");
+  });
+});
+
 describe("check", () => {
   const entries = parseLockfile(LOCKFILE).entries;
   const find = (url: string) =>
-    entries.find((e) => url.includes(e.name.replace("/", "%2F")) && url.endsWith(e.version));
+    entries.find((e) => url.includes(registryPath(e.name)) && url.endsWith(e.version));
   const mock = (answer: (e: Entry) => ReturnType<typeof document>) => async (url: string) => {
     if (url.endsWith("/-/npm/v1/keys")) return keysDocument(npm);
     const e = find(url);
@@ -604,7 +616,7 @@ describe("lockfile-integrity.ts", () => {
       if (path === "/-/npm/v1/keys") return void res.end(JSON.stringify({ keys: [npm.listed] }));
       const doc = answer(path);
       if (!doc) return void res.writeHead(404).end("{}");
-      const entry = parseLockfile(lockfile).entries.find((e) => path.includes(e.name.replace("/", "%2F")));
+      const entry = parseLockfile(lockfile).entries.find((e) => path.includes(registryPath(e.name)));
       const covered = doc.signed ?? entry?.integrity ?? "";
       const e = entry ?? { name: "", version: "", integrity: "" };
       res.end(JSON.stringify({ dist: { integrity: doc.integrity, signatures: [npm.sign(e, covered)] } }));
