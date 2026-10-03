@@ -284,7 +284,7 @@ test("a press that starts in the panel and ends on the backdrop does not close i
   const startY = entry.y + 20;
   expect(
     await page.evaluate(
-      ([x, y]) => document.querySelector("dialog[data-release-details]")?.contains(document.elementFromPoint(x, y)),
+      ([x, y]) => !!document.elementFromPoint(x, y)?.closest("[data-release-entry]"),
       [startX, startY],
     ),
     "the press starts inside the sheet",
@@ -295,10 +295,7 @@ test("a press that starts in the panel and ends on the backdrop does not close i
   await page.mouse.move(3, 3, { steps: 4 });
   await page.mouse.up();
   await expect(dialog(page)).toBeVisible();
-  // A whole click on the backdrop still closes it. The drag may have left a selection and the pointer is still on
-  // the backdrop: clear the one, and move off before the click, so that it is a fresh press and not the drag's end.
-  await page.evaluate(() => getSelection()?.removeAllRanges());
-  await page.mouse.move(60, 60);
+  // A whole click on the backdrop still closes it, with the drag's selection still there as it is for a real user.
   await page.mouse.click(3, 3);
   await expect(dialog(page)).toHaveCount(0);
 });
