@@ -6,6 +6,11 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Fixed
+
+- The headline and the sentence under it no longer jump when the web font arrives, on a phone, a tablet or a desktop that has no Apple system font. Inter is now loaded with `font-display: optional`: a page view that does not have Inter ready in time stays in the system font (Arial, Liberation Sans or Roboto, sized to Inter's letter heights and close to its widths) and nothing is swapped in later, so no line re-wraps and the service links in the headline stay put. In Chromium (Android, Windows, Linux) a font that was not preloaded is used only if it is ready when the page starts to render, so a first visit is normally in the system font and a later one in Inter. The fonts moved from `/fonts/` to content-hashed names under `/assets/`. On Cloudflare, `public/_headers` caches them for a year, so a returning visitor's copy is used without asking the server (Cloudflare's default would make the browser revalidate it, and a revalidated font is always too late); most return visits there draw in Inter from the first paint, a few lose the race to the disk cache. A Node host should serve `/assets/*` with `Cache-Control: public, max-age=31536000, immutable` (see the README); without it a return visit stays in the system font. The handwritten "all quiet" follows the same rule.
+- On a wide screen the filter row (the categories with Issues only and Starred) stays on one line in Inter and in the system font alike, so the toggles no longer drop below the categories and push the board down; the categories are a little narrower to make room.
+
 ## [0.6.0] - 2026-10-03
 
 ### Added
