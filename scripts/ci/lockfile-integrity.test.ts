@@ -413,8 +413,7 @@ describe("registryPath", () => {
 
 describe("check", () => {
   const entries = parseLockfile(LOCKFILE).entries;
-  const find = (url: string) =>
-    entries.find((e) => url.includes(registryPath(e.name)) && url.endsWith(e.version));
+  const find = (url: string) => entries.find((e) => url.includes(registryPath(e.name)) && url.endsWith(e.version));
   const mock = (answer: (e: Entry) => ReturnType<typeof document>) => async (url: string) => {
     if (url.endsWith("/-/npm/v1/keys")) return keysDocument(npm);
     const e = find(url);
