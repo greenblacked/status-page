@@ -2123,6 +2123,23 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       });
     });
 
+    it.each(["America/Los_Angeles", "Pacific/Kiritimati"])(
+      "Windows release health: the days read the same on a host in %s",
+      async (tz) => {
+        const zone = process.env.TZ;
+        process.env.TZ = tz;
+        try {
+          vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+          stubFetch({ [URLS.windows]: text(fixture("windows/windows11-release-information.html")) });
+          const windows = await collect("windows");
+          expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1000) · Sep 29");
+          expect(windows.components[0].detail).toBe("26300.1000 · Sep 29");
+        } finally {
+          process.env.TZ = zone;
+        }
+      },
+    );
+
     it("Windows release health: a version the page adds later becomes the headline and a fresh release", async () => {
       vi.setSystemTime(new Date("2027-09-30T12:00:00.000Z"));
       const page = fixture("windows/windows11-release-information.html").replace(

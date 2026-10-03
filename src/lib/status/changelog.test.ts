@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { afterEach, describe, it } from "vitest";
 import {
   appleOsReleases,
   describeVersionChanges,
+  formatReleaseAge,
   formatVersionMap,
   isFreshRelease,
   latestAppleOsByFamily,
@@ -201,6 +202,30 @@ describe("isFreshRelease", () => {
     const now = Date.parse("2026-09-22T12:00:00.000Z");
     assert.equal(isFreshRelease("2026-09-16T15:32:21.000Z", now), true);
     assert.equal(isFreshRelease("2026-08-01T00:00:00.000Z", now), false);
+  });
+});
+
+describe("formatReleaseAge", () => {
+  // The day is the one in UTC, whatever zone the host runs in: a calendar day the vendor gave as midnight UTC
+  // (a Windows release) must not slip to the day before west of Greenwich, nor an evening one to the next day east.
+  const zone = process.env.TZ;
+  afterEach(() => {
+    process.env.TZ = zone;
+  });
+
+  it.each(["UTC", "America/Los_Angeles", "Pacific/Kiritimati", "Pacific/Pago_Pago"])(
+    "names the UTC day in %s",
+    (tz) => {
+      process.env.TZ = tz;
+      assert.equal(formatReleaseAge("2026-09-29T00:00:00.000Z"), "Sep 29");
+      assert.equal(formatReleaseAge("2026-09-29T23:59:00.000Z"), "Sep 29");
+      assert.equal(formatReleaseAge("2026-09-29"), "Sep 29");
+    },
+  );
+
+  it("is empty for a missing or unreadable date", () => {
+    assert.equal(formatReleaseAge(undefined), "");
+    assert.equal(formatReleaseAge("not a date"), "");
   });
 });
 
