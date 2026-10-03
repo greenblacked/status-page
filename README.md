@@ -328,7 +328,7 @@ groups:
 | Where | How |
 | --- | --- |
 | **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `main` to the `status-page` Worker at [status.szolotov.com](https://status.szolotov.com) and creates `stage` as a Worker Preview named `stage` of that same Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com); `dev` deploys nothing. Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested, and a production deploy is rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
-| **Any Node host** | `pnpm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice. `pnpm run preview` is a smoke test of that build, not a production host |
+| **Any Node host** | `pnpm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice, and serve `/assets/*` (hashed files that never change) with `Cache-Control: public, max-age=31536000, immutable`, the rule in [`public/_headers`](public/_headers), which only Cloudflare reads; without it a return visit loads Inter too late for `font-display: optional` and stays in the system font. `pnpm run preview` is a smoke test of that build, not a production host |
 | **Docker** | `docker compose up preview` serves the built board from the public CI images, for a local run or a quick demo |
 
 The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
