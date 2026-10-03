@@ -141,19 +141,19 @@ node -e '
 ./scripts/ci/release-notes.sh "$next" >/dev/null
 
 if [ "$ci" = true ]; then
-  git commit --quiet -m "chore(release): $next" -- package.json CHANGELOG.md
+  git commit --quiet -m "release: $next" -- package.json CHANGELOG.md
   echo "Prepared $tag ($current -> $next) on $(git rev-parse --short HEAD)."
   exit 0
 fi
 
 git switch --quiet -c "$branch"
-git commit --quiet -m "chore(release): $next" -- package.json CHANGELOG.md
+git commit --quiet -m "release: $next" -- package.json CHANGELOG.md
 
 cat <<EOF
 Prepared $tag on branch $branch ($current -> $next).
 
 Next:
   git push -u origin $branch
-  then open a pull request into main. When it merges, release.yml tags
+  then open a pull request into main titled "release: v$next". When it merges, release.yml tags
   the merge commit $tag and publishes the GitHub Release.
 EOF
