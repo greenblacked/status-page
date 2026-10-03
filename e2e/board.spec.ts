@@ -1745,7 +1745,10 @@ test("search reveal: takes the pose a scroll gives it before the page has loaded
 
 test("search reveal: the revealed field keeps still when the bar's lead text changes", async ({ page }) => {
   test.slow();
-  const offsets = await revealBoard(page);
+  // A served board, as in the 'mirrors the query' and 'layout alone' tests: the live board's cards change height with
+  // what the vendors say that day, and the Refresh below fetches it again, so a card that grew or shrank moved the
+  // page (its height, and on WebKit the scroll position, which follows it) under this test's checks of the field.
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
   const y0 = await scrollDeep(page, offsets);
   await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
   await expectRevealed(page, true);
