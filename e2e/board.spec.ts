@@ -249,6 +249,21 @@ async function leadSteady(page: Page): Promise<void> {
 }
 
 /**
+ * Waits until the self-hosted Inter has landed and been drawn. The hero's lede wraps differently in the fallback face
+ * than in Inter, and how many lines it takes depends on the board's words (the canned first render has a long one),
+ * so a page measured before the swap is taller or shorter than the same page after it: every offset read earlier is
+ * then off by a line, and a restored scroll is moved with it by scroll anchoring. Tests that read geometry call this
+ * before they read any. Not for a test that holds the font back itself: it would wait for the test's own release.
+ */
+async function fontsSettled(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await document.fonts.load("400 16px Inter").catch(() => []);
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+}
+
+/**
  * Opens the board with its bar steady: the page's Date is 30 s into a slot (pinToSlot), so the next scheduled
  * refetch and the turn of the slot are 90 s or more away, and the refetch on mount of a snapshot past its
  * staleTime, if there is one, has landed (leadSteady). A test that reads where the field or its fill is against the
@@ -260,6 +275,7 @@ async function steadyBoard(page: Page): Promise<void> {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   await leadSteady(page);
 }
 
@@ -896,6 +912,7 @@ async function revealServedBoard(
 ): Promise<DockOffsets & { limit: number }> {
   await pinToSlot(page);
   await openFixture(page, () => board(Date.now()), ready);
+  await fontsSettled(page);
   await leadSteady(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
@@ -924,6 +941,7 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
   await expect(page.getByTestId("live-bar")).toContainText("Checked");
 
@@ -1107,6 +1125,7 @@ test("keeps the bar up while the page hovers just above where it appears", async
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   const { wide, barStart } = await dockOffsets(page);
   test.skip(wide, "the bar is part of the field's one move from 64rem");
   const bar = controlBar(page);
@@ -1309,6 +1328,7 @@ test("search reveal: a fast scroll down and back up reveals the bar's field once
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   await lightenPaint(page);
   const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
@@ -1676,6 +1696,7 @@ test("search reveal: the revealed field takes the tap and the page behind it doe
 
 test("search reveal: opens a page that is already scrolled past the field with the bar's field hidden, and plays no move", async ({
   page,
+  browserName,
 }) => {
   test.slow();
   // Every transition that starts on the bar's field, from before the page's own script runs.
@@ -1690,24 +1711,52 @@ test("search reveal: opens a page that is already scrolled past the field with t
       true,
     );
   });
+  // The reload draws the server's own first render, the canned payloads' board, whatever board a test served to the
+  // page (a served board reaches the page only by a refetch, and its hero is not the first render's), so this test
+  // opens that same board, and the position it leaves is measured on it, in Inter (steadyBoard waits for the
+  // font). The reload then draws it in the fallback face and restores the scroll there; when Inter lands afterwards
+  // from the cache, at no predictable moment, the lede wraps differently and scroll anchoring moves the page under
+  // the restored position (46px on a phone), so a position read back after that can be short of the one that was
+  // left. How the swap shifts the page is the subject of "shifts nothing much when the self-hosted Inter arrives
+  // late". Here the font is held until the restored position has been read, then let in: the restore is checked
+  // before the swap, the dock after it, as a reader meets them. (WebKit restores at the end of the load, which
+  // waits for the font, so there is no race to order there and the font is not held.)
+  let holdFont = false;
+  let releaseFont = () => {};
+  const fontHeld = new Promise<void>((resolve) => {
+    releaseFont = resolve;
+  });
+  await page.route("**/fonts/inter-var.woff2", async (route) => {
+    if (holdFont) await fontHeld;
+    await route.continue().catch(() => {});
+  });
   const offsets = await revealBoard(page);
   const y0 = await scrollDeep(page, offsets);
   // Back to the same place the way a reload or a return to the tab does: the browser restores the scroll.
-  await page.reload();
+  holdFont = browserName === "chromium";
+  try {
+    // The held font keeps the load event from firing; Chromium restores the position as the page grows.
+    await page.reload({ waitUntil: holdFont ? "domcontentloaded" : "load" });
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), { message: "the browser restores the position" })
+      .toBeGreaterThan(y0 - 40);
+  } finally {
+    releaseFont();
+  }
+  await page.waitForLoadState("load");
   await hydrated(page);
   await leadSteady(page);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(offsets.revealFrom);
+  await fontsSettled(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  // Inter's arrival may have moved the page a little (see above); the reader is where the page left them now.
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
   // It opens hidden, and nothing about it moved.
   expect(await isRevealed(page)).toBe(false);
   const runs = () => page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
   expect(await runs(), "the field's move played on load").toEqual([]);
   // The first real scroll up after the load reveals it, and that one is a move.
-  const restored = await page.evaluate(() => window.scrollY);
-  expect(restored).toBeGreaterThan(y0 - 40);
-  await scrollAndSettle(page, restored - 2 * REVEAL_UP_PX);
+  await scrollAndSettle(page, (await page.evaluate(() => window.scrollY)) - 2 * REVEAL_UP_PX);
   await expectRevealed(page, true);
   await expect.poll(async () => (await runs()).length, { message: "the reveal plays" }).toBeGreaterThan(0);
 });
