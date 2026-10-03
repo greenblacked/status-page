@@ -4847,81 +4847,52 @@ async function fallbackFaceFound(page: Page): Promise<boolean> {
   });
 }
 
-test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
-  // Hold the font back so the page is drawn in its fallback first, and count every layout shift that follows.
-  await page.route("**/fonts/inter-var.woff2", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    await route.continue();
-  });
-  await page.addInitScript(() => {
-    const tracked = window as Window & { __cls?: number };
-    tracked.__cls = 0;
-    new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
-        if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
-      }
-    }).observe({ type: "layout-shift", buffered: true });
-  });
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
-  // The first paint was in the fallback; the swap has happened once Inter reports loaded.
-  await page.waitForFunction(
-    () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
-    undefined,
-    { timeout: 15_000 },
-  );
-  await page.evaluate(
-    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-  );
-  await page.waitForTimeout(500);
-  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
-  expect(shift, "cumulative layout shift").toBeLessThan(0.1);
-});
+/** Whether a platform font family from drawnFonts is the self-hosted Inter (its file's own name is "Inter Variable"). */
+const isInter = (family: string) => family.startsWith("Inter");
 
-// The line under the headline wraps at whatever width the font gives it, and its links jump with the wrap. The
-// fallback faces in styles.css are sized so that Inter, arriving, leaves the lines where they were; this holds Inter
-// back, lets the board draw, then releases it and counts the shift on a board with no such line, a short one and the
-// longest one. The page is a phone, a tablet and a desktop in turn: the wrap differs with the width.
+/** The status of the page's Inter FontFace: "loading" while the file is on its way, "loaded" once it is in. */
+async function interStatus(page: Page): Promise<string> {
+  return page.evaluate(
+    () => [...document.fonts].find((face) => face.family.replaceAll('"', "") === "Inter")?.status ?? "missing",
+  );
+}
+
+/** The font families Chromium really drew the text of the first element matching the selector in (Chrome DevTools). */
+async function drawnFonts(page: Page, selector: string): Promise<string[]> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("DOM.enable");
+    await cdp.send("CSS.enable");
+    const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
+    const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
+    const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+    return fonts.map((font) => font.familyName);
+  } finally {
+    await cdp.detach();
+  }
+}
+
+// The self-hosted Inter is font-display: optional (src/styles.css). Inter that is there within the browser's short
+// block period is the page's font from the first paint; Inter that comes later is fetched and cached, but the page
+// view keeps the system font it was drawn in, so nothing re-wraps and the hero's links do not jump. The next load
+// draws in Inter from the first paint. The page is a phone, a tablet and a desktop in turn, over a board with no
+// line to move (calm), the plain fixture and the longest hero (the most lines on a phone).
 //
-// The calm board has no incident to move, so the swap has only the 12-13px text of the cards to shift, which the
-// fallback draws narrower than Inter; it shifted almost nothing before the faces were cut. It is held to a limit
-// just above what the fix leaves (0.0009 at most, on a tablet), which the phone's 0.014 without the fix is over,
-// and measured at a phone's and a tablet's real size (the desktop project also runs 360px and 834px wide, with the
-// heights of a phone and a tablet): a taller viewport divides the score down, so it would loosen the limit.
-const SWAP_LIMIT = 0.1;
-const CALM_SWAP_LIMIT = 0.005;
-for (const [name, makeBoard, ready, size, limit] of [
-  ["a calm board", calmBoard, { id: "aws", label: "Operational" }, undefined, CALM_SWAP_LIMIT],
-  ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }, undefined, SWAP_LIMIT],
-  ["the longest hero", longHeroBoard, { id: "aws", label: "Outage" }, undefined, SWAP_LIMIT],
-  [
-    "a calm board at 360px",
-    calmBoard,
-    { id: "aws", label: "Operational" },
-    { width: 360, height: 780 },
-    CALM_SWAP_LIMIT,
-  ],
-  [
-    "a calm board at 834px",
-    calmBoard,
-    { id: "aws", label: "Operational" },
-    { width: 834, height: 1194 },
-    CALM_SWAP_LIMIT,
-  ],
-] as const) {
-  test(`keeps the hero in place when the self-hosted Inter replaces its fallback on ${name}`, async ({
+// A shift of "none" is under 0.0001: a relative time that ticks over while the test waits ("since 4 min") moves its
+// chip by 0.00002, and a swap to Inter (font-display: swap) moves these boards by 0.0014 to 0.0023.
+const NO_SHIFT = 0.0001;
+const FONT_BOARDS = [
+  ["a calm board", calmBoard, { id: "aws", label: "Operational" }],
+  ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }],
+  ["the longest hero", longHeroBoard, { id: "aws", label: "Outage" }],
+] as const;
+
+for (const [name, makeBoard, ready] of FONT_BOARDS) {
+  test(`keeps the system font and the hero in place when the self-hosted Inter arrives late on ${name}`, async ({
     page,
     browserName,
-  }, testInfo) => {
+  }) => {
     test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
-    test.skip(
-      Boolean(size) && testInfo.project.name !== "desktop",
-      "a set width is measured once, on the desktop project",
-    );
-    if (size) await page.setViewportSize(size);
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
@@ -4961,18 +4932,18 @@ for (const [name, makeBoard, ready, size, limit] of [
     test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
     await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
     await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
-    // Not vacuous: the board is drawn in the fallback, Inter still on its way.
-    const interStatus = () =>
-      page.evaluate(
-        () => [...document.fonts].find((face) => face.family.replaceAll('"', "") === "Inter")?.status ?? "missing",
-      );
-    expect(await interStatus()).toBe("loading");
-    // The click's 500ms window must be over before the swap, or a shift in it would not count and the test would
-    // pass whatever the swap did.
+    // Not vacuous: Inter is still on its way, long past the block period, and the board is drawn without it.
+    expect(await interStatus(page)).toBe("loading");
+    const before = await drawnFonts(page, "h1");
+    expect(before.length, "the headline is drawn in some font").toBeGreaterThan(0);
+    expect(before.some(isInter), "the headline before Inter arrives is drawn in Inter").toBe(false);
+    const heroBefore = await page.locator("h1").boundingBox();
+    // The click's 500ms window must be over before Inter lands, or a shift in it would not count and the test would
+    // pass whatever the arrival did.
     await page.waitForFunction(
       () => performance.now() - ((window as Window & { __lastInput?: number }).__lastInput ?? 0) > 600,
     );
-    // Count only what the swap does: drop what the first draws and the refresh moved.
+    // Count only what the arrival does: drop what the first draws and the refresh moved.
     await page.evaluate(() => {
       const tracked = window as Window & { __cls?: number; __ignored?: number; __shifts?: PerformanceObserver };
       tracked.__shifts?.takeRecords();
@@ -4993,8 +4964,32 @@ for (const [name, makeBoard, ready, size, limit] of [
       const tracked = window as Window & { __cls?: number; __ignored?: number };
       return { shift: tracked.__cls ?? 0, ignored: tracked.__ignored ?? 0 };
     });
+    expect(shift, "cumulative layout shift once Inter has arrived").toBeLessThan(NO_SHIFT);
     expect(ignored, "layout shift left out of the score as a reaction to an input").toBe(0);
-    expect(shift, "cumulative layout shift of the font swap").toBeLessThan(limit);
+    // Inter is in (loaded, and cached for the next load), and the page view still does not use it.
+    expect(await drawnFonts(page, "h1"), "the headline after Inter arrived").toEqual(before);
+    expect((await page.locator("h1").boundingBox()) ?? null).toEqual(heroBefore);
+    // Text laid out after Inter landed stays in the fallback too: a refresh redraws the cards.
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    expect(await drawnFonts(page, "h1"), "the headline after another refresh").toEqual(before);
+  });
+
+  test(`draws ${name} in the cached self-hosted Inter from the first paint`, async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
+    // No route yet: a routed page has its HTTP cache switched off, and the cache is what this test is about.
+    // The first view fetches Inter (and may draw without it); the second finds it in the cache.
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await hydrated(page);
+    await page.evaluate(() => document.fonts.load("400 16px Inter"));
+    expect(await interStatus(page)).toBe("loaded");
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await hydrated(page);
+    expect((await drawnFonts(page, "h1")).some(isInter), "the second view's headline is drawn in Inter").toBe(true);
+    // And it stays so once the board is the one under test.
+    await serveBoard(page, () => makeBoard(Date.now()));
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
+    expect((await drawnFonts(page, "h1")).some(isInter), "the board's headline is drawn in Inter").toBe(true);
   });
 }
 
