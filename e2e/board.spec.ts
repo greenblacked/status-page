@@ -4886,28 +4886,29 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
 // back, lets the board draw, then releases it and counts the shift on a board with no such line, a short one and the
 // longest one. The page is a phone, a tablet and a desktop in turn: the wrap differs with the width.
 //
-// The calm board is also held to 360px and 834px on the desktop project, in a viewport as tall as the whole page (a
-// layout shift only counts where it is on screen), with a tight limit: with no incident to move, the swap has
-// nothing to shift but the 12-13px text of the cards, which the fallback draws narrower than Inter, and it
-// shifted almost nothing before the faces were cut. The limit keeps that from growing.
+// The calm board has no incident to move, so the swap has only the 12-13px text of the cards to shift, which the
+// fallback draws narrower than Inter; it shifted almost nothing before the faces were cut. It is held to a limit
+// just above what the fix leaves (0.0009 at most, on a tablet), which the phone's 0.014 without the fix is over,
+// and measured at a phone's and a tablet's real size (the desktop project also runs 360px and 834px wide, with the
+// heights of a phone and a tablet): a taller viewport divides the score down, so it would loosen the limit.
 const SWAP_LIMIT = 0.1;
-const CALM_SWAP_LIMIT = 0.02;
+const CALM_SWAP_LIMIT = 0.005;
 for (const [name, makeBoard, ready, size, limit] of [
-  ["a calm board", calmBoard, { id: "aws", label: "Operational" }, undefined, SWAP_LIMIT],
+  ["a calm board", calmBoard, { id: "aws", label: "Operational" }, undefined, CALM_SWAP_LIMIT],
   ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }, undefined, SWAP_LIMIT],
   ["the longest hero", longHeroBoard, { id: "aws", label: "Outage" }, undefined, SWAP_LIMIT],
   [
     "a calm board at 360px",
     calmBoard,
     { id: "aws", label: "Operational" },
-    { width: 360, height: 6000 },
+    { width: 360, height: 780 },
     CALM_SWAP_LIMIT,
   ],
   [
     "a calm board at 834px",
     calmBoard,
     { id: "aws", label: "Operational" },
-    { width: 834, height: 6000 },
+    { width: 834, height: 1194 },
     CALM_SWAP_LIMIT,
   ],
 ] as const) {
@@ -4930,11 +4931,24 @@ for (const [name, makeBoard, ready, size, limit] of [
       await route.continue();
     });
     await page.addInitScript(() => {
-      const tracked = window as Window & { __cls?: number; __shifts?: PerformanceObserver };
+      const tracked = window as Window & {
+        __cls?: number;
+        __ignored?: number;
+        __lastInput?: number;
+        __shifts?: PerformanceObserver;
+      };
       tracked.__cls = 0;
+      tracked.__ignored = 0;
+      tracked.__lastInput = 0;
+      // A shift within 500ms of a click or a key press is flagged and dropped from the score; note the last input,
+      // to measure only once that window is over.
+      for (const type of ["pointerdown", "keydown"]) {
+        addEventListener(type, () => (tracked.__lastInput = performance.now()), true);
+      }
       tracked.__shifts = new PerformanceObserver((list) => {
         for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
-          if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+          if (entry.hadRecentInput) tracked.__ignored = (tracked.__ignored ?? 0) + entry.value;
+          else tracked.__cls = (tracked.__cls ?? 0) + entry.value;
         }
       });
       tracked.__shifts.observe({ type: "layout-shift", buffered: true });
@@ -4953,11 +4967,17 @@ for (const [name, makeBoard, ready, size, limit] of [
         () => [...document.fonts].find((face) => face.family.replaceAll('"', "") === "Inter")?.status ?? "missing",
       );
     expect(await interStatus()).toBe("loading");
+    // The click's 500ms window must be over before the swap, or a shift in it would not count and the test would
+    // pass whatever the swap did.
+    await page.waitForFunction(
+      () => performance.now() - ((window as Window & { __lastInput?: number }).__lastInput ?? 0) > 600,
+    );
     // Count only what the swap does: drop what the first draws and the refresh moved.
     await page.evaluate(() => {
-      const tracked = window as Window & { __cls?: number; __shifts?: PerformanceObserver };
+      const tracked = window as Window & { __cls?: number; __ignored?: number; __shifts?: PerformanceObserver };
       tracked.__shifts?.takeRecords();
       tracked.__cls = 0;
+      tracked.__ignored = 0;
     });
     release();
     await page.waitForFunction(
@@ -4969,7 +4989,11 @@ for (const [name, makeBoard, ready, size, limit] of [
       () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
     );
     await page.waitForTimeout(500);
-    const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+    const { shift, ignored } = await page.evaluate(() => {
+      const tracked = window as Window & { __cls?: number; __ignored?: number };
+      return { shift: tracked.__cls ?? 0, ignored: tracked.__ignored ?? 0 };
+    });
+    expect(ignored, "layout shift left out of the score as a reaction to an input").toBe(0);
     expect(shift, "cumulative layout shift of the font swap").toBeLessThan(limit);
   });
 }
