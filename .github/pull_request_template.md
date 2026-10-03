@@ -9,7 +9,7 @@
 ## Checklist
 
 - [ ] Commits follow [Conventional Commits](../CONTRIBUTING.md#commits) (`<type>(<scope>): <imperative summary>`, subject ≤ 72 chars)
-- [ ] `npm run typecheck` and `npm test` pass locally
+- [ ] `pnpm run typecheck` and `pnpm test` pass locally
 - [ ] `./scripts/ci/hygiene.sh` and `./scripts/ci/links.sh` pass locally
 - [ ] README updated in the same commit if vendor coverage or health rules changed
 - [ ] `CHANGELOG.md` has a line under `## [Unreleased]` if the change is user-visible

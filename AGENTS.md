@@ -6,7 +6,7 @@ Instructions for AI coding and review agents working in this repository. Humans 
 
 Status Page is a public status board at [status.szolotov.com](https://status.szolotov.com) (the `stage` branch is previewed at [stage.status.szolotov.com](https://stage.status.szolotov.com)). It reads each vendor's own official status source and puts the answers on one page. Its rules, from [the README](README.md#why-status-page): official sources or nothing, no data beats a guess, zero setup (no API keys, accounts or environment variables), and the vendor has the last word (every card links to the vendor's page).
 
-Stack: TanStack Start (React 19), Tailwind CSS v4, strict TypeScript, Vitest, Playwright with axe, Biome. It runs on Cloudflare Workers (`wrangler.jsonc`, one Worker named `status-page`) and on plain Node via `npm run build` / `npm run preview`.
+Stack: TanStack Start (React 19), Tailwind CSS v4, strict TypeScript, Vitest, Playwright with axe, Biome. It runs on Cloudflare Workers (`wrangler.jsonc`, one Worker named `status-page`) and on plain Node via `pnpm run build` / `pnpm run preview`.
 
 How data flows:
 
@@ -17,7 +17,7 @@ How data flows:
 
 The **catalog** (`src/lib/status/catalog.ts`) lists every service: id, name, category (cloud, gaming, platforms, ai, updates), source name and source URL. The README table [What it watches](README.md#what-it-watches) is the public contract: a source not listed there is not read. Four "Releases" entries (MikroTik RouterOS, Apple OS, Windows 11, Android releases) track versions, not incidents.
 
-**Release feeds.** Six status cards (AWS, Google Cloud, Azure, GitHub, GitLab, CS2 Europe) also carry a `releaseFeed`: the vendor's own release or changelog feed, read by `src/lib/status/release-feeds.server.ts` only after the health sweep has settled (never beside it: a Worker has six connection slots) and never waited for (cached 30 minutes per isolate; a feed read after a board joins the next) and attached in `collect-board.ts`. It is advisory: it must never change health, the verdict, counts, the change feed or the API, and a feed that fails is logged (`release_feed_failed`) and leaves the card with no line. `npm run source-health` probes each feed apart.
+**Release feeds.** Six status cards (AWS, Google Cloud, Azure, GitHub, GitLab, CS2 Europe) also carry a `releaseFeed`: the vendor's own release or changelog feed, read by `src/lib/status/release-feeds.server.ts` only after the health sweep has settled (never beside it: a Worker has six connection slots) and never waited for (cached 30 minutes per isolate; a feed read after a board joins the next) and attached in `collect-board.ts`. It is advisory: it must never change health, the verdict, counts, the change feed or the API, and a feed that fails is logged (`release_feed_failed`) and leaves the card with no line. `pnpm run source-health` probes each feed apart.
 
 **History and feed.** There is no persistent 30-day history: `/api/history.json` returns an empty but schema-compatible document, and the history strip in the UI is built only when `VITE_STATUS_HISTORY=1` (CI runs it as a separate `browser tests (history build)` job, tests tagged `@history`). The "recent changes" list comes from diffing consecutive snapshots in the browser (`pulse.ts`, `diff.ts`); `/feed.xml` entry ids are stable per service, health and incident.
 
@@ -38,39 +38,39 @@ The **catalog** (`src/lib/status/catalog.ts`) lists every service: id, name, cat
 | `scripts/release/` | Version bump and changelog merge for releases |
 | `.github/workflows/` | every workflow; [overview](.github/workflows/README.md) |
 | `docs/` | Commit and README conventions ([git-and-readme.md](docs/git-and-readme.md)) |
-| `tools/npm/` | Lockfile that pins the npm CLI by hash |
+| `pnpm-workspace.yaml` | pnpm settings: which dependency build scripts may run, and the trust policy |
 | `CHANGELOG.md`, `SECURITY.md` | Release notes (see below) and the security policy |
 
 ## Setup and commands
 
-Node 22.22.2 (`.nvmrc`; `engines` also allows `^24.15.0`) and npm 12.1.0 (`packageManager` in `package.json`). CI installs that exact npm from the hash-locked `tools/npm` with `scripts/ci/npm-pin.sh` ([why](CONTRIBUTING.md#dependencies)):
+Node 22.22.2 (`.nvmrc`; `engines` also allows `^24.15.0`) and pnpm 12.8.1 (`packageManager` in `package.json`, with the sha512 that Corepack verifies the download against). CI installs that exact pnpm through Corepack with `scripts/ci/pnpm-pin.sh` ([why](CONTRIBUTING.md#dependencies)):
 
 ```bash
-./scripts/ci/npm-pin.sh install                       # installs the pinned npm into tools/npm
-export PATH="$PWD/tools/npm/node_modules/.bin:$PATH"  # the line it prints; CI does this itself
-./scripts/ci/npm-pin.sh verify                        # npm on PATH is the pinned 12.1.0
-npm ci
+./scripts/ci/pnpm-pin.sh install                      # Corepack fetches the pinned pnpm into a shim directory
+export PATH="<the directory it prints>:$PATH"         # CI does this itself; `corepack enable pnpm` also works locally
+./scripts/ci/pnpm-pin.sh verify                       # pnpm on PATH is the pinned 12.8.1
+pnpm install --frozen-lockfile
 ```
 
-For local browser tests install the browsers once (`npx playwright install chromium webkit`, see [CONTRIBUTING.md#ci](CONTRIBUTING.md#ci)). An agent in a sandbox that has no browsers, or cannot download them, should not try to install them: run the other checks and say which e2e projects were skipped.
+For local browser tests install the browsers once (`pnpm exec playwright install chromium webkit`, see [CONTRIBUTING.md#ci](CONTRIBUTING.md#ci)). An agent in a sandbox that has no browsers, or cannot download them, should not try to install them: run the other checks and say which e2e projects were skipped.
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Dev server with hot reload |
-| `npm run build` / `npm run preview` | Production build into `dist/`, and a local server for it on `127.0.0.1:4173` |
-| `npm run build:cf` / `npm run preview:cf` / `npm run deploy:dry-run` | The Cloudflare Worker build, run in workerd, and a dry-run deploy ([details](CONTRIBUTING.md#locally)) |
-| `npm run typecheck` | `tsc --noEmit` (strict, no unused locals or parameters) |
-| `npm run lint` / `npm run lint:fix` | Biome check (lint, format, import order) / apply fixes. CI runs `npx biome ci .` |
-| `npm test` | Vitest, fully offline (`TZ` is pinned to UTC in `vitest.config.ts`) |
-| `npm run test:coverage` | Same with coverage thresholds from `vitest.config.ts` |
-| `npm run test:e2e` | Playwright against the built preview; run `npm run build` first |
-| `npm run check` | `lint`, `typecheck`, `test`, `hygiene.sh` and `links.sh` in one go |
-| `npm run source-health` | The only command that probes the real vendors on purpose, to check the sources; do not run it from tests or as part of a review |
+| `pnpm run dev` | Dev server with hot reload |
+| `pnpm run build` / `pnpm run preview` | Production build into `dist/`, and a local server for it on `127.0.0.1:4173` |
+| `pnpm run build:cf` / `pnpm run preview:cf` / `pnpm run deploy:dry-run` | The Cloudflare Worker build, run in workerd, and a dry-run deploy ([details](CONTRIBUTING.md#locally)) |
+| `pnpm run typecheck` | `tsc6 --noEmit` (strict, no unused locals or parameters; `tsc6` is the command `@typescript/typescript6` ships) |
+| `pnpm run lint` / `pnpm run lint:fix` | Biome check (lint, format, import order) / apply fixes. CI runs `pnpm exec biome ci .` |
+| `pnpm test` | Vitest, fully offline (`TZ` is pinned to UTC in `vitest.config.ts`) |
+| `pnpm run test:coverage` | Same with coverage thresholds from `vitest.config.ts` |
+| `pnpm run test:e2e` | Playwright against the built preview; run `pnpm run build` first |
+| `pnpm run check` | `lint`, `typecheck`, `test`, `hygiene.sh` and `links.sh` in one go |
+| `pnpm run source-health` | The only command that probes the real vendors on purpose, to check the sources; do not run it from tests or as part of a review |
 
 **Browser tests** (`playwright.config.ts`):
 
 - Six projects: `desktop` and `mobile` (Chromium), `tablet` (Chromium at iPad size, runs only the search reveal and floating-bar tests), and the WebKit projects `Desktop Safari`, `iPhone 17 Pro` and `iPad Pro 11`.
-- Pick some with `--project`, for example `npm run test:e2e -- --project=desktop`.
+- Pick some with `--project`, for example `pnpm run test:e2e --project=desktop`.
 - CI runs Chromium on the runner and the three WebKit projects as separate shards inside Playwright's container image (pinned by digest in `ci.yml`), because WebKit's system libraries are slow to fetch. WebKit on a bare Linux machine needs those libraries ([CONTRIBUTING.md#ci](CONTRIBUTING.md#ci)).
 - When `@playwright/test` moves, the image tag and digest in `ci.yml` move with it.
 
@@ -84,8 +84,8 @@ For local browser tests install the browsers once (`npx playwright install chrom
 ./scripts/ci/commits.sh --subject "feat: add a feed"             # one subject, as the PR title check runs it
 ./scripts/ci/branch.sh "$(git branch --show-current)" stage      # branch name and base, as CI checks them
 ./scripts/ci/release-notes.sh                                    # the CHANGELOG section for the package.json version must exist
-./scripts/ci/npm-pin.sh check                                    # packageManager, tools/npm and its lockfile agree
-./scripts/ci/smoke.sh http://127.0.0.1:4173                      # after `npm run preview`: the smoke test CI and deploy run
+./scripts/ci/pnpm-pin.sh check                                   # packageManager, its sha512 and pnpm-lock.yaml agree
+./scripts/ci/smoke.sh http://127.0.0.1:4173                      # after `pnpm run preview`: the smoke test CI and deploy run
 ```
 
 CI also runs `shellcheck scripts/ci/*.sh scripts/release/*.sh`, actionlint and zizmor on the workflows, CodeQL, and dependency review. Run them if you touch shell scripts or workflows and the tools are installed.
@@ -134,12 +134,12 @@ The full list is [CONTRIBUTING.md#code-style](CONTRIBUTING.md#code-style) and [#
 **Tests**
 - Unit tests are offline: route `fetch` through `src/test/stub-fetch.ts` and read payloads from `__fixtures__`; unrouted URLs answer 404, never the network. Pin the clock (`vi.useFakeTimers` / `vi.setSystemTime`) for anything with a window such as the 14-day rules; `TZ` is UTC.
 - E2E tests run against the built preview, which reads live vendors on the server, so they assert only what holds whatever the vendors say (page, accessibility, keyboard, URL state). For a specific state, serve a fixture board with `e2e/fixture-board.ts` instead of depending on a vendor. `playwright.config.ts` pins `UTC` and `en-GB`, forbids `test.only` in CI and allows no retries: a test that needs a retry is hiding a bug.
-- Unit tests never reach the network. E2E reaches the vendors only indirectly, through the preview server, which is why it asserts only vendor-independent things or uses `e2e/fixture-board.ts`. Only `npm run source-health` and `source-health.yml` probe the vendors on purpose, to check the sources themselves.
+- Unit tests never reach the network. E2E reaches the vendors only indirectly, through the preview server, which is why it asserts only vendor-independent things or uses `e2e/fixture-board.ts`. Only `pnpm run source-health` and `source-health.yml` probe the vendors on purpose, to check the sources themselves.
 
 **Security and supply chain**
 - No secrets, `.env` files or credentials in the repo (the board needs none). The Cloudflare token is an environment secret reachable only by the `deploy.yml` job for `stage` and `main`; pull request code never runs with it ([how it is kept safe](CONTRIBUTING.md#deploying)).
 - Every response gets the security headers from `src/lib/security-headers.ts` (CSP allowing only this origin and forbidding framing, HSTS, nosniff, referrer and permissions policies; `'unsafe-inline'` for scripts and styles is deliberate, for hydration, and the CSP is off in dev: neither is a finding). Do not loosen them without a reason in the PR.
-- Dependencies are pinned to exact versions. Add a runtime dependency only with a stated reason; the app has few on purpose. npm 12 blocks install scripts unless `allowScripts` in `package.json` allows them (`npm install-scripts approve <pkg>` or `deny <pkg>`). Dependabot waits out a cooldown; do not bypass it. See [CONTRIBUTING.md#dependencies](CONTRIBUTING.md#dependencies).
+- Dependencies are pinned to exact versions. Add a runtime dependency only with a stated reason; the app has few on purpose. pnpm 12 blocks dependency install scripts unless `allowBuilds` in `pnpm-workspace.yaml` allows them (list a package there as `true` or `false` when `pnpm install` reports its script as ignored). Dependabot waits out a cooldown; do not bypass it. See [CONTRIBUTING.md#dependencies](CONTRIBUTING.md#dependencies).
 - GitHub Actions are pinned to a full commit SHA with the version in a trailing comment; workflows default to read-only tokens (`permissions: contents: read`) and request more per job. There is no `pull_request_target`; the one `workflow_run` (`ci-triage.yml`) never checks out or runs pull request code. A deliberate zizmor exception carries a `# zizmor: ignore[<audit>]` comment with its reason.
 
 **UI**
@@ -171,7 +171,7 @@ Applies to any agent asked to review a change here. Read [CONTRIBUTING.md](CONTR
    - ReDoS and unbounded parsing: nested quantifiers, backtracking on vendor text, loops over unbounded input, a missing `redos.test.ts` case.
    - Secrets: credentials, tokens or `.env` content in code, tests, fixtures or logs.
    - Headers and CSP loosened in `security-headers.ts` or `src/start.ts` (the deliberate `'unsafe-inline'` and the dev-only CSP omission are not findings).
-4. **Supply chain and workflows.** Unpinned or caret-ranged dependencies, a new runtime dependency without a reason, a changed `allowScripts`, a lockfile that does not match `package.json`, a changed npm pin that `npm-pin.sh check` would reject, an Action not pinned to a full SHA, broader workflow `permissions`, a new `pull_request_target` or `workflow_run`, or one that checks out or runs PR code, secrets exposed to pull request code, a deploy path that runs project code beside the token. Changes under `.github/`, `scripts/` and `wrangler.jsonc` are code-owner paths: read them line by line.
+4. **Supply chain and workflows.** Unpinned or caret-ranged dependencies, a new runtime dependency without a reason, a changed `allowBuilds` or `trustPolicyExclude`, a lockfile that does not match `package.json`, a changed pnpm pin that `pnpm-pin.sh check` would reject, an Action not pinned to a full SHA, broader workflow `permissions`, a new `pull_request_target` or `workflow_run`, or one that checks out or runs PR code, secrets exposed to pull request code, a deploy path that runs project code beside the token. Changes under `.github/`, `scripts/` and `wrangler.jsonc` are code-owner paths: read them line by line.
 5. **Data-source policy.** An unofficial or non-machine-readable source, a service missing from the README table, or an HTML source beyond the documented exceptions (Windows, Android).
 6. **Tests.** New behaviour without a test; a collector test without a malformed-payload case; a unit test that reaches the network or an e2e assertion that depends on a live vendor's state; time-dependent tests without a pinned clock or with a zone-dependent expectation; a skipped, `only`, loosened or deleted test; a lowered coverage threshold in `vitest.config.ts`.
 7. **Accessibility.** Lost labels or `sr-only` text, contrast below 4.5:1 on a material, focus or keyboard regressions, motion without a reduced-motion path, anything that conveys state by colour alone.
@@ -205,9 +205,9 @@ A fix agent works on its own branch and opens its own pull request.
 Before you push, all of these pass locally on the branch:
 
 ```bash
-npm run typecheck
-npx biome ci .
-npm test
+pnpm run typecheck
+pnpm exec biome ci .
+pnpm test
 ./scripts/ci/hygiene.sh
 ./scripts/ci/tokens.sh
 ./scripts/ci/links.sh
@@ -215,6 +215,6 @@ npm test
 ./scripts/ci/branch.sh "$(git branch --show-current)" stage
 ```
 
-`npm run check` covers lint, typecheck, tests, hygiene and links. Also run `npm run test:coverage` if you changed logic, and `npm run build && npm run test:e2e -- --project=desktop` (plus a WebKit project when the change touches layout, motion or touch) if you changed the UI and the browsers are available. `release-notes.sh` and `npm-pin.sh check` if you touched `package.json` or `tools/npm`. Shell script changes: `shellcheck`. Workflow changes: actionlint and zizmor.
+`pnpm run check` covers lint, typecheck, tests, hygiene and links. Also run `pnpm run test:coverage` if you changed logic, and `pnpm run build && pnpm run test:e2e --project=desktop` (plus a WebKit project when the change touches layout, motion or touch) if you changed the UI and the browsers are available. `release-notes.sh` and `pnpm-pin.sh check` if you touched `package.json` or `pnpm-lock.yaml`. Shell script changes: `shellcheck`. Workflow changes: actionlint and zizmor.
 
 Then the pull request into `stage` has every CI job green. **`CI OK`** is the one aggregate check that sums up `lint`, `typecheck`, `test`, `build`, the browser shards, `browser tests (history build)`, `commit messages`, `branch name` and `workflow lint`; `pull request title`, CodeQL (`analyze (javascript-typescript)`, `analyze (actions)`) and `dependency-review` are separate required checks ([branch protection](CONTRIBUTING.md#branch-protection)). A red check is fixed in code, never by weakening the check.
