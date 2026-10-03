@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -126,6 +126,29 @@ describe("push.sh", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("::error::push to main failed for a reason other than a ruleset or a newer push");
     expect(result.output).not.toContain("GitHub Actions");
+  });
+
+  it("exits 0 when the server applied the push but the client saw an error", () => {
+    const planned = git(work, "rev-parse", "HEAD");
+    const next = commit(work, "chore(release): 0.6.0");
+    // A git that pushes for real and then reports a failure, like a dropped connection.
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const realGit = execFileSync("sh", ["-c", "command -v git"], PIPE).trim();
+    const wrapper = join(bin, "git");
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\n"${realGit}" "$@"\nstatus=$?\n[ "$1" = push ] && [ "$status" = 0 ] && { echo "fatal: the remote end hung up unexpectedly" >&2; exit 128; }\nexit $status\n`,
+    );
+    chmodSync(wrapper, 0o755);
+    const result = spawnSync(PUSH, ["main", planned], {
+      cwd: work,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("reported an error but landed");
+    expect(git(remote, "rev-parse", "main")).toBe(next);
   });
 
   it("fails when the remote cannot be asked again, rather than guess", () => {
@@ -266,6 +289,21 @@ describe("release.yml: merge main into stage and dev", () => {
     const result = run();
     expect(result.status).toBe(0);
     expect(result.output).toContain("::notice::no dev branch; nothing to sync");
+  });
+
+  it("runs main's push.sh, never the one a branch carries", () => {
+    seedBranches(true);
+    const marker = join(root, "branch-script-ran");
+    const stageClone = clone("stageclone");
+    git(stageClone, "switch", "--quiet", "stage");
+    writeFileSync(join(stageClone, "scripts/release/push.sh"), `#!/usr/bin/env bash\ntouch "${marker}"\nexit 0\n`);
+    git(stageClone, "commit", "--quiet", "-am", "ci: tamper with push.sh");
+    git(stageClone, "push", "--quiet", "origin", "stage");
+    git(work, "fetch", "--quiet", "origin");
+    const result = run();
+    expect(result.status).toBe(0);
+    expect(existsSync(marker)).toBe(false);
+    expect(containsMain("stage")).toBe(true);
   });
 
   it("fails at once with the ruleset cause when a push is rejected, without calling it moved", () => {

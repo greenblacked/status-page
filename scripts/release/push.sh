@@ -3,7 +3,8 @@
 # Usage: push.sh <branch> <expected-sha>
 #   <expected-sha> is the tip of <branch> the work was planned from.
 # Exit status:
-#   0   pushed
+#   0   pushed (including a push that reported an error but landed: the
+#       remote tip is the commit that was pushed)
 #   10  the push failed because the remote branch really moved: its tip is no
 #       longer <expected-sha>. The caller decides whether that is benign.
 #   1   the push failed and the branch did NOT move (a ruleset rejection such
@@ -29,6 +30,12 @@ if [ "$looked" != 0 ]; then
   exit 1
 fi
 tip="${tip%%[[:space:]]*}"
+# The server may have applied the push although the client saw an error (a
+# dropped connection after the ref update): the branch is at what we sent.
+if [ -n "$tip" ] && [ "$tip" = "$(git rev-parse HEAD)" ]; then
+  echo "::notice::push to $branch reported an error but landed" >&2
+  exit 0
+fi
 if [ -n "$tip" ] && [ "$tip" != "$expected" ]; then
   exit 10
 fi

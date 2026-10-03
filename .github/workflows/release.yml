@@ -563,6 +563,11 @@ jobs:
           # main's copy: a branch's own may predate it.
           merge_changelog="$RUNNER_TEMP/merge-changelog.sh"
           cp scripts/release/merge-changelog.sh "$merge_changelog"
+          # push.sh (and the explain-failure.sh it runs, found next to it)
+          # runs with this job's write token, so it too comes from main, never
+          # from the branch checked out below.
+          mkdir -p "$RUNNER_TEMP/release"
+          cp scripts/release/push.sh scripts/release/explain-failure.sh "$RUNNER_TEMP/release/"
 
           # stage first, then dev. A problem that stops one branch does not
           # stop the other, but fails the job at the end. The script runs under
@@ -635,7 +640,7 @@ jobs:
               # ruleset or the token rejects fails the job at once, with the
               # cause, instead of looping and calling it "moved".
               pushed=0
-              ./scripts/release/push.sh "$branch" "$(git rev-parse "origin/$branch")" || pushed=$?
+              "$RUNNER_TEMP/release/push.sh" "$branch" "$(git rev-parse "origin/$branch")" || pushed=$?
               if [ "$pushed" = 0 ]; then
                 if [ "$branch" = stage ]; then
                   echo "stage_pushed=true" >>"$GITHUB_OUTPUT"
