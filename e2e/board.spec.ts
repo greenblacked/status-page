@@ -4878,9 +4878,9 @@ async function drawnFonts(page: Page, selector: string): Promise<string[]> {
 // draws in Inter from the first paint. The page is a phone, a tablet and a desktop in turn, over a board with no
 // line to move (calm), the plain fixture and the longest hero (the most lines on a phone).
 //
-// A shift of "none" is under 0.0001: a relative time that ticks over while the test waits ("since 4 min") moves its
-// chip by 0.00002, and a swap to Inter (font-display: swap) moves these boards by 0.0014 to 0.0023.
-const NO_SHIFT = 0.0001;
+// A shift of "none" is under 0.0005: a relative time that ticks over while the test waits ("since 4 min") moves its
+// chip by 0.00002 to 0.00012, and a swap to Inter (font-display: swap) moves these boards by 0.0013 to 0.0023.
+const NO_SHIFT = 0.0005;
 const FONT_BOARDS = [
   ["a calm board", calmBoard, { id: "aws", label: "Operational" }],
   ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }],
