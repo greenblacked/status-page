@@ -14,9 +14,17 @@ export type SegmentedOption<T extends string> = {
  * inset fill, the pressed option lifts to the card with a hairline. A group of
  * buttons with aria-pressed rather than a radio group, so it keeps the tab
  * stops and the names the board's other filters have. On a phone the track
- * scrolls sideways instead of wrapping. From lg up the segments are 4px
+ * scrolls sideways instead of wrapping. From lg up the segments are 8px
  * narrower: the desktop filter row is a fixed 696px, and with the toggles'
- * counts (Issues only 12, Starred 11) it must still hold on one line.
+ * counts (Issues only 12, Starred 11) it must still hold on one line, in
+ * Inter (which is wider than the fallback face here, by about 14px) and in
+ * the fallback alike. The row does not wrap there (it is nowrap), so a face
+ * wider still scrolls the segments by the difference instead of dropping the
+ * toggles below them. The trade-off: the track has no scrollbar, so on that
+ * overflow the last options are cut off with no cue (a mouse reaches them with
+ * shift+wheel or Tab). The row is sized to fit in both faces, and the e2e test
+ * asserts every option is visible there; only a wider face than either would
+ * clip.
  */
 export function Segmented<T extends string>({
   label,
@@ -51,7 +59,7 @@ export function Segmented<T extends string>({
             aria-pressed={pressed}
             onClick={() => onChange(option.value)}
             className={cn(
-              "focus-ring pressable flex min-h-8 shrink-0 items-center gap-1.5 rounded-thumb px-2.5 text-caption lg:px-2 pointer-coarse:min-h-11 pointer-coarse:min-w-11 justify-center",
+              "focus-ring pressable flex min-h-8 shrink-0 items-center gap-1.5 rounded-thumb px-2.5 text-caption lg:px-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 justify-center",
               pressed
                 ? "bg-card font-semibold text-fg shadow-[inset_0_0_0_var(--hair)_var(--color-hairline)]"
                 : "text-muted hover:text-fg",

@@ -79,17 +79,3 @@ jobs:
         with:
           fail-on-severity: high
           fail-on-scopes: runtime, development, unknown
-          # Owner-approved exception, and the only one: three advisories in
-          # dependencies that the npm CLI bundles inside itself (brace-expansion
-          # 5.0.9: GHSA-qhr7-859c-m2p7 and GHSA-6j4f-fj2g-mc7p; undici 6.28.0:
-          # GHSA-rfgv-xxqx-mfg5). They appear only because tools/npm/package-lock.json
-          # pins npm 12.1.0 by hash, and that lockfile lists the bundled copies.
-          # That npm runs in CI only and never ships to users; the same code ran
-          # before through `npm install -g`, where nothing scanned it. Every
-          # published npm (11.19.1, 11.20.0, 12.1.0) bundles these same versions,
-          # so bumping the pin does not clear them.
-          # allow-ghsas matches by advisory ID, not by path: keep this list to
-          # exactly these three (scripts/ci/npm-pin.test.ts fails if it grows).
-          # Remove when npm bundles brace-expansion >=5.0.12 and undici >=6.28.1.
-          # Review by 2026-12-31. The Trivy side (.trivyignore.yaml) expires that day.
-          allow-ghsas: GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p, GHSA-rfgv-xxqx-mfg5

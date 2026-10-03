@@ -17,7 +17,7 @@ export default defineConfig({
     // Browser tests live in e2e/ and run under Playwright, not here.
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
     env: { TZ: "UTC" },
-    // `npm run test:coverage`. The thresholds sit just under the current
+    // `pnpm run test:coverage`. The thresholds sit just under the current
     // numbers, so coverage can only go up: raise them when it does.
     coverage: {
       provider: "v8",

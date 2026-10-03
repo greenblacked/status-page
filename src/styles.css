@@ -22,46 +22,137 @@
 /*
   Inter, the face for devices that have no system face of their own. The
   stack (below) puts SF first, so an Apple device never fetches it, and there
-  is deliberately no <link rel="preload">. Until it arrives the text is drawn
-  in a fallback resized to Inter's metrics, so the swap moves almost nothing:
+  is deliberately no <link rel="preload">.
+
+  The approach: the page never changes face under the reader. Inter is
+  font-display: optional, so a page view that does not have Inter ready in time
+  is drawn in the fallback and keeps it to the end; Inter is still fetched and
+  cached. There is no swap, so nothing re-wraps and the service links in the
+  headline never jump. The price is a visit that reads the page in the system
+  face, which is the same words in a slightly different type.
+
+  What "in time" means depends on the engine. Chromium (Android, Windows,
+  Linux, ChromeOS) uses an optional font that was not preloaded only if it is
+  ready when the page starts to render, which in practice means one already in
+  the cache: a first visit there is normally drawn in the fallback, however
+  fast the connection. Firefox and WebKit give the font a short block period
+  (about 100ms) first. A return visit draws in Inter only if the browser can
+  use its copy without asking the server: a copy that has to be revalidated
+  (Cloudflare answers a file with no rule of its own with "max-age=0,
+  must-revalidate") comes too late, in a new browser session every time. So
+  the fonts are built into /assets/ with a content hash in the name, and
+  public/_headers marks that folder immutable for a year (e2e/font-cache.spec.ts
+  checks both). Even then the copy comes off the disk, and most return visits
+  win that race and a few do not. A preload would make Chromium wait for the
+  font (up to about 100ms) and win it more often, at the price of Apple
+  devices fetching a font they never draw in; that is left as it is until it is
+  decided. The hand below is optional for the same reason: "all quiet" sits on
+  the headline's last line, and a swap would move it.
+
   "Inter Fallback" is Arial (Windows, macOS) or its metric twins Liberation
   Sans and Arimo (most Linux, ChromeOS), "Inter Fallback Roboto" is Roboto
   (Android). local() needs the font's own name: fontconfig's Arial-to-Liberation
   substitution does not count, so each name is listed. A system with none of
-  them falls to system-ui, and the swap then reflows the page once.
+  them falls to system-ui, drawn at its own size.
+
+  One size-adjust per family, regular and bold alike, chosen so the type looks
+  like Inter's and not to make the lines wrap at the same words (nothing swaps
+  now, so there is no wrap to preserve). size-adjust scales the glyphs with the
+  advances, so a value picked for width alone (an earlier version used 107.1%
+  for lowercase, 98.9% for capitals and 94.7% for digits) draws lowercase
+  4% taller than Inter's, capitals 6.5% shorter and digits 10% shorter. Inter's
+  x-height is 0.544 em and its cap height 0.728 em (opsz 15); Liberation Sans
+  and Arial are 0.528 and 0.688, Roboto 0.528 and 0.711. The value is the mean
+  of the two ratios, so the x-height and the cap height are off by about the
+  same amount in opposite directions:
+    Arial / Liberation / Arimo: 104.4% (ratios 1.030 and 1.058): x +1.4%, cap -1.3%
+    Roboto: 102.7% (ratios 1.030 and 1.023): x -0.3%, cap +0.4%
+  Measured with fontTools on src/fonts/inter-var.woff2 (instanced at weight
+  400 and 620, opsz 15), Liberation Sans 2.1 and @fontsource/roboto 5.3.0
+  (latin, static 400 and 700; Android 12 and later ships the same Roboto
+  design as one variable file), over the 300-odd strings the board can draw.
+  The widths land close: the average advance of the fallback is within 1% of
+  Inter's for Arial's regular (-0.9%), +3.1% for its bold (Inter's semibold is
+  narrower than Arial Bold), and -3.5% and -4.4% for Roboto's regular and bold.
+  Only the headline (34px and 56px) differs more, because Inter's opsz axis
+  narrows it there: Arial Bold at 104.4% is about 9% wider than Inter's display
+  cut. That line wraps differently in the fallback than in Inter, which is why
+  the face must not change mid-view; across views it does not matter. Its type
+  is also taller in the x-height than Inter's display cut (opsz 32, weight 640:
+  x-height 0.516 em, cap height 0.728 em): Arial or Liberation Bold at 104.4%
+  by 7.0% (cap height -1.3%), Roboto Bold at 102.7% by 5.2% (cap height +0.4%).
+  That is accepted: one size-adjust per family, with no separate face for the
+  display sizes.
+
+  ascent-override and descent-override are Inter's own (1984 and 494 of 2048
+  units, which is 96.875% and 24.12%) divided by the family's size-adjust,
+  because the overrides are scaled by it; line-gap-override is Inter's 0. That
+  keeps the line box and the baseline where Inter puts them.
+
+  The bold face (weights 600-900; the text sizes at 570-640 take it) is its
+  own face, because a synthesised bold keeps the regular's widths. It ends with
+  the regular names. A browser does not fall back to a family's regular face
+  when the bold one it picked fails to load; it leaves the family, and the text
+  would be drawn in system-ui at its own size. Android 12 and later ships
+  Roboto as one variable file (Roboto-Regular.ttf, no face named "Roboto
+  Bold"), which takes weights 600-900 itself, so the last names are what make
+  the bold face load there. Where only a static regular file exists the text is
+  drawn unbolded.
 */
 @font-face {
   font-family: "Inter";
-  src: url("/fonts/inter-var.woff2") format("woff2");
+  src: url("./fonts/inter-var.woff2") format("woff2");
   font-weight: 400 700;
   font-style: normal;
-  font-display: swap;
+  font-display: optional;
 }
 
 @font-face {
   font-family: "Inter Fallback";
   src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans"), local("Arimo");
-  size-adjust: 107.4%;
-  ascent-override: 90.2%;
-  descent-override: 22.48%;
+  font-weight: 100 500;
+  size-adjust: 104.4%;
+  ascent-override: 92.79%;
+  descent-override: 23.1%;
   line-gap-override: 0%;
 }
 
-/* Roboto is narrower than Arial and its lines are shaped differently, so it gets its own numbers. */
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial Bold"), local("Arial-BoldMT"), local("Liberation Sans Bold"), local("LiberationSans-Bold"), local("Arimo Bold"), local("Arimo-Bold"),
+    local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans"), local("Arimo");
+  font-weight: 600 900;
+  size-adjust: 104.4%;
+  ascent-override: 92.79%;
+  descent-override: 23.1%;
+  line-gap-override: 0%;
+}
+
 @font-face {
   font-family: "Inter Fallback Roboto";
   src: local("Roboto"), local("Roboto Regular"), local("Roboto-Regular");
-  size-adjust: 105.8%;
-  ascent-override: 91.6%;
-  descent-override: 22.8%;
+  font-weight: 100 500;
+  size-adjust: 102.7%;
+  ascent-override: 94.33%;
+  descent-override: 23.49%;
   line-gap-override: 0%;
 }
 
-/* The hand: the signature only ("all quiet"), never body text or a control. */
+@font-face {
+  font-family: "Inter Fallback Roboto";
+  src: local("Roboto Bold"), local("Roboto-Bold"), local("Roboto"), local("Roboto Regular"), local("Roboto-Regular");
+  font-weight: 600 900;
+  size-adjust: 102.7%;
+  ascent-override: 94.33%;
+  descent-override: 23.49%;
+  line-gap-override: 0%;
+}
+
+/* The hand: the signature only ("all quiet"), never body text or a control. Optional, like Inter: it is drawn inline on the headline's last line, so a late swap would move it. */
 @font-face {
   font-family: "Hand";
-  src: url("/fonts/hand.woff2") format("woff2");
-  font-display: swap;
+  src: url("./fonts/hand.woff2") format("woff2");
+  font-display: optional;
 }
 
 /*

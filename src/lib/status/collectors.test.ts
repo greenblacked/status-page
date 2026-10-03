@@ -2,12 +2,14 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bytes, type Handler, json, networkError, stubFetch, text, utf16 } from "../../test/stub-fetch.ts";
 import { CATALOG } from "./catalog.ts";
+import { assembleBoard } from "./collect-board.ts";
+import { diffBoards, releaseChange } from "./diff.ts";
 import { MAX_BODY_BYTES } from "./http.ts";
 import {
-  clearMikrotikNotesCache,
   collectAllServices,
   MAX_NESTED_ROWS,
   MAX_RSS_ITEMS,
+  MAX_RSS_SCANNED,
   MAX_SCANNED_ROWS,
 } from "./sources.server.ts";
 import type { ServiceId, ServiceSnapshot } from "./types.ts";
@@ -110,8 +112,6 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     // instead of the real global fetch reaching out to the network.
     stubFetch({});
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    // The collector remembers the changelogs it read; a test serves its own.
-    clearMikrotikNotesCache();
   });
 
   afterEach(() => {
@@ -1724,28 +1724,39 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     const azureItem = (i: number) =>
       `<item><title>Outage ${i}</title><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
 
-    it("Azure: a dense feed of 40,000 dated items is scanned to the bound and keeps MAX_RSS_ITEMS", async () => {
+    it("Azure: a dense feed past the scan bound is unknown with a parser failure, never an all-clear", async () => {
       const xml = `<rss><channel>${Array.from({ length: 40_000 }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
       stubFetch({ [URLS.azure]: raw(xml) });
       const started = performance.now();
       const azure = await collect("azure");
       expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
+      expect(azure.health).toBe("unknown");
+      expect(azure.failure).toEqual({
+        kind: "parser",
+        message: `RSS feed has more than ${MAX_RSS_SCANNED} items.`,
+      });
+      expect(azure.incidents).toEqual([]);
+    });
+
+    it("Azure: a feed of exactly the scan bound is read, and keeps MAX_RSS_ITEMS", async () => {
+      const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, i) => azureItem(i)).join("")}</channel></rss>`;
+      stubFetch({ [URLS.azure]: raw(xml) });
+      const azure = await collect("azure");
       expect(azure.failure).toBeUndefined();
       expect(azure.incidents).toHaveLength(50);
       expect(azure.incidentCount).toBe(MAX_RSS_ITEMS);
     });
 
-    it("Azure: items past the scan bound are not read, however many empty ones come first", async () => {
-      const dated = Array.from({ length: 15_000 }, (_, i) => azureItem(i)).join("");
-      const xml = `<rss><channel>${"<item></item>".repeat(200_000)}${dated}</channel></rss>`;
-      stubFetch({ [URLS.azure]: raw(xml) });
-      const started = performance.now();
-      const azure = await collect("azure");
-      expect(performance.now() - started).toBeLessThan(DENSE_BUDGET_MS);
-      // The empty items are read and none has a date; had the dated ones past the bound been read, one would have.
-      expect(azure.health).toBe("unknown");
-      expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
-      expect(azure.incidents).toEqual([]);
+    it("Grok: an oldest-first feed with its current outage past the scan bound is unknown, not operational", async () => {
+      const old = (i: number) =>
+        `<item><title>Old ${i}</title><description>Status: Resolved</description><pubDate>Sun, 01 Mar 2026 10:00:00 GMT</pubDate></item>`;
+      const current = `<item><title>Major outage</title><description>Major outage</description><pubDate>Sun, 20 Sep 2026 10:00:00 GMT</pubDate></item>`;
+      const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, i) => old(i)).join("")}${current}</channel></rss>`;
+      stubFetch({ [URLS.grok]: raw(xml) });
+      const grok = await collect("grok");
+      expect(grok.health).toBe("unknown");
+      expect(grok.failure?.kind).toBe("parser");
+      expect(grok.incidents).toEqual([]);
     });
 
     it("Azure: an Atom document (feed-malformed.xml) is unknown with a parser failure", async () => {
@@ -1830,28 +1841,91 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.incidents).toEqual([]);
     });
 
-    it("Azure feed.xml: maintenance is maintenance, and an item without a date or with a foreign link is handled", async () => {
-      const item = (title: string, extra: string) =>
-        `<item><title>${title}</title>${extra}<description>Impact.</description></item>`;
-      stubFetch({
-        [URLS.azure]: text(
-          '<rss version="2.0"><channel>' +
-            item(
-              "Planned maintenance - Key Vault",
-              "<pubDate>Sun, 20 Sep 2026 08:00:00 GMT</pubDate><link>https://evil.example/x</link>",
-            ) +
-            item("Undated incident", "") +
-            "</channel></rss>",
-        ),
+    describe("Azure maintenance notices", () => {
+      // The feed has no machine-readable window, so a notice's own date says
+      // nothing about when the work runs: it never affects health.
+      const when = () => new Date(Date.now() - 3_600_000).toUTCString();
+      const item = (title: string, extra = "") =>
+        `<item><title>${title}</title><pubDate>${when()}</pubDate>${extra}<description>Impact.</description></item>`;
+      const feed = (items: string[]) => text(`<rss version="2.0"><channel>${items.join("")}</channel></rss>`);
+
+      it("a recent maintenance notice leaves the card operational, with no incident or upcoming maintenance", async () => {
+        stubFetch({ [URLS.azure]: feed([item("Planned maintenance - Key Vault")]) });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("operational");
+        expect(azure.incidents).toEqual([]);
+        expect(azure.incidentCount).toBeUndefined();
+        expect(azure.upcomingMaintenance).toBeUndefined();
       });
-      const azure = await collect("azure");
-      expect(azure.health).toBe("maintenance");
-      // The undated item cannot be shown to be current; the foreign link is replaced by the card's page.
-      expect(azure.incidents).toHaveLength(1);
-      expect(azure.incidents[0]).toMatchObject({
-        title: "Planned maintenance - Key Vault",
-        health: "maintenance",
-        url: "https://azure.status.microsoft/en-us/status/",
+
+      it("a maintenance notice with no date is left out too, and is not a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            "<item><title>Planned maintenance - Key Vault</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("operational");
+        expect(azure.incidents).toEqual([]);
+      });
+
+      it("beside a real incident, health follows the incident alone and the notice is not listed", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault"),
+            item("Storage - East US - Increased latency", "<link>https://evil.example/x</link>"),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("degraded");
+        expect(azure.incidents).toHaveLength(1);
+        // A foreign link is replaced by the card's page.
+        expect(azure.incidents[0]).toMatchObject({
+          title: "Storage - East US - Increased latency",
+          health: "degraded",
+          url: "https://azure.status.microsoft/en-us/status/",
+        });
+        expect(azure.upcomingMaintenance).toBeUndefined();
+      });
+
+      it("a maintenance-titled item that says outage or service unavailable is still an outage", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault"),
+            item("Maintenance overran: service unavailable"),
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("outage");
+        expect(azure.incidents.map((incident) => incident.title)).toEqual(["Maintenance overran: service unavailable"]);
+      });
+
+      it("an undated item beside a dated incident is dropped quietly, not a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Storage - East US - Increased latency"),
+            "<item><title>Undated incident</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.failure).toBeUndefined();
+        expect(azure.health).toBe("degraded");
+        expect(azure.incidents.map((incident) => incident.title)).toEqual(["Storage - East US - Increased latency"]);
+      });
+
+      it("a dated notice does not make an undated incident readable: unknown with a parser failure", async () => {
+        stubFetch({
+          [URLS.azure]: feed([
+            item("Planned maintenance - Key Vault"),
+            "<item><title>Undated incident</title><description>Impact.</description></item>",
+          ]),
+        });
+        const azure = await collect("azure");
+        expect(azure.health).toBe("unknown");
+        expect(azure.failure).toEqual({ kind: "parser", message: "Azure feed items have no readable date." });
+        expect(azure.incidents).toEqual([]);
       });
     });
 
@@ -1948,18 +2022,21 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.summary).toContain("azure.status.microsoft");
     });
 
-    it("MikroTik: every channel becomes a component, and the newest release's CHANGELOG is the summary", async () => {
-      stubFetch({
-        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
-        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text(fixture("mikrotik/7.20.2/CHANGELOG")),
+    it("MikroTik: every channel becomes a component, and the collector reads the version channels only", async () => {
+      const asked: string[] = [];
+      const routes = mikrotikChannels((file) => fixture(`mikrotik/${file}`));
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.startsWith(URLS.mikrotikDownload)) asked.push(url);
+        return routes[url]?.() ?? new Response("not found", { status: 404 });
       });
       const mikrotik = await collect("mikrotik");
       expect(mikrotik.failure).toBeUndefined();
       expect(mikrotik.health).toBe("operational");
-      expect(mikrotik.summary).toBe(
-        "What's new in 7.21beta4 (2026-Sep-19 12:00) — bgp - fixed route refresh handling when the peer restarts",
-      );
+      // The changelogs are the board's business, after the sweep (mikrotik-notes.server.ts): the collector
+      // never asks for one, so its result cannot depend on how fast or whether the changelog host answers.
+      expect(asked).toEqual([]);
+      expect(mikrotik.summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
       // Released within 14 days reads as "maintenance": a fresh release is
       // worth a look, not an all-clear.
       expect(mikrotik.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
@@ -1978,18 +2055,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       });
     });
 
-    it("MikroTik: each channel's Details carry its version, date, changelog link and first notes", async () => {
-      const asked: string[] = [];
-      const routes: Record<string, Handler> = {
-        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
-        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text(fixture("mikrotik/7.20.2/CHANGELOG")),
-      };
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-        if (url.endsWith("/CHANGELOG")) asked.push(`${url} ${new Headers(init?.headers).get("range")}`);
-        return routes[url]?.() ?? new Response("not found", { status: 404 });
-      });
+    it("MikroTik: each channel's Details carry its version, date and changelog link, and no notes yet", async () => {
+      stubFetch(mikrotikChannels((file) => fixture(`mikrotik/${file}`)));
       const mikrotik = await collect("mikrotik");
       const release = (name: string) => mikrotik.components.find((component) => component.name === name)?.release;
       expect(release("RouterOS 7 stable")).toEqual({
@@ -1997,178 +2064,19 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         releasedAt: "2026-09-15T12:00:00.000Z",
         url: "https://download.mikrotik.com/routeros/7.20.2/CHANGELOG",
         linkLabel: "Release notes",
-        // The important bullet first, four of the five, no markers or trailing semicolons.
-        notes: [
-          "lte - fixed a crash when a modem is removed during a firmware update",
-          "bridge - fixed VLAN filtering after a port is moved between bridges",
-          "dhcpv4-server - fixed lease expiry reported in the wrong unit",
-          "ipsec - improved rekeying with peers that change address",
-        ],
       });
-      expect(release("RouterOS 7 development")?.notes?.[0]).toBe(
-        "bgp - fixed route refresh handling when the peer restarts",
-      );
-      // A version whose changelog could not be read has its link and date, and no notes: nothing is made up.
-      expect(release("RouterOS 6 long-term")).toEqual({
-        version: "6.49.19",
-        releasedAt: expect.any(String),
-        url: "https://download.mikrotik.com/routeros/6.49.19/CHANGELOG",
-        linkLabel: "Release notes",
-      });
-      // One ranged read of the start of each distinct version's changelog, not of the whole file.
-      expect(asked).toHaveLength(5);
-      expect(new Set(asked.map((line) => line.split(" ")[1]))).toEqual(new Set(["bytes=0-65535"]));
-    });
-
-    it("MikroTik: a version's changelog is read once, and a failed one is asked for again", async () => {
-      const asked: string[] = [];
-      let down = true;
-      const routes: Record<string, Handler> = {
-        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
-        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: () =>
-          down ? new Response("", { status: 503 }) : text(fixture("mikrotik/7.20.2/CHANGELOG"))(),
-      };
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-        if (url.endsWith("/CHANGELOG")) asked.push(url);
-        return routes[url]?.() ?? new Response("not found", { status: 404 });
-      });
-      const first = await collect("mikrotik");
-      expect(asked).toHaveLength(5);
-      expect(first.summary).toContain("What's new in 7.21beta4");
-      asked.length = 0;
-      // The second sweep asks only for what failed: 7.20.2 (503) and the three that 404 are not remembered.
-      down = false;
-      const second = await collect("mikrotik");
-      expect(asked.sort()).toEqual(
-        [
-          `${URLS.mikrotikDownload}6.49.19/CHANGELOG`,
-          `${URLS.mikrotikDownload}7.18.4/CHANGELOG`,
-          `${URLS.mikrotikDownload}7.20.2/CHANGELOG`,
-          `${URLS.mikrotikDownload}7.21beta3/CHANGELOG`,
-        ].sort(),
-      );
-      expect(
-        second.components.find((component) => component.name === "RouterOS 7 stable")?.release?.notes,
-      ).toBeTruthy();
-      expect(
-        second.components.find((component) => component.name === "RouterOS 7 development")?.release?.notes?.[0],
-      ).toBe("bgp - fixed route refresh handling when the peer restarts");
-      // The third asks for nothing that was read: the stable one now is too.
-      asked.length = 0;
-      await collect("mikrotik");
-      expect(asked.sort()).toEqual(
-        [
-          `${URLS.mikrotikDownload}6.49.19/CHANGELOG`,
-          `${URLS.mikrotikDownload}7.18.4/CHANGELOG`,
-          `${URLS.mikrotikDownload}7.21beta3/CHANGELOG`,
-        ].sort(),
-      );
-    });
-
-    describe("MikroTik: a changelog body that does not parse is not remembered", () => {
-      const badBodies: Array<[string, string]> = [
-        ["empty", ""],
-        [
-          "an HTML error page",
-          "<!doctype html><html><head><title>Error</title></head><body><h1>502 Bad Gateway</h1></body></html>",
-        ],
-        ["truncated before the version's section", "Changelog for RouterOS\n\n"],
-        ["a heading with no bullet", "What's new in 7.20.2 (2025-Sep-19 10:00):\n\n"],
-      ];
-      for (const [label, bad] of badBodies) {
-        it(`${label}: the card still renders, and the next sweep asks again`, async () => {
-          const asked: string[] = [];
-          let broken = true;
-          const routes: Record<string, Handler> = {
-            ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-            [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
-            [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: () =>
-              text(broken ? bad : fixture("mikrotik/7.20.2/CHANGELOG"))(),
-          };
-          vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-            const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-            if (url === `${URLS.mikrotikDownload}7.20.2/CHANGELOG`) asked.push(url);
-            return routes[url]?.() ?? new Response("not found", { status: 404 });
-          });
-          const first = await collect("mikrotik");
-          expect(first.failure).toBeUndefined();
-          expect(first.summary).toContain("What's new in 7.21beta4");
-          const stableFirst = first.components.find((component) => component.name === "RouterOS 7 stable")?.release;
-          expect(stableFirst?.notes).toBeUndefined();
-          expect(stableFirst?.url).toBe("https://download.mikrotik.com/routeros/7.20.2/CHANGELOG");
-          expect(asked).toHaveLength(1);
-          broken = false;
-          const second = await collect("mikrotik");
-          expect(asked).toHaveLength(2);
-          expect(
-            second.components.find((component) => component.name === "RouterOS 7 stable")?.release?.notes,
-          ).toBeTruthy();
-          // Parsed now: remembered, so a third sweep does not ask.
-          await collect("mikrotik");
-          expect(asked).toHaveLength(2);
-        });
-      }
-
-      it("the newest version's summary is not remembered from a bad parse either", async () => {
-        const asked: string[] = [];
-        let broken = true;
-        const routes: Record<string, Handler> = {
-          ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-          [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text(fixture("mikrotik/7.20.2/CHANGELOG")),
-          [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: () =>
-            text(broken ? "<html>oops</html>" : fixture("mikrotik/7.21beta4/CHANGELOG"))(),
-        };
-        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-          const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-          if (url === `${URLS.mikrotikDownload}7.21beta4/CHANGELOG`) asked.push(url);
-          return routes[url]?.() ?? new Response("not found", { status: 404 });
-        });
-        const first = await collect("mikrotik");
-        expect(first.summary).not.toContain("changelog loaded");
-        expect(first.summary).toMatch(/^Latest RouterOS /);
-        broken = false;
-        const second = await collect("mikrotik");
-        expect(second.summary).toContain("What's new in 7.21beta4");
-        expect(asked).toHaveLength(2);
-        await collect("mikrotik");
-        expect(asked).toHaveLength(2);
-      });
-    });
-
-    it("MikroTik: a changelog for another version is not remembered under this one", async () => {
-      const url = `${URLS.mikrotikDownload}7.20.2/CHANGELOG`;
-      const asked: string[] = [];
-      const routes: Record<string, Handler> = {
-        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-        [`${URLS.mikrotikDownload}7.21beta4/CHANGELOG`]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
-        [url]: text(fixture("mikrotik/7.21beta4/CHANGELOG")),
-      };
-      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-        const requested = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-        if (requested === url) asked.push(requested);
-        return routes[requested]?.() ?? new Response("not found", { status: 404 });
-      });
-      const first = await collect("mikrotik");
-      const stable = first.components.find((component) => component.name === "RouterOS 7 stable")?.release;
-      expect(stable?.notes).toBeUndefined();
-      expect(stable?.url).toBe("https://download.mikrotik.com/routeros/7.20.2/CHANGELOG");
-      expect(asked).toHaveLength(1);
-      await collect("mikrotik");
-      expect(asked).toHaveLength(2);
-    });
-
-    it("MikroTik: a changelog that fails costs only that version's notes", async () => {
-      stubFetch({
-        ...mikrotikChannels((file) => fixture(`mikrotik/${file}`)),
-        [`${URLS.mikrotikDownload}7.20.2/CHANGELOG`]: text("", { status: 503 }),
-      });
-      const mikrotik = await collect("mikrotik");
-      expect(mikrotik.failure).toBeUndefined();
-      expect(mikrotik.summary).toBe("Latest RouterOS 7.20.2 · Sep 19");
       expect(mikrotik.components.every((component) => component.release?.notes === undefined)).toBe(true);
-      expect(mikrotik.components.every((component) => component.release?.url?.endsWith("/CHANGELOG"))).toBe(true);
+    });
+
+    it("MikroTik: the headline pairs the displayed channel's version with its own date", async () => {
+      // Stable (7.20.2, Sep 15) is shown even though development (7.21beta4) is newer, Sep 19.
+      stubFetch(mikrotikChannels((file) => fixture(`mikrotik/${file}`)));
+      expect((await collect("mikrotik")).summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
+      // Without a stable channel the newest one is displayed, with its own date.
+      const routes = mikrotikChannels((file) => fixture(`mikrotik/${file}`));
+      delete routes[`${URLS.mikrotikUpgrade}NEWESTa7.stable`];
+      stubFetch(routes);
+      expect((await collect("mikrotik")).summary).toBe("Latest RouterOS 7.21beta4 · Sep 19");
     });
 
     it("MikroTik: channel files that answer but hold no version are unknown with a parser failure", async () => {
@@ -2272,10 +2180,28 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(windows.incidents).toEqual([]);
       expect(windows.meta).toEqual({
         latest: "Windows 11 26H2 (build 26300.1000)",
-        versions:
-          "Windows 11 26H2=26300.1000|Windows 11 26H1=28000.1575|Windows 11 25H2=26200.8100|Windows 11 24H2=26100.8100",
+        // The release fingerprint names each feature version, not its build: a monthly build bump must not
+        // read as a new release. The build stays in the component details above.
+        versions: "Windows 11 26H2=released|Windows 11 26H1=released|Windows 11 25H2=released|Windows 11 24H2=released",
       });
     });
+
+    it.each(["America/Los_Angeles", "Pacific/Kiritimati"])(
+      "Windows release health: the days read the same on a host in %s",
+      async (tz) => {
+        const zone = process.env.TZ;
+        process.env.TZ = tz;
+        try {
+          vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+          stubFetch({ [URLS.windows]: text(fixture("windows/windows11-release-information.html")) });
+          const windows = await collect("windows");
+          expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1000) · Sep 29");
+          expect(windows.components[0].detail).toBe("26300.1000 · Sep 29");
+        } finally {
+          process.env.TZ = zone;
+        }
+      },
+    );
 
     it("Windows release health: a version the page adds later becomes the headline and a fresh release", async () => {
       vi.setSystemTime(new Date("2027-09-30T12:00:00.000Z"));
@@ -2294,7 +2220,40 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         ["26H1", "operational"],
         ["25H2", "operational"],
       ]);
-      expect(String(windows.meta?.versions).startsWith("Windows 11 27H2=27500.1|Windows 11 26H2=")).toBe(true);
+      expect(String(windows.meta?.versions).startsWith("Windows 11 27H2=released|Windows 11 26H2=released|")).toBe(
+        true,
+      );
+    });
+
+    it("Windows release health: a monthly build bump is no new release, a new feature version is", async () => {
+      vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+      const original = fixture("windows/windows11-release-information.html");
+      const board = async (page: string) => {
+        stubFetch({ [URLS.windows]: text(page) });
+        return assembleBoard([await collect("windows")], 0);
+      };
+      const before = await board(original);
+      // Microsoft's monthly cumulative update: 26H2 moves from build 26300.1000 to 26300.1100.
+      const bumped = original.replaceAll("26300.1000", "26300.1100");
+      expect(bumped).not.toBe(original);
+      const after = await board(bumped);
+      const windows = after.services[0];
+      // The build is on the card and in its Details...
+      expect(windows.summary).toBe("Latest: Windows 11 26H2 (build 26300.1100) · Sep 29");
+      expect(windows.components[0].release?.build).toBe("26300.1100");
+      // ...and is no release: no change, no Changed bar, no Recent changes entry.
+      expect(diffBoards(before, after)).toEqual([]);
+      expect(releaseChange(before.services[0], windows)).toBe("");
+      // A feature version the page adds is one.
+      const added = original.replace(
+        '<tbody>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+        '<tbody>\n<tr><td>27H2</td><td>General Availability Channel</td><td>2026-09-30</td><td>2026-09-30</td><td>27500.1</td></tr>\n<tr>\n<td><a href="#26h2">26H2</a></td>',
+      );
+      expect(added).toContain("27H2");
+      const next = await board(added);
+      expect(diffBoards(after, next)).toEqual([
+        expect.objectContaining({ id: "windows", release: true, summary: "Windows 11 27H2 released" }),
+      ]);
     });
 
     it("Windows release health: a page without the versions table is unknown with a parser failure", async () => {
@@ -2834,7 +2793,8 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     });
 
     describe("AWS components", () => {
-      const at = Math.floor(Date.now() / 1000) - 3600;
+      // An hour before the clock this block pins (an event dated after it would not be current).
+      const at = Math.floor(Date.parse("2026-09-20T12:00:00.000Z") / 1000) - 3600;
       function awsEvent(overrides: Record<string, unknown> = {}) {
         return {
           date: String(at),
@@ -3205,7 +3165,7 @@ describe("collectors bound vendor text and counts", () => {
       title: string,
     ) => `<item><title>${title}</title><link>https://status.x.ai/incidents/${i}</link>
       <pubDate>Sun, 20 Sep 2026 09:30:00 GMT</pubDate><description>Status: Identified</description></item>`;
-    const feed = `<rss version="2.0"><channel>${item(0, `[Grok] ${HUGE}`)}${Array.from({ length: 5000 }, (_, i) => item(i + 1, `[Svc ${i}] issue`)).join("")}</channel></rss>`;
+    const feed = `<rss version="2.0"><channel>${item(0, `[Grok] ${HUGE}`)}${Array.from({ length: MAX_RSS_SCANNED - 1 }, (_, i) => item(i + 1, `[Svc ${i}] issue`)).join("")}</channel></rss>`;
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-20T12:00:00.000Z"));
     try {

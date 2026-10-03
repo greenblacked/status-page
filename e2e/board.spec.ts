@@ -249,11 +249,13 @@ async function leadSteady(page: Page): Promise<void> {
 }
 
 /**
- * Waits until the self-hosted Inter has landed and been drawn. The hero's lede wraps differently in the fallback face
- * than in Inter, and how many lines it takes depends on the board's words (the canned first render has a long one),
- * so a page measured before the swap is taller or shorter than the same page after it: every offset read earlier is
- * then off by a line, and a restored scroll is moved with it by scroll anchoring. Tests that read geometry call this
- * before they read any. Not for a test that holds the font back itself: it would wait for the test's own release.
+ * Waits until the self-hosted Inter's fetch is over (loaded, or failed). Inter is font-display: optional, so a page
+ * view keeps the face it was first drawn in (Inter if the file was ready at the first render, the system font if
+ * not) and nothing swaps in later; what this wait settles is that no fetch of the font is still in flight when a
+ * test reads geometry, and that the hero is drawn. The hero's lede wraps differently in the two faces, and how many
+ * lines it takes depends on the board's words (the canned first render has a long one), so tests that read geometry
+ * call this before they read any. Not for a test that holds the font back itself: it would wait for the test's own
+ * release (an aborted font settles at once).
  */
 async function fontsSettled(page: Page): Promise<void> {
   await page.evaluate(async () => {
@@ -1713,30 +1715,31 @@ test("search reveal: opens a page that is already scrolled past the field with t
   });
   // The reload draws the server's own first render, the canned payloads' board, whatever board a test served to the
   // page (a served board reaches the page only by a refetch, and its hero is not the first render's), so this test
-  // opens that same board, and the position it leaves is measured on it, in Inter (steadyBoard waits for the
-  // font). The reload then draws it in the fallback face and restores the scroll there; when Inter lands afterwards
-  // from the cache, at no predictable moment, the lede wraps differently and scroll anchoring moves the page under
-  // the restored position (46px on a phone), so a position read back after that can be short of the one that was
-  // left. How the swap shifts the page is the subject of "shifts nothing much when the self-hosted Inter arrives
-  // late". Here the font is held until the restored position has been read, then let in: the restore is checked
-  // before the swap, the dock after it, as a reader meets them. (WebKit restores at the end of the load, which
-  // waits for the font, so there is no race to order there and the font is not held.)
-  let holdFont = false;
+  // opens that same board, and the position it leaves is measured on it. Inter is font-display: optional, so a page
+  // view is drawn in Inter only if the file is ready at its first render, a race with the preview that would make
+  // the view that leaves a position and the one that restores it differ in the lede's wrap and so in the page's
+  // height. On Chromium both views are therefore drawn in the system font: the first has the Inter file refused,
+  // the reload has it held until the restored position has been read, then let in (it is cached and never swapped
+  // in, so nothing moves under the restored position). WebKit restores at the end of the load, which waits for the
+  // font, so there is no race to order there and the font is left alone.
+  type FontMode = "pass" | "refuse" | "hold";
+  let fontMode: FontMode = browserName === "chromium" ? "refuse" : "pass";
   let releaseFont = () => {};
   const fontHeld = new Promise<void>((resolve) => {
     releaseFont = resolve;
   });
-  await page.route("**/fonts/inter-var.woff2", async (route) => {
-    if (holdFont) await fontHeld;
+  await page.route("**/inter-var*.woff2", async (route) => {
+    if (fontMode === "refuse") return route.abort();
+    if (fontMode === "hold") await fontHeld;
     await route.continue().catch(() => {});
   });
   const offsets = await revealBoard(page);
   const y0 = await scrollDeep(page, offsets);
   // Back to the same place the way a reload or a return to the tab does: the browser restores the scroll.
-  holdFont = browserName === "chromium";
+  fontMode = browserName === "chromium" ? "hold" : "pass";
   try {
     // The held font keeps the load event from firing; Chromium restores the position as the page grows.
-    await page.reload({ waitUntil: holdFont ? "domcontentloaded" : "load" });
+    await page.reload({ waitUntil: fontMode === "hold" ? "domcontentloaded" : "load" });
     await expect
       .poll(() => page.evaluate(() => window.scrollY), { message: "the browser restores the position" })
       .toBeGreaterThan(y0 - 40);
@@ -1749,7 +1752,7 @@ test("search reveal: opens a page that is already scrolled past the field with t
   await fontsSettled(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
-  // Inter's arrival may have moved the page a little (see above); the reader is where the page left them now.
+  // The reader is where the restored page is now.
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
   // It opens hidden, and nothing about it moved.
   expect(await isRevealed(page)).toBe(false);
@@ -4304,34 +4307,18 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
     }).observe({ type: "layout-shift", buffered: true });
   }, saved);
   const releaseBoard = await holdBoardFetches(page);
-  // Inter's arrival is another test's subject ("when the self-hosted Inter arrives late"). It reflows the hero's
-  // lede whenever that wraps differently in the fallback face, which depends on the board's words, so the font is
-  // held back until the measure is done: what is counted here is the saved checks filling the list.
-  let releaseFont = () => {};
-  const fontHeld = new Promise<void>((resolve) => {
-    releaseFont = resolve;
-  });
-  await page.route("**/fonts/inter-var.woff2", async (route) => {
-    await fontHeld;
-    await route.continue().catch(() => {});
-  });
-  try {
-    // The held font keeps the load event from firing.
-    await page.goto("/", { waitUntil: "domcontentloaded" });
-    await expect(cards(page)).toHaveCount(SERVICES);
-    await hydrated(page);
-    // The load's own check, then the saved ones with the quiet run as one row.
-    await expect(feedRows(page)).toHaveCount(7);
-    await page.evaluate(
-      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-    );
-    await page.waitForTimeout(500);
-    const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
-    await releaseBoard();
-    expect(shift, "cumulative layout shift").toBeLessThan(0.02);
-  } finally {
-    releaseFont();
-  }
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  // The load's own check, then the saved ones with the quiet run as one row.
+  await expect(feedRows(page)).toHaveCount(7);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  await page.waitForTimeout(500);
+  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+  await releaseBoard();
+  expect(shift, "cumulative layout shift").toBeLessThan(0.02);
 });
 
 // The reserve is measured from the markup the page draws, so it holds at any
@@ -4923,44 +4910,13 @@ for (const [name, makeBoard] of [
   });
 }
 
-test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
-  // Hold the font back so the page is drawn in its fallback first, and count the layout shift of the swap alone.
-  // The font is released by the test, once the page is hydrated and a calm board is on it: how a long hero lede
-  // wraps in the fallback face depends on the board's words, and the swap is measured on a board whose words are
-  // the same whatever a server's first render had (the canned payloads' board has a long lede).
-  let releaseFont = () => {};
-  const fontHeld = new Promise<void>((resolve) => {
-    releaseFont = resolve;
-  });
-  await page.route("**/fonts/inter-var.woff2", async (route) => {
-    await fontHeld;
-    await route.continue().catch(() => {});
-  });
-  await page.addInitScript(() => {
-    const tracked = window as Window & { __cls?: number };
-    tracked.__cls = 0;
-    new PerformanceObserver((list) => {
-      for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
-        if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
-      }
-    }).observe({ type: "layout-shift", buffered: true });
-  });
-  await serveBoard(page, () => calmBoard(Date.now()));
-  // The held font keeps the load event from firing.
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await refreshIntoServedBoard(page, { id: "aws", label: "Operational" });
-  await page.evaluate(
-    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-  );
-  // Only the swap is counted: what the first paint and the calm board's arrival moved is not this test's subject.
-  await page.evaluate(() => {
-    (window as Window & { __cls?: number }).__cls = 0;
-  });
-  releaseFont();
-  // Whether this machine has any font the fallback faces name (the local() names in styles.css).
-  const fallbackFound = await page.evaluate(async () => {
+/** The local() names the fallback faces in styles.css look for, which this machine may have none of. */
+const NO_FALLBACK_FONT =
+  'this machine has none of the fonts the fallback faces look for, so there is no fallback to resize: local() "Arial", "ArialMT", "Liberation Sans", "LiberationSans", "Arimo" (Inter Fallback) and "Roboto", "Roboto Regular", "Roboto-Regular" (Inter Fallback Roboto)';
+
+/** Whether this machine has any font the fallback faces name (the local() names in styles.css). */
+async function fallbackFaceFound(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
     // A face whose local() names match no installed font fails to load and matches nothing.
     const loaded = await Promise.all(
       ['"Inter Fallback"', '"Inter Fallback Roboto"'].map((family) =>
@@ -4969,23 +4925,155 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
     );
     return loaded.some((faces) => faces.length > 0);
   });
-  test.skip(
-    !fallbackFound,
-    'this machine has none of the fonts the fallback faces look for, so there is no fallback to resize: local() "Arial", "ArialMT", "Liberation Sans", "LiberationSans", "Arimo" (Inter Fallback) and "Roboto", "Roboto Regular", "Roboto-Regular" (Inter Fallback Roboto)',
+}
+
+/** Whether a platform font family from drawnFonts is the self-hosted Inter (its file's own name is "Inter Variable"). */
+const isInter = (family: string) => family.startsWith("Inter");
+
+/** The status of the page's Inter FontFace: "loading" while the file is on its way, "loaded" once it is in. */
+async function interStatus(page: Page): Promise<string> {
+  return page.evaluate(
+    () => [...document.fonts].find((face) => face.family.replaceAll('"', "") === "Inter")?.status ?? "missing",
   );
-  // The first paint was in the fallback; the swap has happened once Inter reports loaded.
-  await page.waitForFunction(
-    () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
-    undefined,
-    { timeout: 15_000 },
-  );
-  await page.evaluate(
-    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-  );
-  await page.waitForTimeout(500);
-  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
-  expect(shift, "cumulative layout shift").toBeLessThan(0.1);
-});
+}
+
+/** The font families Chromium really drew the text of the first element matching the selector in (Chrome DevTools). */
+async function drawnFonts(page: Page, selector: string): Promise<string[]> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("DOM.enable");
+    await cdp.send("CSS.enable");
+    const { root } = await cdp.send("DOM.getDocument", { depth: 0 });
+    const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector });
+    const { fonts } = await cdp.send("CSS.getPlatformFontsForNode", { nodeId });
+    return fonts.map((font) => font.familyName);
+  } finally {
+    await cdp.detach();
+  }
+}
+
+// The self-hosted Inter is font-display: optional (src/styles.css). Chromium uses an optional font that was not
+// preloaded only if it is ready when the page starts to render (in practice, already cached); Inter that comes later
+// is fetched and cached, but the page view keeps the system font it was drawn in, so nothing re-wraps and the hero's
+// links do not jump. A later load can draw in Inter from the first paint (e2e/font-cache.spec.ts covers a return
+// visit in a new browser session; the second view below stays in one session, where the font is in memory). The page
+// is a phone, a tablet and a desktop in turn, over a board with no line to move (calm), the plain fixture and the
+// longest hero (the most lines on a phone).
+//
+// A shift of "none" is under 0.0005: a relative time that ticks over while the test waits ("since 4 min") moves its
+// chip by 0.00002 to 0.00012, and a swap to Inter (font-display: swap) moves these boards by 0.0013 to 0.0023.
+const NO_SHIFT = 0.0005;
+const FONT_BOARDS = [
+  ["a calm board", calmBoard, { id: "aws", label: "Operational" }],
+  ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }],
+  ["the longest hero", longHeroBoard, { id: "aws", label: "Outage" }],
+] as const;
+
+for (const [name, makeBoard, ready] of FONT_BOARDS) {
+  test(`keeps the system font and the hero in place when the self-hosted Inter arrives late on ${name}`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/inter-var*.woff2", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.addInitScript(() => {
+      const tracked = window as Window & {
+        __cls?: number;
+        __ignored?: number;
+        __lastInput?: number;
+        __shifts?: PerformanceObserver;
+      };
+      tracked.__cls = 0;
+      tracked.__ignored = 0;
+      tracked.__lastInput = 0;
+      // A shift within 500ms of a click or a key press is flagged and dropped from the score; note the last input,
+      // to measure only once that window is over.
+      for (const type of ["pointerdown", "keydown"]) {
+        addEventListener(type, () => (tracked.__lastInput = performance.now()), true);
+      }
+      tracked.__shifts = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
+          if (entry.hadRecentInput) tracked.__ignored = (tracked.__ignored ?? 0) + entry.value;
+          else tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+        }
+      });
+      tracked.__shifts.observe({ type: "layout-shift", buffered: true });
+    });
+    await serveBoard(page, () => makeBoard(Date.now()));
+    // Not "load": a font that is still being fetched holds the load event back.
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
+    // Not vacuous: Inter is still on its way, long past the page's first render, and the board is drawn without it.
+    expect(await interStatus(page)).toBe("loading");
+    const before = await drawnFonts(page, "h1");
+    expect(before.length, "the headline is drawn in some font").toBeGreaterThan(0);
+    expect(before.some(isInter), "the headline before Inter arrives is drawn in Inter").toBe(false);
+    const heroBefore = await page.locator("h1").boundingBox();
+    // The click's 500ms window must be over before Inter lands, or a shift in it would not count and the test would
+    // pass whatever the arrival did.
+    await page.waitForFunction(
+      () => performance.now() - ((window as Window & { __lastInput?: number }).__lastInput ?? 0) > 600,
+    );
+    // Count only what the arrival does: drop what the first draws and the refresh moved.
+    await page.evaluate(() => {
+      const tracked = window as Window & { __cls?: number; __ignored?: number; __shifts?: PerformanceObserver };
+      tracked.__shifts?.takeRecords();
+      tracked.__cls = 0;
+      tracked.__ignored = 0;
+    });
+    release();
+    await page.waitForFunction(
+      () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
+      undefined,
+      { timeout: 15_000 },
+    );
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    await page.waitForTimeout(500);
+    const { shift, ignored } = await page.evaluate(() => {
+      const tracked = window as Window & { __cls?: number; __ignored?: number };
+      return { shift: tracked.__cls ?? 0, ignored: tracked.__ignored ?? 0 };
+    });
+    expect(shift, "cumulative layout shift once Inter has arrived").toBeLessThan(NO_SHIFT);
+    expect(ignored, "layout shift left out of the score as a reaction to an input").toBe(0);
+    // Inter is in (loaded, and cached for the next load), and the page view still does not use it.
+    expect(await drawnFonts(page, "h1"), "the headline after Inter arrived").toEqual(before);
+    expect((await page.locator("h1").boundingBox()) ?? null).toEqual(heroBefore);
+    // Text laid out after Inter landed stays in the fallback too: a refresh redraws the cards.
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    expect(await drawnFonts(page, "h1"), "the headline after another refresh").toEqual(before);
+  });
+
+  test(`draws ${name} in the cached self-hosted Inter from the first paint`, async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
+    // No route yet: a routed page has its HTTP cache switched off, and the cache is what this test is about.
+    // The first view fetches Inter (and may draw without it); the second finds it in the cache.
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await hydrated(page);
+    await page.evaluate(() => document.fonts.load("400 16px Inter"));
+    expect(await interStatus(page)).toBe("loaded");
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await hydrated(page);
+    expect((await drawnFonts(page, "h1")).some(isInter), "the second view's headline is drawn in Inter").toBe(true);
+    // And it stays so once the board is the one under test.
+    await serveBoard(page, () => makeBoard(Date.now()));
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
+    expect((await drawnFonts(page, "h1")).some(isInter), "the board's headline is drawn in Inter").toBe(true);
+  });
+}
 
 /** The fixture board with twelve services degraded, so the Issues count has two digits. */
 function busyBoard(): BoardSnapshot {
@@ -5000,57 +5088,134 @@ function busyBoard(): BoardSnapshot {
   return { ...board, services, counts };
 }
 
+// The filter row is one line at the widths the desktop layout guarantees it (1024px and up), in Inter and in the
+// fallback a first-time visitor is drawn in (Inter is font-display: optional, and a cold browser has not got it ready
+// at the first render). Inter is the wider of the two by some 14px at 1024px, so the row has little to spare in
+// either, and a machine that rasterizes the text a little wider (hinting) is enough to tip it. Each face is pinned,
+// so the test measures both on any machine: "fallback" aborts the Inter file, so the page keeps the system face,
+// and "Inter" re-declares the face with font-display: block (what the cached case draws in, without the race
+// optional has with a file that arrives within the first 100ms). The last two cases stress the guarantee itself:
+// the row's text spaced out far past either face, which must scroll the segments and keep the toggles beside them,
+// not drop the toggles below. The first two cases also assert that every category is visible (the segments do not
+// scroll), since the toggles cannot wrap and a row too wide would otherwise pass with its last option clipped.
+const FILTER_ROW_CASES = [
+  { face: "fallback", spacing: "", note: "" },
+  { face: "Inter", spacing: "", note: "" },
+  { face: "fallback", spacing: "1px", note: " with the text spaced out" },
+  { face: "Inter", spacing: "1px", note: " with the text spaced out" },
+] as const;
+
 for (const width of [1024, 1440]) {
-  test(`keeps the filter row on one line, and the board still, when a star is added at ${width}px`, async ({
-    page,
-  }, testInfo) => {
-    test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
-    await page.setViewportSize({ width, height: 900 });
-    await openFixture(page, busyBoard);
-    const row = async () =>
-      page.evaluate(() => {
-        const segments = document.querySelector('[role="group"][aria-label="Category"]') as HTMLElement;
-        const toggles = segments.nextElementSibling as HTMLElement;
-        const field = document.querySelector(".search-dock .search-field") as HTMLElement;
-        const box = (element: Element) => element.getBoundingClientRect();
-        return {
-          segmentsBottom: box(segments).bottom,
-          togglesTop: box(toggles).top,
-          togglesRight: box(toggles).right,
-          sectionRight: box(segments.parentElement as Element).right,
-          mainTop: box(document.querySelector("main#services") as Element).top,
-          fieldMid: box(field).top + box(field).height / 2,
-          rowMid: (box(segments).top + box(segments).bottom) / 2,
-          togglesText: toggles.textContent ?? "",
-        };
-      });
-    const bare = await row();
-    // Not vacuous: two digits on Issues only.
-    expect(bare.togglesText).toMatch(/Issues only\s*1\d/);
+  for (const { face, spacing, note } of FILTER_ROW_CASES) {
+    test(`keeps the filter row on one line, and the board still, when a star is added at ${width}px in ${face}${note}`, async ({
+      page,
+    }, testInfo) => {
+      test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+      if (face === "fallback") await page.route("**/inter-var*.woff2", (route) => route.abort());
+      await page.setViewportSize({ width, height: 900 });
+      await openFixture(page, busyBoard);
+      /** Pins the face: Inter drawn (declared again, as block, so that it is used whenever it arrives) or never. */
+      const pinFace = async () => {
+        if (face === "fallback") {
+          test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
+          expect(await interStatus(page), "Inter never arrives").toBe("error");
+          return;
+        }
+        await page.evaluate(async () => {
+          const rule = [...document.styleSheets]
+            .flatMap((sheet) => [...sheet.cssRules])
+            .find((r) => r instanceof CSSFontFaceRule && r.style.getPropertyValue("font-family").includes("Inter"));
+          const src = (rule as CSSFontFaceRule).style.getPropertyValue("src");
+          const style = document.createElement("style");
+          style.textContent = `@font-face { font-family: "Inter"; src: ${src}; font-weight: 400 700; font-display: block; }`;
+          document.head.appendChild(style);
+          await Promise.all([document.fonts.load("400 16px Inter"), document.fonts.load("600 16px Inter")]);
+        });
+        await expect
+          .poll(() =>
+            page.evaluate(() => [...document.fonts].some((f) => f.family.includes("Inter") && f.status === "loaded")),
+          )
+          .toBe(true);
+      };
+      await pinFace();
+      const stress = async () => {
+        if (spacing) {
+          await page.addStyleTag({
+            content: `.board-chips, .board-chips * { letter-spacing: ${spacing} !important; }`,
+          });
+        }
+      };
+      const toggleFonts = () => drawnFonts(page, '[role="group"][aria-label="Category"] + div button');
+      const row = async () =>
+        page.evaluate(() => {
+          const segments = document.querySelector('[role="group"][aria-label="Category"]') as HTMLElement;
+          const toggles = segments.nextElementSibling as HTMLElement;
+          const field = document.querySelector(".search-dock .search-field") as HTMLElement;
+          const box = (element: Element) => element.getBoundingClientRect();
+          return {
+            segmentsBottom: box(segments).bottom,
+            segmentsRight: box(segments).right,
+            segmentsScrollWidth: segments.scrollWidth,
+            segmentsClientWidth: segments.clientWidth,
+            togglesTop: box(toggles).top,
+            togglesLeft: box(toggles).left,
+            togglesRight: box(toggles).right,
+            sectionRight: box(segments.parentElement as Element).right,
+            mainTop: box(document.querySelector("main#services") as Element).top,
+            fieldMid: box(field).top + box(field).height / 2,
+            rowMid: (box(segments).top + box(segments).bottom) / 2,
+            togglesText: toggles.textContent ?? "",
+          };
+        });
+      await stress();
+      /**
+       * Unspaced, the row has to fit with every category visible (the toggles cannot wrap, so a face too wide
+       * for it would only show as clipped segments).
+       */
+      const expectFits = (state: Awaited<ReturnType<typeof row>>) => {
+        if (!spacing) expect(state.segmentsScrollWidth).toBeLessThanOrEqual(state.segmentsClientWidth + 0.5);
+      };
+      const bare = await row();
+      expectFits(bare);
+      // Not vacuous: two digits on Issues only.
+      expect(bare.togglesText).toMatch(/Issues only\s*1\d/);
 
-    const one = page.getByRole("button", { name: /^Star / }).first();
-    await toggleStar(page, () => one.click());
-    const starred = await row();
-    expect(starred.togglesText).toMatch(/Starred\s*1$/);
-    // The toggles stay beside the segments: their top is not below the segments' bottom.
-    expect(starred.togglesTop).toBeLessThan(starred.segmentsBottom);
-    expect(starred.togglesRight).toBeLessThanOrEqual(starred.sectionRight + 0.5);
-    // Nothing on the page moves, and the field in the margin still lines up with the row.
-    expect(starred.mainTop).toBeCloseTo(bare.mainTop, 0);
-    expect(Math.abs(starred.fieldMid - starred.rowMid)).toBeLessThan(2);
+      const one = page.getByRole("button", { name: /^Star / }).first();
+      await toggleStar(page, () => one.click());
+      const starred = await row();
+      expectFits(starred);
+      expect(starred.togglesText).toMatch(/Starred\s*1$/);
+      // The toggles stay beside the segments: their top is not below the segments' bottom.
+      expect(starred.togglesTop).toBeLessThan(starred.segmentsBottom);
+      expect(starred.togglesLeft).toBeGreaterThanOrEqual(starred.segmentsRight);
+      expect(starred.togglesRight).toBeLessThanOrEqual(starred.sectionRight + 0.5);
+      // Nothing on the page moves, and the field in the margin still lines up with the row.
+      expect(starred.mainTop).toBeCloseTo(bare.mainTop, 0);
+      expect(Math.abs(starred.fieldMid - starred.rowMid)).toBeLessThan(2);
 
-    // And with two digits on Starred as well: eleven more stars.
-    await page.evaluate(
-      (ids) => localStorage.setItem("status-bar:starred", JSON.stringify(ids)),
-      CATALOG.slice(0, 11).map((entry) => entry.id),
-    );
-    await page.reload();
-    await hydrated(page);
-    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
-    const many = await row();
-    expect(many.togglesText).toMatch(/Starred\s*11$/);
-    expect(many.togglesTop).toBeLessThan(many.segmentsBottom);
-    expect(many.togglesRight).toBeLessThanOrEqual(many.sectionRight + 0.5);
-    expect(many.mainTop).toBeCloseTo(bare.mainTop, 0);
-  });
+      // And with two digits on Starred as well: eleven more stars, on a page drawn afresh.
+      await page.evaluate(
+        (ids) => localStorage.setItem("status-bar:starred", JSON.stringify(ids)),
+        CATALOG.slice(0, 11).map((entry) => entry.id),
+      );
+      await page.reload();
+      await hydrated(page);
+      await pinFace();
+      await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+      await expect(page.getByRole("button", { name: /^Starred\s*11$/ })).toBeVisible();
+      // Not vacuous: the row was drawn in the face under test.
+      const drawn = await toggleFonts();
+      expect(drawn.some(isInter), `the toggles are drawn in ${drawn}`).toBe(face === "Inter");
+      await stress();
+      const many = await row();
+      expectFits(many);
+      // Spaced out, the widest state (two digits on both toggles) has to have overflowed the segments.
+      if (spacing) expect(many.segmentsScrollWidth).toBeGreaterThan(many.segmentsClientWidth);
+      expect(many.togglesText).toMatch(/Starred\s*11$/);
+      expect(many.togglesTop).toBeLessThan(many.segmentsBottom);
+      expect(many.togglesLeft).toBeGreaterThanOrEqual(many.segmentsRight);
+      expect(many.togglesRight).toBeLessThanOrEqual(many.sectionRight + 0.5);
+      expect(many.mainTop).toBeCloseTo(bare.mainTop, 0);
+    });
+  }
 }

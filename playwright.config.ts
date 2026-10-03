@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 
 // Browser tests against the production build, served the way CI's smoke
-// test serves it: run `npm run build` first. `npm run test:e2e` runs them.
+// test serves it: run `pnpm run build` first. `pnpm run test:e2e` runs them.
 //
 // The board reads vendors on the server, which the tests must not depend on:
 // the preview is started with e2e/support/no-vendors.mjs, which answers a
@@ -48,17 +48,18 @@ export default defineConfig({
   },
   // The board is built for Apple devices first, so Safari's engine runs
   // every test too: a Mac, an iPhone and an iPad, alongside Chromium on a
-  // desktop, an Android phone and an iPad-sized tablet. `npx playwright install chromium webkit`.
+  // desktop, an Android phone and an iPad-sized tablet. `pnpm exec playwright install chromium webkit`.
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], launchOptions: { executablePath } } },
     { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: { executablePath } } },
     // An iPad's size in Chromium: 834px is still the narrow layout (below 64rem) but wide enough (from 40rem)
     // for the bar's lead text to sit in the flow before the field's slot, which only WebKit's iPad would
-    // otherwise cover. It runs the tests of the search reveal (the bar's copy of the field), the field's fill and
-    // the floating bar, not the whole suite: the rest has its Chromium coverage at the other two sizes.
+    // otherwise cover. It runs the tests of the search reveal (the bar's copy of the field), the field's fill, the
+    // floating bar and the self-hosted Inter (a late or a cached one, on a hero that wraps differently by width), not the whole suite: the rest has
+    // its Chromium coverage at the other two sizes.
     {
       name: "tablet",
-      grep: /search reveal|floating bar|field's fill/i,
+      grep: /search reveal|floating bar|field's fill|self-hosted Inter/i,
       use: { ...devices["iPad Pro 11"], defaultBrowserType: "chromium", launchOptions: { executablePath } },
     },
     { name: "Desktop Safari", use: { ...devices["Desktop Safari"] } },
@@ -66,7 +67,7 @@ export default defineConfig({
     { name: "iPad Pro 11", use: { ...devices["iPad Pro 11"] } },
   ],
   webServer: {
-    command: `npm run preview -- --port ${port} --strictPort`,
+    command: `pnpm run preview --port ${port} --strictPort`,
     // /healthz never reads the board, so the server is up before any vendor answers.
     url: `${baseURL}/healthz`,
     // Always its own: a server that was started by hand does not have the vendors cut off.

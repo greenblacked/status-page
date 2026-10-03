@@ -126,19 +126,19 @@ It is advisory and kept apart from health. It never changes a card's health, the
 | Service | How it is read |
 | --- | --- |
 | Google Cloud | `incidents.json`; only incidents without an end time count. The components are the products in `products.json`: a product takes the state of the worst open incident that lists it, mapped exactly as the card maps it (an information-only notice, such as `SERVICE_INFORMATION`, is listed on the card as a notice but changes neither the card's health nor any product's row; an impact the board does not recognise reads Unknown). Without a readable `products.json`, the components are the services the open incidents name, except information-only notices, which add no row |
-| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days. The vendor's own status comes first: 3 (service disruption) is Outage in any region. Otherwise an event whose text mentions maintenance is Maintenance, and 2 (performance issue) is Degraded. Only an informational or missing status falls back to the event text: a regional or availability-zone event is Degraded, and outage or unavailable wording is Outage. For a "Multiple services" event, each impacted service takes its own current reading: 3 is Outage, 1 or 2 is Degraded (Maintenance during maintenance), and a recovered service contributes no row. The components are only the AWS services those events name, one each, with the worst state across its events, the regions of every event, and the newest event's summary; a quiet dashboard lists none |
+| AWS | Public current events. An event counts while it is unresolved and updated within the last 14 days (an update dated in the future, past a few minutes of clock skew, does not count). The vendor's own status comes first: 3 (service disruption) is Outage in any region. Otherwise an event whose text mentions maintenance is Maintenance, and 2 (performance issue) is Degraded. Only an informational or missing status falls back to the event text: a regional or availability-zone event is Degraded, and outage or unavailable wording is Outage. For a "Multiple services" event, each impacted service takes its own current reading: 3 is Outage, 1 or 2 is Degraded (Maintenance during maintenance), and a recovered service contributes no row. The components are only the AWS services those events name, one each, with the worst state across its events, the regions of every event, and the newest event's summary; a quiet dashboard lists none |
 | Steam | `GetServerInfo` plus the Store featured API. Both answering with the expected data is Operational, only one is Degraded and its component says why. If neither can be read, the card is Unknown. A **Steam Connection Managers** component appears, Operational, when Valve's connection-manager directory (`GetCMListForConnect`) returns a non-empty `serverlist` of server objects; when it cannot be read there is simply no such row, and it never changes the card's health |
 | CS2 Europe | European relay points of presence. Outage when the relay config reports failure or lists no European points. Degraded when fewer than 3, or fewer than 40%, of them publish relays. An Operational card shows the player count when it is available; the count never affects health |
 | Epic Games | Statuspage summary, worst component, excluding Fortnite components |
 | Fortnite | Same page, only components whose name contains "Fortnite" |
 | Spotify, ChatGPT, Claude, GitHub, Confluence | Statuspage summary indicator, with the page's components, active incidents and maintenance (in progress or upcoming). A body without a `status` reads Unknown. GitHub's own "Visit … for more information" pseudo-component is not listed |
 | GitLab | Status.io public status API (`api.status.io/1.0/status/<page id>`; status.gitlab.com runs on Status.io, which has no Statuspage API). The page's `status_overall.status_code` is the health: 100 Operational, 200 Maintenance, 300, 400 and 600 Degraded, 500 Outage; a missing or other code reads Unknown. Components from `status[]` (with the affected containers as detail), incidents from `incidents[]` (health from the newest message's status code) and maintenance from `maintenance.active[]` and `maintenance.upcoming[]`. An open incident keeps the card at least Degraded. Links go to the page's incident pages on `status.gitlab.com` only |
-| Microsoft Azure | RSS `feed/`, which has no status field and no severity, so an item is read from its title. An item counts when it is dated within the last 14 days and its title does not begin with "Resolved", "Mitigated", "Post Incident Review" or "PIR" (Azure's own prefixes; the same words inside an item's text end nothing). "Outage" or "Service unavailable" in the title is Outage, "maintenance" is Maintenance, and anything else still listed is Degraded, since most items are one service in one region. A channel with no items is Operational; a body that is not an RSS channel reads Unknown. There is no component list |
+| Microsoft Azure | RSS `feed/`, which has no status field and no severity, so an item is read from its title. An item counts when it is dated within the last 14 days (not in the future, past a few minutes of clock skew) and its title does not begin with "Resolved", "Mitigated", "Post Incident Review" or "PIR" (Azure's own prefixes; the same words inside an item's text end nothing). "Outage" or "Service unavailable" in the title is Outage, and anything else still listed is Degraded, since most items are one service in one region. A title with "maintenance" (and no outage wording) is not counted: it never affects health and is not listed as an incident or as upcoming maintenance, because the feed gives no machine-readable window and a notice's own date is when it was announced, not when the work runs. A channel with no items is Operational; a body that is not an RSS channel, or a feed of more than 5000 items, reads Unknown. There is no component list |
 | Apple | `system_status_en_US.js`, services with an active event |
 | Android / Google Play | Play `incidents.json`; only incidents without an end time count. The components come from the dashboard's `products.json` the same way as Google Cloud's, when it is published |
-| Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days. Components: the status page's `v2/components.json` is attempted, but it may not exist or may be blocked (its JSON sits behind Cloudflare's challenge), and a list whose statuses are all unreadable is ignored, so the card falls back to the services that active items' titles lead with (`[API] Elevated error rates`, `[Grok (iOS)] Models outage`); they add detail and never change the card's health, so a component row from the vendor's list can read worse than the card's badge, which follows the feed |
-| MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus the first 64 KB of each listed version's `CHANGELOG` (the newest's first note is the summary; each version's first notes are in Details) |
-| Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS |
+| Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days (not in the future, past a few minutes of clock skew). A feed of more than 5000 items reads Unknown, since nothing says which end is newest. Components: the status page's `v2/components.json` is attempted, but it may not exist or may be blocked (its JSON sits behind Cloudflare's challenge), and a list whose statuses are all unreadable is ignored, so the card falls back to the services that active items' titles lead with (`[API] Elevated error rates`, `[Grok (iOS)] Models outage`); they add detail and never change the card's health, so a component row from the vendor's list can read worse than the card's badge, which follows the feed |
+| MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus, in the background after the health check and the release feeds, the first 64 KB of each listed version's `CHANGELOG` (the newest release by date has its first note as the summary, where the plain line names the stable one; each version's first notes are in Details; they show on the next board, and a changelog that cannot be read changes no health result) |
+| Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS; a feed of more than 5000 items reads Unknown |
 | Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. A page without that table reads Unknown. This is one of two sources read as HTML, an exception recorded in `CONTRIBUTING.md` |
 | Android releases | The releases page on developer.android.com: the four newest Android versions it links as "Android 17", "Android 16" and so on, newest first, read from the site menu and the footer. A new major version (Android 18) appears as a new link with no code change, and the oldest drops off. The page gives no release dates, so the card never carries **New release**. A browser that already had the board sees a version joining the list in **Recent changes** as "Android 18 released" and, with alerts on, gets an alert; a first-time visitor sees only the list. The page links a version as "Android 18" once it has shipped (a beta is linked as "Android Beta"), which is an assumption about Google's markup. The quarterly platform releases (QPRs) are not listed: the page links only betas for them, so none is read as a release. A page with no such links reads Unknown. This is the second source read as HTML, an exception recorded in `CONTRIBUTING.md` |
 
@@ -162,14 +162,15 @@ Collection runs on the server, so the browser never deals with vendor CORS. Each
 
 ## Quick start
 
-You need Node 22.22.2 (pinned in `.nvmrc`), npm 12.1.0, and outbound HTTPS to the vendors above.
+You need Node 22.22.2 (pinned in `.nvmrc`), pnpm 12.8.1 (Corepack, which ships with Node, installs the exact one `package.json` pins and checks its hash), and outbound HTTPS to the vendors above.
 
 ```bash
 git clone https://github.com/greenblacked/status-page.git
 cd status-page
 nvm use
-npm ci
-npm run dev
+corepack enable pnpm
+pnpm install
+pnpm run dev
 ```
 
 Open the local URL that Vite prints. The first load reads all twenty sources, which can take a few seconds.
@@ -202,7 +203,7 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Switch on Notifications** (the bell) for a browser notification when a service changes while the tab is in the background.
 - **Open any card's vendor page** for the full story.
 
-A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 npm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
+A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 pnpm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
 
 ## Integrations
 
@@ -327,7 +328,7 @@ groups:
 | Where | How |
 | --- | --- |
 | **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `main` to the `status-page` Worker at [status.szolotov.com](https://status.szolotov.com) and creates `stage` as a Worker Preview named `stage` of that same Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com); `dev` deploys nothing. Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested, and a production deploy is rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
-| **Any Node host** | `npm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice. `npm run preview` is a smoke test of that build, not a production host |
+| **Any Node host** | `pnpm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice, and serve `/assets/*` (hashed files that never change) with `Cache-Control: public, max-age=31536000, immutable`, the rule in [`public/_headers`](public/_headers), which only Cloudflare reads; without it a return visit loads Inter too late for `font-display: optional` and stays in the system font. `pnpm run preview` is a smoke test of that build, not a production host |
 | **Docker** | `docker compose up preview` serves the built board from the public CI images, for a local run or a quick demo |
 
 The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
@@ -342,7 +343,7 @@ The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search en
 
 `dev` is paused for now: pull requests go into `stage` (squash-merged) instead, and `stage` → `main` is unchanged. [CONTRIBUTING.md](CONTRIBUTING.md#branches) says how `dev` comes back.
 
-Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. `dev`, `stage` and `main` are protected: changes arrive by pull request, and the rulesets require `CI OK` to pass. The owner and the release workflow can bypass them. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
+Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. Today only `main` is fully protected: its ruleset requires a pull request plus the `CI OK` and `CodeQL` checks and has no bypass actors, so a release is a pull request into `main` ([CONTRIBUTING.md#releases](CONTRIBUTING.md#releases)). `stage`'s ruleset only blocks deletion and force pushes, and `dev` has no ruleset while it is paused. The recommended setup is in [CONTRIBUTING.md#branch-protection](CONTRIBUTING.md#branch-protection). [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
 
 ## FAQ
 
@@ -371,7 +372,7 @@ Not necessarily. No data (`unknown` in the API) means Status Page could not read
 
 Usually under three minutes old. Each board asks the server every two minutes.
 
-Running on Node (`npm run build`/`npm run preview`, or any other Node host), the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago. Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
+Running on Node (`pnpm run build`/`pnpm run preview`, or any other Node host), the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago. Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
 
 Running on Cloudflare Workers, each isolate collects on demand and keeps its own in-memory cache. A cold request can wait for vendor responses, and **Refresh** requests a new sweep within that isolate (throttled to once per 15 seconds). Different isolates can show different collection times and issue more vendor requests.
 
@@ -410,19 +411,19 @@ React 19 on TanStack Start, Tailwind CSS 4, TypeScript in strict mode, Vitest an
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Development server with hot reload |
-| `npm run check` | Lint, typecheck, unit tests, and the hygiene and link checks: run it before you push |
-| `npm run lint` / `npm run lint:fix` | Biome lint, format and import order; `:fix` applies the fixes |
-| `npm run typecheck` | Type-check without emitting |
-| `npm test` | Unit tests and a property-based fuzz of the vendor parsers (fast-check, fixed seed), fully offline |
-| `npm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
-| `npm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `npm run build` first, and `npx playwright install chromium webkit` once |
-| `npm run build` / `npm run preview` | Production build into `dist/`, and a local server for it |
-| `npm run build:cf` / `npm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
-| `npm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
-| `npm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
+| `pnpm run dev` | Development server with hot reload |
+| `pnpm run check` | Lint, typecheck, unit tests, and the hygiene and link checks: run it before you push |
+| `pnpm run lint` / `pnpm run lint:fix` | Biome lint, format and import order; `:fix` applies the fixes |
+| `pnpm run typecheck` | Type-check without emitting |
+| `pnpm test` | Unit tests and a property-based fuzz of the vendor parsers (fast-check, fixed seed), fully offline |
+| `pnpm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
+| `pnpm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `pnpm run build` first, and `pnpm exec playwright install chromium webkit` once |
+| `pnpm run build` / `pnpm run preview` | Production build into `dist/`, and a local server for it |
+| `pnpm run build:cf` / `pnpm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
+| `pnpm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
+| `pnpm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
 
-The scripts that set variables inline (`build:cf`, `preview:cf`, `deploy:dry-run`) and `check` need a POSIX shell: on Windows, use WSL or [point npm at Git Bash](CONTRIBUTING.md#locally).
+The scripts that set variables inline (`build:cf`, `preview:cf`, `deploy:dry-run`) and `check` need a POSIX shell: on Windows, use WSL or [point pnpm at Git Bash](CONTRIBUTING.md#locally).
 
 ```text
 src/lib/status/        catalog, health model, collectors, cache and schedule
@@ -482,7 +483,7 @@ Outside pull requests, an hourly job calls every real vendor and opens an issue 
 [`compose.yaml`](compose.yaml) runs the same checks inside the public images from [greenblacked/github-base-images](https://github.com/greenblacked/github-base-images), so a failure can be reproduced with the exact toolchain a container job uses. Only Docker is needed, no local Node:
 
 ```bash
-docker compose run --rm node22         # ci-node22: npm ci, lint, typecheck, tests, build, repository checks
+docker compose run --rm node22         # ci-node22: pnpm install, lint, typecheck, tests, build, repository checks
 docker compose run --rm node24         # the same on ci-node24
 docker compose up preview              # ci-node22: serve the built board on http://127.0.0.1:4173
 docker compose run --rm security       # ci-security: trivy (HIGH/CRITICAL) and gitleaks

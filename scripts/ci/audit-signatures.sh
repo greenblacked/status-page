@@ -1,51 +1,64 @@
 #!/usr/bin/env bash
-# `npm audit signatures`, retried when it cannot load a verification key.
+# Checks that every package pnpm-lock.yaml locks is the one the npm registry
+# signed, the way `npm audit signatures` did for package-lock.json. Two steps:
 #
-# Provenance attestations are checked against Sigstore's trust root, which
-# npm fetches at run time. When that fetch fails, npm reports
-# EMISSINGSIGNATUREKEY for whichever attested package it reaches first,
-# although the package is fine: the same lockfile verifies on the next
-# runner. A tampered package fails differently (an invalid signature or an
-# integrity mismatch), and that fails here at once, without a retry.
+#   1. `pnpm audit signatures` verifies the registry's signature over every
+#      package version pnpm-lock.yaml lists, using npm's
+#      published keys. It fails on an invalid or a missing signature.
+#   2. scripts/ci/lockfile-integrity.ts verifies, with npm's signing keys
+#      (pinned in the script, expiry applied as the npm CLI does), a registry
+#      signature over `name@version:integrity` for the integrity the
+#      lockfile records for each package. It fails on any entry it cannot
+#      read, so none is dropped silently. pnpm does not compare the two,
+#      so without this step an edited lockfile line would still audit clean;
+#      `pnpm install` checks every tarball it downloads against that line, so
+#      together the downloaded bytes are the signed ones. A pnpm store
+#      restored from a cache is not checked against the lockfile on install,
+#      so the deploy workflow restores none.
 #
-# npm keeps the trust root it fetched under its cache (`<cache>/_tuf`), so a
-# retry would read back the same broken copy. Each retry deletes it first,
-# which makes npm fetch it again from its built-in root, and asks the
-# registry for its keys again (--prefer-online) instead of reusing a cached
-# answer. Sigstore outages have lasted over a minute, so the four attempts
-# span 90 seconds (AUDIT_SIGNATURES_BACKOFF=0 makes the waits zero, for tests).
+# What pnpm 12 does not do, and npm did: verify the Sigstore provenance
+# attestation that about two thirds of these packages publish. The
+# trustPolicy in pnpm-workspace.yaml is the nearest control (see
+# CONTRIBUTING.md#dependencies).
 #
-# With a directory argument it audits the install in that directory instead
-# of the project's (npm-pin.sh passes tools/npm).
+# A failure to reach the registry (or a 5xx from it) is retried, three
+# attempts. A signature that does not verify is not: it fails at once.
 #
-# Run locally: ./scripts/ci/audit-signatures.sh [dir] (after `npm ci`)
+# Run locally: ./scripts/ci/audit-signatures.sh [pnpm-lock.yaml] (after `pnpm install`)
 set -uo pipefail
 
-attempts=4
-backoff="${AUDIT_SIGNATURES_BACKOFF:-15}"
-prefix=()
-[ -n "${1:-}" ] && prefix=(--prefix "$1")
-tuf_cache="$(npm config get cache)/_tuf"
+cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-for attempt in $(seq 1 "$attempts"); do
-  extra=""
-  [ "$attempt" -gt 1 ] && extra="--prefer-online"
-  # $extra unquoted on purpose: empty on the first attempt, one flag after.
-  # shellcheck disable=SC2086
-  if output="$(npm audit signatures ${prefix[@]+"${prefix[@]}"} $extra 2>&1)"; then
-    printf '%s\n' "$output"
-    exit 0
-  fi
-  printf '%s\n' "$output" >&2
-  if ! grep -qE 'EMISSINGSIGNATUREKEY|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up' <<<"$output"; then
-    echo "::error::npm audit signatures failed on a package, not on fetching keys" >&2
-    exit 1
-  fi
-  if [ "$attempt" -lt "$attempts" ]; then
-    echo "::warning::npm audit signatures could not load a verification key (attempt $attempt of $attempts); retrying with a fresh trust root"
-    rm -rf "$tuf_cache"
-    sleep $((attempt * backoff))
-  fi
-done
-echo "::error::npm audit signatures could not load a verification key in $attempts attempts" >&2
-exit 1
+lockfile="${1:-pnpm-lock.yaml}"
+attempts=3
+backoff="${AUDIT_SIGNATURES_BACKOFF:-15}"
+
+audit_signatures() {
+  local attempt output
+  for attempt in $(seq 1 "$attempts"); do
+    if output="$(pnpm audit signatures 2>&1)"; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+    printf '%s\n' "$output" >&2
+    # A package that fails verification is reported with the key id it was
+    # signed with, or as missing its signature; that is never retried. Only a
+    # registry that could not answer is (pnpm lists a package whose manifest
+    # came back as a 5xx under "invalid registry signature" too, but with the
+    # status instead of a key id).
+    if grep -qE 'has an invalid registry signature with keyid|missing registry signature' <<<"$output" ||
+      ! grep -qiE 'ERR_PNPM_AUDIT_SIGNATURE_KEYS_FETCH_FAIL|error sending request|responded with (429|5[0-9][0-9])|timed out|timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|connection (reset|closed|refused)' <<<"$output"; then
+      echo "::error::pnpm audit signatures failed on a package, not on reaching the registry" >&2
+      return 1
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      echo "::warning::pnpm audit signatures could not reach the registry (attempt $attempt of $attempts); retrying"
+      sleep $((attempt * backoff))
+    fi
+  done
+  echo "::error::pnpm audit signatures could not reach the registry in $attempts attempts" >&2
+  return 1
+}
+
+audit_signatures || exit 1
+node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/lockfile-integrity.ts "$lockfile"

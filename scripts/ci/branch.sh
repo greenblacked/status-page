@@ -11,10 +11,10 @@
 set -euo pipefail
 
 # While dev is paused (CONTRIBUTING.md#branches), feature branches open pull
-# requests into stage; set to false when dev is back. This default is the one
-# switch: DEV_PAUSED in the environment overrides it, which the tests use to
-# check both modes.
-DEV_PAUSED="${DEV_PAUSED:-true}"
+# requests into stage. dev-paused.sh is the one switch, shared with
+# release.yml: it reads scripts/ci/dev-paused, and DEV_PAUSED in the
+# environment overrides it, which the tests use to check both modes.
+DEV_PAUSED="$("$(dirname "${BASH_SOURCE[0]}")/dev-paused.sh")"
 
 name="${1:?usage: branch.sh <branch-name> [<base-branch>]}"
 base="${2:-}"

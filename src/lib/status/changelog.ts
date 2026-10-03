@@ -194,11 +194,16 @@ export function latestAppleOsByFamily(items: Array<{ title: string; pubDate?: st
   );
 }
 
+// The calendar day in UTC, like every time the server writes (AGENTS.md: never formatted on the server in a
+// zone). A host's own zone would move a day the vendor gave as midnight UTC (a Windows release) to the day before
+// in the Americas, and an evening release to the day after in the Pacific.
+const RELEASE_DAY_FORMAT = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" });
+
 export function formatReleaseAge(iso?: string): string {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date);
+  return RELEASE_DAY_FORMAT.format(date);
 }
 
 export function isFreshRelease(iso?: string, now = Date.now(), windowMs = 14 * 24 * 60 * 60 * 1000): boolean {

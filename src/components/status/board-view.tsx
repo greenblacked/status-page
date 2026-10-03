@@ -427,11 +427,13 @@ export function BoardView({
               showSlash={singleKey.enabled}
             />
           </div>
-          {/* The row's landmark, and its flex item. The segments scroll sideways on a phone; the two toggles follow them. */}
+          {/* The row's landmark, and its flex item. The segments scroll sideways on a phone; the two toggles follow them.
+              From lg up the row never wraps: the segments give way (and scroll) before the toggles drop below them, in
+              Inter and in the fallback face alike, so the board under it does not move. */}
           <section
             ref={chipsRef}
             aria-label="Filter services"
-            className="board-chips mt-3 flex min-w-0 basis-full flex-wrap items-center gap-2 lg:mt-0 lg:flex-1 lg:basis-0 lg:self-center"
+            className="board-chips mt-3 flex min-w-0 basis-full flex-wrap items-center gap-2 lg:mt-0 lg:flex-1 lg:flex-nowrap lg:basis-0 lg:self-center"
           >
             <FilterBar
               filters={filters}
