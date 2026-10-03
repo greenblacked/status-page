@@ -275,7 +275,15 @@ function watchConsole(page: Page): string[] {
 
 test("renders every service with no console errors or hydration warnings", async ({ page }) => {
   const problems = watchConsole(page);
-  await page.goto("/");
+  const response = await page.goto("/");
+  // What is hydrated is not a board of Unknown cards: the preview answers its collectors from the unit tests'
+  // payloads (e2e/support/no-vendors.mjs), so the server's markup has outage and degraded cards and an incident's
+  // "since" time on them, and a mismatch in any of those fails here as a hydration warning. If the markup were
+  // all Unknown, this would say so rather than pass on less.
+  const html = (await response?.text()) ?? "";
+  expect(html).toContain('data-health="outage"');
+  expect(html).toContain('data-health="degraded"');
+  expect(html).toMatch(/[Ss]ince \d\d:\d\d(?:\s|&nbsp;|\u202f)UTC/);
   // After hydration the title leads with how many services need attention: "(2) Status".
   await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -305,7 +313,7 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
         ),
       );
   };
-  // The page as the server renders it (every card Unknown, whatever the vendors say) ...
+  // The page as the server renders it (the preview's canned vendor payloads: outages, degraded, incidents) ...
   expect(await audit()).toEqual([]);
   // ... and with every state a card can be in: outage, degraded, maintenance, unknown, operational.
   await serveBoard(page, () => fixtureBoard(Date.now()));
