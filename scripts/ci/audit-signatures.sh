@@ -5,9 +5,11 @@
 #   1. `pnpm audit signatures` verifies the registry's signature over every
 #      package version pnpm-lock.yaml lists, using npm's
 #      published keys. It fails on an invalid or a missing signature.
-#   2. scripts/ci/lockfile-integrity.ts verifies, with npm's published keys,
-#      a registry signature over `name@version:integrity` for the integrity
-#      the lockfile records for each package. pnpm does not compare the two,
+#   2. scripts/ci/lockfile-integrity.ts verifies, with npm's signing keys
+#      (pinned in the script, expiry applied as the npm CLI does), a registry
+#      signature over `name@version:integrity` for the integrity the
+#      lockfile records for each package. It fails on any entry it cannot
+#      read, so none is dropped silently. pnpm does not compare the two,
 #      so without this step an edited lockfile line would still audit clean;
 #      `pnpm install` checks every tarball it downloads against that line, so
 #      together the downloaded bytes are the signed ones. A pnpm store
