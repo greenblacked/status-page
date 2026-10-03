@@ -6,6 +6,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
 ### Added
 
 - A quiet **release line** under the health line of the cards whose vendors publish an official release or changelog feed: **AWS** (What's New), **Google Cloud** (release notes), **Microsoft Azure** (Azure Updates), **GitHub** (Changelog), **GitLab** (the newest version, such as "GitLab 18.4 · Sep 18") and **CS2 Europe** (the latest update post on Steam). **Details** opens the vendor's recent entries with a few notes and a link to the vendor's own post. It never changes a card's health or anything derived from it, and a feed that cannot be read just leaves the line out. Each feed is read at most every 30 minutes, after the health checks have finished so it can never slow one, and the board never waits for one.
@@ -31,7 +33,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 - The headline says what is wrong instead of counting things that need a look: "Two services are down.", "One service is degraded.", or, when the states differ, "One is down, one is degraded." The line under it names the services state by state ("ChatGPT is down. Apple is degraded."), the floating bar reads "1 down · 1 degraded", and the JSON API, the feed and the board badge use the same words.
 - The thin bar beside a card that changed in the latest check now shows how serious it is: red for an outage, amber for degraded, green for a recovery, and the maintenance tone for maintenance. A new release keeps the neutral bar; a release tracker whose source came back with the same versions gets the green one.
-- The page footer no longer says what the site is built with, and no longer links the badges.
+- The page footer no longer links the badges.
 - The name at the top of the page reads Status Page and sits in the middle.
 - Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until you scroll up and the search field appears). The settings button is called **Settings**.
 - The site is called **Status**, and the words are plainer and in the first person. The headline says "Everything is up." when all is well; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The line under the headline names one or two of them, linked ("I couldn't read Android."), and counts more than that ("I couldn't read three of them."). The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.
@@ -67,20 +69,22 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Dark subtle text reaches 4.5:1 contrast.
 - The short search placeholder is used where the long one would be clipped.
 - The summary says "2 outages", not "2 outage".
+- Grok and Apple OS read No data instead of a guess when their feed has more than 5000 items, and Grok and AWS no longer count an incident dated in the future (beyond a few minutes of clock skew) as current.
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
-- On a phone the search field no longer moves into the bar by script as you scroll, so there is no move in it that can jump or flicker; it scrolls away with the page, and the bar shows its own copy when you scroll up (not yet confirmed on an iPhone). Safari's toolbar sliding away or back still does not make the page measure itself again.
 - The "+N more" under a service counts every incident it has, not only the ones the board kept.
 - In Safari the board no longer jumps when a check adds a line to Recent changes above what you are reading, and the floating bar on a phone gets out of the way as soon as the headline grows under it.
+- A slow or unavailable MikroTik changelog no longer holds up the board. The RouterOS notes (the first note on the card and the first lines in **Details**) are read in the background after the health checks and the release feeds have finished, and shown on the next board; a changelog that cannot be read is left alone for five minutes, and changes no health result and not how long the board took.
 
 ### Security
 
 - Text from a vendor is kept to sensible lengths, with "…" where it was cut: a name to 120 characters, a title to 300 and a summary or detail to 500.
 - A source that sends the board to another site, or to another port, is no longer followed. Its card reads No data, with the host it was sent to.
 - HSTS now covers subdomains.
+- Each GitHub Release now carries its source archive signed with Sigstore, so you can check that the download is the tagged code.
 - Vendor status feeds with malformed markup or large product lists no longer stall status checks.
 - The advisories in the dependencies bundled inside the npm CLI that CI used to run (`http-cache-semantics` CVE-2026-93748, `brace-expansion`, `undici`, `ip-address`) no longer apply: pnpm 12 has none of them, so the scanner exceptions for them are gone and dependency review, trivy and OSV-Scanner accept no advisory at HIGH or above.
-- Every install still verifies the registry's signature of each locked package, and that the integrity the lockfile holds carries a valid registry signature. The deploy workflow restores no package cache. The Sigstore provenance check that `npm audit signatures` ran is not available in pnpm; installs fail instead when a version carries less publisher evidence than an earlier one (`trustPolicy: no-downgrade`).
+- Every CI and deploy install verifies the registry's signature of each locked package, and that the integrity the lockfile holds carries a valid registry signature. The deploy workflow restores no package cache. The Sigstore provenance check that `npm audit signatures` ran is not available in pnpm; installs fail instead when a version carries less publisher evidence than an earlier one (`trustPolicy: no-downgrade`).
 
 ## [0.5.0] - 2026-09-30
 
@@ -212,7 +216,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/greenblacked/status-page/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/greenblacked/status-page/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/greenblacked/status-page/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/greenblacked/status-page/compare/v0.2.0...v0.3.0

@@ -19,6 +19,7 @@ import {
   grokItemHealth,
   grokTitleService,
   isoTimestamp,
+  MAX_RSS_SCANNED,
   parseGoogleProducts,
   parseInstatusComponents,
   parseRssItems,
@@ -49,6 +50,16 @@ describe("grok feed", () => {
     assert.equal(grokItemActive(fresh, NOW), true);
   });
 
+  it("ignores an unresolved item dated in the future, but not one a feed clock's skew ahead", () => {
+    const at = (offset: number) => ({
+      description: "Investigating elevated errors",
+      pubDate: new Date(NOW + offset).toUTCString(),
+    });
+    assert.equal(grokItemActive(at(DAY), NOW), false);
+    assert.equal(grokItemActive(at(5 * 365 * DAY), NOW), false);
+    assert.equal(grokItemActive(at(2 * 60_000), NOW), true);
+  });
+
   it("ignores an item with no usable date", () => {
     assert.equal(grokItemActive({ description: "Investigating" }, NOW), false);
     assert.equal(grokItemActive({ description: "Investigating", pubDate: "not a date" }, NOW), false);
@@ -72,6 +83,14 @@ describe("aws health events", () => {
       awsEventActive({ event_log: [{ timestamp: recent, message: "The issue is resolved" }] } as never, NOW),
       false,
     );
+  });
+
+  it("ignores an event whose last update is dated in the future, but not one a clock's skew ahead", () => {
+    const at = (offset: number) =>
+      ({ event_log: [{ timestamp: Math.floor((NOW + offset) / 1000), message: "Elevated error rates" }] }) as never;
+    assert.equal(awsEventActive(at(DAY), NOW), false);
+    assert.equal(awsEventActive(at(5 * 365 * DAY), NOW), false);
+    assert.equal(awsEventActive(at(2 * 60_000), NOW), true);
   });
 
   it("does not read a negated or prefixed 'resolved' as a resolution", () => {
@@ -292,6 +311,21 @@ describe("grok feed html stripping end to end", () => {
     assert.equal(grokItemHealth("<!-- <p>Status:&nbsp;Resolved</p>"), "operational");
     assert.equal(grokItemHealth("<p <b>Status: Resolved</b>"), "operational");
     assert.equal(grokItemHealth("Latency < 500ms. Status: Resolved. Errors > 1%"), "operational");
+  });
+});
+
+describe("parseRssItems scan cap", () => {
+  const item = (n: number) => `<item><title>t${n}</title></item>`;
+
+  it("reads a feed of exactly MAX_RSS_SCANNED items", () => {
+    const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED }, (_, n) => item(n)).join("")}</channel></rss>`;
+    assert.equal(parseRssItems(xml).length, 200);
+  });
+
+  it("fails a feed with even one item past the cap instead of ignoring it", () => {
+    // Nothing says which end of the feed is newest, so an item past the cap could be the current incident.
+    const xml = `<rss><channel>${Array.from({ length: MAX_RSS_SCANNED + 1 }, (_, n) => item(n)).join("")}</channel></rss>`;
+    assert.throws(() => parseRssItems(xml), PayloadError);
   });
 });
 
@@ -1019,6 +1053,16 @@ describe("azure feed", () => {
     }
   });
 
+  it("does not count an unresolved item dated in the future, but does one a feed clock's skew ahead", () => {
+    const item = (offset: number) => ({
+      title: "App Service - Degraded performance",
+      pubDate: new Date(NOW + offset).toUTCString(),
+    });
+    assert.equal(azureItemActive(item(DAY), NOW), false);
+    assert.equal(azureItemActive(item(5 * 365 * DAY), NOW), false);
+    assert.equal(azureItemActive(item(2 * 60_000), NOW), true);
+  });
+
   it("counts an item as active when it is unresolved and dated within 14 days", () => {
     const item = (pubDate?: string, title = "App Service - Degraded performance") => ({ title, pubDate });
     assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString()), NOW), true);
@@ -1026,5 +1070,15 @@ describe("azure feed", () => {
     assert.equal(azureItemActive(item(undefined), NOW), false);
     assert.equal(azureItemActive(item("not a date"), NOW), false);
     assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString(), "RESOLVED - App Service"), NOW), false);
+  });
+
+  it("never counts a maintenance notice as active, however recent, but does an outage-worded title", () => {
+    const item = (title: string, ago = 60_000) => ({ title, pubDate: new Date(NOW - ago).toUTCString() });
+    assert.equal(azureItemActive(item("Planned maintenance - Key Vault"), NOW), false);
+    assert.equal(azureItemActive(item("Maintenance impacting Key Vault", DAY), NOW), false);
+    assert.equal(azureItemActive(item("Planned maintenance - Key Vault", -DAY), NOW), false);
+    assert.equal(azureItemActive({ title: "Planned maintenance - Key Vault" }, NOW), false);
+    assert.equal(azureItemActive(item("Service unavailable - maintenance overran"), NOW), true);
+    assert.equal(azureItemActive(item("Maintenance in West US: outage"), NOW), true);
   });
 });
