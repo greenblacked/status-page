@@ -16,7 +16,6 @@ import {
 } from "./release-feeds.server.ts";
 import {
   azureItemHealth,
-  azureMaintenanceWindow,
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
@@ -83,22 +82,6 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(azureItemHealth("Preliminary Post Incident Review (PIR) – Networking – Outage")).toBe("operational");
     expect(azureItemHealth("Final PIR – Networking")).toBe("operational");
     expect(azureItemHealth(`${"preliminary ".repeat(10)}x`)).toBe("degraded");
-  });
-
-  it("azureMaintenanceWindow: long runs of its start and end words, clock times, days and spaces", () => {
-    const cases = [
-      `${"starting ".repeat(SIZE / 9)}x`,
-      `${"end ".repeat(SIZE / 4)}x`,
-      `start${" ".repeat(SIZE)}01:00 UTC`,
-      `starting ${"01:0".repeat(SIZE / 4)}`,
-      `starting ${"1 ".repeat(SIZE / 2)}oct 2026`,
-      `starting ${"oct ".repeat(SIZE / 4)}`,
-      `${"a".repeat(SIZE)} starting 01:00 UTC on 5 oct 2026`,
-      `starting 01:00 UTC on 05 oct 2026 ${"until ".repeat(SIZE / 6)}`,
-      `${"<p>".repeat(SIZE / 3)}starting 01:00 UTC on 05 oct 2026`,
-    ];
-    for (const body of cases) expect(elapsed(() => azureMaintenanceWindow(body))).toBeLessThan(BUDGET_MS);
-    expect(azureMaintenanceWindow("Starting at 01:00 UTC on 05 Oct 2026").start).toBe(Date.UTC(2026, 9, 5, 1, 0));
   });
 
   it.each(["title", "description", "pubDate", "link"])("parseRssItems: a repeated unclosed <%s>", (tag) => {

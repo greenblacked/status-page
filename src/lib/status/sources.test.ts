@@ -9,7 +9,6 @@ import {
   awsLatestLog,
   azureItemActive,
   azureItemHealth,
-  azureMaintenanceWindow,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
@@ -1073,104 +1072,13 @@ describe("azure feed", () => {
     assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString(), "RESOLVED - App Service"), NOW), false);
   });
 
-  it("reads a maintenance window only from a time with a UTC zone and a calendar day", () => {
-    const at = Date.UTC(2026, 9, 5, 1, 0);
-    const end = Date.UTC(2026, 9, 5, 5, 30);
-    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 UTC on 05 Oct 2026."), { start: at });
-    assert.deepEqual(
-      azureMaintenanceWindow("<p>Start time: 2026-10-05 01:00 UTC</p><p>End time: 2026-10-05 05:30 GMT</p>"),
-      {
-        start: at,
-        end,
-      },
-    );
-    assert.deepEqual(azureMaintenanceWindow("Begins October 5th, 2026 01:00 UTC until 05:30 UTC on 5 October 2026"), {
-      start: at,
-      end,
-    });
-    // No zone, no day, a day not on the calendar, or no start word: nothing is read.
-    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 on 05 Oct 2026"), {});
-    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 UTC"), {});
-    assert.deepEqual(azureMaintenanceWindow("Starting at 01:00 UTC on 31 Feb 2026"), {});
-    assert.deepEqual(azureMaintenanceWindow("Starting at 25:00 UTC on 05 Oct 2026"), {});
-    assert.deepEqual(azureMaintenanceWindow("Planned for 01:00 UTC on 05 Oct 2026"), {});
-    assert.deepEqual(azureMaintenanceWindow(undefined), {});
-    // An end is not mistaken for the start when the start has no time of its own.
-    assert.deepEqual(azureMaintenanceWindow("Starting soon. Ending at 05:30 UTC on 05 Oct 2026"), { end });
-  });
-
-  it("reads the window past ordinary prose that holds a start or end word", () => {
-    const at = Date.UTC(2026, 9, 5, 1, 0);
-    const end = Date.UTC(2026, 9, 5, 5, 30);
-    // "end users" ahead of the window does not take the end.
-    assert.deepEqual(
-      azureMaintenanceWindow(
-        "End users may notice. Starting at 01:00 UTC on 05 Oct 2026 until 05:30 UTC on 05 Oct 2026.",
-      ),
-      { start: at, end },
-    );
-    assert.deepEqual(
-      azureMaintenanceWindow("This is end-to-end work. Start: 2026-10-05 01:00 UTC. End: 2026-10-05 05:30 UTC."),
-      { start: at, end },
-    );
-    // "unable to start" ahead of the window does not hide the start.
-    assert.deepEqual(
-      azureMaintenanceWindow(
-        "Customers may be unable to start or allocate Virtual Machines. Starting at 01:00 UTC on 05 Oct 2026.",
-      ),
-      { start: at },
-    );
-    // An end listed before the start is still read.
-    assert.deepEqual(azureMaintenanceWindow("End: 2026-10-05 05:30 UTC. Start: 2026-10-05 01:00 UTC."), {
-      start: at,
-      end,
-    });
-  });
-
-  it("does not read a time with an offset after its zone as UTC", () => {
-    assert.deepEqual(azureMaintenanceWindow("Start: 01:00 UTC+02:00 on 05 Oct 2026"), {});
-    assert.deepEqual(azureMaintenanceWindow("Starting 2026-10-05 01:00 GMT+5:30"), {});
-    assert.deepEqual(azureMaintenanceWindow("Starting 2026-10-05 01:00 UTC-5"), {});
-    // A range written with a spaced dash still reads.
-    assert.deepEqual(azureMaintenanceWindow("Starting 2026-10-05 01:00 UTC - 05:30 UTC"), {
-      start: Date.UTC(2026, 9, 5, 1, 0),
-    });
-  });
-
-  it("counts a short ended window as over despite prose with an end word before it", () => {
-    const stated = "Our end users may notice. Starting at 01:00 UTC on 01 Oct 2026 until 05:00 UTC on 01 Oct 2026.";
-    const item = { title: "Planned maintenance - X", pubDate: "Thu, 01 Oct 2026 00:00:00 GMT", description: stated };
-    assert.equal(azureItemActive(item, Date.UTC(2026, 9, 3, 12, 0)), false);
-    assert.equal(azureItemActive(item, Date.UTC(2026, 9, 1, 3, 0)), true);
-  });
-
-  it("counts maintenance only once its window has started and not ended", () => {
-    const clock = (ms: number) => {
-      const d = new Date(ms).toISOString();
-      return `${d.slice(0, 10)} ${d.slice(11, 16)} UTC`;
-    };
-    const item = (description?: string, title = "Planned maintenance - Key Vault") => ({
-      title,
-      pubDate: new Date(NOW - 60_000).toUTCString(),
-      description,
-    });
-    // Recent, but no window: out of health.
-    assert.equal(azureItemActive(item(), NOW), false);
-    assert.equal(azureItemActive(item("Impact."), NOW), false);
-    // Announced, not started.
-    assert.equal(azureItemActive(item(`Starting at ${clock(NOW + DAY)}`), NOW), false);
-    // Started, no end yet; started and not ended; ended.
-    assert.equal(azureItemActive(item(`Starting at ${clock(NOW - DAY)}`), NOW), true);
-    assert.equal(azureItemActive(item(`Start: ${clock(NOW - DAY)} End: ${clock(NOW + DAY)}`), NOW), true);
-    assert.equal(azureItemActive(item(`Start: ${clock(NOW - 2 * DAY)} End: ${clock(NOW - DAY)}`), NOW), false);
-    // Started long ago with no end is stale, like any other item.
-    assert.equal(azureItemActive(item(`Starting at ${clock(NOW - 30 * DAY)}`), NOW), false);
-    // A notice published weeks ahead of work that has now started still counts.
-    const early = { ...item(`Starting at ${clock(NOW - 60_000)}`), pubDate: new Date(NOW - 40 * DAY).toUTCString() };
-    assert.equal(azureItemActive(early, NOW), true);
-    // Other items ignore the text: an incident is active on its date alone.
-    const incident = { title: "Storage - East US", pubDate: new Date(NOW - DAY).toUTCString(), description: "Impact." };
-    assert.equal(azureItemActive(incident, NOW), true);
-    assert.equal(azureItemActive({ ...incident, title: "Service unavailable - maintenance overran" }, NOW), true);
+  it("never counts a maintenance notice as active, however recent, but does an outage-worded title", () => {
+    const item = (title: string, ago = 60_000) => ({ title, pubDate: new Date(NOW - ago).toUTCString() });
+    assert.equal(azureItemActive(item("Planned maintenance - Key Vault"), NOW), false);
+    assert.equal(azureItemActive(item("Maintenance impacting Key Vault", DAY), NOW), false);
+    assert.equal(azureItemActive(item("Planned maintenance - Key Vault", -DAY), NOW), false);
+    assert.equal(azureItemActive({ title: "Planned maintenance - Key Vault" }, NOW), false);
+    assert.equal(azureItemActive(item("Service unavailable - maintenance overran"), NOW), true);
+    assert.equal(azureItemActive(item("Maintenance in West US: outage"), NOW), true);
   });
 });

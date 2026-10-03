@@ -45,7 +45,6 @@ import {
   awsLatestLog,
   azureItemActive,
   azureItemHealth,
-  azureMaintenanceWindow,
   decodeXmlEntities,
   decodeXmlField,
   epochToIso,
@@ -666,22 +665,6 @@ describe("feeds and payloads", () => {
     );
   });
 
-  it("azureMaintenanceWindow: only finite moments, for any text", () => {
-    const body = fc.oneof(
-      anyText,
-      markup,
-      fc.constantFrom("Starting at 01:00 UTC on 05 Oct 2026", "Start: 2026-10-05 01:00 Z End: 2026-10-05 02:00 Z"),
-    );
-    fc.assert(
-      fc.property(body, (text) => {
-        const { start, end } = azureMaintenanceWindow(text);
-        if (start !== undefined) expect(Number.isFinite(start)).toBe(true);
-        if (end !== undefined) expect(Number.isFinite(end)).toBe(true);
-      }),
-      run(),
-    );
-  });
-
   it("azureItemHealth: one of the five healths for any title, over only when it begins with a resolution", () => {
     const title = fc.oneof(
       anyText,
@@ -694,7 +677,7 @@ describe("feeds and payloads", () => {
         if (azureItemHealth(text) === "operational") {
           expect(/^[\s[(]*(?:resolved|mitigated|post[ -]incident review|pir)/i.test(text)).toBe(true);
         }
-        expect(typeof azureItemActive({ title: text, pubDate, description: text }, Date.now())).toBe("boolean");
+        expect(typeof azureItemActive({ title: text, pubDate }, Date.now())).toBe("boolean");
       }),
       run(),
     );
