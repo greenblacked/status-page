@@ -207,3 +207,17 @@ describe("no npm toolchain is left to scan", () => {
     ).toEqual(["npm /", "github-actions /"]);
   });
 });
+
+describe("a restored pnpm store is not trusted", () => {
+  // `pnpm install --frozen-lockfile` does not check the files of a store restored from the Actions
+  // cache against the lockfile's integrity, so a poisoned cache entry would be installed silently.
+  // The jobs that make the Worker or hold the Cloudflare token therefore download every package.
+  it("restores no package cache in deploy.yml, and turns setup-node's off in each job", () => {
+    const deploy = read(".github/workflows/deploy.yml");
+    expect(deploy).not.toMatch(/^\s+cache:/m);
+    expect(deploy).not.toMatch(/actions\/cache(?:\/restore)?@/);
+    const setups = deploy.match(/uses: actions\/setup-node@/g) ?? [];
+    expect(setups).toHaveLength(3);
+    expect(deploy.match(/package-manager-cache: false/g)).toHaveLength(setups.length);
+  });
+});

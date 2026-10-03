@@ -23,7 +23,7 @@ name: Deploy
 #   - The job that holds the token installs with --ignore-scripts, checks
 #     every installed package against the registry's signature
 #     (scripts/ci/audit-signatures.sh: pnpm audit signatures, and the
-#     lockfile's integrity against the signed one), runs no build, no package
+#     lockfile's integrity against its signature), runs no build, no package
 #     script and no project JavaScript, and only uploads what the build job
 #     made, so a compromised dependency's install script never runs beside
 #     it. The repository files it runs are shell scripts from the same
@@ -32,6 +32,9 @@ name: Deploy
 #     packageManager), the signature check (scripts/ci/audit-signatures.sh,
 #     which also runs scripts/ci/lockfile-integrity.ts) and the smoke test
 #     (scripts/ci/smoke.sh: bash, curl and jq).
+#   - No job restores a package cache: a pnpm store taken from the Actions
+#     cache is installed without its files being checked against the
+#     lockfile, and these jobs make the Worker or hold the token.
 #   - Every job reads the repository and nothing more.
 
 on:
@@ -95,7 +98,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          # pnpm is not there yet, and the package cache needs it (below).
+          # No package cache. A pnpm store restored from the Actions cache is
+          # installed as it is, without its files being checked against the
+          # lockfile's integrity, so a poisoned entry would reach the Worker
+          # or the job that holds the token. A cold install is a few seconds.
           package-manager-cache: false
       # pnpm at the packageManager version, installed by Corepack, which
       # refuses it unless it matches the sha512 in packageManager. Not
@@ -104,12 +110,6 @@ jobs:
         run: ./scripts/ci/pnpm-pin.sh install
       - name: Check pnpm
         run: ./scripts/ci/pnpm-pin.sh verify
-      # The same Node again, now with pnpm on PATH so the package store is
-      # cached, keyed on pnpm-lock.yaml.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
 
       - run: pnpm install --frozen-lockfile
       # Every installed tarball against the registry's signature, before
@@ -165,7 +165,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          # pnpm is not there yet, and the package cache needs it (below).
+          # No package cache. A pnpm store restored from the Actions cache is
+          # installed as it is, without its files being checked against the
+          # lockfile's integrity, so a poisoned entry would reach the Worker
+          # or the job that holds the token. A cold install is a few seconds.
           package-manager-cache: false
       # pnpm at the packageManager version, installed by Corepack, which
       # refuses it unless it matches the sha512 in packageManager. Not
@@ -174,12 +177,6 @@ jobs:
         run: ./scripts/ci/pnpm-pin.sh install
       - name: Check pnpm
         run: ./scripts/ci/pnpm-pin.sh verify
-      # The same Node again, now with pnpm on PATH so the package store is
-      # cached, keyed on pnpm-lock.yaml.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
       # This install's wrangler is what checks the Worker below, so it is
       # verified too, not only the build job's.
@@ -211,7 +208,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          # pnpm is not there yet, and the package cache needs it (below).
+          # No package cache. A pnpm store restored from the Actions cache is
+          # installed as it is, without its files being checked against the
+          # lockfile's integrity, so a poisoned entry would reach the Worker
+          # or the job that holds the token. A cold install is a few seconds.
           package-manager-cache: false
       # pnpm at the packageManager version, installed by Corepack, which
       # refuses it unless it matches the sha512 in packageManager. Not
@@ -220,12 +220,6 @@ jobs:
         run: ./scripts/ci/pnpm-pin.sh install
       - name: Check pnpm
         run: ./scripts/ci/pnpm-pin.sh verify
-      # The same Node again, now with pnpm on PATH so the package store is
-      # cached, keyed on pnpm-lock.yaml.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
       # No install scripts: nothing but wrangler runs while the token exists.
       - run: pnpm install --frozen-lockfile --ignore-scripts
       # And that wrangler is the registry's: this install, not the build
