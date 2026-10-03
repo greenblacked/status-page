@@ -25,8 +25,12 @@ name: Release
 #   - Pushing a vX.Y.Z tag by hand.
 # The release has to be on main, have a changelog section and pass the same
 # checks as CI. After every run for main, released or not, main is merged back
-# into stage and then dev, so both carry the release commit and any fix
-# merged into main directly. Those merges are pushed with GITHUB_TOKEN, which
+# into stage and then dev (not while dev is paused: scripts/ci/dev-paused), so
+# both carry the release commit and any fix merged into main directly. A push
+# to main, stage or dev that fails fails the run, naming the cause, unless the
+# branch really moved meanwhile (scripts/release/push.sh); a ruleset that does
+# not let GitHub Actions bypass it is the usual cause (CONTRIBUTING.md#branch-protection).
+# Those merges are pushed with GITHUB_TOKEN, which
 # starts no workflow of its own, so when one actually moved stage this also
 # starts deploy.yml on stage by hand, or the stage preview would keep running
 # the pre-release code until an unrelated push to stage updated it (dev
@@ -306,8 +310,18 @@ jobs:
             exit 1
           fi
           # Fails without force if main moved since the checks above, so a
-          # concurrent merge is never overwritten.
-          git push origin "HEAD:refs/heads/main" || moved
+          # concurrent merge is never overwritten. push.sh looks main up again
+          # after a failed push: only a tip that is no longer $SHA is "moved"
+          # (status 10). Any other failure, a ruleset rejection (GH013)
+          # included, fails the run with its cause, because nothing was
+          # released and a green run would hide that.
+          pushed=0
+          ./scripts/release/push.sh main "$SHA" || pushed=$?
+          if [ "$pushed" = 10 ]; then
+            moved
+          elif [ "$pushed" != 0 ]; then
+            exit 1
+          fi
 
       - name: Tag and draft the GitHub Release
         id: release
@@ -338,7 +352,15 @@ jobs:
           if existing="$(git rev-parse -q --verify "refs/tags/$TAG^{commit}")"; then
             [ "$existing" = "$target" ] || { echo "::error::$TAG is on $existing, not $target"; exit 1; }
           else
-            gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$target" >/dev/null
+            # A ruleset on tags can reject this as it does a push to main:
+            # name the cause instead of leaving gh's bare message.
+            created=0
+            out="$(gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$target" 2>&1)" || created=$?
+            if [ "$created" != 0 ]; then
+              printf '%s\n' "$out" >&2
+              ./scripts/release/explain-failure.sh "creating tag $TAG" "$TAG" <<<"$out"
+              exit 1
+            fi
           fi
 
           # The release for this tag, a draft included (the releases list has
@@ -548,7 +570,16 @@ jobs:
           # (network, checkout) are guarded: a failure sets failed=1 instead of
           # ending the script, and stage_pushed is written the moment stage's
           # push succeeds, before dev is touched.
+          # While dev is paused (scripts/ci/dev-paused, the same switch the
+          # branch name check reads) nothing lands in it, so merging main
+          # would only conflict with its stale history on every release. Read
+          # once, while main is checked out.
+          dev_paused="$(./scripts/ci/dev-paused.sh)" || { dev_paused=true; failed=1; }
           for branch in stage dev; do
+            if [ "$branch" = dev ] && [ "$dev_paused" = true ]; then
+              echo "::notice::dev is paused (scripts/ci/dev-paused); not merging main into it. When dev is recreated from stage, set the file to false"
+              continue
+            fi
             listed=0
             git ls-remote --exit-code --heads origin "$branch" >/dev/null || listed=$?
             if [ "$listed" = 2 ]; then
@@ -599,10 +630,20 @@ jobs:
                   break
                 fi
               fi
-              if git push origin "HEAD:refs/heads/$branch"; then
+              # Only a branch that really moved since the fetch above is
+              # worth another attempt (push.sh looks it up again). A push the
+              # ruleset or the token rejects fails the job at once, with the
+              # cause, instead of looping and calling it "moved".
+              pushed=0
+              ./scripts/release/push.sh "$branch" "$(git rev-parse "origin/$branch")" || pushed=$?
+              if [ "$pushed" = 0 ]; then
                 if [ "$branch" = stage ]; then
                   echo "stage_pushed=true" >>"$GITHUB_OUTPUT"
                 fi
+                synced=true
+                break
+              elif [ "$pushed" != 10 ]; then
+                failed=1
                 synced=true
                 break
               fi
