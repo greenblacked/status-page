@@ -1,8 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
-import { DOCK_HYSTERESIS, DOCK_LEAD_MS, DOCK_MS, transitionMs, WIDE_RANGE } from "../src/lib/status/dock.ts";
-import { dockProgress } from "../src/lib/status/layout.ts";
+import { BAR_RISE, DOCK_HYSTERESIS, HIDE_DOWN_PX, REVEAL_UP_PX, WIDE_RANGE } from "../src/lib/status/dock.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
@@ -331,7 +330,7 @@ test("starts the tab order with a skip link that moves focus to the board", asyn
 test("opens with the search from the address and announces a new result count", async ({ page }) => {
   await page.goto("/?q=aws");
   await hydrated(page);
-  const search = page.getByRole("searchbox", { name: "Search services" }).or(page.getByLabel("Search services"));
+  const search = page.getByRole("searchbox", { name: "Search services" }).or(heroSearch(page));
   await expect(search).toHaveValue("aws");
   await expect(page.locator("#service-aws")).toBeVisible();
   await expect(cards(page)).not.toHaveCount(SERVICES);
@@ -479,12 +478,19 @@ test("floats a compact header with the controls once the hero scrolls away", asy
 const controlBar = (page: Page) => page.locator('section[aria-label="Board controls"]');
 
 /**
- * The search dock. From 64rem it carries --dock (0 to 1), the search field's progress into the bar, which follows
- * the scroll. Below that the field does not follow the scroll: the dock carries data-docked once the page has
- * reached it, and a transition in time moves the field. Every reading of "the dock" below is --dock on a wide
- * screen and 0 or 1 (data-docked) on a phone, so one assertion serves both.
+ * The search dock, in the hero. From 64rem it carries --dock (0 to 1), the field's progress into the bar, which
+ * follows the scroll. Below that the field is ordinary content that scrolls away with the page, and the bar has a
+ * copy of it that a scroll up reveals (data-revealed on the bar) and a scroll down hides. Every reading of the dock
+ * below is --dock on a wide screen and the bar's data-revealed below it.
  */
 const searchDock = (page: Page) => page.locator(".search-dock");
+
+/**
+ * The hero's search field and the bar's copy of it. Both are labelled "Search services", so neither is found by
+ * its label; the markup says which is which (data-search-input).
+ */
+const heroSearch = (page: Page) => page.locator('[data-search-input="hero"]');
+const barSearch = (page: Page) => page.locator('[data-search-input="bar"]');
 
 /** Scrolls to `y` and waits three frames, so the dock's own callback and React's update have run. */
 async function scrollAndSettle(page: Page, y: number): Promise<void> {
@@ -502,50 +508,29 @@ async function scrollAndSettle(page: Page, y: number): Promise<void> {
 const maxScroll = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollHeight - document.documentElement.clientHeight);
 
-/** The dock's reading as a number: --dock on a wide screen, 0 or 1 (data-docked) on a phone. */
+/** The dock's reading on a wide screen: --dock (0 to 1). Below 64rem nothing is written, and this is 0. */
 const dockValue = (page: Page) =>
-  searchDock(page).evaluate((element) =>
-    element.hasAttribute("data-docked") ? 1 : Number.parseFloat(element.style.getPropertyValue("--dock") || "0"),
-  );
+  searchDock(page).evaluate((element) => Number.parseFloat(element.style.getPropertyValue("--dock") || "0"));
 
-/**
- * The easing of the dock's move, as the stylesheet's --ease-out says it (the "transform and opacity only" test checks
- * the two agree). The test of the move's first frames reads its curve from it.
- */
-const DOCK_EASING = "cubic-bezier(0.23, 1, 0.32, 1)";
+/** Whether the bar's copy of the field is revealed, as the page says it (data-revealed on the bar). */
+const isRevealed = (page: Page) => controlBar(page).evaluate((bar) => bar.hasAttribute("data-revealed"));
 
-/** A CSS cubic-bezier(x1, y1, x2, y2) as a function of the time (0 to 1) to the progress (0 to 1). */
-function cubicBezier(x1: number, y1: number, x2: number, y2: number): (time: number) => number {
-  const at = (t: number, a: number, b: number) => 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t ** 2 * b + t ** 3;
-  return (time) => {
-    if (time <= 0) return 0;
-    if (time >= 1) return 1;
-    let low = 0;
-    let high = 1;
-    for (let step = 0; step < 40; step++) {
-      const mid = (low + high) / 2;
-      if (at(mid, x1, x2) < time) low = mid;
-      else high = mid;
-    }
-    return at((low + high) / 2, y1, y2);
-  };
-}
-
-/**
- * Waits until the search field and its fill have stopped moving: below 64rem a transition of --t-dock follows the
- * moment the field docks or leaves. Reading the animations also lets the browser start any that is due, so call
- * it after the scroll has been seen by the page (scrollAndSettle).
- */
-async function dockMoved(page: Page): Promise<void> {
-  await searchDock(page).evaluate(async (dock) => {
-    await Promise.allSettled(dock.getAnimations({ subtree: true }).map((animation) => animation.finished));
-  });
+/** Waits until the page says the bar's field is (or is not) revealed. */
+async function expectRevealed(page: Page, revealed: boolean): Promise<void> {
+  if (revealed) await expect(controlBar(page)).toHaveAttribute("data-revealed", "");
+  else await expect(controlBar(page)).not.toHaveAttribute("data-revealed");
 }
 
 /** Waits out the bar's own fade and slide, but not the live ring inside it, which never finishes. */
 async function barSettled(page: Page): Promise<void> {
   await controlBar(page).evaluate((bar) => Promise.all(bar.getAnimations().map((animation) => animation.finished)));
 }
+
+/** Waits until the bar's copy of the field has finished fading and rising, in or out. */
+const barFieldSettled = (page: Page) =>
+  page
+    .locator(".bar-search")
+    .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
 
 /** Where the search field sits in the page before any scrolling, as a scroll position. */
 const dockNatural = (page: Page) =>
@@ -562,25 +547,29 @@ type DockStop = {
   frameMs: number[];
   /** How many of those frames were the fallback timer rather than a real one. */
   fellBack: number;
-  /** The dock's reading: --dock on a wide screen, 0 or 1 on a phone (see dockValue). */
+  /** Wide: the dock's reading, --dock. Below 64rem it is never written, and this is 0. */
   dock: number;
   shown: string | null;
   /** Wide: the move is under way (--dock above 0). */
   docking: boolean;
-  /** Phone: the field is docked (data-docked), which its transition then plays out. */
-  docked: boolean;
+  /** Below 64rem: the bar's copy of the field is revealed (data-revealed). */
+  revealed: boolean;
+  /** The opacity the bar's copy of the field is drawn at. */
+  barFieldOpacity: number;
   liveBottom: number;
   /** Where the hero's last line ends: the live line on a phone, the headline's sentence beside it from 48rem. */
   contentBottom: number;
   barTop: number;
   barBottom: number;
+  /** The hero's field. */
   fieldTop: number;
-  /** The input's placeholder, which may only change where the field is at rest. */
+  fieldBottom: number;
+  /** The hero's input's placeholder. */
   placeholder: string;
   chipOpacity: number;
   chipsClickable: boolean;
   chipHitByInput: boolean;
-  input: { same: boolean; mark?: string; value?: string; caret?: number | null; count: number };
+  input: { same: boolean; mark?: string; value?: string; caret?: number | null };
 };
 
 /** What the page-side half of a sweep hands back. */
@@ -671,8 +660,10 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           requestAnimationFrame(() => finish(false));
         });
       const dock = document.querySelector<HTMLElement>(".search-dock");
-      const field = document.querySelector<HTMLElement>(".search-field");
+      const field = document.querySelector<HTMLElement>(".search-dock .search-field");
+      const input = document.querySelector<HTMLInputElement>('[data-search-input="hero"]');
       const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+      const barField = document.querySelector<HTMLElement>(".bar-search");
       const live = document.querySelector<HTMLElement>('[data-testid="live-bar"]');
       const hero = document.querySelector<HTMLElement>(".board-body")?.previousElementSibling ?? null;
       const heroPad = hero ? Number.parseFloat(getComputedStyle(hero).paddingBottom) : 0;
@@ -693,27 +684,27 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           frameMs.push(waited.ms);
           if (waited.fellBack) fellBack++;
         }
-        const input = document.querySelector<HTMLInputElement>('input[type="search"]');
         const box = chip?.getBoundingClientRect();
         const hit = box ? document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) : null;
         const limit = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+        const fieldBox = field?.getBoundingClientRect();
         seen.push({
           y,
           target: Math.max(0, Math.min(y, limit)),
           scrollY: window.scrollY,
           frameMs,
           fellBack,
-          dock: dock?.hasAttribute("data-docked")
-            ? 1
-            : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
           shown: bar?.getAttribute("data-shown") ?? null,
           docking: dock?.hasAttribute("data-docking") ?? false,
-          docked: dock?.hasAttribute("data-docked") ?? false,
+          revealed: bar?.hasAttribute("data-revealed") ?? false,
+          barFieldOpacity: barField ? Number.parseFloat(getComputedStyle(barField).opacity) : 0,
           liveBottom: live?.getBoundingClientRect().bottom ?? 0,
           contentBottom: (hero?.getBoundingClientRect().bottom ?? 0) - heroPad,
           barTop: bar?.getBoundingClientRect().top ?? 0,
           barBottom: bar?.getBoundingClientRect().bottom ?? 0,
-          fieldTop: field?.getBoundingClientRect().top ?? 0,
+          fieldTop: fieldBox?.top ?? 0,
+          fieldBottom: fieldBox?.bottom ?? 0,
           placeholder: input?.placeholder ?? "",
           chipOpacity: chips ? Number.parseFloat(getComputedStyle(chips).opacity) : 1,
           chipsClickable: chip ? getComputedStyle(chip).pointerEvents !== "none" : true,
@@ -723,7 +714,6 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
             mark: (document.activeElement as (HTMLInputElement & { dockMark?: string }) | null)?.dockMark,
             value: input?.value,
             caret: input?.selectionStart,
-            count: document.querySelectorAll('input[type="search"]').length,
           },
         });
       }
@@ -743,13 +733,14 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
         fallbackMs: DOCK_FRAME_FALLBACK_MS,
         budgetMs: DOCK_SWEEP_BUDGET_MS,
         truncated: sweep.truncated,
-        stops: sweep.stops.map(({ y, target, scrollY, frameMs, fellBack, dock }) => ({
+        stops: sweep.stops.map(({ y, target, scrollY, frameMs, fellBack, dock, revealed }) => ({
           y,
           target,
           scrollY,
           frameMs: frameMs.map((ms) => Math.round(ms)),
           fellBack,
           dock,
+          revealed,
         })),
       },
       null,
@@ -775,50 +766,65 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
   return sweep.stops;
 }
 
-/** On a phone: the clear page, in px, between the bar's bottom edge and the field when the bar comes up (PHONE_GAP in dock.ts). */
-const PHONE_GAP = 24;
-
 /** The scroll offsets at which the dock changes, worked out from the page the way useSearchDock does. */
 type DockOffsets = {
   /** From 64rem the field shares a row with the chips and moves in one go. */
   wide: boolean;
   natural: number;
-  /** The bar comes up: on a phone by itself, with the field still on its way, a good way below it. */
+  /** The bar comes up: below 64rem on its own, once the hero's last line has cleared it. */
   barStart: number;
-  /**
-   * Wide: --dock leaves 0 here, and returns to 1 at moveEnd. Phone: the field reaches the bar's bottom edge and
-   * docks (data-docked), the one moment the page's scrolling matters to it.
-   */
+  /** Wide: --dock leaves 0 here, and returns to 1 at moveEnd. Below 64rem: the bar comes up (the same as barStart). */
   moveStart: number;
-  /** The field reaches its pin (wide: --dock is 1 from here). */
+  /** Wide: the field reaches its pin (--dock is 1 from here). Below 64rem: the hero's field is behind the bar. */
   moveEnd: number;
+  /** Below 64rem: where the hero's field has its bottom edge at the bar's, and the bar's field can show. */
+  revealFrom: number;
 };
 
 async function dockOffsets(page: Page): Promise<DockOffsets> {
   const natural = await dockNatural(page);
-  const { wide, reduced, barStick, barHeight, dockStick } = await page.evaluate(() => {
+  const measured = await page.evaluate(() => {
     const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const dock = document.querySelector(".search-dock") as HTMLElement;
+    const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
     return {
       wide: matchMedia("(min-width: 64rem)").matches,
       reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
-      barStick: Number.parseFloat(getComputedStyle(bar).top),
+      barTop: Number.parseFloat(getComputedStyle(bar).top),
       barHeight: bar.offsetHeight,
-      dockStick: Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
+      dockStick: Number.parseFloat(getComputedStyle(dock).top),
+      fieldBottom: dock.getBoundingClientRect().bottom + window.scrollY,
+      contentBottom:
+        hero.getBoundingClientRect().bottom + window.scrollY - Number.parseFloat(getComputedStyle(hero).paddingBottom),
     };
   });
-  // The field reaches its pin, and --dock its 1, at moveEnd.
-  const moveEnd = natural - dockStick;
-  if (wide) {
-    // One move of 48px; the bar comes up about two thirds of the way through, or at the end when the field snaps.
-    const moveStart = moveEnd - 48;
-    return { wide, natural, barStart: reduced ? moveEnd : moveStart + 0.67 * 48, moveStart, moveEnd };
+  if (measured.wide) {
+    // The field reaches its pin, and --dock its 1, at moveEnd. One move of 48px; the bar comes up about two thirds
+    // of the way through it, or at the end when the field snaps.
+    const moveEnd = natural - measured.dockStick;
+    const moveStart = moveEnd - WIDE_RANGE;
+    return {
+      wide: true,
+      natural,
+      barStart: measured.reduced ? moveEnd : moveStart + 0.67 * WIDE_RANGE,
+      moveStart,
+      moveEnd,
+      revealFrom: Number.POSITIVE_INFINITY,
+    };
   }
-  // The bar is fixed and comes up on its own while the field is still PHONE_GAP px below its bottom edge (the
-  // page's spacing puts the live line just out from under the sliding bar at the same moment: a test of its own
-  // checks that). The field then rises 1:1 with the page and docks once it has risen to the bar's bottom edge; the
-  // rest of the way to its pin it has only the page's own scrolling to do.
-  const barStart = moveEnd - (barHeight + PHONE_GAP - (dockStick - barStick));
-  return { wide, natural, barStart, moveStart: moveEnd - (barHeight - (dockStick - barStick)), moveEnd };
+  // Below 64rem the bar is fixed and comes up once the hero's last line has scrolled out from under the highest
+  // point the sliding bar reaches. The hero's field is in the flow: the bar's copy can show once its bottom edge
+  // is level with the bar's, and the hook turns that on a few px (DOCK_HYSTERESIS) past it.
+  const barStart = Math.max(0, measured.contentBottom - (measured.barTop - BAR_RISE));
+  const revealFrom = measured.fieldBottom - (measured.barTop + measured.barHeight);
+  return {
+    wide: false,
+    natural,
+    barStart,
+    moveStart: barStart,
+    moveEnd: revealFrom + DOCK_HYSTERESIS,
+    revealFrom,
+  };
 }
 
 /**
@@ -836,6 +842,53 @@ async function dockPath(page: Page, step = 8): Promise<{ up: number[]; path: num
     (a, b) => a - b,
   );
   return { up, path: [...up, ...[...up].reverse()] };
+}
+
+/**
+ * Opens the board for a test of the bar's field: steady (see steadyBoard), hydrated, and armed (the hook reads a
+ * direction only from two frames after the load), and skipped from 64rem, where there is no bar field to reveal.
+ * Returns the page's offsets and how far it can scroll.
+ */
+async function revealBoard(page: Page): Promise<DockOffsets & { limit: number }> {
+  await steadyBoard(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  const offsets = await dockOffsets(page);
+  test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
+  return { ...offsets, limit: await maxScroll(page) };
+}
+
+/**
+ * revealBoard on a served board instead of the live one, whose cards (and so what a search leaves of the page) depend
+ * on what the vendors say that day. Pinned to a slot like steadyBoard, so the bar's lead is steady too.
+ */
+async function revealServedBoard(
+  page: Page,
+  board: (now: number) => BoardSnapshot,
+  ready?: { id: string; label: string },
+): Promise<DockOffsets & { limit: number }> {
+  await pinToSlot(page);
+  await openFixture(page, () => board(Date.now()), ready);
+  await leadSteady(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  const offsets = await dockOffsets(page);
+  test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
+  return { ...offsets, limit: await maxScroll(page) };
+}
+
+/**
+ * Takes the page down past the point where the hero's field is behind the bar, with the bar's field hidden: the
+ * way a reader arrives. Returns the position: 200px past it, and at least 160px short of the end of the page, so a
+ * test has room to scroll further down from there.
+ */
+async function scrollDeep(page: Page, offsets: DockOffsets & { limit: number }): Promise<number> {
+  const y = Math.min(Math.ceil(offsets.revealFrom) + 200, offsets.limit - 160);
+  expect(y, "the page is long enough to scroll down in").toBeGreaterThan(
+    offsets.revealFrom + DOCK_HYSTERESIS + 2 * REVEAL_UP_PX,
+  );
+  await scrollAndSettle(page, y);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect(await isRevealed(page)).toBe(false);
+  return y;
 }
 
 test("keeps the floating bar clear of the live bar as it appears", async ({ page }) => {
@@ -857,76 +910,6 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   for (const stop of stops.filter((stop) => stop.shown === "true")) {
     expect(stop.liveBottom, `at ${stop.y}`).toBeLessThanOrEqual(stop.barTop);
   }
-});
-
-test("brings the bar up on its own first, then docks the field into it when it reaches the bar", async ({ page }) => {
-  test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field shares a row with the chips and moves in one go");
-
-  // The bar has scrolling to itself, long enough for its fade (250ms) to be well under way before the field docks.
-  expect(moveStart - barStart, "the stretch the bar is alone").toBeGreaterThanOrEqual(PHONE_GAP - 0.5);
-
-  const { up } = await dockPath(page, 2);
-  const stops = await sweepDock(page, up);
-  const firstShown = stops.findIndex((stop) => stop.shown === "true");
-  const firstDocked = stops.findIndex((stop) => stop.docked);
-  expect(firstShown, "the bar never showed").toBeGreaterThanOrEqual(0);
-  expect(firstDocked, "the field never docked").toBeGreaterThanOrEqual(0);
-  // Before the bar, the field is in the flow: it rises 1:1 with the page and is never pinned on its own.
-  const pin = await page.evaluate(() =>
-    Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
-  );
-  const before = stops.filter((stop) => stop.shown === "false" && stop.fieldTop > pin + 1);
-  expect(before.length).toBeGreaterThan(3);
-  for (const [index, stop] of before.entries()) {
-    const previous = before[index - 1];
-    if (previous)
-      expect(stop.fieldTop - previous.fieldTop, `at ${stop.y}`).toBeCloseTo(previous.scrollY - stop.scrollY, 0);
-    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
-  }
-  // With the bar hidden nothing sits over the chips: a tap on one reaches the chip, not the search input.
-  for (const stop of stops.filter((stop) => stop.shown === "false")) {
-    expect(stop.chipHitByInput, `at ${stop.y}`).toBe(false);
-  }
-  // Where the bar comes up, the field is still well below it and not docked.
-  const first = stops[firstShown];
-  expect(first?.docked).toBe(false);
-  expect(first?.fieldTop ?? 0).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 12);
-  // Phase one: the bar is up while the field has not docked.
-  const alone = stops.filter((stop) => stop.shown === "true" && !stop.docked);
-  expect(alone.length, "the bar never showed by itself").toBeGreaterThan(1);
-  for (const stop of alone) {
-    // The field waits below the bar, not under it, until it docks.
-    expect(stop.fieldTop, `at ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
-  }
-  // The field docks once the bar is up, at the scroll position where it reaches the bar, and stays docked on the way down.
-  expect(firstDocked).toBeGreaterThan(firstShown);
-  for (const stop of stops) {
-    if (stop.docked) expect(stop.shown, `at ${stop.y}`).toBe("true");
-    if (stop.scrollY < barStart) expect(stop.shown, `at ${stop.y}`).toBe("false");
-    if (stop.scrollY >= barStart + 1) expect(stop.shown, `at ${stop.y}`).toBe("true");
-    if (stop.scrollY < moveStart - 0.5) expect(stop.docked, `at ${stop.y}`).toBe(false);
-    if (stop.scrollY >= moveStart + 1) expect(stop.docked, `at ${stop.y}`).toBe(true);
-  }
-  expect(stops[firstDocked]?.fieldTop, "docks at the bar's bottom edge").toBeGreaterThanOrEqual(
-    (stops[firstDocked]?.barBottom ?? 0) - 0.5,
-  );
-  // It is one step: --dock is not written at all below 64rem, and the field has no part-way pose to hold.
-  expect(new Set(stops.map((stop) => stop.dock))).toEqual(new Set([0, 1]));
-  // Docked, it ends up inside the bar.
-  await scrollAndSettle(page, Math.ceil(moveEnd) + 20);
-  await dockMoved(page);
-  const docked = await page.evaluate(() => {
-    const field = (document.querySelector(".search-field") as Element).getBoundingClientRect();
-    const bar = (document.querySelector('section[aria-label="Board controls"]') as Element).getBoundingClientRect();
-    return { fieldTop: field.top, barTop: bar.top, barBottom: bar.bottom };
-  });
-  expect(docked.fieldTop).toBeGreaterThanOrEqual(docked.barTop - 0.5);
-  expect(docked.fieldTop).toBeLessThanOrEqual(docked.barBottom + 0.5);
 });
 
 test("leaves the bar room to come up on its own under the hero's last line, at every width below 64rem", async ({
@@ -958,60 +941,33 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
         await page.evaluate((px) => {
           document.documentElement.style.fontSize = `${px}px`;
         }, rootPx);
-        // The dock measures again when the hero and the bar change size.
-        await page.waitForTimeout(400);
+        // The bar is 3rem tall: once it is, the layout has taken the size, and the dock measures on the frame after.
+        await expect.poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight)).toBe(3 * rootPx);
       }
       // The page's own refetch changes the live line's height for a moment: sweep clear of it.
       await awayFromRefetch(page);
-      // The field is sticky: measure it at the top of the page, not where the last width left the scroll.
-      await page.evaluate(() => window.scrollTo(0, 0));
-      const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
-      // The spacing under the hero's last line (the live line on a phone) is the bar's height, the 8px it slides
-      // in from and PHONE_GAP: the smallest gap at which the bar can come up clear of that line with the field
-      // still PHONE_GAP below it, and about 80px at a 16px root.
-      const { gap, barHeight } = await page.evaluate(() => {
-        const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
-        const field = document.querySelector(".search-field") as HTMLElement;
-        const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
-        const last = hero.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(hero).paddingBottom);
-        return { gap: field.getBoundingClientRect().top - last, barHeight: bar.offsetHeight };
-      });
-      expect(gap, at).toBeGreaterThanOrEqual(barHeight + 8 + PHONE_GAP - 1);
-      expect(gap, at).toBeLessThanOrEqual(barHeight + 8 + PHONE_GAP + 2);
-      if (rootPx === 16) expect(gap, at).toBeLessThanOrEqual(88);
-      // The bar is alone for at least 24px of scrolling, and the field has at least 46px left to rise to its pin.
-      expect(moveStart - barStart, at).toBeGreaterThanOrEqual(24 - 0.5);
-      expect(moveEnd - moveStart, at).toBeGreaterThanOrEqual(46 - 0.5);
+      // Measure at the top of the page, not where the last width left the scroll.
+      await scrollAndSettle(page, 0);
+      const { natural, barStart, revealFrom } = await dockOffsets(page);
+      // The bar is up alone for a stretch of scrolling before the hero's field is behind it: the spacing under the
+      // live line (the page's padding and the field's margin, less the bar's room) is 36px at a 16px root.
+      expect(revealFrom - barStart, `${at}: the bar alone`).toBeGreaterThanOrEqual(30 * (rootPx / 16) - 1);
 
       const { up } = await dockPath(page, 2);
       const stops = await sweepDock(page, up);
       const shown = stops.filter((stop) => stop.shown === "true");
       const first = shown[0];
       expect(first, `${at}: the bar never showed`).toBeDefined();
-      // (a) It comes up with only itself on screen: the field entirely below its bottom edge, with a visible gap,
-      // the hero's last line already out from under it, and the field not docked.
-      expect(first?.docked, at).toBe(false);
-      expect(first?.fieldTop ?? 0, at).toBeGreaterThanOrEqual((first?.barBottom ?? 0) + 16);
+      // The bar never sits over the hero's last line, from the first stop it shows at.
       for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
-      for (const stop of shown.filter((stop) => !stop.docked)) {
-        expect(stop.fieldTop, `${at}, ${stop.y}`).toBeGreaterThanOrEqual(stop.barBottom - 0.5);
+      // Nothing in the bar to cover the line with: the field is hidden going down, at every stop.
+      for (const stop of stops) {
+        expect(stop.revealed, `${at}, ${stop.y}`).toBe(false);
+        expect(stop.barFieldOpacity, `${at}, ${stop.y}`).toBe(0);
       }
-      // Measured off the sweep, not worked out: the bar is up and the field not docked for a real stretch.
-      const firstDocked = stops.find((stop) => stop.docked);
-      expect(
-        firstDocked && first ? firstDocked.scrollY - first.scrollY : 0,
-        `${at}: the bar alone`,
-      ).toBeGreaterThanOrEqual(22);
-      // (b) The field rises 1:1 with the page the whole way, docked or not, until it reaches its pin: it is the
-      // page's own (sticky) position, not something the dock moves.
-      for (const stop of stops.filter((stop) => stop.scrollY <= moveEnd)) {
+      // The field is the page's own, in the flow: it rises 1:1 with the scrolling the whole way, never pinned.
+      for (const stop of stops) {
         expect(stop.fieldTop, `${at}, ${stop.y}`).toBeCloseTo(natural - stop.scrollY, 0);
-      }
-      // (c) The field docks within a few px of moveStart, where it meets the bar, and from there on stays docked.
-      expect(firstDocked?.scrollY ?? 0, at).toBeGreaterThanOrEqual(moveStart - 0.5);
-      expect(firstDocked?.scrollY ?? Number.POSITIVE_INFINITY, at).toBeLessThanOrEqual(moveStart + 6);
-      for (const stop of stops.filter((stop) => stop.scrollY >= moveStart + 6)) {
-        expect(stop.docked, `${at}, ${stop.y}`).toBe(true);
       }
     }
 });
@@ -1119,52 +1075,6 @@ test("takes the bar down when the hero grows under it, at every width below 64re
   expect(Math.max(...grew), "the longer hero never made the page taller").toBeGreaterThan(8);
 });
 
-test("keeps the bar's buttons clear of the field under Reduce Motion on a phone", async ({ page }) => {
-  test.slow();
-  await page.emulateMedia({ reducedMotion: "reduce" });
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const { wide, moveEnd } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field shares a row with the chips");
-  // Under Reduce Motion the field docks, in one step, at moveEnd, so until then it is full width and rises
-  // through the bar's own place: it must be under the bar, not over its buttons.
-  const stops = await page.evaluate(
-    async ({ from, to }) => {
-      const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
-      const field = document.querySelector(".search-field") as HTMLElement;
-      const refresh = [...bar.querySelectorAll("button")].find((button) =>
-        /^Refresh/.test(button.getAttribute("aria-label") ?? button.textContent ?? ""),
-      );
-      if (!refresh) throw new Error("no Refresh button in the bar");
-      const seen: { y: number; shown: string | null; hits: boolean; overlaps: boolean; docked: boolean }[] = [];
-      for (let y = from; y <= to; y += 2) {
-        window.scrollTo(0, y);
-        await frame();
-        await frame();
-        const box = refresh.getBoundingClientRect();
-        const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-        const fieldBox = field.getBoundingClientRect();
-        seen.push({
-          y,
-          shown: bar.getAttribute("data-shown"),
-          hits: Boolean(hit && refresh.contains(hit)),
-          overlaps: fieldBox.top < bar.getBoundingClientRect().bottom && fieldBox.right > box.left,
-          docked: document.querySelector(".search-dock")?.hasAttribute("data-docked") ?? false,
-        });
-      }
-      return seen;
-    },
-    { from: Math.round(moveEnd - 120), to: Math.round(moveEnd + 30) },
-  );
-  const shown = stops.filter((stop) => stop.shown === "true");
-  expect(shown.length).toBeGreaterThan(20);
-  // Not vacuous: the full-width field does rise through the bar's place before it snaps in.
-  expect(stops.filter((stop) => stop.overlaps && !stop.docked).length).toBeGreaterThan(5);
-  for (const stop of shown) expect(stop.hits, `Refresh at ${stop.y}`).toBe(true);
-});
-
 test("keeps the bar up while the page hovers just above where it appears", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -1195,14 +1105,14 @@ test("keeps the bar up while the page hovers just above where it appears", async
 async function overscroll(
   page: Page,
   positions: number[],
-): Promise<{ y: number; dock: number; shown: string | null; fieldTop: number }[]> {
+): Promise<{ y: number; dock: number; shown: string | null; revealed: boolean; fieldTop: number }[]> {
   return page.evaluate(async (ys) => {
     const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     const original = Object.getOwnPropertyDescriptor(window, "scrollY");
     const dock = document.querySelector<HTMLElement>(".search-dock");
-    const field = document.querySelector<HTMLElement>(".search-field");
+    const field = document.querySelector<HTMLElement>(".search-dock .search-field");
     const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
-    const seen: { y: number; dock: number; shown: string | null; fieldTop: number }[] = [];
+    const seen: { y: number; dock: number; shown: string | null; revealed: boolean; fieldTop: number }[] = [];
     try {
       for (const y of ys) {
         Object.defineProperty(window, "scrollY", { configurable: true, get: () => y });
@@ -1211,10 +1121,9 @@ async function overscroll(
         await frame();
         seen.push({
           y,
-          dock: dock?.hasAttribute("data-docked")
-            ? 1
-            : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
           shown: bar?.getAttribute("data-shown") ?? null,
+          revealed: bar?.hasAttribute("data-revealed") ?? false,
           fieldTop: field?.getBoundingClientRect().top ?? 0,
         });
       }
@@ -1227,14 +1136,16 @@ async function overscroll(
 }
 
 // The two rubber-band tests below are regression guards, not proofs of a fix: the dock only compares the scroll
-// position with thresholds, and a position past either end of the page reads as that end, so they pass without any
-// special handling of the overshoot. They fail if a change makes the dock follow the overshoot (a progress that
-// extrapolates, a threshold that flips on a negative position).
-test("regression guard: keeps the dock still through a rubber band above the top of the page", async ({ page }) => {
+// position with thresholds, and a position past either end of the page reads as that end (the reveal clamps it
+// to the page), so they pass without any special handling of the overshoot in the test. They fail if a change
+// makes the dock follow the overshoot (a progress that extrapolates, a threshold that flips on a negative
+// position, a recoil from the bottom that reads as a scroll up).
+test("search reveal: a rubber band above the top of the page changes nothing", async ({ page }) => {
   // From a steady board (see steadyBoard): a refetch or a late font that moves the bar's slot makes the dock measure
   // again, and a measure that lands among the positions below reads the mocked scrollY against a page that did not
   // move with it, which puts every threshold out (a real rubber band moves the page too).
   await steadyBoard(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
   const [at] = await overscroll(page, [0]);
   const seen = await overscroll(page, [-4, -90, -1, -320, 0, -40, -2000, 0]);
@@ -1242,34 +1153,44 @@ test("regression guard: keeps the dock still through a rubber band above the top
   for (const stop of seen) {
     expect(stop.dock, `at ${stop.y}`).toBe(0);
     expect(stop.shown, `at ${stop.y}`).toBe("false");
+    expect(stop.revealed, `at ${stop.y}`).toBe(false);
     expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(at.fieldTop, 0);
   }
 });
 
-test("regression guard: keeps the dock docked through a rubber band below the end of the page", async ({ page }) => {
+test("search reveal: a rubber band below the end of the page, and its recoil, reveal nothing", async ({ page }) => {
   test.slow();
   // A steady board, as above: no measure may land among the mocked positions.
   await steadyBoard(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  const { wide } = await dockOffsets(page);
   const limit = await maxScroll(page);
   await scrollAndSettle(page, limit);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
-  expect(await dockValue(page)).toBe(1);
+  // Wide: the field is in the bar. Below 64rem: the page went down, so the bar's field is hidden.
+  expect(await dockValue(page)).toBe(wide ? 1 : 0);
+  expect(await isRevealed(page)).toBe(false);
   const [at] = await overscroll(page, [limit]);
-  const seen = await overscroll(page, [limit + 6, limit + 120, limit + 2, limit + 600, limit, limit + 60]);
+  // The bounce past the end and back: iOS reads the way back as a scroll up, but the position is clamped to the end.
+  const seen = await overscroll(page, [limit + 6, limit + 120, limit + 2, limit + 600, limit, limit + 60, limit - 1]);
   for (const stop of seen) {
-    expect(stop.dock, `at ${stop.y}`).toBe(1);
+    expect(stop.dock, `at ${stop.y}`).toBe(wide ? 1 : 0);
     expect(stop.shown, `at ${stop.y}`).toBe("true");
+    expect(stop.revealed, `at ${stop.y}`).toBe(false);
     expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(at.fieldTop, 0);
   }
 });
 
-test("does not move the dock when only the viewport's height changes, as iOS's toolbar does", async ({ page }) => {
+test("search reveal: does not move the dock or the reveal when only the viewport's height changes, as iOS's toolbar does", async ({
+  page,
+}) => {
   test.slow();
   // Well inside a slot, with the page's frames its own, and past the refetch on mount of a snapshot past its TTL
   // (see steadyBoard): that refetch changes the live line, and with it the hero and the slot, so the dock measures
   // again, rightly, and the count below would take that for a resize.
   await steadyBoard(page);
-  const { wide, moveStart, moveEnd } = await dockOffsets(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  const { wide, moveStart, moveEnd, revealFrom } = await dockOffsets(page);
   const frames = (count: number) =>
     page.evaluate(
       (n) =>
@@ -1282,13 +1203,17 @@ test("does not move the dock when only the viewport's height changes, as iOS's t
   const look = () =>
     page.evaluate(() => {
       const dock = document.querySelector<HTMLElement>(".search-dock");
-      const field = document.querySelector<HTMLElement>(".search-field");
       const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+      // The field that is in use: the hero's, moving into the bar, on a wide screen; the bar's copy below it.
+      const field = document.querySelector<HTMLElement>(
+        matchMedia("(min-width: 64rem)").matches ? ".search-dock .search-field" : ".bar-search .search-field",
+      );
       const box = field?.getBoundingClientRect();
       return {
         scrollY: window.scrollY,
-        dock: dock?.hasAttribute("data-docked") ? 1 : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+        dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
         shown: bar?.getAttribute("data-shown") ?? null,
+        revealed: bar?.hasAttribute("data-revealed") ?? false,
         box: box ? { x: box.x, y: box.y, width: box.width, height: box.height } : null,
       };
     });
@@ -1306,14 +1231,23 @@ test("does not move the dock when only the viewport's height changes, as iOS's t
   const size = page.viewportSize();
   if (!size) throw new Error("no viewport");
 
-  // Part way through the move (wide) or just after the field docked (phone), where the dock is most sensitive to
-  // being measured again. A phone's field is read once its transition has played out.
-  const mid = Math.round((moveStart + moveEnd) / 2);
-  await scrollAndSettle(page, mid);
-  await dockMoved(page);
+  if (wide) {
+    // Part way through the move, where the dock is most sensitive to being measured again.
+    await scrollAndSettle(page, Math.round((moveStart + moveEnd) / 2));
+  } else {
+    // With the bar's field revealed: well down the page, and then a little way up.
+    await scrollAndSettle(page, Math.ceil(revealFrom) + 300);
+    await scrollAndSettle(page, Math.ceil(revealFrom) + 300 - 2 * REVEAL_UP_PX);
+    await expectRevealed(page, true);
+    await barFieldSettled(page);
+  }
   const before = await look();
-  expect(before.dock).toBeGreaterThan(0);
-  if (wide) expect(before.dock).toBeLessThan(1);
+  if (wide) {
+    expect(before.dock).toBeGreaterThan(0);
+    expect(before.dock).toBeLessThan(1);
+  } else {
+    expect(before.revealed).toBe(true);
+  }
   const measuredBefore = await measured();
 
   // The toolbar collapses (the page gets taller by about 80px), comes back, and does it again.
@@ -1324,6 +1258,7 @@ test("does not move the dock when only the viewport's height changes, as iOS's t
     expect(after.scrollY, `height ${height}`).toBeCloseTo(before.scrollY, 0);
     expect(after.dock, `height ${height}`).toBe(before.dock);
     expect(after.shown, `height ${height}`).toBe(before.shown);
+    expect(after.revealed, `height ${height}`).toBe(before.revealed);
     expect(after.box?.y, `height ${height}`).toBeCloseTo(before.box?.y ?? 0, 0);
     expect(after.box?.x, `height ${height}`).toBeCloseTo(before.box?.x ?? 0, 0);
     expect(after.box?.width, `height ${height}`).toBeCloseTo(before.box?.width ?? 0, 0);
@@ -1339,25 +1274,28 @@ test("does not move the dock when only the viewport's height changes, as iOS's t
     .toBeGreaterThan(measuredBefore ?? 0);
 });
 
-test("keeps the dock steady through a fast scroll, down and back up", async ({ page }) => {
+test("search reveal: a fast scroll down and back up reveals the bar's field once and hides it once", async ({
+  page,
+}) => {
   test.slow();
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   await lightenPaint(page);
-  const { natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
+  const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
   const limit = await maxScroll(page);
   const from = Math.max(0, Math.round(Math.min(barStart, moveStart) - 80));
-  const to = Math.min(limit, Math.round(moveEnd + 80));
+  const to = Math.min(limit, Math.round(moveEnd + (wide ? 80 : 160)));
   // A long stride a stop: a flick, not the sweeps' careful steps. Two frames a stop: the dock writes what a scroll
   // means in a requestAnimationFrame of its own, queued after this one's, so it is read in the frame after.
   const run = (ys: number[]) =>
     page.evaluate(async (stops) => {
       const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       const dock = document.querySelector<HTMLElement>(".search-dock");
-      const field = document.querySelector<HTMLElement>(".search-field");
+      const field = document.querySelector<HTMLElement>(".search-dock .search-field");
       const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
-      const seen: { scrollY: number; fieldTop: number; dock: number; shown: string | null }[] = [];
+      const seen: { scrollY: number; fieldTop: number; dock: number; shown: string | null; revealed: boolean }[] = [];
       for (const y of stops) {
         window.scrollTo(0, y);
         await frame();
@@ -1365,10 +1303,9 @@ test("keeps the dock steady through a fast scroll, down and back up", async ({ p
         seen.push({
           scrollY: window.scrollY,
           fieldTop: field?.getBoundingClientRect().top ?? 0,
-          dock: dock?.hasAttribute("data-docked")
-            ? 1
-            : Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
+          dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
           shown: bar?.getAttribute("data-shown") ?? null,
+          revealed: bar?.hasAttribute("data-revealed") ?? false,
         });
       }
       return seen;
@@ -1381,8 +1318,10 @@ test("keeps the dock steady through a fast scroll, down and back up", async ({ p
   await scrollAndSettle(page, 0);
 
   const flips = (stops: { shown: string | null }[]) => stops.filter((s, i) => i > 0 && s.shown !== stops[i - 1].shown);
-  // Down: the page goes only one way, so the field only rises (it stops at its pin), the dock only grows (docks
-  // once, on a phone) and the bar comes up once. Up is the same run backwards. Not one stop goes back and forth.
+  const changes = (stops: { revealed: boolean }[]) =>
+    stops.filter((s, i) => i > 0 && s.revealed !== stops[i - 1].revealed).map((s) => s.revealed);
+  // Down: the page goes only one way, so the field only rises (it stops at its pin, wide), the dock only grows and
+  // the bar comes up once. Up is the same run backwards. Not one stop goes back and forth.
   for (const [index, stop] of downward.entries()) {
     expect(stop.scrollY, `down, stop ${index}`).toBeGreaterThanOrEqual(downward[Math.max(0, index - 1)].scrollY);
     if (index === 0) continue;
@@ -1400,83 +1339,21 @@ test("keeps the dock steady through a fast scroll, down and back up", async ({ p
   expect(flips(downward).length, "the bar came up more than once on the way down").toBeLessThanOrEqual(1);
   expect(flips(upward).length, "the bar went more than once on the way up").toBeLessThanOrEqual(1);
   // Above its pin the field is the page's own: it is where the page puts it, at every stop, not a frame behind.
-  const pin = await page.evaluate(() =>
-    Number.parseFloat(getComputedStyle(document.querySelector(".search-dock") as Element).top),
-  );
+  // Below 64rem it has no pin.
+  const pin = wide ? natural - moveEnd : Number.NEGATIVE_INFINITY;
   for (const stop of [...downward, ...upward].filter((stop) => natural - stop.scrollY > pin + 1)) {
     expect(stop.fieldTop, `at ${stop.scrollY}`).toBeCloseTo(natural - stop.scrollY, 0);
   }
-  expect(downward.at(-1)?.dock).toBe(1);
-  expect(upward.at(-1)?.dock).toBe(0);
+  if (wide) {
+    expect(downward.at(-1)?.dock).toBe(1);
+    expect(upward.at(-1)?.dock).toBe(0);
+  } else {
+    // Going down reveals nothing. Coming back it reveals once, 24px into the way up, and takes the field away once,
+    // where the hero's field comes back from behind the bar: one reveal and one hide, whatever the stride.
+    expect(changes(downward), "the bar's field changed on the way down").toEqual([]);
+    expect(changes(upward), "the bar's field on the way up").toEqual([true, false]);
+  }
 });
-
-/**
- * Scrolls to `y` and, the moment the page has docked or released the field (data-docked changes), stops the
- * transitions that start with it, before a frame is drawn, so a test can look at the field at the start of its
- * move whatever the speed of the browser. `release` lets them finish. Phone only.
- */
-async function dockHeld(page: Page, y: number): Promise<{ clearOpacity: number | null }> {
-  // Moves are armed two frames after the load; a scroll before that is a snap, not a move.
-  await expect(page.locator(".search-dock")).toHaveAttribute("data-armed", "");
-  return page.evaluate(
-    (top) =>
-      new Promise<{ clearOpacity: number | null }>((resolve, reject) => {
-        const dock = document.querySelector(".search-dock") as HTMLElement;
-        const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
-        const was = dock.hasAttribute("data-docked");
-        const timer = window.setTimeout(() => {
-          observer.disconnect();
-          reject(new Error(`the dock did not react to ${top}`));
-        }, 10_000);
-        const observer = new MutationObserver(() => {
-          if (dock.hasAttribute("data-docked") === was) return;
-          observer.disconnect();
-          window.clearTimeout(timer);
-          // Reading the animations lets the browser start the ones this change calls for, in this very frame.
-          for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
-            animation.pause();
-          }
-          // Read in this task: the dock's own timer ends the wait for the move whether or not it is held.
-          const clear = dock.querySelector('button[aria-label="Clear search"]');
-          resolve({ clearOpacity: clear ? Number.parseFloat(getComputedStyle(clear).opacity) : null });
-        });
-        observer.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
-        window.scrollTo(0, top);
-      }),
-    y,
-  );
-}
-
-/** Lets the transitions `dockHeld` stopped run to their end. */
-const dockRelease = (page: Page) =>
-  page.evaluate(async () => {
-    const dock = document.querySelector(".search-dock") as HTMLElement;
-    const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
-    const running = [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()];
-    for (const animation of running) animation.finish();
-    await Promise.allSettled(running.map((animation) => animation.finished));
-  });
-
-/** Where things are, for a test of where the field is. */
-const dockBoxes = (page: Page) =>
-  page.evaluate(() => {
-    const rect = (element: Element | null) => {
-      const { left, top, width, height, right, bottom } = (element as Element).getBoundingClientRect();
-      return { left, top, width, height, right, bottom };
-    };
-    const dock = document.querySelector(".search-dock") as HTMLElement;
-    const chrome = dock.querySelector(".search-chrome");
-    return {
-      dock: rect(dock),
-      field: rect(dock.querySelector(".search-field")),
-      chrome: rect(chrome),
-      input: rect(dock.querySelector("input")),
-      slot: rect(document.querySelector('section[aria-label="Board controls"] div[class*="max-w-[26rem]"]')),
-      bar: rect(document.querySelector('section[aria-label="Board controls"]')),
-      chromeTransform: getComputedStyle(chrome as Element).transform,
-      zIndex: getComputedStyle(dock).zIndex,
-    };
-  });
 
 test("draws the search field's fill behind a see-through input, the size of the field, at every width", async ({
   page,
@@ -1484,598 +1361,332 @@ test("draws the search field's fill behind a see-through input, the size of the 
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  const { chrome, field, input, style } = await page.evaluate(() => {
-    const rect = (element: Element | null) => {
-      const { left, top, width, height } = (element as Element).getBoundingClientRect();
-      return { left, top, width, height };
-    };
-    const fieldElement = document.querySelector(".search-field") as Element;
-    const chromeElement = fieldElement.querySelector(".search-chrome") as Element;
-    const inputElement = fieldElement.querySelector("input") as Element;
-    return {
-      chrome: rect(chromeElement),
-      field: rect(fieldElement),
-      input: rect(inputElement),
-      style: {
-        chromeFill: getComputedStyle(chromeElement).backgroundColor,
-        inputFill: getComputedStyle(inputElement).backgroundColor,
-        hidden: chromeElement.getAttribute("aria-hidden"),
-        transform: getComputedStyle(chromeElement).transform,
-      },
-    };
-  });
-  // The fill is the field, edge to edge, and at rest unscaled, so its corners are the .control radius.
-  for (const key of ["left", "top", "width", "height"] as const) {
-    expect(chrome[key], `fill ${key}`).toBeCloseTo(field[key], 0);
-    expect(input[key], `input ${key}`).toBeCloseTo(field[key], 0);
+  // The hero's field, and (below 64rem, where it is laid out) the bar's copy of it.
+  const wide = await page.evaluate(() => matchMedia("(min-width: 64rem)").matches);
+  for (const selector of wide
+    ? [".search-dock .search-field"]
+    : [".search-dock .search-field", ".bar-search .search-field"]) {
+    const { chrome, field, input, style } = await page.evaluate((fieldSelector) => {
+      const rect = (element: Element | null) => {
+        const { left, top, width, height } = (element as Element).getBoundingClientRect();
+        return { left, top, width, height };
+      };
+      const fieldElement = document.querySelector(fieldSelector) as Element;
+      const chromeElement = fieldElement.querySelector(".search-chrome") as Element;
+      const inputElement = fieldElement.querySelector("input") as Element;
+      return {
+        chrome: rect(chromeElement),
+        field: rect(fieldElement),
+        input: rect(inputElement),
+        style: {
+          chromeFill: getComputedStyle(chromeElement).backgroundColor,
+          inputFill: getComputedStyle(inputElement).backgroundColor,
+          hidden: chromeElement.getAttribute("aria-hidden"),
+          transform: getComputedStyle(chromeElement).transform,
+        },
+      };
+    }, selector);
+    // The fill is the field, edge to edge, and unscaled, so its corners are the .control radius.
+    for (const key of ["left", "top", "width", "height"] as const) {
+      expect(chrome[key], `${selector}: fill ${key}`).toBeCloseTo(field[key], 0);
+      expect(input[key], `${selector}: input ${key}`).toBeCloseTo(field[key], 0);
+    }
+    expect(style.transform, selector).toBe("none");
+    expect(style.hidden, selector).toBe("true");
+    expect(style.inputFill, `${selector}: the input shows the fill, not a fill of its own`).toBe("rgba(0, 0, 0, 0)");
+    expect(style.chromeFill, `${selector}: the fill is drawn`).not.toBe("rgba(0, 0, 0, 0)");
   }
-  expect(style.transform).toBe("none");
-  expect(style.hidden).toBe("true");
-  expect(style.inputFill, "the input shows the fill, not a fill of its own").toBe("rgba(0, 0, 0, 0)");
-  expect(style.chromeFill, "the fill is drawn").not.toBe("rgba(0, 0, 0, 0)");
-});
-
-test("docks the field in one step where it meets the bar, and holds it a few px short of that", async ({ page }) => {
-  test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const { wide, moveStart } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the move follows the scroll, with no threshold");
-  const dockAt = Math.ceil(moveStart);
-  const at = async (y: number) => {
-    await scrollAndSettle(page, y);
-    return dockValue(page);
-  };
-  // Short of the point where the field meets the bar's bottom edge it is not docked, however near.
-  expect(await at(dockAt - 3)).toBe(0);
-  expect(await at(dockAt + 1)).toBe(1);
-  // Docked, it stays docked through the hold below that point, so a finger resting there cannot restart the move...
-  expect(await at(dockAt - (DOCK_HYSTERESIS - 3))).toBe(1);
-  expect(await at(dockAt + 1)).toBe(1);
-  // ...and is released beyond it.
-  expect(await at(dockAt - DOCK_HYSTERESIS - 3)).toBe(0);
-  // Released, it does not dock again until the point itself.
-  expect(await at(dockAt - 3)).toBe(0);
-  expect(await at(dockAt + 1)).toBe(1);
-});
-
-test("moves the docking field with transform and opacity only, over the dock's own time", async ({ page }) => {
-  test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const { wide, moveStart } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll instead of playing a transition");
-
-  // The first pose (data-instant) plays no transition, so wait for it to end before reading the delays.
-  await expect(page.locator("[data-instant]")).toHaveCount(0);
-
-  // What the stylesheet says: of everything in the dock, only transform is timed, over the same time as the
-  // stylesheet's token, which dock.ts names too; and on a narrow phone the bar's verdict fades by opacity alone.
-  const css = await page.evaluate(() => {
-    const dock = document.querySelector(".search-dock") as HTMLElement;
-    const timed = (element: Element) => {
-      const style = getComputedStyle(element);
-      const properties = style.transitionProperty.split(",").map((value) => value.trim());
-      const durations = style.transitionDuration.split(",").map((value) => value.trim());
-      return properties.filter((_, index) => Number.parseFloat(durations[index % durations.length]) > 0);
-    };
-    const verdict = document.querySelector("[data-bar-verdict]") as Element;
-    return {
-      token: getComputedStyle(document.documentElement).getPropertyValue("--t-dock").trim(),
-      ease: getComputedStyle(document.documentElement).getPropertyValue("--ease-out").trim(),
-      field: timed(dock.querySelector(".search-field") as Element),
-      chrome: timed(dock.querySelector(".search-chrome") as Element),
-      fieldDuration: getComputedStyle(dock.querySelector(".search-field") as Element).transitionDuration,
-      everything: [dock, ...dock.querySelectorAll("*")].flatMap(timed),
-      verdict: timed(verdict),
-      verdictDuration: getComputedStyle(verdict).transitionDuration,
-      lead: getComputedStyle(document.documentElement).getPropertyValue("--t-dock-lead").trim(),
-      fieldDelay: getComputedStyle(dock.querySelector(".search-field") as Element).transitionDelay,
-      chromeDelay: getComputedStyle(dock.querySelector(".search-chrome") as Element).transitionDelay,
-      verdictDelay: getComputedStyle(verdict).transitionDelay,
-      narrow: matchMedia("(width < 40rem)").matches,
-    };
-  });
-  // The stylesheet may spell it 180ms or .18s.
-  expect(transitionMs(css.token)).toBeCloseTo(DOCK_MS, 5);
-  // The build may spell the easing .23 for 0.23: it is the numbers that are the same. The first-frame test reads its
-  // curve from DOCK_EASING above, so it has to be the token's.
-  const numbers = (value: string) => (value.match(/-?\d*\.?\d+/g) ?? []).map(Number);
-  expect(numbers(css.ease), "--ease-out is the easing the first-frame test assumes").toEqual(numbers(DOCK_EASING));
-  expect(css.field).toEqual(["transform"]);
-  expect(css.chrome).toEqual(["transform"]);
-  expect(Number.parseFloat(css.fieldDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
-  // The lead: the token is DOCK_LEAD_MS (the settle timer counts on it), and the field, its fill and the
-  // verdict all wait it out, so none of them starts before the others (that would be the jump again).
-  expect(transitionMs(css.lead)).toBeCloseTo(DOCK_LEAD_MS, 5);
-  expect(Number.parseFloat(css.fieldDelay) * 1000, "the field's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
-  expect(Number.parseFloat(css.chromeDelay) * 1000, "the fill's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
-  for (const property of css.everything) expect(["transform", "opacity"], "in the dock").toContain(property);
-  if (css.narrow) {
-    expect(css.verdict).toEqual(["opacity"]);
-    expect(Number.parseFloat(css.verdictDuration) * 1000).toBeCloseTo(DOCK_MS, 5);
-    expect(Number.parseFloat(css.verdictDelay) * 1000, "the verdict's delay").toBeCloseTo(DOCK_LEAD_MS, 5);
-  }
-
-  // What the browser then runs when the field docks: transitions of those properties and no other.
-  await dockHeld(page, Math.ceil(moveStart) + 2);
-  const running = await page.evaluate(() => {
-    const dock = document.querySelector(".search-dock") as HTMLElement;
-    const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
-    return [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()].map((animation) => ({
-      kind: typeof CSSTransition !== "undefined" && animation instanceof CSSTransition ? "transition" : "other",
-      property: (animation as CSSTransition).transitionProperty,
-      ms: Number(animation.effect?.getComputedTiming().duration),
-    }));
-  });
-  expect(running.length, "the field moves").toBeGreaterThan(0);
-  for (const animation of running) {
-    expect(animation.kind).toBe("transition");
-    expect(["transform", "opacity"]).toContain(animation.property);
-    expect(animation.ms).toBeCloseTo(DOCK_MS, 0);
-  }
-  expect(running.some((animation) => animation.property === "transform")).toBe(true);
-  await dockRelease(page);
-});
-
-test("starts the field's fill where it was and ends it in the slot, never at the wrong width in between", async ({
-  page,
-}) => {
-  test.slow();
-  await steadyBoard(page);
-  const { wide, moveStart } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll, with no fill to play");
-  const rest = await dockBoxes(page);
-  expect(rest.chromeTransform, "undocked, the fill is unscaled").toBe("none");
-
-  // Docking, held at the first frame of its move: the input has its docked width already (one step, under the
-  // transition), while the fill still covers what the field covered, edge to edge.
-  await dockHeld(page, Math.ceil(moveStart) + 2);
-  const start = await dockBoxes(page);
-  expect(
-    Math.abs(start.input.width - start.slot.width),
-    "the input is at its docked width at once",
-  ).toBeLessThanOrEqual(1);
-  expect(start.chrome.width, "the fill still has the old width").toBeGreaterThan(start.slot.width + 20);
-  expect(start.chrome.width).toBeCloseTo(rest.chrome.width, 0);
-  expect(start.chrome.left).toBeCloseTo(rest.chrome.left, 0);
-  await dockRelease(page);
-  const end = await dockBoxes(page);
-  // The dock places the field by the slot's own, fractional box (not by rounded offsets), so it is on the slot to
-  // well under a pixel.
-  for (const key of ["left", "width", "height"] as const) {
-    expect(Math.abs(end.chrome[key] - end.slot[key]), `docked fill ${key}`).toBeLessThanOrEqual(0.5);
-    expect(Math.abs(end.field[key] - end.slot[key]), `docked field ${key}`).toBeLessThanOrEqual(0.5);
-  }
-  expect(end.chromeTransform, "docked, the fill is unscaled too, so its corners are not squashed").toBe("none");
-
-  // Leaving, the same the other way: the fill starts as narrow as it was, and ends as wide as the field.
-  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
-  const leaving = await dockBoxes(page);
-  expect(leaving.chrome.width, "the fill starts at the docked width").toBeCloseTo(end.chrome.width, 0);
-  expect(leaving.chrome.left).toBeCloseTo(end.chrome.left, 0);
-  expect(leaving.input.width, "the input is at its full width at once").toBeGreaterThan(end.slot.width + 20);
-  await dockRelease(page);
-  const back = await dockBoxes(page);
-  expect(back.chrome.width).toBeCloseTo(back.dock.width, 0);
-  expect(back.chrome.left).toBeCloseTo(back.dock.left, 0);
-  expect(back.chromeTransform).toBe("none");
 });
 
 /**
- * What `sampleDockMove` read on one animation frame. `y`: the scroll position. `moving`: how many transitions the
- * dock has running. `clipped`: the placeholder shown is wider than the input. `keycap`: the "/" hint in the field.
+ * Scrolls to `y` inside the page and, the moment the bar's field has been revealed or hidden (data-revealed
+ * changes), reads what the browser is about to run for it, before a frame is drawn: the transitions on the bar's
+ * copy of the field (their property and length), its computed transition length, and its opacity right then. That is
+ * the start of the move whatever the speed of the browser, and under Reduce Motion it is the finished step.
  */
-type DockFrame = {
-  at: number;
-  y: number;
-  left: number;
-  width: number;
-  docked: boolean;
-  moving: number;
-  clipped: boolean;
-  /** The "/" keycap: how opaque it is and where its right edge is. Null where it is not drawn (below 40rem, or with a query). */
-  keycap: { opacity: number; right: number } | null;
-};
-
-/**
- * Scrolls the way `kind` says and reads the search field's fill (left, width), the dock's pose and whether the
- * placeholder is cut off by the input, on every animation frame, for `ms`. The reading runs first in each frame, so
- * it is what the frame before drew. `lost` is, it appears, WebKit's: one iPhone screen recording shows a transition
- * counted from the frame that starts it, with the compositor applying the animation only after the commit of that
- * frame to the UI process, so that the first frame drawn of the move is `lost` ms into it (33 ms there). The cause is
- * not confirmed. Chromium shows no such loss and draws it one frame (about 17 ms) in, so every animation of the
- * dock and of the bar's verdict is moved on by the rest in the task that writes data-docked, before a frame is
- * drawn.
- *   drag  - a finger's pace, 14px a frame, to `to`
- *   flick - momentum, 40px a frame
- *   jump  - one scroll event that crosses the whole threshold
- */
-async function sampleDockMove(
+async function revealObserved(
   page: Page,
-  move: { kind: "drag" | "flick" | "jump"; from: number; to: number; lost: number; ms?: number },
-): Promise<{ frames: DockFrame[]; poseAt: number; extra: number; diag: string[] }> {
-  await scrollAndSettle(page, move.from);
-  await dockMoved(page);
+  y: number,
+): Promise<{
+  revealed: boolean;
+  animations: { property: string; ms: number }[];
+  duration: string;
+  opacity: number;
+}> {
   return page.evaluate(
-    ({ kind, from, to, lost, ms = 900 }) =>
-      new Promise<{ frames: DockFrame[]; poseAt: number; extra: number; diag: string[] }>((resolve) => {
-        const dock = document.querySelector(".search-dock") as HTMLElement;
-        const chrome = dock.querySelector(".search-chrome") as HTMLElement;
-        const input = dock.querySelector("input") as HTMLInputElement;
-        const keycap = dock.querySelector("kbd");
-        const verdict = document.querySelector("[data-bar-verdict]") as HTMLElement;
-        const measure = document.createElement("canvas").getContext("2d") as CanvasRenderingContext2D;
-        const frames: DockFrame[] = [];
-        const was = dock.hasAttribute("data-docked");
-        const extra = Math.max(0, lost - 1000 / 60);
-        let readAt = 0;
-        let poseAt = 0;
-        // One compact line per frame from the dock's reaction on, for the failure message of a test that reads
-        // them: what the field, the fill and the verdict are running, what CSS times, the fill's inline style.
-        const diag: string[] = [];
-        const number = (value: unknown) => (value === null || value === undefined ? "-" : Number(value).toFixed(1));
-        const describe = (name: string, element: Element) =>
-          `${name}[${element
-            .getAnimations()
-            .map((animation) => {
-              const timing = (animation.effect as KeyframeEffect | null)?.getTiming();
-              const kind = animation instanceof CSSTransition ? `css:${animation.transitionProperty}` : animation.id;
-              return `${kind} ${animation.playState} t=${number(animation.currentTime)} s=${number(animation.startTime)} d=${timing?.delay}/${timing?.duration} ${timing?.fill}`;
-            })
-            .join("; ")}]`;
-        const note = (label: string, now: number) => {
-          const field = dock.querySelector(".search-field") as HTMLElement;
-          const timed = (element: Element) => {
-            const style = getComputedStyle(element);
-            return `${style.transitionProperty}/${style.transitionDuration}/${style.transitionDelay}`;
-          };
-          diag.push(
-            `${label} at=${number(now)} tl=${number(document.timeline.currentTime)} w=${number(chrome.getBoundingClientRect().width)} ${describe("field", field)} ${describe("fill", chrome)} ${describe("verdict", verdict)} css=${timed(field)},${timed(chrome)} fillStyle="${chrome.getAttribute("style") ?? ""}"`,
-          );
-        };
-        const lose = new MutationObserver(() => {
-          if (dock.hasAttribute("data-docked") === was) return;
-          lose.disconnect();
-          // The frame this runs in: the last one read, as the reading comes first in a frame.
-          poseAt = readAt;
+    (top) =>
+      new Promise((resolve, reject) => {
+        const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+        const field = document.querySelector(".bar-search") as HTMLElement;
+        const was = bar.hasAttribute("data-revealed");
+        const timer = window.setTimeout(() => {
+          observer.disconnect();
+          reject(new Error(`the bar's field did not change for ${top}`));
+        }, 10_000);
+        const observer = new MutationObserver(() => {
+          if (bar.hasAttribute("data-revealed") === was) return;
+          observer.disconnect();
+          window.clearTimeout(timer);
           // Reading the animations lets the browser start the ones this change calls for, in this very frame.
-          for (const animation of [...dock.getAnimations({ subtree: true }), ...verdict.getAnimations()]) {
-            animation.currentTime = Number(animation.currentTime ?? 0) + extra;
-          }
-          note("pose", readAt);
-        });
-        lose.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
-        const start = performance.now();
-        const read = (frameTime: number) => {
-          // The animations' own clock, not the frame's timestamp: an engine whose timestamps do not keep up with its
-          // frames (a loaded machine, a headless one) would otherwise make a late frame look early.
-          const now = Number(document.timeline.currentTime ?? frameTime);
-          readAt = now;
-          const box = chrome.getBoundingClientRect();
-          const style = getComputedStyle(input);
-          measure.font = style.font;
-          const room = input.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
-          frames.push({
-            at: now,
-            y: window.scrollY,
-            left: box.left,
-            width: box.width,
-            docked: dock.hasAttribute("data-docked"),
-            moving: dock.getAnimations({ subtree: true }).filter((animation) => animation instanceof CSSTransition)
-              .length,
-            clipped: measure.measureText(input.placeholder).width > room + 1,
-            keycap:
-              keycap && getComputedStyle(keycap).display !== "none"
-                ? {
-                    opacity: Number.parseFloat(getComputedStyle(keycap).opacity),
-                    right: keycap.getBoundingClientRect().right,
-                  }
-                : null,
+          const animations = field.getAnimations().map((animation) => ({
+            property: (animation as CSSTransition).transitionProperty,
+            ms: Number(animation.effect?.getComputedTiming().duration),
+          }));
+          const style = getComputedStyle(field);
+          resolve({
+            revealed: !was,
+            animations,
+            duration: style.transitionDuration,
+            opacity: Number.parseFloat(style.opacity),
           });
-          if (poseAt > 0 && diag.length < 8) note(`f${diag.length - 1}`, now);
-          if (frameTime - start < ms) requestAnimationFrame(read);
-          else resolve({ frames, poseAt, extra, diag });
-        };
-        requestAnimationFrame(read);
-        const step = kind === "flick" ? 40 : 14;
-        let y = from;
-        const scroll = () => {
-          y = kind === "jump" ? to : Math.abs(to - y) <= step ? to : y + Math.sign(to - y) * step;
-          window.scrollTo(0, y);
-          if (y !== to) requestAnimationFrame(scroll);
-        };
-        // After a few frames at rest, so the first reading is of the pose before the move.
-        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(scroll)));
+        });
+        observer.observe(bar, { attributes: true, attributeFilter: ["data-revealed"] });
+        window.scrollTo(0, top);
       }),
-    move,
+    y,
   );
 }
 
-test("moves the field's fill into the dock in small steps from its rest box, even when its first frames are lost", async ({
-  page,
-  browserName,
-}) => {
+test("search reveal: scrolling down keeps one field in the page and none in the bar", async ({ page }) => {
   test.slow();
-  await steadyBoard(page);
-  const { wide, moveStart, moveEnd } = await dockOffsets(page);
-  const rest = await dockBoxes(page);
-  const FRAME = 1000 / 60;
-  // The first frame the move draws is next to its rest box: the lead (DOCK_LEAD_MS) is there for the time a
-  // browser loses at the start, and the move has not begun. Without it a first frame 33 ms in draws the fill 65% of
-  // the way in.
-  const FIRST = 0.12;
-  // The lead, in ms (DOCK_LEAD_MS in dock.ts).
-  const LEAD = DOCK_LEAD_MS;
-  // How far along its way the fill may be at a given time after the dock changed: the page's easing over DOCK_MS,
-  // after the lead. One frame is added to the time because an animation started in a frame may count from the
-  // frame's own start, and the slack is for the curve's steepness. A frame that arrives late (a loaded machine, a
-  // browser with a slow frame) is then allowed to be further along, in proportion to how late it is, and a fill that
-  // is far along in a frame drawn inside the lead is a lead that was not honoured.
-  const [x1, y1, x2, y2] = (DOCK_EASING.match(/-?\d*\.?\d+/g) ?? []).map(Number);
-  const ease = cubicBezier(x1, y1, x2, y2);
-  const reach = (since: number) => ease((since + FRAME - LEAD) / DOCK_MS) + 0.05;
-  // The most of the way a frame at 60Hz may cover after that: the first frame of --ease-out is 37% of it (the curve
-  // is steep at the start, which is its character), so this holds the move to the curve and not to a jump past it.
-  const STEP = 0.42;
-  const cdp = browserName === "chromium" ? await page.context().newCDPSession(page) : null;
-  const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
-  const past = Math.ceil(moveEnd) + 60;
-  // Just over the line that docks the field: from 64rem that is the end of its move, not the start.
-  const across = Math.ceil(wide ? moveEnd : moveStart) + 3;
-  const moves = [
-    { kind: "drag", from: before, to: past, name: "a drag in" },
-    { kind: "jump", from: past, to: before, name: "one jump out" },
-    { kind: "jump", from: before, to: across, name: "one jump in" },
-    { kind: "drag", from: past, to: before, name: "a drag out" },
-    { kind: "flick", from: before, to: past + 200, name: "a flick in" },
-    { kind: "flick", from: past + 200, to: before, name: "a flick out" },
-  ] as const;
-  // The time into the move at which its first frame is drawn: 17 ms is none lost, 33 ms is the iPhone's, and a
-  // slow phone loses more. From 64rem nothing is played in time, so there is nothing to lose: one run at the
-  // page's pace and, where Chromium can, one at a quarter of it.
-  const runs = wide
-    ? [{ rate: 1, lost: 0 }, ...(cdp ? [{ rate: 4, lost: 0 }] : [])]
-    : [{ rate: 1, lost: 0 }, { rate: 1, lost: 33 }, { rate: 1, lost: 40 }, ...(cdp ? [{ rate: 4, lost: 33 }] : [])];
-  for (const { rate, lost } of runs) {
-    await cdp?.send("Emulation.setCPUThrottlingRate", { rate });
-    for (const move of moves) {
-      const name = `${move.name}, first frame ${lost} ms in${rate > 1 ? ` at ${rate}x CPU` : ""}`;
-      const { frames, poseAt, extra, diag } = await sampleDockMove(page, { ...move, lost });
-      // What the dock was running at the pose and for the frames after it, one line each: it is in the message
-      // of the checks of the first frames, so a CI failure shows what the engine did.
-      const trace = `\n${diag.join("\n")}`;
-      await test.info().attach(`dock-frames ${name}`, { body: diag.join("\n") });
-      const going = move.to > move.from;
-      // Below 64rem the pose (data-docked) says when the dock reacted; from 64rem the fill itself does.
-      const first = wide
-        ? frames.findIndex((frame) => Math.abs(frame.width - (going ? rest.dock.width : rest.slot.width)) > 0.5)
-        : frames.findIndex((frame) => frame.docked === going);
-      expect(first, `${name}: the dock reacted`).toBeGreaterThanOrEqual(0);
-      await dockMoved(page);
-      const box = await dockBoxes(page);
-      // The box the fill leaves and the one it settles in: the field's own at rest, and the slot (to half a pixel: the
-      // dock places the field by the slot's own, fractional box).
-      const from = going
-        ? { left: rest.dock.left, width: rest.dock.width }
-        : { left: box.slot.left, width: box.slot.width };
-      const to = going ? box.chrome : box.dock;
-      const target = going ? box.slot : box.dock;
-      expect(Math.abs(to.left - target.left), `${name}: settles at its left edge`).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(to.width - target.width), `${name}: settles at its width`).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(to.width - from.width), `${name}: the fill has somewhere to go`).toBeGreaterThan(20);
-      const last = frames.at(-1) as DockFrame;
-      expect(Math.abs(last.left - to.left), `${name}: ends where it settles`).toBeLessThanOrEqual(1);
-      expect(Math.abs(last.width - to.width), `${name}: ends at the width it settles at`).toBeLessThanOrEqual(1);
-      // How far along the way from `from` to `to` each of its edges is: 0 at the start, 1 at the end.
-      const along = (value: number, key: "left" | "width") => (value - from[key]) / (to[key] - from[key]);
-      if (wide) {
-        // From 64rem the fill is a function of the scroll position, drawn the frame it is scrolled to, and nothing is
-        // played in time: no transition to lose the start of, and so no lead to wait out. The fill is never ahead of the
-        // scroll (a frame reads the scroll of its own or of the frame before: the dock writes after the read), and a
-        // flick that crosses the 48px at once crosses the fill at once, which is the scroll's doing and not the field's.
-        let behind = 0;
-        for (const [index, frame] of frames.entries()) {
-          const label = `${name}, frame ${index}`;
-          const size = along(frame.width, "width");
-          const edge = along(frame.left, "left");
-          const at = (y: number) => {
-            const progress = Math.round(dockProgress(y, moveStart, WIDE_RANGE) * 500) / 500;
-            return going ? progress : 1 - progress;
-          };
-          const shown = [at(frame.y), at(frames[Math.max(0, index - 1)].y)];
-          expect(frame.moving, `${label}: nothing is played in time`).toBe(0);
-          expect(Math.abs(edge - size), `${label}: left and width move together`).toBeLessThanOrEqual(0.04);
-          expect(size, `${label}: not ahead of the scroll`).toBeLessThanOrEqual(Math.max(...shown) + 0.03);
-          expect(size, `${label}: not behind the scroll`).toBeGreaterThanOrEqual(Math.min(...shown) - 0.03);
-          expect(size, `${label}: never turns back`).toBeGreaterThanOrEqual(behind - 0.02);
-          expect(frame.clipped, `${label}: the placeholder fits`).toBe(false);
-          behind = size;
-        }
-        continue;
-      }
-      let previous = 0;
-      let previousAt = frames[first].at;
-      for (const [index, frame] of frames.slice(first).entries()) {
-        const edge = along(frame.left, "left");
-        const size = along(frame.width, "width");
-        const label = `${name}, frame ${index} after the dock changed`;
-        // Never the wrong width for its place: the two edges go together, and the fill stays between the boxes.
-        expect(Math.abs(edge - size), `${label}: left and width move together`).toBeLessThanOrEqual(0.04);
-        expect(size, `${label}: not past the slot`).toBeLessThanOrEqual(1.02);
-        expect(size, `${label}: not back past where it started`).toBeGreaterThanOrEqual(-0.02);
-        expect(size, `${label}: never turns back`).toBeGreaterThanOrEqual(previous - 0.02);
-        // In small steps, scaled by the length of the frame. The first frame has no frame before it to be a step
-        // from: it is held to the time that has passed since the dock changed instead (below).
-        const since = frame.at - poseAt + extra;
-        if (index > 0) {
-          const room = STEP * Math.max(1, (frame.at - previousAt) / FRAME);
-          expect(size - previous, `${label}: the step${trace}`).toBeLessThanOrEqual(Math.min(room, 1));
-        }
-        // And never further along than the page's easing allows for the time since the dock changed.
-        expect(
-          size,
-          `${label}: no further along than ${since.toFixed(1)} ms into the move allows${trace}`,
-        ).toBeLessThanOrEqual(Math.min(reach(since), 1));
-        // The first frame drawn is the rest box, as long as it is drawn inside the lead (a frame that comes later than
-        // that, on a throttled or busy machine, may be part way in).
-        if (index === 0 && since <= LEAD - 4) {
-          expect(size, `${label}: starts where it was${trace}`).toBeLessThanOrEqual(FIRST);
-        }
-        // The long placeholder is never drawn cut off by the input (it changes in the frame the input narrows).
-        expect(frame.clipped, `${label}: the placeholder fits`).toBe(false);
-        previous = size;
-        previousAt = frame.at;
-      }
-    }
+  const offsets = await revealBoard(page);
+  const ys: number[] = [];
+  for (let y = 0; y <= Math.min(offsets.limit, Math.ceil(offsets.revealFrom) + 300); y += 24) ys.push(y);
+  const stops = await sweepDock(page, ys);
+  for (const stop of stops) {
+    // The hero's field rises 1:1 with the page, as ordinary content does...
+    expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(offsets.natural - stop.scrollY, 0);
+    // ...and the bar's copy is not there: not revealed, not drawn.
+    expect(stop.revealed, `at ${stop.y}`).toBe(false);
+    expect(stop.barFieldOpacity, `at ${stop.y}`).toBe(0);
   }
-  await cdp?.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+  expect(
+    stops.some((stop) => stop.shown === "true"),
+    "the bar came up on the way",
+  ).toBe(true);
+  // Nothing in the bar takes a tap: at the middle of its slot the bar answers, not an input.
+  const hit = await page.evaluate(() => {
+    const slot = (document.querySelector(".bar-search") as HTMLElement).parentElement as HTMLElement;
+    const box = slot.getBoundingClientRect();
+    const element = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    return { inBar: Boolean(element && bar.contains(element)), isInput: element instanceof HTMLInputElement };
+  });
+  expect(hit).toEqual({ inBar: true, isInput: false });
 });
 
-test("hides the / keycap while the field docks and leaves, so it never moves alone outside the fill", async ({
-  page,
-}) => {
+test("search reveal: scrolling up shows the field in the floating bar", async ({ page }) => {
   test.slow();
-  await steadyBoard(page);
-  const { wide, moveStart, moveEnd } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll, and the keycap with it");
-  test.skip((page.viewportSize()?.width ?? 0) < 640, "the keycap shows from 40rem");
-  const before = Math.floor(moveStart) - DOCK_HYSTERESIS - 40;
-  const past = Math.ceil(moveEnd) + 60;
-  const moves = [
-    { kind: "jump", from: before, to: past, name: "one jump in" },
-    { kind: "jump", from: past, to: before, name: "one jump out" },
-    { kind: "drag", from: before, to: past, name: "a drag in" },
-    { kind: "drag", from: past, to: before, name: "a drag out" },
-  ] as const;
-  for (const lost of [0, 33]) {
-    for (const move of moves) {
-      const name = `${move.name}, first frame ${lost} ms in`;
-      const { frames } = await sampleDockMove(page, { ...move, lost });
-      let hidden = 0;
-      for (const [index, frame] of frames.entries()) {
-        const label = `${name}, frame ${index}`;
-        expect(frame.keycap, `${label}: the keycap is in the field`).not.toBeNull();
-        const { opacity, right } = frame.keycap as { opacity: number; right: number };
-        // The input has its new width at once, while the fill waits out the lead and then moves: the keycap, at the
-        // input's edge, is either not drawn or inside the fill, on every frame.
-        if (opacity === 0) hidden++;
-        else {
-          expect(right, `${label}: not left of the fill`).toBeGreaterThanOrEqual(frame.left - 0.5);
-          expect(right, `${label}: not right of the fill`).toBeLessThanOrEqual(frame.left + frame.width + 0.5);
-        }
-      }
-      expect(hidden, `${name}: it is hidden for the move`).toBeGreaterThan(0);
-      const last = (frames.at(-1) as DockFrame).keycap;
-      expect(last?.opacity, `${name}: and back once the field has stopped`).toBe(1);
-    }
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  // Short of REVEAL_UP_PX it stays hidden, whatever the finger does up to there; past it, it comes in.
+  await scrollAndSettle(page, y0 - (REVEAL_UP_PX - 4));
+  expect(await isRevealed(page), "4px short").toBe(false);
+  await scrollAndSettle(page, y0 - (REVEAL_UP_PX + 4));
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  expect(
+    await page.locator(".bar-search").evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity)),
+  ).toBe(1);
+  // Keeps going up: it stays.
+  await scrollAndSettle(page, y0 - 3 * REVEAL_UP_PX);
+  expect(await isRevealed(page)).toBe(true);
+});
+
+test("search reveal: scrolling down again hides it", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  const low = y0 - 2 * REVEAL_UP_PX;
+  await scrollAndSettle(page, low);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  // Short of HIDE_DOWN_PX it stays; past it, it goes.
+  await scrollAndSettle(page, low + (HIDE_DOWN_PX - 4));
+  expect(await isRevealed(page), "4px short").toBe(true);
+  await scrollAndSettle(page, low + (HIDE_DOWN_PX + 4));
+  await expectRevealed(page, false);
+  await barFieldSettled(page);
+  expect(
+    await page.locator(".bar-search").evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity)),
+  ).toBe(0);
+  expect(await page.locator(".bar-search").evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("none");
+});
+
+test("search reveal: jitter and reversals do not flip it", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  // Every change of the bar's data-revealed from here on, in order.
+  await page.evaluate(() => {
+    const flips: boolean[] = [];
+    (window as Window & { __flips?: boolean[] }).__flips = flips;
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    let was = bar.hasAttribute("data-revealed");
+    new MutationObserver(() => {
+      const now = bar.hasAttribute("data-revealed");
+      if (now !== was) flips.push(now);
+      was = now;
+    }).observe(bar, { attributes: true, attributeFilter: ["data-revealed"] });
+  });
+  const flips = () => page.evaluate(() => (window as Window & { __flips?: boolean[] }).__flips ?? []);
+  const y0 = await scrollDeep(page, offsets);
+  // Hidden: small steps up and down around the highest point, none of them REVEAL_UP_PX from it.
+  for (const y of [y0 - 10, y0 + 6, y0 - 14, y0 + 8, y0 - 8, y0 + 2]) await scrollAndSettle(page, y);
+  expect(await flips(), "jitter while hidden").toEqual([]);
+  // A real scroll up reveals it once.
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  expect(await flips()).toEqual([true]);
+  // Shown: steps down and up around the lowest point, none of them HIDE_DOWN_PX from it.
+  const low = y0 - 2 * REVEAL_UP_PX;
+  for (const y of [low + 6, low - 5, low + 5, low - 8, low + 2, low - 2]) await scrollAndSettle(page, y);
+  expect(await flips(), "jitter while shown").toEqual([true]);
+  // A real scroll down hides it once; a small step back up does not bring it back.
+  await scrollAndSettle(page, low - 8 + HIDE_DOWN_PX + 4);
+  await expectRevealed(page, false);
+  await scrollAndSettle(page, low - 8 + HIDE_DOWN_PX + 4 - 10);
+  expect(await isRevealed(page), "a step back up of 10px").toBe(false);
+  expect(await flips()).toEqual([true, false]);
+});
+
+test("search reveal: back at the top there is only the hero's field, and never two together", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const { path } = await dockPath(page, 12);
+  const stops = await sweepDock(page, path);
+  const viewportHeight = page.viewportSize()?.height ?? 0;
+  for (const stop of stops) {
+    // The hero's field can be seen when its bottom edge is below the bar's and its top is on screen.
+    const heroSeen = stop.fieldBottom > stop.barBottom + 1 && stop.fieldTop < viewportHeight;
+    expect(heroSeen && stop.revealed, `both fields at ${stop.y}`).toBe(false);
   }
+  expect(
+    stops.some((stop) => stop.revealed),
+    "the bar's field showed on the way back",
+  ).toBe(true);
+  expect(
+    stops.some((stop) => stop.fieldBottom > stop.barBottom + 1 && !stop.revealed),
+    "the hero's showed too",
+  ).toBe(true);
+  // At the top: the bar is down, nothing is revealed, and the bar's copy is not drawn once its fade has run.
+  await scrollAndSettle(page, 0);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+  expect(await isRevealed(page)).toBe(false);
+  await barFieldSettled(page);
+  expect(
+    await page.locator(".bar-search").evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity)),
+  ).toBe(0);
+  expect(offsets.natural).toBeGreaterThan(0);
 });
 
-test("never puts the field under the bar, so a flick's late frame cannot hide it", async ({ page }) => {
+test("search reveal: back at the top with the bar's field focused, only one field is on screen", async ({ page }) => {
   test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const { wide, moveStart } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the bar is not fixed, and the field is always over it");
-  const zIndex = () => searchDock(page).evaluate((dock) => Number(getComputedStyle(dock).zIndex));
-  const barZ = await controlBar(page).evaluate((bar) => Number(getComputedStyle(bar).zIndex));
-  // An undocked field is always below the bar's bottom edge (the sweeps above check that), so it can be over the
-  // bar all the time: a field that a flick carried into the bar before the page could dock it is then drawn over
-  // it, full width, while it shrinks, not hidden under it for a frame and popped on top.
-  expect(await zIndex(), "at the top").toBeGreaterThan(barZ);
-  await scrollAndSettle(page, Math.floor(moveStart) - 4);
-  expect(await zIndex(), "with the bar up alone").toBeGreaterThan(barZ);
-  await dockHeld(page, Math.ceil(moveStart) + 2);
-  expect(await zIndex(), "as it docks").toBeGreaterThan(barZ);
-  await dockRelease(page);
-  await scrollAndSettle(page, await maxScroll(page));
-  expect(await zIndex(), "docked, after a flick").toBeGreaterThan(barZ);
-  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
-  expect(await zIndex(), "as it leaves").toBeGreaterThan(barZ);
-  await dockRelease(page);
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await expect(bar).toBeFocused();
+  await page.keyboard.type("a");
+  await expect(bar).toHaveValue("a");
+  // Up the page in steps, with the bar's field focused and a query in it, to the top.
+  const viewportHeight = page.viewportSize()?.height ?? 0;
+  const path = [Math.ceil(offsets.revealFrom) + 60, Math.ceil(offsets.revealFrom) + 4, offsets.revealFrom - 4, 150, 0];
+  for (const y of path.map((step) => Math.max(0, Math.round(step)))) {
+    await scrollAndSettle(page, y);
+    const seen = await page.evaluate(() => {
+      const hero = document.querySelector('[data-search-input="hero"]') as HTMLElement;
+      const field = document.querySelector(".search-dock .search-field") as HTMLElement;
+      const barEl = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+      const box = field.getBoundingClientRect();
+      return {
+        revealed: barEl.hasAttribute("data-revealed"),
+        fieldTop: box.top,
+        fieldBottom: box.bottom,
+        barBottom: barEl.getBoundingClientRect().bottom,
+        heroTab: hero.tabIndex,
+      };
+    });
+    const heroSeen = seen.fieldBottom > seen.barBottom + 1 && seen.fieldTop < viewportHeight;
+    expect(heroSeen && seen.revealed, `both fields at ${y}`).toBe(false);
+    // While the hero's field is in view it is in the Tab order, and the bar's copy has let go of focus.
+    if (heroSeen) expect(seen.heroTab, `the hero's field is reachable at ${y}`).toBe(0);
+  }
+  await expectRevealed(page, false);
+  await expect(bar).not.toBeFocused();
+  // The hero's field keeps the query, and the bar is down again: nothing holds it up.
+  await expect(heroSearch(page)).toHaveValue("a");
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
 });
 
-test("opens a page that is already scrolled past the dock with the field docked, and plays no move", async ({
+test("search reveal: the revealed field takes the tap and the page behind it does not", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  const hit = () =>
+    page.evaluate(() => {
+      const input = document.querySelector('[data-search-input="bar"]') as HTMLElement;
+      const box = input.getBoundingClientRect();
+      const element = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+      return { isInput: element === input, inBar: Boolean(element && bar.contains(element)) };
+    });
+  // Hidden, it takes nothing: the tap lands on the bar (or, where the bar has nothing, the page), never the input.
+  expect((await hit()).isInput, "hidden").toBe(false);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  expect(await hit(), "revealed").toEqual({ isInput: true, inBar: true });
+  // Hidden again, it gives the tap back.
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX + 2 * HIDE_DOWN_PX);
+  await expectRevealed(page, false);
+  await barFieldSettled(page);
+  expect((await hit()).isInput, "hidden again").toBe(false);
+});
+
+test("search reveal: opens a page that is already scrolled past the field with the bar's field hidden, and plays no move", async ({
   page,
 }) => {
   test.slow();
-  // Every transition that starts, from before the page's own script runs.
+  // Every transition that starts on the bar's field, from before the page's own script runs.
   await page.addInitScript(() => {
     const runs: string[] = [];
     (window as Window & { __runs?: string[] }).__runs = runs;
     document.addEventListener(
       "transitionrun",
       (event) => {
-        const element = event.target as Element;
-        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
+        if ((event.target as Element).closest(".bar-search")) runs.push(`${event.propertyName}`);
       },
       true,
     );
   });
-  await steadyBoard(page);
-  const { wide, moveEnd } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
-  await scrollAndSettle(page, Math.ceil(moveEnd) + 80);
-  await dockMoved(page);
-  expect(await dockValue(page)).toBe(1);
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
   // Back to the same place the way a reload or a return to the tab does: the browser restores the scroll.
   await page.reload();
   await hydrated(page);
   await leadSteady(page);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(moveEnd);
-  await expect.poll(() => dockValue(page)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(offsets.revealFrom);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  const runs = await page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
-  expect(
-    runs.filter((run) => run.includes("transform")),
-    "the field's move played on load",
-  ).toEqual([]);
-  // And it is where a docked field belongs: in its slot, not on its way there.
-  const boxes = await dockBoxes(page);
-  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
-  expect(boxes.chromeTransform).toBe("none");
+  // It opens hidden, and nothing about it moved.
+  expect(await isRevealed(page)).toBe(false);
+  const runs = () => page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
+  expect(await runs(), "the field's move played on load").toEqual([]);
+  // The first real scroll up after the load reveals it, and that one is a move.
+  const restored = await page.evaluate(() => window.scrollY);
+  expect(restored).toBeGreaterThan(y0 - 40);
+  await scrollAndSettle(page, restored - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await expect.poll(async () => (await runs()).length, { message: "the reveal plays" }).toBeGreaterThan(0);
 });
 
-test("keeps a docked field in its slot when the bar's text moves the slot, without sliding it", async ({ page }) => {
-  test.slow();
-  await steadyBoard(page);
-  const { wide, moveEnd } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
-  await scrollAndSettle(page, Math.ceil(moveEnd) + 80);
-  await dockMoved(page);
-  expect(await dockValue(page)).toBe(1);
-  // From here on, every transition the dock starts. Refreshing changes the bar's lead text ("Checking..."),
-  // which from 40rem sits in the flow before the slot: the slot moves and resizes under a docked field.
-  await page.evaluate(() => {
-    const runs: string[] = [];
-    (window as Window & { __runs?: string[] }).__runs = runs;
-    document.addEventListener(
-      "transitionrun",
-      (event) => {
-        const element = event.target as Element;
-        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
-      },
-      true,
-    );
-  });
-  const refresh = controlBar(page).getByRole("button", { name: "Refresh status now" });
-  await pressRefresh(page, refresh);
-  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  const runs = await page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
-  expect(
-    runs.filter((run) => run.includes("transform")),
-    "the docked field slid when its slot changed",
-  ).toEqual([]);
-  const boxes = await dockBoxes(page);
-  expect(Math.abs(boxes.field.left - boxes.slot.left)).toBeLessThanOrEqual(0.5);
-  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(0.5);
-});
-
-test("takes the pose a scroll gives it before the page has loaded without playing a move", async ({ page }) => {
+test("search reveal: takes the pose a scroll gives it before the page has loaded without playing a move", async ({
+  page,
+}) => {
   test.slow();
   // WebKit restores a reloaded page's scroll position as late as the end of the load, after the dock's hook has
   // run. Held here by an image that does not answer until the test says so, so the load stays open.
@@ -2093,8 +1704,7 @@ test("takes the pose a scroll gives it before the page has loaded without playin
     document.addEventListener(
       "transitionrun",
       (event) => {
-        const element = event.target as Element;
-        if (element.closest(".search-dock")) runs.push(`${element.className} ${event.propertyName}`);
+        if ((event.target as Element).closest(".bar-search")) runs.push(`${event.propertyName}`);
       },
       true,
     );
@@ -2107,177 +1717,282 @@ test("takes the pose a scroll gives it before the page has loaded without playin
   await hydrated(page);
   await leadSteady(page);
   expect(await page.evaluate(() => document.readyState), "the load is still open").not.toBe("complete");
-  const { wide, moveStart, moveEnd } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll instead of playing a move");
-  await page.evaluate((to) => window.scrollTo(0, to), Math.ceil(moveEnd) + 80);
-  await expect.poll(() => dockValue(page)).toBe(1);
-  const played = () =>
-    page.evaluate(() =>
-      ((window as Window & { __runs?: string[] }).__runs ?? []).filter((run) => run.includes("transform")),
-    );
+  const offsets = await dockOffsets(page);
+  test.skip(offsets.wide, "from 64rem there is no field in the bar");
+  const deep = Math.ceil(offsets.revealFrom) + 400;
+  await page.evaluate((to) => window.scrollTo(0, to), deep);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  // Before the load has finished a scroll is a restored position, not a direction: even a scroll up reveals nothing.
+  await page.evaluate((to) => window.scrollTo(0, to), deep - 3 * REVEAL_UP_PX);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect(await isRevealed(page)).toBe(false);
+  const played = () => page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
   expect(await played(), "the field's move played before the load").toEqual([]);
   release();
   await page.waitForLoadState("load");
-  expect(await dockValue(page)).toBe(1);
-  const boxes = await dockBoxes(page);
-  expect(Math.abs(boxes.field.width - boxes.slot.width)).toBeLessThanOrEqual(1);
-  // The transitions are back for the next pose: the hold is two frames long, not for good, and the moves are
-  // armed. A pose change after the load is a move again.
-  await expect(page.locator(".search-dock")).not.toHaveAttribute("data-instant", "");
-  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
-  // transitionrun is dispatched with the next frame, so it is waited for rather than read at once.
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  // Armed, the page is where the restored scroll left it, with nothing revealed and nothing played; the baseline is
+  // here, so the next scroll up counts from here.
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  expect(await isRevealed(page)).toBe(false);
+  expect(await played(), "the field's move played on load").toEqual([]);
+  await scrollAndSettle(page, deep - 6 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
   await expect
-    .poll(async () => (await played()).length, { message: "the field's move comes back after the load" })
+    .poll(async () => (await played()).length, { message: "the reveal plays after the load" })
     .toBeGreaterThan(0);
-  await dockRelease(page);
 });
 
-test("hides the Clear button for the field's move and brings it back once the field has stopped", async ({ page }) => {
+test("search reveal: the revealed field keeps still when the bar's lead text changes", async ({ page }) => {
   test.slow();
-  await page.goto("/?q=aws");
-  await expect(page.getByRole("button", { name: "Clear search" })).toBeVisible();
-  await hydrated(page);
-  const { wide, moveStart } = await dockOffsets(page);
-  test.skip(wide, "from 64rem the field follows the scroll, and the button with it");
-  const opacity = () =>
-    page.evaluate(() =>
-      Number.parseFloat(
-        getComputedStyle(document.querySelector('.search-field button[aria-label="Clear search"]') as Element).opacity,
-      ),
+  // A served board, as in the 'mirrors the query' and 'layout alone' tests: the live board's cards change height with
+  // what the vendors say that day, and the Refresh below fetches it again, so a card that grew or shrank moved the
+  // page (its height, and on WebKit the scroll position, which follows it) under this test's checks of the field.
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  // From here on, everything that could start a transition on the bar's field, and the field's box in every frame.
+  // Refreshing changes the bar's lead text ("Checking..."), which from 40rem sits in the flow before the slot: the
+  // lead has a width of its own, so the slot, and the field in it, stay where they are. The field's CSS transition
+  // starts only when the bar's data-revealed flips (opacity and translate both follow it), and that follows the
+  // dock store's `revealed`, which only a scroll the rule reads, or heroAway / barShown turning off, can flip. So
+  // the page also keeps a log of those: the marks on the bar and on the field's wrapper (data-revealed, data-shown,
+  // inert), every scroll event with its position, the page's height, and each transition that runs anywhere in the
+  // bar, with its target. A failure prints the log, which says which of them moved first.
+  await page.evaluate(() => {
+    type Tracked = Window & {
+      __runs?: string[];
+      __log?: string[];
+      __boxes?: { left: number; width: number }[];
+      __watching?: boolean;
+    };
+    const tracked = window as Tracked;
+    const runs: string[] = [];
+    const log: string[] = [];
+    const boxes: { left: number; width: number }[] = [];
+    const t0 = performance.now();
+    const stamp = () => `${(performance.now() - t0).toFixed(0)}ms`;
+    tracked.__runs = runs;
+    tracked.__log = log;
+    tracked.__boxes = boxes;
+    tracked.__watching = true;
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const describe = (element: Element) =>
+      `${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).split(" ")[0]}` : ""}`;
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        const target = event.target as Element;
+        if (!bar.contains(target)) return;
+        log.push(`${stamp()} transitionrun ${event.propertyName} on ${describe(target)}`);
+        if (target.closest(".bar-search")) runs.push(event.propertyName);
+      },
+      true,
     );
-  expect(await opacity()).toBe(1);
-  // It would be at the docked input's edge while the fill is still wide: it waits out the move.
-  expect((await dockHeld(page, Math.ceil(moveStart) + 2)).clearOpacity, "while the field docks").toBe(0);
-  await dockRelease(page);
-  await expect.poll(opacity).toBe(1);
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const target = record.target as Element;
+        log.push(
+          `${stamp()} ${record.attributeName}=${JSON.stringify(target.getAttribute(record.attributeName as string))} on ${describe(target)}`,
+        );
+      }
+    }).observe(bar, {
+      attributes: true,
+      subtree: true,
+      attributeFilter: ["data-revealed", "data-shown", "inert", "data-state"],
+    });
+    let height = document.documentElement.scrollHeight;
+    window.addEventListener("scroll", () => log.push(`${stamp()} scroll to ${window.scrollY}`), { passive: true });
+    const input = document.querySelector('[data-search-input="bar"]') as HTMLElement;
+    const watch = () => {
+      const box = input.getBoundingClientRect();
+      boxes.push({ left: box.left, width: box.width });
+      if (document.documentElement.scrollHeight !== height) {
+        log.push(`${stamp()} page height ${height} -> ${document.documentElement.scrollHeight}`);
+        height = document.documentElement.scrollHeight;
+      }
+      if (tracked.__watching) requestAnimationFrame(watch);
+    };
+    watch();
+  });
+  const refresh = controlBar(page).getByRole("button", { name: "Refresh status now" });
+  await pressRefresh(page, refresh);
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  const { runs, log, boxes } = await page.evaluate(() => {
+    const tracked = window as Window & {
+      __runs?: string[];
+      __log?: string[];
+      __boxes?: { left: number; width: number }[];
+      __watching?: boolean;
+    };
+    tracked.__watching = false;
+    return {
+      runs: tracked.__runs ?? [],
+      log: tracked.__log ?? [],
+      boxes: tracked.__boxes ?? [],
+    };
+  });
+  const story = `\n${log.join("\n")}`;
+  // The marks the field's state is written to, and the position, never moved: the lead's text is "data-state" and is
+  // the only mark that may change.
   expect(
-    (await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4)).clearOpacity,
-    "while the field leaves",
-  ).toBe(0);
-  await dockRelease(page);
-  await expect.poll(opacity).toBe(1);
+    log.filter((line) => /(data-revealed|data-shown|inert)=|scroll to|page height/.test(line)),
+    `the field's state or the page's position moved${story}`,
+  ).toEqual([]);
+  expect(runs, `the field moved when its slot changed${story}`).toEqual([]);
+  expect(boxes.length).toBeGreaterThan(3);
+  const lefts = boxes.map((box) => box.left);
+  const widths = boxes.map((box) => box.width);
+  expect(Math.max(...lefts) - Math.min(...lefts), "the field's left edge").toBeLessThanOrEqual(0.5);
+  expect(Math.max(...widths) - Math.min(...widths), "the field's width").toBeLessThanOrEqual(0.5);
+  expect(await isRevealed(page)).toBe(true);
 });
 
-test("fades the bar's verdict with the field's move, and brings it back when the field leaves", async ({ page }) => {
+test("search reveal: a reorder above the reader that keeps the board's height does not flip the field", async ({
+  page,
+}) => {
   test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const { wide, moveStart } = await dockOffsets(page);
-  test.skip(wide || (page.viewportSize()?.width ?? 0) >= 640, "the verdict only gives way to the field under 640px");
+  const offsets = await revealBoard(page);
+  // A tall block after the last card, so that there are cards above the viewport whatever the board holds (offline
+  // it is short). It is also what gives the 40px back below.
+  await page.evaluate(() => {
+    const filler = document.createElement("div");
+    filler.id = "test-filler";
+    filler.style.height = "2400px";
+    document.getElementById("services")?.appendChild(filler);
+  });
+  await expect.poll(() => maxScroll(page)).toBeGreaterThan(offsets.limit + 2000);
+  const y0 = offsets.revealFrom + 1000;
+  await scrollAndSettle(page, y0);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect(await isRevealed(page)).toBe(false);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  await page.evaluate(() => {
+    const tracked = window as Window & { __flips?: boolean[] };
+    const flips: boolean[] = [];
+    tracked.__flips = flips;
+    const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    let was = bar.hasAttribute("data-revealed");
+    new MutationObserver(() => {
+      const now = bar.hasAttribute("data-revealed");
+      if (now !== was) flips.push(now);
+      was = now;
+    }).observe(bar, { attributes: true, attributeFilter: ["data-revealed"] });
+  });
+  // A card above the viewport gains 40px and the block after the last card gives 40px back, in one style change: the board
+  // reorders above the reader's anchor and its total height stays the same, so nothing resizes for the dock to
+  // notice. Where the browser anchors scrolling, it moves the page by the shift; the dock must not read it as the
+  // reader (which would hide the revealed field, a scroll down of 40px, with no input).
+  const shifted = await page.evaluate(
+    () =>
+      new Promise<{ before: number; after: number; heightBefore: number; heightAfter: number; anchors: boolean }>(
+        (resolve, reject) => {
+          const all = [...document.querySelectorAll<HTMLElement>('article[id^="service-"]')];
+          const above = all.filter((card) => card.getBoundingClientRect().bottom < 0).at(-1);
+          const filler = document.getElementById("test-filler");
+          if (!above || !filler) {
+            reject(new Error("no card to shift"));
+            return;
+          }
+          const before = window.scrollY;
+          const heightBefore = document.documentElement.scrollHeight;
+          above.style.marginTop = "40px";
+          filler.style.height = "2360px";
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() =>
+                resolve({
+                  before,
+                  after: window.scrollY,
+                  heightBefore,
+                  heightAfter: document.documentElement.scrollHeight,
+                  anchors:
+                    CSS.supports("overflow-anchor", "auto") &&
+                    getComputedStyle(document.documentElement).overflowAnchor !== "none",
+                }),
+              ),
+            ),
+          );
+        },
+      ),
+  );
+  expect(shifted.heightAfter, "the board's height is unchanged").toBe(shifted.heightBefore);
+  // Chromium and Firefox anchor, so the page really moved by the shift; where the browser does not, there is no
+  // adjustment to read and the field must still be where it was.
+  if (shifted.anchors)
+    expect(Math.abs(shifted.after - shifted.before), "the page was moved by the browser").toBeGreaterThan(20);
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  expect(await isRevealed(page), "the revealed field stayed").toBe(true);
+  expect(
+    await page.evaluate(() => (window as Window & { __flips?: boolean[] }).__flips ?? []),
+    "data-revealed did not change",
+  ).toEqual([]);
+  // The reader's own scroll counts from here: HIDE_DOWN_PX down still hides it.
+  const here = await page.evaluate(() => window.scrollY);
+  await scrollAndSettle(page, here + HIDE_DOWN_PX + 4);
+  await expectRevealed(page, false);
+});
+
+test("search reveal: the bar's verdict gives way while the field is revealed and returns when it hides", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  test.skip((page.viewportSize()?.width ?? 0) >= 640, "the verdict only gives way to the field under 640px");
   const opacity = () =>
     page.evaluate(() =>
       Number.parseFloat(getComputedStyle(document.querySelector("[data-bar-verdict]") as Element).opacity),
     );
-  await scrollAndSettle(page, Math.ceil(moveStart) - 6);
-  await barSettled(page);
-  expect(await opacity(), "the verdict shows while the bar has the scrolling to itself").toBe(1);
-  await dockHeld(page, Math.ceil(moveStart) + 2);
-  expect(await opacity(), "it starts to fade as the field docks").toBeGreaterThan(0.9);
-  await dockRelease(page);
-  expect(await opacity(), "and is gone once the field is in").toBe(0);
-  await dockHeld(page, Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
-  await dockRelease(page);
-  await barSettled(page);
-  expect(await opacity(), "it returns when the field leaves").toBe(1);
-});
-
-test("shortens the search placeholder as the field docks, and restores it after the field has left", async ({
-  page,
-}) => {
-  test.slow();
-  // A refetch turns the bar's lead line to "Checking…" and back, which moves the field's slot from 40rem on; a
-  // field that is docked and has stopped follows its slot at once, without a move (the dock holds its transitions
-  // for two frames, data-instant), and a release in those frames would then be answered with the placeholder at
-  // once, as it should be for a field that did not move. Two refetches can land in this test. A scheduled one
-  // comes 15 to 30 s into a two-minute slot, so the page's Date is pinned well inside the slot, past that window
-  // (only Date: the timings below need real frames and transitions, see pinToSlot). The other is the refetch on
-  // mount, for a snapshot older than the 45 s staleTime; the guard below waits it out.
-  await pinToSlot(page);
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  // A refetch on mount is not visible until the first client render with a clock: the server markup and the
-  // hydration render read "live" with "next in —" whatever is in flight. The digits come with that render, and a
-  // check that started with the page then shows "Checking…"; leadSteady waits for "live" and the digits, with the
-  // long timeout a sweep behind a stale snapshot needs.
-  await leadSteady(page);
-  const { wide, moveStart } = await dockOffsets(page);
-  test.skip(wide, "from 64rem there is no move in time, and the placeholder follows the field at once");
-  const input = page.getByLabel("Search services");
-  const rest = await input.getAttribute("placeholder");
-  test.skip(rest === "Search…", "where the long placeholder does not fit, the short one is used throughout");
-
-  // Docking: when the dock changes, when the move's transition ends, and when the placeholder changes.
-  const timeline = (y: number) =>
-    page.evaluate(
-      (top) =>
-        new Promise<{ docked: number; ended: number | null; swapped: number }>((resolve, reject) => {
-          const dock = document.querySelector(".search-dock") as HTMLElement;
-          const field = dock.querySelector(".search-field") as HTMLElement;
-          const search = document.querySelector('input[type="search"]') as HTMLInputElement;
-          const was = dock.hasAttribute("data-docked");
-          const before = search.placeholder;
-          const seen: { docked?: number; ended?: number } = {};
-          const stop = window.setTimeout(() => reject(new Error("the placeholder never changed")), 10_000);
-          const mark = new MutationObserver(() => {
-            if (dock.hasAttribute("data-docked") !== was) seen.docked ??= performance.now();
-          });
-          mark.observe(dock, { attributes: true, attributeFilter: ["data-docked"] });
-          field.addEventListener("transitionend", (event) => {
-            if (event.target === field && event.propertyName === "transform") seen.ended ??= performance.now();
-          });
-          const swap = new MutationObserver(() => {
-            if (search.placeholder === before) return;
-            swap.disconnect();
-            mark.disconnect();
-            window.clearTimeout(stop);
-            resolve({ docked: seen.docked ?? Number.NaN, ended: seen.ended ?? null, swapped: performance.now() });
-          });
-          swap.observe(search, { attributes: true, attributeFilter: ["placeholder"] });
-          window.scrollTo(0, top);
-        }),
-      y,
+  const verdictSettled = () =>
+    page.evaluate(() =>
+      Promise.allSettled(
+        (document.querySelector("[data-bar-verdict]") as Element)
+          .getAnimations()
+          .map((animation) => animation.finished),
+      ),
     );
-  // Going in the input is at its docked width at once, so the long text would be clipped: the short one comes with
-  // the dock, in the same task, well before the move ends.
-  const down = await timeline(Math.ceil(moveStart) + 2);
-  expect(down.swapped - down.docked, "going in, as it docks").toBeLessThan(DOCK_MS / 2);
-  if (down.ended !== null) expect(down.swapped, "going in, before the move ends").toBeLessThanOrEqual(down.ended);
-  await expect(input).toHaveAttribute("placeholder", "Search…");
-  await dockMoved(page);
-  const up = await timeline(Math.floor(moveStart) - DOCK_HYSTERESIS - 4);
-  expect(up.swapped - up.docked, "coming out, after the move").toBeGreaterThanOrEqual(DOCK_MS - 20);
-  if (up.ended !== null) expect(up.swapped, "coming out, after transitionend").toBeGreaterThanOrEqual(up.ended);
-  await expect(input).toHaveAttribute("placeholder", rest ?? "");
+  const y0 = await scrollDeep(page, offsets);
+  await barSettled(page);
+  expect(await opacity(), "the verdict shows while the field is hidden").toBe(1);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await verdictSettled();
+  expect(await opacity(), "and is gone while the field shows").toBe(0);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX + 2 * HIDE_DOWN_PX);
+  await expectRevealed(page, false);
+  await verdictSettled();
+  expect(await opacity(), "it returns when the field hides").toBe(1);
 });
 
-test("changes the search placeholder only where the field is at rest", async ({ page }) => {
+test("search reveal: the bar's copy of the field always has the short placeholder", async ({ page }) => {
   test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const { path } = await dockPath(page);
-  const { wide } = await dockOffsets(page);
-  const stops = await sweepDock(page, path);
-  const half = stops.length / 2;
-  const long = "Search GCP, CS2 Europe, RouterOS…";
-  // At rest it is the long one where the field has room for it, and the short one in the 200px margin column of
-  // a wide screen. Either way it never changes part way: down, it changes only once the field is in the bar,
-  // and back up only once the field is out of it. On a wide screen that is the stop at which --dock reaches 1 (or
-  // leaves it). On a phone the field is still moving for DOCK_MS after it docks, and the placeholder waits for it
-  // (a test of its own holds the move still and watches), so a stop right after the dock may still show the old one.
-  const rest = stops[0].placeholder;
-  expect(stops[0].dock).toBe(0);
-  expect([long, "Search…"]).toContain(rest);
-  for (const stop of stops.slice(0, half)) {
-    if (wide) expect(stop.placeholder, `going down, at ${stop.y}`).toBe(stop.dock === 1 ? "Search…" : rest);
-    else if (stop.dock === 0) expect(stop.placeholder, `going down, at ${stop.y}`).toBe(rest);
-  }
-  for (const stop of stops.slice(half)) {
-    if (wide) expect(stop.placeholder, `coming up, at ${stop.y}`).toBe(stop.dock === 0 ? rest : "Search…");
-    else if (stop.dock === 1) expect(stop.placeholder, `coming up, at ${stop.y}`).toBe("Search…");
-  }
+  const offsets = await revealBoard(page);
+  const bar = barSearch(page);
+  const short = "Search…";
+  const placeholders = async () => ({
+    bar: await bar.getAttribute("placeholder"),
+    hero: await heroSearch(page).getAttribute("placeholder"),
+  });
+  // At rest, scrolled down, revealed and hidden again: the bar's is the same text, so it never changes under the eye.
+  const seen = [(await placeholders()).bar];
+  const y0 = await scrollDeep(page, offsets);
+  seen.push((await placeholders()).bar);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  seen.push((await placeholders()).bar);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX + 2 * HIDE_DOWN_PX);
+  await expectRevealed(page, false);
+  seen.push((await placeholders()).bar);
+  expect(seen).toEqual([short, short, short, short]);
+  // The hero's keeps its own rule: the long text where there is room for it at rest, and it does not follow the scroll.
+  const hero = (await placeholders()).hero;
+  expect(["Search GCP, CS2 Europe, RouterOS…", short]).toContain(hero);
+  await scrollAndSettle(page, 0);
+  expect((await placeholders()).hero).toBe(hero);
 });
 
 test("never clips the search placeholder, at any width", async ({ page }, testInfo) => {
@@ -2285,8 +2000,24 @@ test("never clips the search placeholder, at any width", async ({ page }, testIn
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  const search = page.getByRole("searchbox", { name: "Search services" }).or(page.getByLabel("Search services"));
+  const search = heroSearch(page);
+  const bar = barSearch(page);
   const long = "Search GCP, CS2 Europe, RouterOS…";
+  /** The placeholder's text against the room the input has for it. */
+  const room = (input: Locator) =>
+    input.evaluate((element: HTMLInputElement) => {
+      const style = getComputedStyle(element);
+      const probe = document.createElement("span");
+      probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${style.font}`;
+      probe.textContent = element.placeholder;
+      document.body.appendChild(probe);
+      const text = probe.getBoundingClientRect().width;
+      probe.remove();
+      return {
+        text,
+        room: element.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight),
+      };
+    });
   for (const [width, placeholder] of [
     [1280, "Search…"],
     [1100, "Search…"],
@@ -2297,88 +2028,497 @@ test("never clips the search placeholder, at any width", async ({ page }, testIn
   ] as const) {
     await page.setViewportSize({ width, height: 800 });
     await expect(search, `placeholder at ${width}px`).toHaveAttribute("placeholder", placeholder);
-    const { text, room } = await search.evaluate((input: HTMLInputElement) => {
-      const style = getComputedStyle(input);
-      const probe = document.createElement("span");
-      probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${style.font}`;
-      probe.textContent = input.placeholder;
-      document.body.appendChild(probe);
-      const text = probe.getBoundingClientRect().width;
-      probe.remove();
+    const hero = await room(search);
+    expect(hero.text, `the placeholder fits the field at ${width}px`).toBeLessThanOrEqual(hero.room);
+    // The bar's copy, where there is one (below 64rem), has the short text in a slot of 134px at 320px wide.
+    if (width < 1024) {
+      await expect(bar, `the bar's placeholder at ${width}px`).toHaveAttribute("placeholder", "Search…");
+      const copy = await room(bar);
+      expect(copy.room, `the bar's field has room at ${width}px`).toBeGreaterThan(0);
+      expect(copy.text, `the bar's placeholder fits its field at ${width}px`).toBeLessThanOrEqual(copy.room);
+    }
+  }
+});
+
+// A served board, not the live one, with room to stand on and no scroll anchoring: what "ab" leaves of the page
+// depends on what the vendors say that day, and on CI (with the network) it was the page's end, or the browser's
+// scroll anchoring, that decided whether the page stayed behind the hero's field. Here it does, so that the bar's
+// field is the one being typed in (the test after this one is the layout putting the hero's field back in view).
+test("search reveal: mirrors the query in both fields and keeps focus, text and caret in the one being typed in", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
+  await page.addStyleTag({
+    content: ".board-body { min-height: 3000px !important; } * { overflow-anchor: none !important; }",
+  });
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  const hero = heroSearch(page);
+  await bar.evaluate((input) => {
+    (input as HTMLInputElement & { dockMark?: string }).dockMark = "the bar's input";
+  });
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await page.keyboard.type("ab");
+  await expect(bar).toHaveValue("ab");
+  await expect(hero).toHaveValue("ab");
+  // Caret into the middle of the bar's text, and one more character typed there.
+  await bar.evaluate((input) => (input as HTMLInputElement).setSelectionRange(1, 1));
+  await page.keyboard.type("c");
+  await expect(bar).toHaveValue("acb");
+  await expect(hero).toHaveValue("acb");
+  const state = () =>
+    page.evaluate(() => {
+      const barInput = document.querySelector('[data-search-input="bar"]') as HTMLInputElement & { dockMark?: string };
+      const heroInput = document.querySelector('[data-search-input="hero"]') as HTMLInputElement;
       return {
-        text,
-        room: input.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight),
+        focusedIsBar: document.activeElement === barInput,
+        mark: (document.activeElement as (HTMLInputElement & { dockMark?: string }) | null)?.dockMark,
+        barCaret: barInput.selectionStart,
+        barValue: barInput.value,
+        heroValue: heroInput.value,
+        heroFocused: document.activeElement === heroInput,
+        inputs: document.querySelectorAll('input[type="search"]').length,
       };
     });
-    expect(text, `the placeholder fits the field at ${width}px`).toBeLessThanOrEqual(room);
-  }
-});
-
-test("keeps one search input, focus, text and caret intact through the dock", async ({ page }) => {
-  test.slow();
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const search = page.getByLabel("Search services");
-  await search.evaluate((input) => {
-    (input as HTMLInputElement & { dockMark?: string }).dockMark = "the one input";
+  // The copy is updated, the one being typed in keeps focus, its text and its caret (after the "c").
+  expect(await state()).toEqual({
+    focusedIsBar: true,
+    mark: "the bar's input",
+    barCaret: 2,
+    barValue: "acb",
+    heroValue: "acb",
+    heroFocused: false,
+    inputs: 2,
   });
-  await search.focus();
-  await page.keyboard.type("e");
-  await expect(search).toHaveValue("e");
-  await search.evaluate((input) => (input as HTMLInputElement).setSelectionRange(0, 0));
-
-  // Through the whole move, to the end of the page, and back.
-  const { path } = await dockPath(page);
-  const stops = await sweepDock(page, path);
-  expect(stops.some((stop) => stop.shown === "true")).toBe(true);
-  for (const stop of stops) {
-    expect(stop.input, `scrolled to ${stop.y}`).toEqual({
-      same: true,
-      mark: "the one input",
-      value: "e",
-      caret: 0,
-      count: 1,
-    });
-  }
+  // The filter is applied once, from the one value.
+  await expect(page).toHaveURL(/q=acb/);
 });
 
-// On a board with things to look at, Recent changes sits in view under them; on a calm one it leads the board.
-// Both are served, so the page does not depend on what the vendors say today.
+/** What is on screen of the two search fields, and which of them has focus. */
+async function fieldsNow(page: Page) {
+  return page.evaluate(() => {
+    const hero = document.querySelector('[data-search-input="hero"]') as HTMLInputElement;
+    const field = document.querySelector(".search-dock .search-field") as HTMLElement;
+    const barEl = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const active = document.activeElement as HTMLElement | null;
+    const box = field.getBoundingClientRect();
+    return {
+      active: active?.dataset.searchInput ?? active?.tagName ?? null,
+      revealed: barEl.hasAttribute("data-revealed"),
+      shown: barEl.getAttribute("data-shown"),
+      heroSeen: box.bottom > barEl.getBoundingClientRect().bottom + 1 && box.top < window.innerHeight,
+      heroTab: hero.tabIndex,
+      heroCaret: [hero.selectionStart, hero.selectionEnd],
+    };
+  });
+}
+
+test("search reveal: when the layout alone puts the hero's field back in view, the typing moves to it", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  const hero = heroSearch(page);
+  // A board that gives the page nothing to stand on once the filter has taken its cards away: the page ends up
+  // above the line where the hero's field is behind the bar, however the browser then moves it (it clamps it
+  // to the new end; Chromium's scroll anchoring may take it further). The reader did not scroll.
+  await page.addStyleTag({
+    content: ".board-body { min-height: 0 !important; } .board-body footer { display: none !important; }",
+  });
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await page.keyboard.type("ab");
+  await expect
+    .poll(() => page.evaluate(() => window.scrollY), "the filter took the page above the hero's field")
+    .toBeLessThan(offsets.revealFrom);
+  // The reader is still typing, and the two fields are not on screen together: the focus, the text and the caret
+  // went to the hero's field, which is reachable again, and the bar is down.
+  await expect(hero).toBeFocused();
+  await expect(hero).toHaveValue("ab");
+  await expect(bar).toHaveValue("ab");
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  expect(await fieldsNow(page)).toEqual({
+    active: "hero",
+    revealed: false,
+    shown: "false",
+    heroSeen: true,
+    heroTab: 0,
+    heroCaret: [2, 2],
+  });
+  await page.keyboard.type("c");
+  await expect(hero).toHaveValue("abc");
+  await expect(bar).toHaveValue("abc");
+  // Nothing finds the page held by the bar's field any more, with results, with none, or with the search cleared.
+  await page.keyboard.type("zzzzq");
+  await expect(hero).toHaveValue("abczzzzq");
+  await expect(hero).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(hero).toHaveValue("");
+  await expect(hero).toBeFocused();
+  const cleared = await fieldsNow(page);
+  expect(cleared).toMatchObject({ revealed: false, shown: "false", heroSeen: true, heroTab: 0 });
+});
+
+test("search reveal: the reader's scroll up to the hero lets the bar's field go, whatever else the page does", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealServedBoard(page, calmBoard, { id: "aws", label: "Operational" });
+  await page.addStyleTag({ content: ".board-body { min-height: 3000px !important; }" });
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await page.keyboard.type("a");
+  await expect(bar).toHaveValue("a");
+  await scrollAndSettle(page, Math.ceil(offsets.revealFrom) + 40);
+  await expectRevealed(page, true);
+  // In the frame the reader scrolls up past the hero's field the page also gets 2px longer (a row of Recent changes,
+  // the live line): the reader's travel is not the layout's, and the bar's field is let go of as it would be alone.
+  await page.evaluate(
+    (top) =>
+      new Promise<void>((resolve) => {
+        document.body.style.paddingBottom = "2px";
+        window.scrollTo(0, top);
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      }),
+    Math.max(0, Math.floor(offsets.revealFrom) - 30),
+  );
+  await expect(bar).not.toBeFocused();
+  expect(await fieldsNow(page)).toMatchObject({
+    active: "BODY",
+    revealed: false,
+    heroSeen: true,
+    heroTab: 0,
+  });
+  await expect(heroSearch(page)).toHaveValue("a");
+});
+
+// An iPad turned between upright and sideways crosses 64rem (the lg breakpoint) with the reader's hand in a field:
+// the field that was in use is hidden or out of reach in the other layout, so the typing goes to the one that is not.
+// Served board, room to stand on and no scroll anchoring, as above; each test opens the page at the width it starts at.
+const UPRIGHT = { width: 820, height: 900 };
+const SIDEWAYS = { width: 1280, height: 900 };
+
+/** Opens the served board at one size (and motion setting), armed, with room to scroll. */
+async function openCrossingBoard(page: Page, view: { width: number; height: number }, reduced: boolean): Promise<void> {
+  await page.emulateMedia({ reducedMotion: reduced ? "reduce" : "no-preference" });
+  await page.setViewportSize(view);
+  await pinToSlot(page);
+  await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
+  await leadSteady(page);
+  await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  await page.addStyleTag({
+    content: ".board-body { min-height: 3000px !important; } * { overflow-anchor: none !important; }",
+  });
+}
+
+/** Turns the device: resizes the viewport across 64rem and lets three frames pass. */
+async function turnTo(page: Page, view: { width: number; height: number }): Promise<void> {
+  await page.setViewportSize(view);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      ),
+  );
+}
+
+/** Types "abc" into the field in `focusable`, which gets focus, and selects the "b" backwards: a caret to carry over. */
+async function typeAndSelect(field: Locator): Promise<void> {
+  await field.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await field.page().keyboard.type("abc");
+  await field.evaluate((input) => (input as HTMLInputElement).setSelectionRange(1, 2, "backward"));
+}
+
+/** Both search fields, as a reader would find them: which has focus, what they hold and whether they can be used. */
+async function searchFields(page: Page) {
+  return page.evaluate(() => {
+    const hero = document.querySelector('[data-search-input="hero"]') as HTMLInputElement;
+    const bar = document.querySelector('[data-search-input="bar"]') as HTMLInputElement;
+    const section = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const active = document.activeElement as HTMLElement | null;
+    const reachable = (input: HTMLInputElement) =>
+      input.closest("[inert]") === null && input.checkVisibility({ opacityProperty: true, visibilityProperty: true });
+    const onScreen = (input: HTMLInputElement) => {
+      const box = input.getBoundingClientRect();
+      return box.width > 0 && box.bottom > 0 && box.top < window.innerHeight;
+    };
+    const selection = (input: HTMLInputElement) => [input.selectionStart, input.selectionEnd, input.selectionDirection];
+    return {
+      active: active?.dataset?.searchInput ?? active?.tagName ?? null,
+      wide: matchMedia("(min-width: 64rem)").matches,
+      scrollY: window.scrollY,
+      heroValue: hero.value,
+      barValue: bar.value,
+      heroSelection: selection(hero),
+      barSelection: selection(bar),
+      heroOnScreen: onScreen(hero),
+      heroReachable: reachable(hero),
+      barReachable: reachable(bar),
+      barRevealed: section.hasAttribute("data-revealed"),
+      barShown: section.getAttribute("data-shown"),
+    };
+  });
+}
+
+for (const reduced of [false, true]) {
+  const motion = reduced ? ", under Reduce Motion" : "";
+
+  test(`search reveal: turning sideways with the bar's field in use moves the typing to the docked field${motion}`, async ({
+    page,
+  }) => {
+    test.slow();
+    await openCrossingBoard(page, UPRIGHT, reduced);
+    const offsets = await dockOffsets(page);
+    const y0 = await scrollDeep(page, { ...offsets, limit: await maxScroll(page) });
+    await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+    await expectRevealed(page, true);
+    await barFieldSettled(page);
+    await typeAndSelect(barSearch(page));
+    await expect(barSearch(page)).toBeFocused();
+    await turnTo(page, SIDEWAYS);
+    // The bar's copy is hidden in the wide layout (lg:hidden): the docked field has the focus, the text and the caret.
+    await expect(heroSearch(page)).toBeFocused();
+    expect(await searchFields(page)).toMatchObject({
+      active: "hero",
+      wide: true,
+      heroValue: "abc",
+      barValue: "abc",
+      heroSelection: [1, 2, "backward"],
+      heroOnScreen: true,
+      heroReachable: true,
+      barRevealed: false,
+    });
+    expect(await dockValue(page)).toBe(1);
+    // Typing goes on where the caret was: the selected "b" is replaced.
+    await page.keyboard.type("d");
+    await expect(heroSearch(page)).toHaveValue("adc");
+    await expect(barSearch(page)).toHaveValue("adc");
+  });
+
+  test(`search reveal: turning upright with the docked field in use moves the typing to the bar's, which is revealed${motion}`, async ({
+    page,
+  }) => {
+    test.slow();
+    await openCrossingBoard(page, SIDEWAYS, reduced);
+    const y = 900;
+    await scrollAndSettle(page, y);
+    expect(await dockValue(page)).toBe(1);
+    await typeAndSelect(heroSearch(page));
+    await expect(heroSearch(page)).toBeFocused();
+    await turnTo(page, UPRIGHT);
+    // Upright, the hero's field is far above the page's position: the bar's copy is the one in reach.
+    const upright = await dockOffsets(page);
+    expect(y, "the page is past the hero's field in the upright layout").toBeGreaterThan(
+      upright.revealFrom + DOCK_HYSTERESIS,
+    );
+    await expect(barSearch(page)).toBeFocused();
+    await barFieldSettled(page);
+    expect(await searchFields(page)).toMatchObject({
+      active: "bar",
+      wide: false,
+      heroValue: "abc",
+      barValue: "abc",
+      barSelection: [1, 2, "backward"],
+      barReachable: true,
+      barRevealed: true,
+      barShown: "true",
+    });
+    await page.keyboard.type("d");
+    await expect(barSearch(page)).toHaveValue("adc");
+    await expect(heroSearch(page)).toHaveValue("adc");
+    // And it stays: the field in use is not let go of by the frames after the turn.
+    await scrollAndSettle(page, y);
+    await expect(barSearch(page)).toBeFocused();
+    await expectRevealed(page, true);
+  });
+}
+
+test("search reveal: turning sideways at the top of the page keeps the typing in the hero's field", async ({
+  page,
+}) => {
+  test.slow();
+  await openCrossingBoard(page, UPRIGHT, false);
+  await typeAndSelect(heroSearch(page));
+  await turnTo(page, SIDEWAYS);
+  await expect(heroSearch(page)).toBeFocused();
+  expect(await searchFields(page)).toMatchObject({
+    active: "hero",
+    wide: true,
+    heroValue: "abc",
+    heroSelection: [1, 2, "backward"],
+    heroOnScreen: true,
+    barRevealed: false,
+    scrollY: 0,
+  });
+  await page.keyboard.type("d");
+  await expect(heroSearch(page)).toHaveValue("adc");
+});
+
+test("search reveal: turning upright at the top of the page keeps the typing in the hero's field, in view", async ({
+  page,
+}) => {
+  test.slow();
+  await openCrossingBoard(page, SIDEWAYS, false);
+  await typeAndSelect(heroSearch(page));
+  await turnTo(page, UPRIGHT);
+  await expect(heroSearch(page)).toBeFocused();
+  const upright = await searchFields(page);
+  expect(upright).toMatchObject({
+    active: "hero",
+    wide: false,
+    heroValue: "abc",
+    heroSelection: [1, 2, "backward"],
+    heroOnScreen: true,
+    barRevealed: false,
+    barReachable: false,
+    scrollY: 0,
+  });
+  await page.keyboard.type("d");
+  await expect(heroSearch(page)).toHaveValue("adc");
+  await expect(barSearch(page)).toHaveValue("adc");
+  expect(await searchFields(page)).toMatchObject({ active: "hero", barRevealed: false, barReachable: false });
+});
+
+test("search reveal: turning the device takes no focus when neither search field has it", async ({ page }) => {
+  test.slow();
+  await openCrossingBoard(page, SIDEWAYS, false);
+  await scrollAndSettle(page, 900);
+  // The Refresh that loaded the served board is still focused: let go, so that nothing is.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await turnTo(page, UPRIGHT);
+  await barFieldSettled(page);
+  expect(await searchFields(page)).toMatchObject({ active: "BODY", wide: false, barRevealed: false });
+  await turnTo(page, SIDEWAYS);
+  expect(await searchFields(page)).toMatchObject({ active: "BODY", wide: true, barRevealed: false });
+  // Nor does it leave the dock or the bar in a state a scroll has to repair: a scroll up upright reveals as usual.
+  await turnTo(page, UPRIGHT);
+  const y = await page.evaluate(() => window.scrollY);
+  await scrollAndSettle(page, y - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  expect((await searchFields(page)).active).toBe("BODY");
+});
+
+test("search reveal: a query typed in the hero's field shows in the bar's, which then stays revealed", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  await heroSearch(page).fill("a");
+  await heroSearch(page).blur();
+  const limit = await maxScroll(page);
+  const y = Math.min(Math.ceil(offsets.revealFrom) + 120, limit);
+  await scrollAndSettle(page, y);
+  await expect(barSearch(page)).toHaveValue("a");
+  // The field is shown as soon as the hero's is behind the bar, without a scroll up: a filter is applied.
+  await expectRevealed(page, true);
+});
+
+test("search reveal: a focused field is never hidden", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await expect(bar).toBeFocused();
+  // Well beyond HIDE_DOWN_PX of travel down: a field in use stays.
+  await scrollAndSettle(page, y0 + 150);
+  expect(await isRevealed(page), "while focused").toBe(true);
+  await expect(bar).toBeFocused();
+  // It does not hide when focus leaves either: tapping outside the field would make it vanish. Hide takes travel.
+  const here = await page.evaluate(() => window.scrollY);
+  await bar.evaluate((input) => (input as HTMLInputElement).blur());
+  await scrollAndSettle(page, here);
+  expect(await isRevealed(page), "right after blur").toBe(true);
+  await scrollAndSettle(page, here + HIDE_DOWN_PX - 4);
+  expect(await isRevealed(page), "short of HIDE_DOWN_PX after blur").toBe(true);
+  await scrollAndSettle(page, here + HIDE_DOWN_PX + 4);
+  await expectRevealed(page, false);
+});
+
+test("search reveal: a field with a query written in it stays revealed until the query is cleared", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barFieldSettled(page);
+  const bar = barSearch(page);
+  await bar.evaluate((input) => (input as HTMLInputElement).focus({ preventScroll: true }));
+  await page.keyboard.type("a");
+  await expect(bar).toHaveValue("a");
+  await bar.evaluate((input) => (input as HTMLInputElement).blur());
+  // The results shrink the page; go down as far as it now lets us, with room left below for the scroll further down.
+  const down = Math.max(0, Math.min((await maxScroll(page)) - 60, y0 + 100));
+  await scrollAndSettle(page, down);
+  expect(await isRevealed(page), "scrolled down with a query").toBe(true);
+  // Cleared, the field is let go of from here: it does not flip at once, and a scroll down then takes it away.
+  await bar.fill("");
+  await bar.evaluate((input) => (input as HTMLInputElement).blur());
+  await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
+  expect(await isRevealed(page), "right after the query is cleared").toBe(true);
+  const here = await page.evaluate(() => window.scrollY);
+  await scrollAndSettle(page, here + HIDE_DOWN_PX + 4);
+  await expectRevealed(page, false);
+});
+
 for (const [name, board, ready] of [
   ["with services to look at", fixtureBoard, { id: "aws", label: "Outage" }],
   ["on a calm board", calmBoard, { id: "aws", label: "Operational" }],
 ] as const) {
-  test(`keeps a docked field docked when a search leaves almost nothing to scroll (${name})`, async ({ page }) => {
+  test(`search reveal: keeps a revealed field revealed, and the page tall enough, when a search leaves almost nothing to scroll (${name})`, async ({
+    page,
+  }) => {
     await openFixture(page, () => board(Date.now()), ready);
     await expect(cards(page)).toHaveCount(SERVICES);
-    const bar = controlBar(page);
-    await scrollAndSettle(page, (await dockNatural(page)) + 100);
-    await expect(bar).toHaveAttribute("data-shown", "true");
-    await expect.poll(() => dockValue(page)).toBe(1);
+    await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+    const offsets = await dockOffsets(page);
+    test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
+    const limit = await maxScroll(page);
+    const deep = Math.min(Math.ceil(offsets.revealFrom) + 200, limit - 40);
+    await scrollAndSettle(page, deep);
+    await scrollAndSettle(page, deep - 2 * REVEAL_UP_PX);
+    await expectRevealed(page, true);
 
-    await page.getByLabel("Search services").fill("zzzzqq");
+    await barSearch(page).fill("zzzzqq");
     await expect(cards(page)).toHaveCount(0);
-    // The page has to stay tall enough to hold the field in the bar.
+    await barSearch(page).blur();
+    // The page has to stay tall enough to hold the field in the bar: the hero's field stays behind it.
     await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-    expect(await dockValue(page)).toBe(1);
-    await expect(bar).toHaveAttribute("data-shown", "true");
+    expect(await maxScroll(page)).toBeGreaterThan(offsets.revealFrom + DOCK_HYSTERESIS);
+    await expectRevealed(page, true);
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   });
 }
 
-test("docks the search field inside the bar, between its dot and its buttons", async ({ page }) => {
+test("search reveal: puts the revealed field inside the bar, between its dot and its buttons", async ({ page }) => {
   test.slow();
-  await steadyBoard(page);
+  const offsets = await revealBoard(page);
   const bar = controlBar(page);
-  const field = page.locator(".search-field");
   await expect(bar).toHaveAttribute("data-shown", "false");
   // In the hero it sits below the summary.
-  const before = await field.boundingBox();
-
-  await page.locator("footer").scrollIntoViewIfNeeded();
-  await expect(bar).toHaveAttribute("data-shown", "true");
-  await expect.poll(() => dockValue(page)).toBe(1);
+  const before = await page.locator(".search-dock .search-field").boundingBox();
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
   await barSettled(page);
+  await barFieldSettled(page);
 
   const boxes = await page.evaluate(() => {
     const rect = (element: Element | null) => {
@@ -2388,7 +2528,7 @@ test("docks the search field inside the bar, between its dot and its buttons", a
     const bar = document.querySelector('section[aria-label="Board controls"]');
     return {
       bar: rect(bar),
-      field: rect(document.querySelector(".search-field")),
+      field: rect(document.querySelector(".bar-search .search-field")),
       dot: rect(bar?.querySelector("p") ?? null),
       firstButton: rect(bar?.querySelector("button") ?? null),
       refresh: rect(bar?.querySelector('button[aria-label="Refresh status now"]') ?? null),
@@ -2405,7 +2545,7 @@ test("docks the search field inside the bar, between its dot and its buttons", a
   // Centred in the bar's height, not just inside it.
   const off = (boxes.field.top + boxes.field.bottom) / 2 - (boxes.bar.top + boxes.bar.bottom) / 2;
   expect(Math.abs(off)).toBeLessThanOrEqual(near);
-  // It travelled up from below the bar, where it sat in the hero.
+  // The hero's field was below the bar, where the page puts it.
   expect(before).not.toBeNull();
   expect(before?.y ?? 0).toBeGreaterThan(boxes.bar.bottom);
 });
@@ -2436,45 +2576,317 @@ test("leaves the filter chips unclickable and faded while the field slides over 
   }
 });
 
-test("tabs from the bar's Refresh to the search field, not back up the page", async ({ page }) => {
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  const bar = controlBar(page);
-  await scrollAndSettle(page, (await dockNatural(page)) + 100);
-  await expect(bar).toHaveAttribute("data-shown", "true");
+test("search reveal: Shift+Tab reaches the field from the bar's buttons without moving the page, and the hero's field is out of the way", async ({
+  page,
+}) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
   await barSettled(page);
-  const scrolled = await page.evaluate(() => window.scrollY);
-
-  await bar.getByRole("button", { name: "Refresh status now" }).focus();
-  await page.keyboard.press("Tab");
-  await expect(page.getByLabel("Search services")).toBeFocused();
-  // Nothing on the way pulled the page back to the hero.
-  expect(Math.abs((await page.evaluate(() => window.scrollY)) - scrolled)).toBeLessThan(2);
+  const bar = controlBar(page);
+  const refresh = bar.getByRole("button", { name: "Refresh status now" });
+  await refresh.evaluate((button) => (button as HTMLElement).focus({ preventScroll: true }));
+  // The field is before the buttons in the bar (Notifications, where the browser has them, then Refresh): going
+  // back never leaves the bar for the hero's controls far above, and focus shows the field.
+  for (let press = 0; press < 3; press++) {
+    await page.keyboard.press("Shift+Tab");
+    expect(
+      await page.evaluate(() => document.activeElement?.closest('section[aria-label="Board controls"]') !== null),
+      "still in the bar",
+    ).toBe(true);
+    if (await barSearch(page).evaluate((input) => input === document.activeElement)) break;
+  }
+  await expect(barSearch(page)).toBeFocused();
+  await expectRevealed(page, true);
+  expect(Math.abs((await page.evaluate(() => window.scrollY)) - y0)).toBeLessThan(2);
   // While the bar is up, the hero's own copies are out of the tab order.
   await expect(page.locator("header").getByRole("button", { name: "Refresh status now" })).toHaveAttribute(
     "tabindex",
     "-1",
   );
+  await expect(heroSearch(page)).toHaveAttribute("tabindex", "-1");
 });
 
-test("lands a link to #services below the docked field, not part way into the bar", async ({ page }) => {
+test("search reveal: Tab reaches the field without moving the page", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await barSettled(page);
+  // The stop before the bar's field in the tab order, whatever it is (the hero's controls, left of the bar in the markup).
+  const found = await page.evaluate(() => {
+    const target = document.querySelector('[data-search-input="bar"]');
+    const stops = [
+      ...document.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, [tabindex]"),
+    ].filter(
+      (element) =>
+        element.tabIndex >= 0 &&
+        !element.closest("[inert]") &&
+        !(element as HTMLButtonElement).disabled &&
+        getComputedStyle(element).visibility !== "hidden",
+    );
+    const before = stops[stops.indexOf(target as HTMLElement) - 1];
+    if (!before) return false;
+    before.focus({ preventScroll: true });
+    return true;
+  });
+  expect(found, "a stop before the field").toBe(true);
+  await page.keyboard.press("Tab");
+  await expect(barSearch(page)).toBeFocused();
+  await expectRevealed(page, true);
+  expect(Math.abs((await page.evaluate(() => window.scrollY)) - y0)).toBeLessThan(2);
+});
+
+test("search reveal: / brings the bar's field up and focuses it without moving the page", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await page.keyboard.press("/");
+  await expect(barSearch(page)).toBeFocused();
+  await expectRevealed(page, true);
+  expect(Math.abs((await page.evaluate(() => window.scrollY)) - y0)).toBeLessThan(2);
+  // At the top, with the hero's field in view, it is the hero's field that takes the key.
+  await barSearch(page).evaluate((input) => (input as HTMLInputElement).blur());
+  await scrollAndSettle(page, 0);
+  await page.keyboard.press("/");
+  await expect(heroSearch(page)).toBeFocused();
+});
+
+test("search reveal: Escape clears the query in the bar's field and then leaves it", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  await scrollDeep(page, offsets);
+  await page.keyboard.press("/");
+  await expect(barSearch(page)).toBeFocused();
+  await page.keyboard.type("aws");
+  await expect(heroSearch(page)).toHaveValue("aws");
+  await page.keyboard.press("Escape");
+  await expect(barSearch(page)).toHaveValue("");
+  await expect(barSearch(page)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(barSearch(page)).not.toBeFocused();
+});
+
+test("search reveal: moves with opacity and translate only", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const css = await page.evaluate(() => {
+    const field = document.querySelector(".bar-search") as HTMLElement;
+    const style = getComputedStyle(field);
+    const root = getComputedStyle(document.documentElement);
+    /** A CSS time ("0.15s", ".15s" or "150ms") in ms. */
+    const ms = (value: string) => Number.parseFloat(value) * (value.trim().endsWith("ms") ? 1 : 1000);
+    return {
+      properties: style.transitionProperty.split(",").map((value) => value.trim()),
+      durations: style.transitionDuration.split(",").map(ms),
+      quick: ms(root.getPropertyValue("--t-quick")),
+      reveal: ms(root.getPropertyValue("--t-reveal")),
+    };
+  });
+  // Hidden, what is timed is the way out: opacity and translate, over --t-quick, and nothing else.
+  expect([...css.properties].sort()).toEqual(["opacity", "translate"]);
+  for (const duration of css.durations) expect(duration).toBeCloseTo(css.quick, 0);
+  const y0 = await scrollDeep(page, offsets);
+  const shown = await revealObserved(page, y0 - 2 * REVEAL_UP_PX);
+  expect(shown.revealed).toBe(true);
+  expect(shown.animations.length, "the field moves").toBeGreaterThan(0);
+  for (const animation of shown.animations) {
+    expect(["opacity", "translate"]).toContain(animation.property);
+    expect(animation.ms, "coming in takes --t-reveal").toBeCloseTo(css.reveal, 0);
+  }
+  expect(new Set(shown.animations.map((animation) => animation.property))).toEqual(new Set(["opacity", "translate"]));
+  expect(shown.opacity, "it starts from hidden").toBeLessThan(0.5);
+  await barFieldSettled(page);
+  const hidden = await revealObserved(page, y0 - 2 * REVEAL_UP_PX + 2 * HIDE_DOWN_PX);
+  expect(hidden.revealed).toBe(false);
+  expect(hidden.animations.length, "the field moves").toBeGreaterThan(0);
+  for (const animation of hidden.animations) {
+    expect(["opacity", "translate"]).toContain(animation.property);
+    expect(animation.ms, "going out takes --t-quick").toBeCloseTo(css.quick, 0);
+  }
+  expect(hidden.opacity, "it starts from shown").toBeGreaterThan(0.5);
+});
+
+test("search reveal: no layout shift", async ({ page, browserName }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  if (browserName === "chromium") {
+    await page.evaluate(() => {
+      const tracked = window as Window & { __cls?: number };
+      tracked.__cls = 0;
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as unknown as { value: number; hadRecentInput: boolean }[]) {
+          if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+        }
+      }).observe({ type: "layout-shift", buffered: false });
+    });
+  }
+  const layout = () =>
+    page.evaluate(() => ({
+      services: (document.querySelector("#services") as Element).getBoundingClientRect().top + window.scrollY,
+      height: document.documentElement.scrollHeight,
+      hero: (document.querySelector(".search-dock") as Element).getBoundingClientRect().top + window.scrollY,
+    }));
+  const y0 = await scrollDeep(page, offsets);
+  const before = await layout();
+  const same = async (label: string) => {
+    const now = await layout();
+    expect(Math.abs(now.services - before.services), `${label}: #services`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(now.height - before.height), `${label}: the page's height`).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(now.hero - before.hero), `${label}: the hero's field`).toBeLessThanOrEqual(0.5);
+  };
+  for (let round = 0; round < 2; round++) {
+    await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+    await expectRevealed(page, true);
+    await barFieldSettled(page);
+    await same(`revealed ${round}`);
+    await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX + 2 * HIDE_DOWN_PX);
+    await expectRevealed(page, false);
+    await barFieldSettled(page);
+    await same(`hidden ${round}`);
+  }
+  if (browserName === "chromium") {
+    expect(await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0), "layout shift").toBe(0);
+  }
+});
+
+test("search reveal: breakpoint", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+  test.slow();
+  await page.setViewportSize({ width: 1023, height: 900 });
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  // Below 64rem the dock never writes the wide progress, nor marks the move.
+  const written = () =>
+    page.evaluate(() => ({
+      dock: (document.querySelector(".search-dock") as HTMLElement).style.getPropertyValue("--dock"),
+      chips: (document.querySelector(".board-chips") as HTMLElement).style.getPropertyValue("--dock"),
+      docking: document.querySelectorAll("[data-docking]").length,
+      barField: getComputedStyle(document.querySelector(".bar-search") as Element).display,
+    }));
+  expect(await written()).toEqual({ dock: "", chips: "", docking: 0, barField: "block" });
+
+  // At 64rem the field is the hero's again, and moves into the bar with the scroll: --dock is written and reaches 1.
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await expectRevealed(page, false);
+  await scrollAndSettle(page, 0);
+  const wide = await dockOffsets(page);
+  expect(wide.wide).toBe(true);
+  await scrollAndSettle(page, Math.ceil(wide.moveEnd) + 80);
+  await expect.poll(() => dockValue(page)).toBe(1);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect((await written()).barField, "the bar has no copy of the field from 64rem").toBe("none");
+  // And scrolling up again never reveals a copy in the bar: it is not there.
+  await scrollAndSettle(page, Math.ceil(wide.moveEnd) + 20);
+  expect(await isRevealed(page)).toBe(false);
+
+  // Back below it: the wide marks are gone and the reveal is back.
+  await page.setViewportSize({ width: 1023, height: 900 });
+  await expect.poll(async () => (await written()).dock).toBe("");
+  expect((await written()).docking).toBe(0);
+  expect((await written()).barField).toBe("block");
+});
+
+test("search reveal: axe, with exactly one search landmark, after a reveal", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  const y0 = await scrollDeep(page, offsets);
+  await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
+  await expectRevealed(page, true);
+  await barSettled(page);
+  await barFieldSettled(page);
+  expect(await page.locator('[role="search"]').count(), "one search landmark").toBe(1);
+  expect(await page.getByRole("search").count(), "one search landmark for a screen reader").toBe(1);
+  const results = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+    .analyze();
+  const blocking = results.violations
+    .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+    .flatMap((violation) =>
+      violation.nodes.map(
+        (node) => `${violation.id} ${node.target.join(" ")}: ${node.failureSummary ?? violation.help}`,
+      ),
+    );
+  expect(blocking).toEqual([]);
+});
+
+test("search reveal: real wheel input reaches the hook", async ({ page, browserName, isMobile }, testInfo) => {
+  test.skip(
+    testInfo.project.name === "iPhone 17 Pro" || testInfo.project.name === "iPad Pro 11",
+    "WebKit has neither a wheel to send on a touch screen nor a CDP gesture to send",
+  );
+  test.slow();
+  // A desktop window narrower than 64rem has the same layout as a phone, and the wheel is how it scrolls.
+  if (!isMobile) await page.setViewportSize({ width: 900, height: 800 });
+  const offsets = await revealBoard(page);
+  const size = page.viewportSize();
+  if (!size) throw new Error("no viewport");
+  const cdp = browserName === "chromium" && isMobile ? await page.context().newCDPSession(page) : null;
+  /** Scrolls the page `dy` px down (negative: up), the way this project's person would. */
+  const scrollBy = async (dy: number) => {
+    if (cdp) {
+      // The browser's own gesture for the device (a touch drag on a phone); a negative yDistance scrolls down.
+      await cdp.send("Input.synthesizeScrollGesture", {
+        x: Math.round(size.width / 2),
+        y: Math.round(size.height / 2),
+        yDistance: -dy,
+        gestureSourceType: "default",
+        speed: 1200,
+      });
+    } else {
+      await page.mouse.move(size.width / 2, size.height / 2);
+      await page.mouse.wheel(0, dy);
+    }
+  };
+  /** Waits until the page has stopped moving (a wheel or a fling scrolls over more than a frame). */
+  const still = () =>
+    page.evaluate(
+      () =>
+        new Promise<number>((resolve) => {
+          let last = window.scrollY;
+          let quiet = 0;
+          const next = () => {
+            if (window.scrollY === last) quiet++;
+            else {
+              quiet = 0;
+              last = window.scrollY;
+            }
+            if (quiet >= 8) resolve(last);
+            else requestAnimationFrame(next);
+          };
+          requestAnimationFrame(next);
+        }),
+    );
+  await scrollBy(Math.ceil(offsets.revealFrom) + 500);
+  const down = await still();
+  expect(down, "the wheel scrolled the page").toBeGreaterThan(offsets.revealFrom + DOCK_HYSTERESIS + 40);
+  await expectRevealed(page, false);
+  await scrollBy(-3 * REVEAL_UP_PX);
+  const up = await still();
+  expect(up).toBeLessThan(down - REVEAL_UP_PX - 4);
+  await expectRevealed(page, true);
+});
+
+test("search reveal: lands a link to #services below the bar, not part way into it", async ({ page }) => {
   await page.goto("/#services");
   await hydrated(page);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
-  const { fieldBottom, servicesTop } = await page.evaluate(() => ({
-    fieldBottom: (document.querySelector(".search-field") as Element).getBoundingClientRect().bottom,
+  const { barBottom, servicesTop } = await page.evaluate(() => ({
+    barBottom: (document.querySelector('section[aria-label="Board controls"]') as Element).getBoundingClientRect()
+      .bottom,
     servicesTop: (document.querySelector("#services") as Element).getBoundingClientRect().top,
   }));
-  expect(servicesTop).toBeGreaterThanOrEqual(fieldBottom - 0.5);
+  expect(servicesTop).toBeGreaterThanOrEqual(barBottom - 0.5);
 });
 
 test("shows a clear button once there is a search, and it keeps the field focused", async ({ page }) => {
   await page.goto("/?q=aws");
   await hydrated(page);
-  const search = page.getByLabel("Search services");
-  const clear = page.getByRole("button", { name: "Clear search" });
+  const search = heroSearch(page);
+  // The hero's Clear: the bar's copy has one too, hidden with it.
+  const clear = page.locator(".search-dock").getByRole("button", { name: "Clear search" });
   await expect(clear).toBeVisible();
   const box = await clear.boundingBox();
   expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
@@ -2490,125 +2902,70 @@ test("shows a clear button once there is a search, and it keeps the field focuse
 test.describe("with reduced motion", () => {
   test.use({ reducedMotion: "reduce" });
 
-  test("steps the search field into the bar and out again, with no transition", async ({ page }) => {
+  test("search reveal: steps the bar's field in and out in the same frame, with no transition", async ({ page }) => {
+    test.slow();
+    const offsets = await revealBoard(page);
+    // Nothing on it is timed, and nothing is left running.
+    const timed = await page.evaluate(() =>
+      [".bar-search", "[data-bar-verdict]"].map(
+        (selector) => getComputedStyle(document.querySelector(selector) as Element).transitionDuration,
+      ),
+    );
+    for (const duration of timed) {
+      for (const part of duration.split(",")) expect(Number.parseFloat(part)).toBe(0);
+    }
+    const y0 = await scrollDeep(page, offsets);
+    // Read in the very frame the attribute changes: already in its place, with no animation to get there.
+    const shown = await revealObserved(page, y0 - 2 * REVEAL_UP_PX);
+    expect(shown.revealed).toBe(true);
+    expect(shown.animations, "no transition plays under Reduce Motion").toEqual([]);
+    expect(shown.opacity, "in at once").toBe(1);
+    const hidden = await revealObserved(page, y0 - 2 * REVEAL_UP_PX + 2 * HIDE_DOWN_PX);
+    expect(hidden.revealed).toBe(false);
+    expect(hidden.animations, "no transition plays under Reduce Motion").toEqual([]);
+    expect(hidden.opacity, "out at once").toBe(0);
+  });
+
+  test("search reveal: snaps the search field into the bar and out again, never part way", async ({ page }) => {
     test.slow();
     await steadyBoard(page);
-    const { wide, moveEnd } = await dockOffsets(page);
-    test.skip(wide, "from 64rem the field snaps through --dock, which the test below reads");
-    // Nothing in the dock is timed, and nothing is left running.
-    const timed = await page.evaluate(() =>
-      [
-        document.querySelector(".search-field"),
-        document.querySelector(".search-chrome"),
-        document.querySelector("[data-bar-verdict]"),
-      ].map((element) => getComputedStyle(element as Element).transitionDuration),
-    );
-    for (const duration of timed) expect(Number.parseFloat(duration)).toBe(0);
-    // Docks where the field reaches its pin: at that frame it is already in its slot, with no animation to get there.
-    await dockHeld(page, Math.ceil(moveEnd) + 1);
-    const boxes = await dockBoxes(page);
-    const running = await page.evaluate(
-      () => (document.querySelector(".search-dock") as HTMLElement).getAnimations({ subtree: true }).length,
-    );
-    expect(running, "no transition plays under Reduce Motion").toBe(0);
-    for (const key of ["left", "width"] as const) {
-      expect(
-        Math.abs(boxes.field[key] - boxes.slot[key]),
-        `the field's ${key}, in its slot at once`,
-      ).toBeLessThanOrEqual(1);
-      expect(
-        Math.abs(boxes.chrome[key] - boxes.slot[key]),
-        `the fill's ${key}, in its slot at once`,
-      ).toBeLessThanOrEqual(1);
-    }
-    // Back out: it is full width again in the same frame.
-    await dockHeld(page, Math.floor(moveEnd) - 12);
-    const out = await dockBoxes(page);
-    expect(out.field.width).toBeCloseTo(out.dock.width, 0);
-    expect(out.chrome.width).toBeCloseTo(out.dock.width, 0);
-  });
-
-  test("keeps the field under the bar until it docks, and over it from then on", async ({ page }) => {
-    test.slow();
-    await page.goto("/");
-    await expect(cards(page)).toHaveCount(SERVICES);
-    await hydrated(page);
-    const { wide, moveEnd } = await dockOffsets(page);
-    test.skip(wide, "from 64rem the bar is not fixed, and the field is always over it");
-    const zIndex = () => searchDock(page).evaluate((dock) => Number(getComputedStyle(dock).zIndex));
-    const barZ = await controlBar(page).evaluate((bar) => Number(getComputedStyle(bar).zIndex));
-    // The field rises through the bar's own place at full width before it steps in: it must not cover the buttons.
-    expect(await zIndex(), "at the top").toBeLessThan(barZ);
-    await scrollAndSettle(page, Math.floor(moveEnd) - 12);
-    expect(await zIndex(), "rising towards its pin").toBeLessThan(barZ);
-    await dockHeld(page, Math.ceil(moveEnd) + 1);
-    expect(await zIndex(), "as it docks").toBeGreaterThan(barZ);
-    await dockHeld(page, Math.floor(moveEnd) - 12);
-    expect(await zIndex(), "as it leaves").toBeLessThan(barZ);
-  });
-
-  test("holds a docked field in the bar only as far as the bar has room around it", async ({ page }) => {
-    test.slow();
-    await page.goto("/");
-    await expect(cards(page)).toHaveCount(SERVICES);
-    await hydrated(page);
-    const { wide, moveEnd } = await dockOffsets(page);
-    test.skip(wide, "from 64rem the snap has no hold");
-    // The bar's height less the field's and the field's inset from the bar's top: how far the narrow field can
-    // descend before it pokes out of the bar's bottom edge.
-    const hold = await page.evaluate(() => {
-      const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
-      const dock = document.querySelector(".search-dock") as HTMLElement;
-      const pin = Number.parseFloat(getComputedStyle(dock).top);
-      const barTop = Number.parseFloat(getComputedStyle(bar).top);
-      return Math.max(0, bar.offsetHeight - dock.offsetHeight - (pin - barTop));
-    });
-    expect(hold, "not the 8px of a bar that moves in time").toBeLessThan(DOCK_HYSTERESIS);
-    const at = async (y: number) => {
-      await scrollAndSettle(page, y);
-      return dockValue(page);
-    };
-    expect(await at(Math.ceil(moveEnd) + 1)).toBe(1);
-    // Held at the far end of the hold, the narrow field is still inside the bar.
-    const held = Math.ceil(moveEnd - hold) + 1;
-    expect(await at(held)).toBe(1);
-    const { field, bar } = await dockBoxes(page);
-    expect(field.bottom, "the held field is inside the bar").toBeLessThanOrEqual(bar.bottom + 0.5);
-    // Beyond the hold it is released, before it can poke out.
-    expect(await at(Math.floor(moveEnd - hold) - 3)).toBe(0);
-  });
-
-  test("snaps the search field into the bar and out again, never part way", async ({ page }) => {
-    test.slow();
-    await page.goto("/");
-    await expect(cards(page)).toHaveCount(SERVICES);
-    await hydrated(page);
+    await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+    const { wide } = await dockOffsets(page);
     const { path } = await dockPath(page);
     const stops = await sweepDock(page, path);
-    expect([...new Set(stops.map((stop) => stop.dock))].sort()).toEqual([0, 1]);
-    // The bar never shows over a field that has not snapped into it, going down or coming back up.
-    if ((await dockOffsets(page)).wide) {
+    if (wide) {
+      expect([...new Set(stops.map((stop) => stop.dock))].sort()).toEqual([0, 1]);
+      // The bar never shows over a field that has not snapped into it, going down or coming back up.
       for (const stop of stops.filter((stop) => stop.shown === "true")) {
         expect(stop.dock, `at ${stop.y}`).toBe(1);
       }
+      return;
     }
-    // The two phases stay apart without motion: on a phone the bar is up before the field snaps in.
-    if (!(await dockOffsets(page)).wide) {
-      expect(stops.some((stop) => stop.shown === "true" && stop.dock === 0)).toBe(true);
-    }
+    // Below 64rem the bar's field is at one of its two poses at every stop, never between them.
+    for (const stop of stops) expect(stop.barFieldOpacity, `at ${stop.y}`).toBe(stop.revealed ? 1 : 0);
+    expect(
+      stops.some((stop) => stop.revealed),
+      "the field was revealed on the way back",
+    ).toBe(true);
+    expect(
+      stops.some((stop) => !stop.revealed && stop.shown === "true"),
+      "and hidden with the bar up",
+    ).toBe(true);
   });
 });
 
 test("marks the search field for an iPhone keyboard: search key, no autocorrect", async ({ page }) => {
   await page.goto("/");
   await hydrated(page);
-  const input = page.getByLabel("Search services");
-  await expect(input).toHaveAttribute("type", "search");
-  await expect(input).toHaveAttribute("enterkeyhint", "search");
-  await expect(input).toHaveAttribute("autocapitalize", "off");
-  await expect(input).toHaveAttribute("autocorrect", "off");
-  await expect(input).toHaveAttribute("autocomplete", "off");
-  await expect(input).toHaveAttribute("spellcheck", "false");
+  // The hero's field and the bar's copy of it are the same field to the keyboard.
+  for (const input of [heroSearch(page), barSearch(page)]) {
+    await expect(input).toHaveAttribute("type", "search");
+    await expect(input).toHaveAttribute("enterkeyhint", "search");
+    await expect(input).toHaveAttribute("autocapitalize", "off");
+    await expect(input).toHaveAttribute("autocorrect", "off");
+    await expect(input).toHaveAttribute("autocomplete", "off");
+    await expect(input).toHaveAttribute("spellcheck", "false");
+  }
 });
 
 test("sets the search field at 16px on a touch screen, so iPhone does not zoom in", async ({ page }) => {
@@ -2616,8 +2973,10 @@ test("sets the search field at 16px on a touch screen, so iPhone does not zoom i
   await hydrated(page);
   const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
   test.skip(!coarse, "the zoom guard is for a coarse pointer, which this project does not have");
-  const size = await page.getByLabel("Search services").evaluate((input) => getComputedStyle(input).fontSize);
-  expect(Number.parseFloat(size)).toBeGreaterThanOrEqual(16);
+  for (const input of [heroSearch(page), barSearch(page)]) {
+    const size = await input.evaluate((element) => getComputedStyle(element).fontSize);
+    expect(Number.parseFloat(size)).toBeGreaterThanOrEqual(16);
+  }
 });
 
 test("renders healthy services as rows, alike whether or not the vendor lists components", async ({ page }) => {
@@ -2792,7 +3151,8 @@ for (const scrollY of [40, 190]) {
     const state = () =>
       page.evaluate(() => ({
         y: window.scrollY,
-        docked: document.querySelector(".search-dock")?.hasAttribute("data-docked") ?? false,
+        revealed:
+          document.querySelector('section[aria-label="Board controls"]')?.hasAttribute("data-revealed") ?? false,
         calls: (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.length ?? 0,
       }));
     const before = await state();
@@ -2800,7 +3160,7 @@ for (const scrollY of [40, 190]) {
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     const after = await state();
     expect(after.y).toBe(before.y);
-    expect(after.docked).toBe(before.docked);
+    expect(after.revealed).toBe(before.revealed);
     expect(after.calls).toBe(before.calls);
     await expect(dock).toHaveCount(1);
   });
@@ -3098,7 +3458,7 @@ test("highlights the board's most urgent service only while it is on screen", as
   await expect(highlight).toHaveAttribute("id", "service-aws");
 
   // Searching leaves Google Cloud first, but it is not the board's most urgent: no highlight.
-  await page.getByLabel("Search services").fill("Google Cloud");
+  await heroSearch(page).fill("Google Cloud");
   await expect(cards(page)).toHaveCount(1);
   await expect(cards(page).first()).toHaveAttribute("id", "service-gcp");
   await expect(highlight).toHaveCount(0);
@@ -3286,7 +3646,7 @@ test("does not glide a filter that follows a star which moved nothing", async ({
   await expect(group(page, "attention").first()).toHaveAttribute("id", leadId ?? "");
 
   // A filter typed at once is not part of that star, so nothing glides against its stale layout.
-  await page.getByLabel("Search services").fill("Google Cloud");
+  await heroSearch(page).fill("Google Cloud");
   await expect(cards(page)).toHaveCount(1);
   await motionDone(page);
   expect(await longGlides(page, before)).toEqual([]);
@@ -3357,7 +3717,7 @@ test("does not glide a scroll and filter that follow a refresh which changed not
   await button.click();
   await answered;
   await page.evaluate(() => window.scrollBy(0, 300));
-  await page.getByLabel("Search services").fill("Google Cloud");
+  await heroSearch(page).fill("Google Cloud");
   await expect(cards(page)).toHaveCount(1);
   await expect(button).toHaveAttribute("aria-busy", "false");
   await motionDone(page);
@@ -3713,7 +4073,7 @@ test("puts Recent changes first when nothing needs a look", async ({ page }) => 
   await openFixture(page, () => fixtureBoard(Date.now()));
   await expect(cards(page)).toHaveCount(SERVICES);
   // Steam is operational, so the search leaves no Needs a look section.
-  await page.getByRole("searchbox").first().fill("steam");
+  await heroSearch(page).fill("steam");
   await expect(cards(page)).toHaveCount(1);
   await expect(page.locator('[data-group="attention"]')).toHaveCount(0);
   const headings = await page
@@ -3732,7 +4092,7 @@ test("keeps one Recent changes region, in place, through an empty search", async
   await recent.evaluate((node) => {
     (node as HTMLElement & { __kept?: boolean }).__kept = true;
   });
-  const search = page.getByRole("searchbox").first();
+  const search = heroSearch(page);
   await search.fill("zzzz-no-such-service");
   await expect(cards(page)).toHaveCount(0);
   await expect(recent).toHaveCount(1);
@@ -4541,7 +4901,7 @@ for (const width of [1024, 1440]) {
       page.evaluate(() => {
         const segments = document.querySelector('[role="group"][aria-label="Category"]') as HTMLElement;
         const toggles = segments.nextElementSibling as HTMLElement;
-        const field = document.querySelector(".search-field") as HTMLElement;
+        const field = document.querySelector(".search-dock .search-field") as HTMLElement;
         const box = (element: Element) => element.getBoundingClientRect();
         return {
           segmentsBottom: box(segments).bottom,

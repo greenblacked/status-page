@@ -275,15 +275,27 @@ test("a press that starts in the panel and ends on the backdrop does not close i
   await openBoard(page);
   await trigger(page, "mikrotik").click();
   await expect(dialog(page)).toBeVisible();
+  // On a phone the panel is a sheet that slides up from the bottom edge: measured while it moves, the note is not
+  // where the press lands.
+  await entered(page);
   const entry = await dialog(page).locator("[data-release-entry]").first().boundingBox();
   if (!entry) throw new Error("the pop-up has no entry");
+  const startX = entry.x + 20;
+  const startY = entry.y + 20;
+  expect(
+    await page.evaluate(
+      ([x, y]) => !!document.elementFromPoint(x, y)?.closest("[data-release-entry]"),
+      [startX, startY],
+    ),
+    "the press starts inside the sheet",
+  ).toBe(true);
   // A drag, as a text selection is: down on a note, up over the dimmed page.
-  await page.mouse.move(entry.x + 20, entry.y + 20);
+  await page.mouse.move(startX, startY);
   await page.mouse.down();
   await page.mouse.move(3, 3, { steps: 4 });
   await page.mouse.up();
   await expect(dialog(page)).toBeVisible();
-  // A whole click on the backdrop still closes it.
+  // A whole click on the backdrop still closes it, with the drag's selection still there as it is for a real user.
   await page.mouse.click(3, 3);
   await expect(dialog(page)).toHaveCount(0);
 });
