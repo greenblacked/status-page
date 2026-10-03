@@ -5008,57 +5008,119 @@ function busyBoard(): BoardSnapshot {
   return { ...board, services, counts };
 }
 
+// The filter row is one line at the widths the desktop layout guarantees it (1024px and up), in Inter and in the
+// fallback a first-time visitor is drawn in (Inter is font-display: optional, and a cold browser has not got it ready
+// at the first render). Inter is the wider of the two by some 14px at 1024px, so the row has little to spare in
+// either, and a machine that rasterizes the text a little wider (hinting) is enough to tip it. Each face is pinned,
+// so the test measures both on any machine: "fallback" aborts the Inter file, so the page keeps the system face,
+// and "Inter" re-declares the face with font-display: block (what the cached case draws in, without the race
+// optional has with a file that arrives within the first 100ms). The last two cases stress the guarantee itself:
+// the row's text spaced out far past either face, which must scroll the segments and keep the toggles beside them,
+// not drop the toggles below.
+const FILTER_ROW_CASES = [
+  { face: "fallback", spacing: "", note: "" },
+  { face: "Inter", spacing: "", note: "" },
+  { face: "fallback", spacing: "0.6px", note: " with the text spaced out" },
+  { face: "Inter", spacing: "0.6px", note: " with the text spaced out" },
+] as const;
+
 for (const width of [1024, 1440]) {
-  test(`keeps the filter row on one line, and the board still, when a star is added at ${width}px`, async ({
-    page,
-  }, testInfo) => {
-    test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
-    await page.setViewportSize({ width, height: 900 });
-    await openFixture(page, busyBoard);
-    const row = async () =>
-      page.evaluate(() => {
-        const segments = document.querySelector('[role="group"][aria-label="Category"]') as HTMLElement;
-        const toggles = segments.nextElementSibling as HTMLElement;
-        const field = document.querySelector(".search-dock .search-field") as HTMLElement;
-        const box = (element: Element) => element.getBoundingClientRect();
-        return {
-          segmentsBottom: box(segments).bottom,
-          togglesTop: box(toggles).top,
-          togglesRight: box(toggles).right,
-          sectionRight: box(segments.parentElement as Element).right,
-          mainTop: box(document.querySelector("main#services") as Element).top,
-          fieldMid: box(field).top + box(field).height / 2,
-          rowMid: (box(segments).top + box(segments).bottom) / 2,
-          togglesText: toggles.textContent ?? "",
-        };
-      });
-    const bare = await row();
-    // Not vacuous: two digits on Issues only.
-    expect(bare.togglesText).toMatch(/Issues only\s*1\d/);
+  for (const { face, spacing, note } of FILTER_ROW_CASES) {
+    test(`keeps the filter row on one line, and the board still, when a star is added at ${width}px in ${face}${note}`, async ({
+      page,
+    }, testInfo) => {
+      test.skip(testInfo.project.name !== "desktop", "the widths are set here, so one project measures them");
+      if (face === "fallback") await page.route("**/inter-var*.woff2", (route) => route.abort());
+      await page.setViewportSize({ width, height: 900 });
+      await openFixture(page, busyBoard);
+      /** Pins the face: Inter drawn (declared again, as block, so that it is used whenever it arrives) or never. */
+      const pinFace = async () => {
+        if (face === "fallback") {
+          test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
+          expect(await interStatus(page), "Inter never arrives").toBe("error");
+          return;
+        }
+        await page.evaluate(async () => {
+          const rule = [...document.styleSheets]
+            .flatMap((sheet) => [...sheet.cssRules])
+            .find((r) => r instanceof CSSFontFaceRule && r.style.getPropertyValue("font-family").includes("Inter"));
+          const src = (rule as CSSFontFaceRule).style.getPropertyValue("src");
+          const style = document.createElement("style");
+          style.textContent = `@font-face { font-family: "Inter"; src: ${src}; font-weight: 400 700; font-display: block; }`;
+          document.head.append(style);
+          await Promise.all([document.fonts.load("400 16px Inter"), document.fonts.load("600 16px Inter")]);
+        });
+        await expect
+          .poll(() =>
+            page.evaluate(() => [...document.fonts].some((f) => f.family.includes("Inter") && f.status === "loaded")),
+          )
+          .toBe(true);
+      };
+      await pinFace();
+      const stress = async () => {
+        if (spacing) {
+          await page.addStyleTag({
+            content: `.board-chips, .board-chips * { letter-spacing: ${spacing} !important; }`,
+          });
+        }
+      };
+      const toggleFonts = () => drawnFonts(page, '[role="group"][aria-label="Category"] + div button');
+      const row = async () =>
+        page.evaluate(() => {
+          const segments = document.querySelector('[role="group"][aria-label="Category"]') as HTMLElement;
+          const toggles = segments.nextElementSibling as HTMLElement;
+          const field = document.querySelector(".search-dock .search-field") as HTMLElement;
+          const box = (element: Element) => element.getBoundingClientRect();
+          return {
+            segmentsBottom: box(segments).bottom,
+            segmentsRight: box(segments).right,
+            togglesTop: box(toggles).top,
+            togglesLeft: box(toggles).left,
+            togglesRight: box(toggles).right,
+            sectionRight: box(segments.parentElement as Element).right,
+            mainTop: box(document.querySelector("main#services") as Element).top,
+            fieldMid: box(field).top + box(field).height / 2,
+            rowMid: (box(segments).top + box(segments).bottom) / 2,
+            togglesText: toggles.textContent ?? "",
+          };
+        });
+      await stress();
+      const bare = await row();
+      // Not vacuous: two digits on Issues only.
+      expect(bare.togglesText).toMatch(/Issues only\s*1\d/);
 
-    const one = page.getByRole("button", { name: /^Star / }).first();
-    await toggleStar(page, () => one.click());
-    const starred = await row();
-    expect(starred.togglesText).toMatch(/Starred\s*1$/);
-    // The toggles stay beside the segments: their top is not below the segments' bottom.
-    expect(starred.togglesTop).toBeLessThan(starred.segmentsBottom);
-    expect(starred.togglesRight).toBeLessThanOrEqual(starred.sectionRight + 0.5);
-    // Nothing on the page moves, and the field in the margin still lines up with the row.
-    expect(starred.mainTop).toBeCloseTo(bare.mainTop, 0);
-    expect(Math.abs(starred.fieldMid - starred.rowMid)).toBeLessThan(2);
+      const one = page.getByRole("button", { name: /^Star / }).first();
+      await toggleStar(page, () => one.click());
+      const starred = await row();
+      expect(starred.togglesText).toMatch(/Starred\s*1$/);
+      // The toggles stay beside the segments: their top is not below the segments' bottom.
+      expect(starred.togglesTop).toBeLessThan(starred.segmentsBottom);
+      expect(starred.togglesLeft).toBeGreaterThanOrEqual(starred.segmentsRight);
+      expect(starred.togglesRight).toBeLessThanOrEqual(starred.sectionRight + 0.5);
+      // Nothing on the page moves, and the field in the margin still lines up with the row.
+      expect(starred.mainTop).toBeCloseTo(bare.mainTop, 0);
+      expect(Math.abs(starred.fieldMid - starred.rowMid)).toBeLessThan(2);
 
-    // And with two digits on Starred as well: eleven more stars.
-    await page.evaluate(
-      (ids) => localStorage.setItem("status-bar:starred", JSON.stringify(ids)),
-      CATALOG.slice(0, 11).map((entry) => entry.id),
-    );
-    await page.reload();
-    await hydrated(page);
-    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
-    const many = await row();
-    expect(many.togglesText).toMatch(/Starred\s*11$/);
-    expect(many.togglesTop).toBeLessThan(many.segmentsBottom);
-    expect(many.togglesRight).toBeLessThanOrEqual(many.sectionRight + 0.5);
-    expect(many.mainTop).toBeCloseTo(bare.mainTop, 0);
-  });
+      // And with two digits on Starred as well: eleven more stars, on a page drawn afresh.
+      await page.evaluate(
+        (ids) => localStorage.setItem("status-bar:starred", JSON.stringify(ids)),
+        CATALOG.slice(0, 11).map((entry) => entry.id),
+      );
+      await page.reload();
+      await hydrated(page);
+      await pinFace();
+      await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+      await expect(page.getByRole("button", { name: /^Starred\s*11$/ })).toBeVisible();
+      // Not vacuous: the row was drawn in the face under test.
+      const drawn = await toggleFonts();
+      expect(drawn.some(isInter), `the toggles are drawn in ${drawn}`).toBe(face === "Inter");
+      await stress();
+      const many = await row();
+      expect(many.togglesText).toMatch(/Starred\s*11$/);
+      expect(many.togglesTop).toBeLessThan(many.segmentsBottom);
+      expect(many.togglesLeft).toBeGreaterThanOrEqual(many.segmentsRight);
+      expect(many.togglesRight).toBeLessThanOrEqual(many.sectionRight + 0.5);
+      expect(many.mainTop).toBeCloseTo(bare.mainTop, 0);
+    });
+  }
 }
