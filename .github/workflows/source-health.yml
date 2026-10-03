@@ -45,13 +45,13 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          # setup-node caches npm automatically because package.json names
-          # npm in packageManager. This job installs nothing, so skip it.
+          # This job installs nothing, so it needs no package cache, and
+          # setup-node must not start one on its own.
           package-manager-cache: false
       # The collectors use only Node built-ins (fetch, TextDecoder), and the
       # script runs on Node's own TypeScript stripping, so there is no
-      # `npm ci`: nothing from the lockfile executes in a job that can write
-      # issues.
+      # `pnpm install`: nothing from the lockfile executes in a job that can
+      # write issues.
       - name: Probe vendor sources
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -82,7 +82,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      # Same as the probe above: Node built-ins only, no `npm ci`.
+      # Same as the probe above: Node built-ins only, no `pnpm install`.
       - name: Check the production deployment
         if: vars.PRODUCTION_URL != ''
         env:

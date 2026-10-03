@@ -1,0 +1,684 @@
+import { spawn } from "node:child_process";
+import { createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  canonicalTarball,
+  check,
+  type Entry,
+  isSigned,
+  type Keys,
+  NPM_KEYS,
+  parseLockfile,
+  registryKeys,
+  registryVersion,
+} from "./lockfile-integrity.ts";
+
+const SCRIPT = fileURLToPath(new URL("./lockfile-integrity.ts", import.meta.url));
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
+const A = `sha512-${"A".repeat(86)}==`;
+const B = `sha512-${"B".repeat(86)}==`;
+const C = `sha512-${"C".repeat(86)}==`;
+
+const LOCKFILE = `---
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    packageManagerDependencies:
+      pnpm:
+        specifier: 12.8.1
+        version: 12.8.1
+
+packages:
+
+  '@pnpm/exe.linux-x64@12.8.1':
+    resolution: {integrity: ${A}}
+    cpu: [x64]
+
+  pnpm@12.8.1:
+    resolution: {integrity: ${B}}
+    hasBin: true
+
+snapshots:
+
+  pnpm@12.8.1: {}
+
+---
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      clsx:
+        specifier: 2.1.1
+        version: 2.1.1
+
+packages:
+
+  clsx@2.1.1:
+    resolution: {integrity: ${C}}
+    engines: {node: '>=6'}
+
+  pnpm@12.8.1:
+    resolution: {integrity: ${B}}
+
+  from-git@https://codeload.github.com/example/from-git/tar.gz/abc123:
+    resolution: {tarball: https://codeload.github.com/example/from-git/tar.gz/abc123}
+    version: 1.0.0
+
+  other@git+https://example.com/other.git#abc:
+    resolution: {commit: abc, repo: https://example.com/other.git, type: git}
+
+  no-integrity@2.0.0:
+    resolution: {directory: vendor/no-integrity, type: directory}
+
+  broken@3.0.0:
+    resolution: {integrity: sha1-AAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+
+snapshots:
+
+  clsx@2.1.1: {}
+`;
+
+/** The lockfile without its two entries that cannot be verified, which fail the run. */
+const VALID = LOCKFILE.replace(/ {2}no-integrity@2\.0\.0:\n {4}resolution: .*\n\n/, "").replace(
+  / {2}broken@3\.0\.0:\n {4}resolution: .*\n\n/,
+  "",
+);
+
+describe("parseLockfile", () => {
+  it("reads the packages of every YAML document, once each, with scoped names and versions split at the last @", () => {
+    const { entries } = parseLockfile(LOCKFILE);
+    expect(entries).toEqual<Entry[]>([
+      { name: "@pnpm/exe.linux-x64", version: "12.8.1", integrity: A },
+      { name: "pnpm", version: "12.8.1", integrity: B },
+      { name: "clsx", version: "2.1.1", integrity: C },
+    ]);
+  });
+
+  it("skips only a key whose version is not semver, and fails closed on every other entry it cannot verify", () => {
+    const { skipped, malformed } = parseLockfile(LOCKFILE);
+    expect(skipped).toEqual([
+      "from-git@https://codeload.github.com/example/from-git/tar.gz/abc123",
+      "other@git+https://example.com/other.git#abc",
+    ]);
+    // a semver key with a directory resolution, and one with a sha1 integrity
+    expect(malformed).toEqual(["no-integrity@2.0.0", "broken@3.0.0"]);
+  });
+
+  /** One `packages:` entry, wrapped in a lockfile with a verified neighbour. */
+  const withEntry = (entry: string) =>
+    parseLockfile(
+      `lockfileVersion: '9.0'\n\npackages:\n\n  pnpm@12.8.1:\n    resolution: {integrity: ${B}}\n\n${entry}\nsnapshots:\n\n  x: {}\n`,
+    );
+
+  it("reads a block-style resolution", () => {
+    const { entries, malformed } = withEntry(
+      `  clsx@2.1.1:\n    resolution:\n      integrity: ${C}\n    engines: {node: '>=6'}\n`,
+    );
+    expect(malformed).toEqual([]);
+    expect(entries).toContainEqual({ name: "clsx", version: "2.1.1", integrity: C });
+  });
+
+  it("fails closed on a block-style resolution without a sha512, and on a missing or odd resolution", () => {
+    expect(withEntry("  clsx@2.1.1:\n    resolution:\n      type: git\n").malformed).toEqual(["clsx@2.1.1"]);
+    expect(withEntry("  clsx@2.1.1:\n    engines: {node: '>=6'}\n").malformed).toEqual(["clsx@2.1.1"]);
+    expect(withEntry(`  clsx@2.1.1:\n    resolution: ${C}\n`).malformed).toEqual(["clsx@2.1.1"]);
+    expect(withEntry("  clsx@2.1.1:\n    resolution:\n      - nonsense\n").malformed).toEqual(["clsx@2.1.1"]);
+  });
+
+  it("strips both quote styles from a key, and fails closed on a key it cannot normalise", () => {
+    const single = withEntry(`  'clsx@2.1.1':\n    resolution: {integrity: ${C}}\n`);
+    const double = withEntry(`  "clsx@2.1.1":\n    resolution: {integrity: ${C}}\n`);
+    for (const parsed of [single, double]) {
+      expect(parsed.skipped).toEqual([]);
+      expect(parsed.entries).toContainEqual({ name: "clsx", version: "2.1.1", integrity: C });
+    }
+    expect(withEntry(`  "clsx@2.1.1:\n    resolution: {integrity: ${C}}\n`).malformed).toEqual(['"clsx@2.1.1']);
+    expect(withEntry(`  clsx: {}\n`).malformed).toEqual(["clsx: {}"]);
+    expect(withEntry(`  clsx:\n    resolution: {integrity: ${C}}\n`).malformed).toEqual(["clsx"]);
+  });
+
+  it("keeps a semver entry's tarball so that it is verified, and flags a non-registry resolution", () => {
+    const url = "https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz";
+    const { entries } = withEntry(`  clsx@2.1.1:\n    resolution: {integrity: ${C}, tarball: ${url}}\n`);
+    expect(entries).toContainEqual({ name: "clsx", version: "2.1.1", integrity: C, tarball: url });
+    expect(
+      withEntry(`  clsx@2.1.1:\n    resolution: {integrity: ${C}, type: directory, directory: x}\n`).malformed,
+    ).toEqual(["clsx@2.1.1"]);
+  });
+
+  it("verifies the same key again when a later document records another integrity for it", () => {
+    const two = parseLockfile(
+      `packages:\n\n  clsx@2.1.1:\n    resolution: {integrity: ${C}}\n\n---\npackages:\n\n  clsx@2.1.1:\n    resolution: {integrity: ${B}}\n`,
+    );
+    expect(two.entries.map((e) => e.integrity)).toEqual([C, B]);
+  });
+
+  it("reads a CRLF lockfile", () => {
+    expect(
+      parseLockfile(`packages:\r\n\r\n  clsx@2.1.1:\r\n    resolution: {integrity: ${C}}\r\n`).entries,
+    ).toHaveLength(1);
+  });
+
+  it("reads this repository's lockfile: every package, nothing malformed or skipped", () => {
+    const { entries, skipped, malformed } = parseLockfile(readFileSync(join(ROOT, "pnpm-lock.yaml"), "utf8"));
+    const names = entries.map((e) => `${e.name}@${e.version}`);
+    expect(names).toContain("react@19.3.0");
+    expect(names).toContain("@typescript/typescript6@6.0.2");
+    expect(names).toContain("typescript@6.0.3");
+    expect(entries.length).toBeGreaterThan(300);
+    expect(skipped).toEqual([]);
+    expect(malformed).toEqual([]);
+  });
+
+  it("accounts for every heading of this repository's lockfile", () => {
+    const text = readFileSync(join(ROOT, "pnpm-lock.yaml"), "utf8");
+    const packages = text.slice(text.indexOf("\npackages:\n"), text.indexOf("\nsnapshots:\n"));
+    const headings = new Set(
+      packages.match(/^ {2}\S.*:$/gm)?.map((h) =>
+        h
+          .trim()
+          .slice(0, -1)
+          .replace(/^'(.*)'$/, "$1"),
+      ),
+    );
+    const { entries, skipped, malformed } = parseLockfile(text);
+    expect(entries.length + skipped.length + malformed.length).toBe(headings.size);
+  });
+});
+
+/** An ECDSA P-256 signing key, shaped the way npm publishes its keys. */
+function signer(keyid: string) {
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const key = Buffer.from(publicKey.export({ format: "der", type: "spki" })).toString("base64");
+  return {
+    keyid,
+    listed: { keyid, keytype: "ecdsa-sha2-nistp256", scheme: "ecdsa-sha2-nistp256", expires: null, key },
+    /** The same key as the script holds it. */
+    held: { key },
+    /** The signature npm makes: over `name@version:integrity`. */
+    sign: (e: Entry, integrity = e.integrity) => ({
+      keyid,
+      sig: Buffer.from(sign("sha256", Buffer.from(`${e.name}@${e.version}:${integrity}`), privateKey)).toString(
+        "base64",
+      ),
+    }),
+  };
+}
+
+const npm = signer("SHA256:npm");
+const other = signer("SHA256:other");
+
+const fast = { attempts: 3, backoffMs: 0 };
+const document = (dist: object) => ({ status: 200, json: async () => ({ dist }) });
+const status = (code: number) => ({ status: code, json: async () => ({}) });
+const keysDocument = (...signers: ReturnType<typeof signer>[]) => ({
+  status: 200,
+  json: async () => ({ keys: signers.map((k) => k.listed) }),
+});
+
+/** The version document a registry serves for a lockfile entry that npm signed. */
+const signedBy = (s: ReturnType<typeof signer>, e: Entry) =>
+  document({ integrity: e.integrity, signatures: [s.sign(e)] });
+
+describe("registryKeys", () => {
+  it("reads the signing keys by key id", async () => {
+    const urls: string[] = [];
+    const { keys } = await registryKeys("https://registry.example/", {
+      ...fast,
+      fetch: async (url) => {
+        urls.push(url);
+        return keysDocument(npm, other);
+      },
+    });
+    expect(urls).toEqual(["https://registry.example/-/npm/v1/keys"]);
+    expect([...(keys?.keys() ?? [])]).toEqual(["SHA256:npm", "SHA256:other"]);
+  });
+
+  it("reads a key's expiry, and takes registry.npmjs.org's keys from the pinned set without asking it", async () => {
+    const expiring = { ...npm.listed, expires: "2025-01-29T00:00:00.000Z" };
+    const listed = await registryKeys("https://registry.example", {
+      ...fast,
+      fetch: async () => ({ status: 200, json: async () => ({ keys: [expiring, other.listed] }) }),
+    });
+    expect(listed.keys?.get(npm.keyid)).toEqual({ key: npm.listed.key, expires: "2025-01-29T00:00:00.000Z" });
+    expect(listed.keys?.get(other.keyid)).toEqual({ key: other.listed.key });
+    const fetched: string[] = [];
+    for (const url of ["https://registry.npmjs.org", "https://registry.npmjs.org/"]) {
+      const pinned = await registryKeys(url, {
+        ...fast,
+        fetch: async (u) => {
+          fetched.push(u);
+          return keysDocument(other);
+        },
+      });
+      expect(pinned.keys).toBe(NPM_KEYS);
+    }
+    expect(fetched).toEqual([]);
+  });
+
+  it("pins two well-formed P-256 keys, one of them expiring", () => {
+    expect([...NPM_KEYS.keys()]).toEqual([
+      "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA",
+      "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+    ]);
+    for (const { key } of NPM_KEYS.values()) {
+      const parsed = createPublicKey({ key: Buffer.from(key, "base64"), format: "der", type: "spki" });
+      expect(parsed.asymmetricKeyType).toBe("ec");
+      expect(parsed.asymmetricKeyDetails?.namedCurve).toBe("prime256v1");
+    }
+    expect([...NPM_KEYS.values()].map((k) => k.expires)).toEqual(["2025-01-29T00:00:00.000Z", undefined]);
+  });
+
+  it("reports a registry with no keys and one that cannot be reached", async () => {
+    const none = await registryKeys("https://r", {
+      ...fast,
+      fetch: async () => ({ status: 200, json: async () => ({}) }),
+    });
+    expect(none.error).toContain("no signing keys");
+    const down = await registryKeys("https://r", { ...fast, fetch: async () => status(503) });
+    expect(down.error).toContain("HTTP 503");
+  });
+});
+
+describe("registryVersion", () => {
+  const entry: Entry = { name: "@scope/pkg", version: "1.2.3", integrity: A };
+
+  it("asks the registry for that version's manifest, with a scoped name's slash encoded", async () => {
+    const urls: string[] = [];
+    const result = await registryVersion("https://registry.example/", entry, {
+      ...fast,
+      fetch: async (url) => {
+        urls.push(url);
+        return signedBy(npm, entry);
+      },
+    });
+    expect(result.integrity).toBe(A);
+    expect(result.signatures).toEqual([{ keyid: npm.keyid, sig: expect.any(String) }]);
+    expect(urls).toEqual(["https://registry.example/@scope%2Fpkg/1.2.3"]);
+  });
+
+  it("retries a 5xx, a 429 and a dropped connection, then answers", async () => {
+    const answers = [
+      () => status(503),
+      () => status(429),
+      () => Promise.reject(new Error("socket hang up")),
+      () => document({ integrity: A, signatures: [] }),
+    ];
+    let calls = 0;
+    const result = await registryVersion("https://r", entry, {
+      attempts: 4,
+      backoffMs: 0,
+      fetch: async () => answers[calls++]?.() as never,
+    });
+    expect(calls).toBe(4);
+    expect(result).toEqual({ integrity: A, signatures: [] });
+  });
+
+  it("gives up after its attempts and says why", async () => {
+    let calls = 0;
+    const result = await registryVersion("https://r", entry, {
+      ...fast,
+      fetch: async () => {
+        calls++;
+        return status(502);
+      },
+    });
+    expect(calls).toBe(3);
+    expect(result.error).toContain("HTTP 502");
+  });
+
+  it("does not retry a 404, and reports a manifest with no integrity", async () => {
+    let calls = 0;
+    const missing = await registryVersion("https://r", entry, {
+      ...fast,
+      fetch: async () => {
+        calls++;
+        return status(404);
+      },
+    });
+    expect(calls).toBe(1);
+    expect(missing.error).toContain("no such version");
+    expect((await registryVersion("https://r", entry, { ...fast, fetch: async () => document({}) })).error).toContain(
+      "no integrity",
+    );
+  });
+
+  it("ignores a signature entry that is not a key id and a signature", async () => {
+    const result = await registryVersion("https://r", entry, {
+      ...fast,
+      fetch: async () => document({ integrity: A, signatures: [{ keyid: 1 }, null, { keyid: "k", sig: "s" }] }),
+    });
+    expect(result.signatures).toEqual([{ keyid: "k", sig: "s" }]);
+  });
+});
+
+describe("isSigned", () => {
+  const entry: Entry = { name: "clsx", version: "2.1.1", integrity: C };
+  const keys: Keys = new Map([
+    [npm.keyid, npm.held],
+    [other.keyid, other.held],
+  ]);
+
+  it("accepts a valid signature over name@version:integrity from a known key", () => {
+    expect(isSigned(entry, [npm.sign(entry)], keys)).toBe(true);
+  });
+
+  it("accepts when any one of several signatures verifies", () => {
+    expect(isSigned(entry, [{ keyid: "SHA256:gone", sig: "AAAA" }, npm.sign(entry)], keys)).toBe(true);
+  });
+
+  it("rejects a signature over another integrity, version or name", () => {
+    expect(isSigned(entry, [npm.sign(entry, B)], keys)).toBe(false);
+    expect(isSigned(entry, [npm.sign({ ...entry, version: "2.1.2" })], keys)).toBe(false);
+    expect(isSigned(entry, [npm.sign({ ...entry, name: "clsy" })], keys)).toBe(false);
+  });
+
+  it("rejects an unknown key id, a signature made by another key, and garbage", () => {
+    expect(isSigned(entry, [{ keyid: "SHA256:unknown", sig: npm.sign(entry).sig }], keys)).toBe(false);
+    expect(isSigned(entry, [{ keyid: npm.keyid, sig: other.sign(entry).sig }], keys)).toBe(false);
+    expect(isSigned(entry, [{ keyid: npm.keyid, sig: "not base64 at all" }], keys)).toBe(false);
+    expect(
+      isSigned(entry, [{ keyid: npm.keyid, sig: npm.sign(entry).sig }], new Map([[npm.keyid, { key: "AAAA" }]])),
+    ).toBe(false);
+  });
+
+  it("uses node:crypto's own parsing of the published key", () => {
+    expect(
+      createPublicKey({ key: Buffer.from(npm.listed.key, "base64"), format: "der", type: "spki" }).asymmetricKeyType,
+    ).toBe("ec");
+  });
+});
+
+describe("check", () => {
+  const entries = parseLockfile(LOCKFILE).entries;
+  const find = (url: string) =>
+    entries.find((e) => url.includes(e.name.replace("/", "%2F")) && url.endsWith(e.version));
+  const mock = (answer: (e: Entry) => ReturnType<typeof document>) => async (url: string) => {
+    if (url.endsWith("/-/npm/v1/keys")) return keysDocument(npm);
+    const e = find(url);
+    return e ? answer(e) : status(404);
+  };
+
+  it("passes when the registry signs exactly the lockfile's integrity", async () => {
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check({ ...parsed, malformed: [] }, "https://r", {
+      ...fast,
+      fetch: mock((e) => signedBy(npm, e)),
+    });
+    expect(failures).toEqual([]);
+  });
+
+  it("names every entry it cannot read, and every one with no signature", async () => {
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check(parsed, "https://r", {
+      ...fast,
+      fetch: mock((e) => (e.name === "clsx" ? document({ integrity: e.integrity }) : signedBy(npm, e))),
+    });
+    expect(failures).toEqual([
+      "broken@3.0.0: not a plain registry entry with a sha512 integrity, so its signature cannot be checked",
+      "clsx@2.1.1: the registry gives no signature for it",
+      "no-integrity@2.0.0: not a plain registry entry with a sha512 integrity, so its signature cannot be checked",
+    ]);
+  });
+
+  it("fails when the version document and the signature disagree about the integrity", async () => {
+    // A registry (or proxy) that reports the lockfile's tampered integrity in
+    // the unsigned document, beside the signature over the real one. The
+    // document agrees with the lockfile; the signature does not.
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check({ ...parsed, malformed: [] }, "https://r", {
+      ...fast,
+      fetch: mock((e) =>
+        e.name === "clsx" ? document({ integrity: e.integrity, signatures: [npm.sign(e, B)] }) : signedBy(npm, e),
+      ),
+    });
+    expect(failures).toEqual([
+      `clsx@2.1.1: no registry signature verifies over the integrity pnpm-lock.yaml records, ${C}`,
+    ]);
+  });
+
+  it("fails when the lockfile's integrity is not the signed one, and says what the registry reports", async () => {
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check({ ...parsed, malformed: [] }, "https://r", {
+      ...fast,
+      fetch: mock((e) => document({ integrity: B, signatures: [npm.sign(e, B)] })),
+    });
+    expect(failures).toEqual([
+      `@pnpm/exe.linux-x64@12.8.1: pnpm-lock.yaml records ${A}, which no registry signature covers (the registry reports ${B})`,
+      `clsx@2.1.1: pnpm-lock.yaml records ${C}, which no registry signature covers (the registry reports ${B})`,
+    ]);
+  });
+
+  it("passes a lockfile integrity that is signed even when the unsigned document says otherwise", async () => {
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check({ ...parsed, malformed: [] }, "https://r", {
+      ...fast,
+      fetch: mock((e) => document({ integrity: B, signatures: [npm.sign(e)] })),
+    });
+    expect(failures).toEqual([]);
+  });
+
+  it("fails when a signature is by a key the registry does not list", async () => {
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check({ ...parsed, malformed: [] }, "https://r", {
+      ...fast,
+      fetch: mock((e) => document({ integrity: e.integrity, signatures: [other.sign(e)] })),
+    });
+    expect(failures).toHaveLength(3);
+  });
+
+  it("reports a signature by a key the registry does not trust, by its id", async () => {
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check({ ...parsed, malformed: [] }, "https://r", {
+      ...fast,
+      fetch: mock((e) => document({ integrity: e.integrity, signatures: [{ ...other.sign(e), keyid: "SHA256:new" }] })),
+    });
+    expect(failures[0]).toContain("signed only by key SHA256:new, which is not one of the trusted registry keys");
+  });
+
+  it("verifies a semver entry's tarball against the registry's canonical URL", async () => {
+    const entry: Entry = { name: "@scope/pkg", version: "1.2.3", integrity: A };
+    expect(canonicalTarball("https://r/", entry)).toBe("https://r/@scope/pkg/-/pkg-1.2.3.tgz");
+    const run = (tarball: string) =>
+      check({ entries: [{ ...entry, tarball }], skipped: [], malformed: [] }, "https://r", {
+        ...fast,
+        fetch: async (url) => (url.endsWith("/keys") ? keysDocument(npm) : signedBy(npm, entry)),
+      });
+    expect(await run("https://r/@scope/pkg/-/pkg-1.2.3.tgz")).toEqual([]);
+    expect(await run("https://evil.example/pkg.tgz")).toEqual([
+      "@scope/pkg@1.2.3: pnpm-lock.yaml gives the tarball https://evil.example/pkg.tgz, not the registry's https://r/@scope/pkg/-/pkg-1.2.3.tgz",
+    ]);
+  });
+
+  it("names a malformed entry as one the signature of which cannot be checked", async () => {
+    const failures = await check({ entries: [], skipped: [], malformed: ["clsx@2.1.1"] }, "https://r", {
+      ...fast,
+      fetch: async () => keysDocument(npm),
+    });
+    expect(failures).toEqual([
+      "clsx@2.1.1: not a plain registry entry with a sha512 integrity, so its signature cannot be checked",
+    ]);
+  });
+
+  describe("a key that expires", () => {
+    const entry: Entry = { name: "clsx", version: "2.1.1", integrity: C };
+    const retired = { ...npm.listed, expires: "2025-01-29T00:00:00.000Z" };
+    const run = (time: unknown, listed: object = retired) =>
+      check({ entries: [entry], skipped: [], malformed: [] }, "https://r", {
+        ...fast,
+        fetch: async (url) => {
+          if (url.endsWith("/-/npm/v1/keys")) return { status: 200, json: async () => ({ keys: [listed] }) };
+          if (url.endsWith("/clsx")) return { status: 200, json: async () => ({ time }) };
+          return signedBy(npm, entry);
+        },
+      });
+
+    it("signs a version published before it expired", async () => {
+      expect(await run({ "2.1.1": "2024-06-01T00:00:00.000Z" })).toEqual([]);
+    });
+
+    it("does not sign a version published after it expired", async () => {
+      expect(await run({ "2.1.1": "2025-03-01T00:00:00.000Z" })).toEqual([
+        "clsx@2.1.1: signed only by a key that expired (2025-01-29T00:00:00.000Z) before it was published (2025-03-01T00:00:00.000Z)",
+      ]);
+    });
+
+    it("fails closed when the publish time is missing, unparseable or unavailable", async () => {
+      for (const time of [{}, { "2.1.1": "soon" }, undefined]) {
+        expect(await run(time)).toEqual([expect.stringContaining("clsx@2.1.1: cannot tell when it was published")]);
+      }
+    });
+
+    it("does not ask for the publish time when a key without an expiry signs", async () => {
+      const urls: string[] = [];
+      const failures = await check({ entries: [entry], skipped: [], malformed: [] }, "https://r", {
+        ...fast,
+        fetch: async (url) => {
+          urls.push(url);
+          return url.endsWith("/-/npm/v1/keys") ? keysDocument(npm) : signedBy(npm, entry);
+        },
+      });
+      expect(failures).toEqual([]);
+      expect(urls.some((u) => u.endsWith("/clsx"))).toBe(false);
+    });
+
+    it("fetches a package's publish times once for all its versions", async () => {
+      const second: Entry = { ...entry, version: "2.1.0" };
+      let packuments = 0;
+      const failures = await check({ entries: [entry, second], skipped: [], malformed: [] }, "https://r", {
+        ...fast,
+        fetch: async (url) => {
+          if (url.endsWith("/-/npm/v1/keys")) return { status: 200, json: async () => ({ keys: [retired] }) };
+          if (url.endsWith("/clsx")) {
+            packuments++;
+            return {
+              status: 200,
+              json: async () => ({ time: { "2.1.1": "2024-01-01T00:00:00Z", "2.1.0": "2024-01-01T00:00:00Z" } }),
+            };
+          }
+          return signedBy(npm, url.endsWith("2.1.0") ? second : entry);
+        },
+      });
+      expect(failures).toEqual([]);
+      expect(packuments).toBe(1);
+    });
+  });
+
+  it("fails with one message when the registry's keys cannot be fetched", async () => {
+    const parsed = parseLockfile(LOCKFILE);
+    const failures = await check({ ...parsed, malformed: [] }, "https://r", {
+      ...fast,
+      fetch: async () => status(503),
+    });
+    expect(failures).toEqual(["the registry's signing keys: the registry answered HTTP 503"]);
+  });
+});
+
+describe("lockfile-integrity.ts", () => {
+  let server: Server | undefined;
+  let dir: string | undefined;
+  afterEach(() => {
+    server?.close();
+    server = undefined;
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+
+  type Doc = { integrity?: string; signed?: string };
+
+  /** `answer` gives, per request path, the integrity the document reports and the one the signature covers. */
+  async function run(lockfile: string, answer: (path: string) => Doc | undefined) {
+    server = createServer((req, res) => {
+      const path = req.url ?? "";
+      res.writeHead(200, { "content-type": "application/json" });
+      if (path === "/-/npm/v1/keys") return void res.end(JSON.stringify({ keys: [npm.listed] }));
+      const doc = answer(path);
+      if (!doc) return void res.writeHead(404).end("{}");
+      const entry = parseLockfile(lockfile).entries.find((e) => path.includes(e.name.replace("/", "%2F")));
+      const covered = doc.signed ?? entry?.integrity ?? "";
+      const e = entry ?? { name: "", version: "", integrity: "" };
+      res.end(JSON.stringify({ dist: { integrity: doc.integrity, signatures: [npm.sign(e, covered)] } }));
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    dir = mkdtempSync(join(tmpdir(), "lockfile-integrity-"));
+    const file = join(dir, "pnpm-lock.yaml");
+    writeFileSync(file, lockfile);
+    const child = spawn("node", ["--experimental-strip-types", "--disable-warning=ExperimentalWarning", SCRIPT, file], {
+      env: { ...process.env, LOCKFILE_INTEGRITY_REGISTRY: `http://127.0.0.1:${port}`, LOCKFILE_INTEGRITY_BACKOFF: "0" },
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk;
+    });
+    const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+    return { status, output };
+  }
+
+  const signed = (path: string): Doc => ({ integrity: path.includes("clsx") ? C : path.includes("exe") ? A : B });
+
+  it("exits 0 when every integrity is a signed one", async () => {
+    const { status, output } = await run(VALID, signed);
+    expect(output).toContain("all 3 integrity values");
+    expect(status).toBe(0);
+  });
+
+  it("exits 1 and names the package when the signature covers another integrity", async () => {
+    const { status, output } = await run(VALID, (path) => ({
+      ...signed(path),
+      signed: path.includes("clsx") ? B : undefined,
+    }));
+    expect(status).toBe(1);
+    expect(output).toContain(
+      `clsx@2.1.1: no registry signature verifies over the integrity pnpm-lock.yaml records, ${C}`,
+    );
+  });
+
+  it("exits 1 when the document reports another integrity than the lockfile's and signs it", async () => {
+    const { status, output } = await run(VALID, (path) =>
+      path.includes("clsx") ? { integrity: B, signed: B } : signed(path),
+    );
+    expect(status).toBe(1);
+    expect(output).toContain(`clsx@2.1.1: pnpm-lock.yaml records ${C}, which no registry signature covers`);
+  });
+
+  it("exits 1 on an entry it cannot read, rather than skipping it", async () => {
+    const blockStyle = VALID.replace(
+      `    resolution: {integrity: ${C}}`,
+      "    resolution:\n      type: git\n      repo: x",
+    );
+    const { status, output } = await run(blockStyle, signed);
+    expect(status).toBe(1);
+    expect(output).toContain("clsx@2.1.1: not a plain registry entry with a sha512 integrity");
+  });
+
+  it("exits 1 on a semver entry whose tarball is not the registry's", async () => {
+    const tarball = VALID.replace(
+      `    resolution: {integrity: ${C}}`,
+      `    resolution: {integrity: ${C}, tarball: https://evil.example/clsx.tgz}`,
+    );
+    const { status, output } = await run(tarball, signed);
+    expect(status).toBe(1);
+    expect(output).toContain("clsx@2.1.1: pnpm-lock.yaml gives the tarball https://evil.example/clsx.tgz");
+  });
+
+  it("exits 1 on a lockfile with no registry package, rather than passing on nothing", async () => {
+    const { status, output } = await run("lockfileVersion: '9.0'\n", signed);
+    expect(status).toBe(1);
+    expect(output).toContain("refusing to pass");
+  });
+});

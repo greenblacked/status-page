@@ -1,4 +1,6 @@
 node_modules
+# pnpm's fallback package store, when it cannot hardlink from its home store
+.pnpm-store
 .vercel
 .output
 .nitro

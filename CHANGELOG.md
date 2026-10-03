@@ -46,6 +46,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - "Recent changes" now sits right after "Needs a look" (first on the board when nothing does) instead of at the foot of the board, and its space is held while saved checks load, so the page does not jump. The skip link is now "Skip to the board".
 - The board now keeps up to 300 components per service (it used to keep 24), so Google Cloud's full product list is there. When a vendor lists more, a line links to the full list on its status page.
 - AWS still lists only the services named by an active event, since its public feed has no full catalogue.
+- Development, CI, deploys and releases use **pnpm**, installed by Corepack at the exact version and sha512 that `package.json` pins, instead of npm. The lockfile is `pnpm-lock.yaml` (the same package versions as before); run `corepack enable pnpm` and `pnpm install`, and use `pnpm run <script>` where the docs said `npm run`. The type check calls `tsc6`, the command TypeScript 6 ships.
 
 ### Fixed
 
@@ -77,6 +78,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - A source that sends the board to another site, or to another port, is no longer followed. Its card reads No data, with the host it was sent to.
 - HSTS now covers subdomains.
 - Vendor status feeds with malformed markup or large product lists no longer stall status checks.
+- The advisories in the dependencies bundled inside the npm CLI that CI used to run (`http-cache-semantics` CVE-2026-93748, `brace-expansion`, `undici`, `ip-address`) no longer apply: pnpm 12 has none of them, so the scanner exceptions for them are gone and dependency review, trivy and OSV-Scanner accept no advisory at HIGH or above.
+- Every install still verifies the registry's signature of each locked package, and that the integrity the lockfile holds carries a valid registry signature. The deploy workflow restores no package cache. The Sigstore provenance check that `npm audit signatures` ran is not available in pnpm; installs fail instead when a version carries less publisher evidence than an earlier one (`trustPolicy: no-downgrade`).
 
 ## [0.5.0] - 2026-09-30
 
