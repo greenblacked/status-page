@@ -13,6 +13,12 @@ const DEFAULT_TIMEOUT_MS = 9000;
  */
 export const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
+/**
+ * How much of a body a head read keeps (`fetchText`'s `head` option): for a feed that lists its newest entries
+ * first and whose whole history would outgrow MAX_BODY_BYTES. It is also the size the Range hint asks for.
+ */
+export const HEAD_BYTES = 512 * 1024;
+
 // Bytes read by every fetch made inside meterBytes(), so each collector's
 // log line can say how much it downloaded without threading a counter
 // through every collector and helper. AsyncLocalStorage is the same
@@ -130,15 +136,23 @@ function tooLarge(url: string, maxBytes: number): PayloadError {
  * a missing or false one is caught by the running count. PayloadError, not
  * a plain SourceError: the vendor answered, just not with something a
  * collector can use, which is what "parser" failures mean on the card.
+ *
+ * With `headBytes` the body is not refused but cut: reading stops once that
+ * many bytes are in hand and the stream is cancelled, so nothing more is
+ * downloaded, whether or not the server honoured a Range request. The cut
+ * can fall anywhere (inside a multi-byte character, a CDATA section, a tag);
+ * the caller parses what it got. Only the bytes kept are counted by
+ * meterBytes().
  */
 export async function readBodyCapped(
   response: Response,
   url: string,
   maxBytes: number = MAX_BODY_BYTES,
+  headBytes?: number,
 ): Promise<ArrayBuffer> {
   const meter = byteMeter.getStore();
   const declared = Number(response.headers.get("content-length") ?? "");
-  if (Number.isFinite(declared) && declared > maxBytes) {
+  if (headBytes === undefined && Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel().catch(() => {});
     throw tooLarge(url, maxBytes);
   }
@@ -150,9 +164,17 @@ export async function readBodyCapped(
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
+    if (headBytes !== undefined && total + value.byteLength >= headBytes) {
+      const kept = value.subarray(0, headBytes - total);
+      chunks.push(kept);
+      total = headBytes;
+      if (meter) meter.bytes += kept.byteLength;
+      await reader.cancel().catch(() => {});
+      break;
+    }
     total += value.byteLength;
     if (meter) meter.bytes += value.byteLength;
-    if (total > maxBytes) {
+    if (headBytes === undefined && total > maxBytes) {
       await reader.cancel().catch(() => {});
       throw tooLarge(url, maxBytes);
     }
@@ -179,6 +201,8 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
  * port); add an entry only for a redirect a collector's real URL has been seen to make.
  */
 const REDIRECT_ALLOWED: Readonly<Record<string, readonly string[]>> = {
+  // Google moved its documentation, release-notes feed included, to docs.cloud.google.com.
+  "cloud.google.com": ["docs.cloud.google.com"],
   "upgrade.mikrotik.com": ["download.mikrotik.com"],
   "download.mikrotik.com": ["upgrade.mikrotik.com"],
 };
@@ -236,9 +260,9 @@ async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
 
 export async function fetchText(
   url: string,
-  init: RequestInit & { timeoutMs?: number; binary?: boolean } = {},
+  init: RequestInit & { timeoutMs?: number; binary?: boolean; head?: boolean } = {},
 ): Promise<{ body: string; bytes: ArrayBuffer; contentType: string; status: number }> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, binary, ...rest } = init;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, binary, head, ...rest } = init;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -264,7 +288,7 @@ export async function fetchText(
     }
     // Still under the timeout above: a vendor trickling a body in slowly
     // is aborted like one that never answers.
-    const bytes = await readBodyCapped(response, url);
+    const bytes = await readBodyCapped(response, url, MAX_BODY_BYTES, head ? HEAD_BYTES : undefined);
     const contentType = response.headers.get("content-type") ?? "";
     let body: string;
     if (binary) {

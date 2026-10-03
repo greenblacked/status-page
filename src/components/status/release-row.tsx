@@ -1,6 +1,8 @@
 // tokens-allow: rounded-full (the accent dot on a fresh release)
 import { Tag as TagIcon } from "lucide-react";
+import { Fragment } from "react";
 import { ReleaseDetails } from "@/components/status/release-details";
+import { ReleaseItem, ReleaseTail } from "@/components/status/release-line";
 import type { ServiceCardProps } from "@/components/status/service-card-shared";
 import { ChangedTag, ROW_LEAD, RowFrame, RowHeader } from "@/components/status/service-row";
 import { Tag } from "@/components/ui/tag";
@@ -24,12 +26,17 @@ export function hasFreshRelease(service: ServiceSnapshot): boolean {
  * put the channel in the component's name and the version in its detail.
  */
 export function releaseLine(service: ServiceSnapshot): string {
+  return releaseItems(service).join(" · ");
+}
+
+/** The items of that line, "Stable 7.21 · Sep 24" each, which the row keeps whole when it wraps. */
+export function releaseItems(service: ServiceSnapshot): string[] {
   const versions = service.components
     .filter((component) => component.detail)
     .sort((a, b) => Number(b.health === "maintenance") - Number(a.health === "maintenance"))
     .slice(0, MAX_VERSIONS)
     .map((component) => `${component.name} ${component.detail}`);
-  return versions.length > 0 ? versions.join(" · ") : "No new release";
+  return versions.length > 0 ? versions : ["No new release"];
 }
 
 /**
@@ -45,6 +52,8 @@ export function releaseLine(service: ServiceSnapshot): string {
  */
 export function ReleaseRow({ service, emphasized, released, starred, onToggleStar }: ServiceCardProps) {
   const fresh = hasFreshRelease(service);
+  const items = releaseItems(service);
+  const last = items[items.length - 1];
   return (
     <RowFrame
       service={service}
@@ -62,14 +71,23 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
               New release
             </Tag>
           ) : null}
-          <span className="[overflow-wrap:anywhere]">{releaseLine(service)}</span>
-          {emphasized ? (
-            <>
-              {" "}
-              <ChangedTag />
-            </>
-          ) : null}
-          <ReleaseDetails service={service} variant="inline" />
+          {/* The line wraps between items, never inside one, and "Details" stays with the last. */}
+          {items.slice(0, -1).map((item, at) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: two versions can read alike; the index only breaks that tie.
+            <Fragment key={at}>
+              <ReleaseItem>{item} ·</ReleaseItem>{" "}
+            </Fragment>
+          ))}
+          <ReleaseTail>
+            <ReleaseItem>{last}</ReleaseItem>
+            {emphasized ? (
+              <>
+                {" "}
+                <ChangedTag />
+              </>
+            ) : null}{" "}
+            <ReleaseDetails service={service} variant="inline" />
+          </ReleaseTail>
         </RowHeader>
       </div>
     </RowFrame>

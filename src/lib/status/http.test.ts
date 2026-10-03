@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchJson,
   fetchText,
+  HEAD_BYTES,
   isRefusal,
   MAX_BODY_BYTES,
   meterBytes,
@@ -86,6 +87,35 @@ describe("readBodyCapped / fetchText size cap", () => {
     expect(error).not.toBeInstanceOf(PayloadError);
     expect((error as SourceError).status).toBe(503);
     expect(state.cancelled).toBe(true);
+  });
+
+  it("a head read keeps exactly HEAD_BYTES of a larger body, cancels it, and counts only what it kept", async () => {
+    const { stream, state } = streamOf(MAX_BODY_BYTES * 4);
+    stubFetch(() => new Response(stream, { headers: { "content-length": String(MAX_BODY_BYTES * 4) } }));
+
+    const metered = await meterBytes(async (meter) => {
+      const { bytes } = await fetchText("https://status.example.com/feed.xml", { head: true });
+      return { length: bytes.byteLength, counted: meter.bytes };
+    });
+
+    expect(metered).toEqual({ length: HEAD_BYTES, counted: HEAD_BYTES });
+    expect(state.cancelled).toBe(true);
+    expect(state.pulled).toBeLessThanOrEqual(HEAD_BYTES + CHUNK);
+  });
+
+  it("a head read of a body shorter than HEAD_BYTES returns it whole", async () => {
+    const { stream, state } = streamOf(HEAD_BYTES - 3);
+    stubFetch(() => new Response(stream));
+    const { bytes } = await fetchText("https://status.example.com/feed.xml", { head: true });
+    expect(bytes.byteLength).toBe(HEAD_BYTES - 3);
+    expect(state.cancelled).toBe(false);
+  });
+
+  it("a head read ends cleanly when the body is exactly HEAD_BYTES", async () => {
+    const { stream } = streamOf(HEAD_BYTES);
+    stubFetch(() => new Response(stream));
+    const { bytes } = await fetchText("https://status.example.com/feed.xml", { head: true });
+    expect(bytes.byteLength).toBe(HEAD_BYTES);
   });
 
   it("still times out a body that trickles in", async () => {
@@ -248,6 +278,24 @@ describe("fetchText redirects", () => {
       "https://download.mikrotik.com/routeros/NEWESTa7.stable": () => new Response("7.16"),
     });
     expect((await fetchText("https://upgrade.mikrotik.com/routeros/NEWESTa7.stable")).body).toBe("7.16");
+  });
+
+  it("follows Google's release-notes feed to docs.cloud.google.com, and only that one move", async () => {
+    const calls = routed({
+      "https://cloud.google.com/feeds/gcp-release-notes.xml": () =>
+        redirect("https://docs.cloud.google.com/feeds/gcp-release-notes.xml", 301),
+      "https://docs.cloud.google.com/feeds/gcp-release-notes.xml": () => new Response("<feed/>"),
+    });
+    expect((await fetchText("https://cloud.google.com/feeds/gcp-release-notes.xml")).body).toBe("<feed/>");
+    expect(calls.map((call) => call.url)).toEqual([
+      "https://cloud.google.com/feeds/gcp-release-notes.xml",
+      "https://docs.cloud.google.com/feeds/gcp-release-notes.xml",
+    ]);
+    // The allowance is one way and one host: nothing else on google.com, and not back again.
+    routed({ "https://cloud.google.com/feeds/x.xml": () => redirect("https://sites.google.com/x") });
+    await expect(fetchText("https://cloud.google.com/feeds/x.xml")).rejects.toThrow("off the vendor's host");
+    routed({ "https://docs.cloud.google.com/a": () => redirect("https://cloud.google.com/a") });
+    await expect(fetchText("https://docs.cloud.google.com/a")).rejects.toThrow("off the vendor's host");
   });
 
   it.each([

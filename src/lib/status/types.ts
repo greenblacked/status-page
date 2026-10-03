@@ -46,6 +46,32 @@ export type ReleaseInfo = {
   notes?: string[];
 };
 
+/**
+ * One entry of the vendor's own release or changelog feed, for a status card
+ * (not a Releases tracker). `title` is what the card's line and the Details
+ * name it by: a version the vendor numbers ("GitLab 18.4") or the entry's
+ * headline. `release` holds the rest, in the shape the trackers use.
+ */
+export type ReleaseFeedEntry = {
+  title: string;
+  release: ReleaseInfo;
+};
+
+/**
+ * What a status card knows about the vendor's release feed. It is advisory and
+ * kept apart from health: it never changes a card's health, verdict, counts,
+ * history or change feed, and a feed that cannot be read is simply absent
+ * (the failure is logged and reported by the source-health check).
+ */
+export type ReleaseFeed = {
+  /** The feed's own name, "GitLab releases", for the Details' links and "no notes" line. */
+  sourceName: string;
+  /** The vendor's page for the feed (an https page, not the feed URL). */
+  sourceUrl: string;
+  /** Newest first, at most MAX_FEED_ENTRIES; never empty. */
+  entries: ReleaseFeedEntry[];
+};
+
 export type ComponentHealth = {
   name: string;
   health: Health;
@@ -109,6 +135,12 @@ export type ServiceSnapshot = {
   /** Scheduled, not yet started maintenance, soonest first. Absent when the vendor lists none. */
   upcomingMaintenance?: UpcomingMaintenance[];
   meta?: Record<string, string | number>;
+  /**
+   * The vendor's latest release or changelog entries, set only on a status
+   * card whose vendor publishes a machine-readable feed. Advisory: health,
+   * counts and the change feed never read it.
+   */
+  releaseFeed?: ReleaseFeed;
   /** Set only when the collector itself failed; health is then "unknown". */
   failure?: SourceFailure;
 };

@@ -1,7 +1,10 @@
 name: Release
 
-# Publishes a GitHub Release whose notes are that version's CHANGELOG.md
-# section, and creates its vX.Y.Z tag. Only main is released: pull requests
+# Creates the vX.Y.Z tag and a draft GitHub Release whose notes are that
+# version's CHANGELOG.md section; the sign job attaches the signed source
+# archive and only then publishes the release. If a check fails nothing is
+# committed, tagged or published; if signing fails the tag exists and the
+# release stays a draft. Only main is released: pull requests
 # merge into dev, which never releases, the owner promotes dev to stage (a
 # preview) and stage to main, each in a merge commit
 # (CONTRIBUTING.md#releases). Ways in:
@@ -9,7 +12,8 @@ name: Release
 #     the last release pick the next version (scripts/release/next.sh): a
 #     breaking change is major, feat minor, fix, perf or revert patch, and
 #     anything else releases nothing. CI commits the bump to main, authored
-#     by whoever merged, then tags it and publishes. The usual way to release.
+#     by whoever merged, then tags it and drafts the release. The usual way
+#     to release.
 #   - Merging a pull request that sets an untagged version in package.json,
 #     for example one from scripts/release/bump.sh: releases that version.
 #   - Run workflow with bump = patch, minor or major: the same bump, by hand.
@@ -20,14 +24,14 @@ name: Release
 #     CHANGELOG.md section on main.
 #   - Pushing a vX.Y.Z tag by hand.
 # The release has to be on main, have a changelog section and pass the same
-# checks as CI. If any check fails, nothing is committed, tagged or
-# published. After every run for main, released or not, main is merged back
+# checks as CI. After every run for main, released or not, main is merged back
 # into stage and then dev, so both carry the release commit and any fix
 # merged into main directly. Those merges are pushed with GITHUB_TOKEN, which
 # starts no workflow of its own, so when one actually moved stage this also
 # starts deploy.yml on stage by hand, or the stage preview would keep running
 # the pre-release code until an unrelated push to stage updated it (dev
-# deploys nothing). CONTRIBUTING.md#releases has the details.
+# deploys nothing). CONTRIBUTING.md#releases has the details, and how to
+# verify a release.
 
 on:
   push:
@@ -82,6 +86,7 @@ jobs:
         id: plan
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           BUMP: ${{ inputs.bump }}
@@ -98,6 +103,14 @@ jobs:
 
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
             fail "$GITHUB_SHA is not on main; only main is released"
+
+          # Run workflow from any other ref (stage can sit on main's tip) would
+          # publish, but the sign job's certificate would name that ref and
+          # fail its own check, leaving a release without signed assets.
+          if [ "$EVENT" = workflow_dispatch ]; then
+            [[ "$REF" =~ ^refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$ ]] ||
+              fail "run this workflow from main or a vX.Y.Z tag, not $REF"
+          fi
 
           # Backfill: tag an older commit with a version main's changelog has.
           if [ "$EVENT" = workflow_dispatch ] && [ -n "$VERSION$COMMIT" ]; then
@@ -234,7 +247,13 @@ jobs:
     # The only job with write access. It installs no dependencies and runs
     # no project code: only the release scripts, npm version and gh.
     permissions:
-      contents: write # push the bump commit to main, create the tag and the GitHub Release
+      contents: write # push the bump commit and the tag, create the draft GitHub Release
+    outputs:
+      # false when main moved and the newer push's run releases instead (the
+      # bump step says so); true for every other run that got this far.
+      published: ${{ steps.bump.outputs.published != 'false' }}
+      # The commit the tag names; the sign job checks the tag still does.
+      target: ${{ steps.release.outputs.target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -290,8 +309,10 @@ jobs:
           # concurrent merge is never overwritten.
           git push origin "HEAD:refs/heads/main" || moved
 
-      - name: Tag and publish the GitHub Release
+      - name: Tag and draft the GitHub Release
+        id: release
         if: steps.bump.outputs.published != 'false'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -299,29 +320,186 @@ jobs:
           TAG: ${{ needs.plan.outputs.tag }}
           SHA: ${{ needs.plan.outputs.sha }}
         run: |
-          notes="$RUNNER_TEMP/release-notes.md"
-          ./scripts/ci/release-notes.sh "${TAG#v}" >"$notes"
           # The bump commit, or the commit this run was started for. A
           # backfill tags the older commit plan checked.
           target="$(git rev-parse HEAD)"
           if [ "$MODE" = backfill ]; then
             target="$SHA"
           fi
-          # Only the newest version is Latest, so a backfill never takes the
-          # badge from a newer release.
+          echo "target=$target" >>"$GITHUB_OUTPUT"
+          notes="$RUNNER_TEMP/release-notes.md"
+          ./scripts/ci/release-notes.sh "${TAG#v}" >"$notes"
+
+          # The tag comes first and is created before the draft, so a draft
+          # never exists without it. Runs are serialized and the checkout has
+          # every tag, so a tag pushed by hand or left by a failed run is
+          # seen here: it is used as it is if it names target. Neither it nor
+          # a bump pushed with GITHUB_TOKEN starts this workflow again.
+          if existing="$(git rev-parse -q --verify "refs/tags/$TAG^{commit}")"; then
+            [ "$existing" = "$target" ] || { echo "::error::$TAG is on $existing, not $target"; exit 1; }
+          else
+            gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$target" >/dev/null
+          fi
+
+          # The release for this tag, a draft included (the releases list has
+          # them for a token that can write). A re-run updates its notes and
+          # leaves it as it is.
+          found="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"')"
+          if [ "$(printf '%s' "$found" | grep -c .)" -gt 1 ]; then
+            echo "::error::more than one release for $TAG"
+            exit 1
+          fi
+          if [ -z "$found" ]; then
+            gh release create "$TAG" --verify-tag --draft --title "Status Page $TAG" --notes-file "$notes"
+          else
+            gh api -X PATCH "repos/$GH_REPO/releases/${found%% *}" -f name="Status Page $TAG" -F body=@"$notes" >/dev/null
+          fi
+
+  sign:
+    name: sign release
+    needs: [plan, publish]
+    if: needs.publish.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The only job in this workflow with id-token: write, and it runs no
+    # project code: git, cosign and gh. contents: write is for uploading the
+    # two release assets and publishing the draft.
+    permissions:
+      contents: write # upload the source archive and its signature, publish the release
+      id-token: write # keyless Sigstore signing with this run's GitHub OIDC identity
+    steps:
+      # The tag publish created (or the one pushed by hand): the archive is
+      # exactly the commit the release names.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Scorecard's Signed-Releases check looks for a signature asset on the
+      # release (*.sigstore.json is one it accepts); users verify the archive
+      # with it (CONTRIBUTING.md#releases).
+      - name: Archive and sign the source
+        shell: bash
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          TARGET: ${{ needs.publish.outputs.target }}
+          REPO: ${{ github.repository }}
+        run: |
+          # A tag moved by hand since publish created it is not signed.
+          [ "$(git rev-parse HEAD)" = "$TARGET" ] || { echo "::error::$TAG is on $(git rev-parse HEAD), not $TARGET"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/assets"
+          archive="$RUNNER_TEMP/assets/status-page-${TAG}.tar.gz"
+          git archive --format=tar.gz --prefix="status-page-${TAG#v}/" -o "$archive" HEAD
+          cosign sign-blob --yes --bundle "$archive.sigstore.json" "$archive"
+          # A bad or mismatched signature fails the run before anything is
+          # attached. The identity is this repository's release workflow on
+          # main, or on a version tag pushed by hand, issued by GitHub Actions.
+          repo_re="${REPO//./\\.}"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github\.com/${repo_re}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$" \
+            "$archive"
+
+      - name: Attach them and publish the GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+        run: |
+          archive="$RUNNER_TEMP/assets/status-page-${TAG}.tar.gz"
+          bundle="$archive.sigstore.json"
+          found="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.tag_name == env.TAG) | "\(.id) \(.draft)"')"
+          if [ "$(printf '%s' "$found" | grep -c .)" -ne 1 ]; then
+            echo "::error::expected exactly one release for $TAG, found: ${found:-none}"
+            exit 1
+          fi
+          id="${found%% *}"
+
+          # Already public (an older run's sign re-run, or a release made
+          # before signing or by hand): never --clobber here, which deletes a
+          # public asset before replacing it. An asset already there is
+          # checked, not trusted by its name: a different archive under the
+          # expected name (a renamed source tarball, or another version's
+          # signed pair) would leave users with the wrong source. Any
+          # mismatch fails the run and
+          # changes nothing; only the asset that is absent is uploaded.
+          if [ "${found##* }" = false ]; then
+            have="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+            has_archive=false
+            has_bundle=false
+            printf '%s\n' "$have" | grep -qxF "$(basename "$archive")" && has_archive=true
+            printf '%s\n' "$have" | grep -qxF "$(basename "$bundle")" && has_bundle=true
+            repo_re="${GH_REPO//./\\.}"
+            verify() { # verify <bundle> <archive>
+              cosign verify-blob \
+                --bundle "$1" \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+                --certificate-identity-regexp "^https://github\.com/${repo_re}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$" \
+                "$2"
+            }
+            # A valid signature only says some release run signed these
+            # bytes, and the identity matches every version. Tie the archive
+            # to this tag too: the same bytes as the fresh archive, or else
+            # the commit id git archive records in the tar header is this
+            # tag's commit and every entry sits under this version's prefix.
+            # The second route does not depend on gzip producing the same
+            # bytes, so releases signed on older runner images still pass.
+            is_this_source() { # is_this_source <archive>
+              [ "$(sha256sum <"$1" | cut -d' ' -f1)" = "$(sha256sum <"$archive" | cut -d' ' -f1)" ] && return 0
+              [ "$(gzip -dc "$1" | git get-tar-commit-id)" = "$(git rev-parse HEAD)" ] || return 1
+              entries="$(tar -tzf "$1")" || return 1
+              printf '%s\n' "$entries" | awk -v p="status-page-${TAG#v}/" 'index($0, p) != 1 { bad = 1 } END { exit (NR == 0 || bad) }'
+            }
+            existing="$RUNNER_TEMP/existing"
+            rm -rf "$existing"
+            mkdir -p "$existing"
+            if [ "$has_archive" = true ] && [ "$has_bundle" = true ]; then
+              gh release download "$TAG" --dir "$existing" --pattern "$(basename "$archive")" --pattern "$(basename "$bundle")"
+              if ! verify "$existing/$(basename "$bundle")" "$existing/$(basename "$archive")"; then
+                echo "::error::$TAG is public, but its archive and signature bundle do not verify; not replacing public assets"
+                exit 1
+              fi
+              if ! is_this_source "$existing/$(basename "$archive")"; then
+                echo "::error::$TAG is public with a signed archive that is not this tag's source; not replacing public assets"
+                exit 1
+              fi
+              echo "::notice::$TAG is already public with its signed assets, which verify"
+            elif [ "$has_archive" = true ]; then
+              gh release download "$TAG" --dir "$existing" --pattern "$(basename "$archive")"
+              # The bundle uploaded below signs the fresh archive, so only
+              # the same bytes will do here.
+              if [ "$(sha256sum <"$existing/$(basename "$archive")" | cut -d' ' -f1)" != "$(sha256sum <"$archive" | cut -d' ' -f1)" ]; then
+                echo "::error::$TAG is public with an archive that is not this tag's source; not signing it"
+                exit 1
+              fi
+              gh release upload "$TAG" "$bundle"
+            elif [ "$has_bundle" = true ]; then
+              gh release download "$TAG" --dir "$existing" --pattern "$(basename "$bundle")"
+              if ! verify "$existing/$(basename "$bundle")" "$archive"; then
+                echo "::error::$TAG is public with a signature bundle that does not verify this tag's source; not replacing it"
+                exit 1
+              fi
+              gh release upload "$TAG" "$archive"
+            else
+              gh release upload "$TAG" "$archive" "$bundle"
+            fi
+            exit 0
+          fi
+
+          # Still a draft: the assets replace any left by a failed attempt,
+          # then it goes public. Latest is the newest published version as
+          # of now, so a backfill or a late re-run never takes the badge.
+          gh release upload "$TAG" "$archive" "$bundle" --clobber
+          newest="$( { gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name'; echo "$TAG"; } | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' | sort -V | tail -n1)"
           latest=false
-          if [ "$( { git tag --list 'v*.*.*'; echo "$TAG"; } | sort -V | tail -n1)" = "$TAG" ]; then
+          if [ "$newest" = "$TAG" ]; then
             latest=true
           fi
-          # A re-run updates the existing release instead of failing on it.
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Status Page $TAG" --notes-file "$notes" --latest="$latest"
-          else
-            # Creates the tag on target. A tag pushed by hand already points
-            # there and is used as it is. Neither the tag nor a bump pushed
-            # with GITHUB_TOKEN starts this workflow again.
-            gh release create "$TAG" --target "$target" --title "Status Page $TAG" --notes-file "$notes" --latest="$latest"
-          fi
+          gh api -X PATCH "repos/$GH_REPO/releases/$id" -F draft=false -f make_latest="$latest" >/dev/null
 
   sync-branches:
     name: merge main into stage and dev

@@ -3,22 +3,46 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CONSECUTIVE_RUNS,
+  MIN_RUN_GAP_MS,
+  PENDING_MAX_AGE_MS,
+  type Pending,
+  parseState,
+  planRun,
   probeReadyz,
   type ReadyzResult,
   type Result,
   recordPath,
   recordResponses,
+  releaseFeedResult,
+  renderState,
+  retryDelayMs,
   syncDeployHealth,
   syncIssues,
 } from "./source-health.ts";
 
 // A fake of the three GitHub issue endpoints the script uses, so the
 // open/update/close flow is tested before it ever runs against the real API.
-type FakeIssue = { number: number; state: string; labels: string[]; title: string; body: string; created_at: string };
+type FakeIssue = {
+  number: number;
+  state: string;
+  state_reason?: string;
+  labels: string[];
+  title: string;
+  body: string;
+  created_at: string;
+  user?: { login: string; type: string };
+};
 let issues: FakeIssue[] = [];
 let comments: { issue: number; body: string }[] = [];
+// Repository labels, and the faked quirks a test can switch on: a status for
+// POST /labels, and an issue API that drops the state label when it is missing.
+let repoLabels: string[] = [];
+let labelStatus: number | undefined;
+let dropUnknownLabels = false;
+let rejectUnknownLabels = false;
 let server: Server;
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
@@ -36,21 +60,47 @@ beforeAll(async () => {
     };
     const one = url.pathname.match(/\/issues\/(\d+)$/);
     const commentOn = url.pathname.match(/\/issues\/(\d+)\/comments$/);
+    // Before the generic /issues route: /search/issues also ends in /issues.
+    if (req.method === "GET" && url.pathname === "/search/issues") {
+      const term = (url.searchParams.get("q") ?? "").split(" ").at(-1) ?? "";
+      return send(200, { items: issues.filter((i) => i.body.includes(term)) });
+    }
     if (req.method === "GET" && url.pathname.endsWith("/issues")) {
-      const wanted = (url.searchParams.get("labels") ?? "").split(",");
-      return send(
-        200,
-        issues.filter((i) => i.state === url.searchParams.get("state") && wanted.every((l) => i.labels.includes(l))),
+      const wanted = (url.searchParams.get("labels") ?? "").split(",").filter(Boolean);
+      const matching = issues.filter(
+        (i) =>
+          (url.searchParams.get("state") === "all" || i.state === url.searchParams.get("state")) &&
+          wanted.every((l) => i.labels.includes(l)),
       );
+      const page = Number(url.searchParams.get("page") ?? 1);
+      return send(200, matching.slice((page - 1) * 100, page * 100));
+    }
+    // GitHub answers 422 for a label the repository does not have, if asked to.
+    const unknownLabel = (labels: unknown) =>
+      rejectUnknownLabels &&
+      Array.isArray(labels) &&
+      labels.includes("source-health-state") &&
+      !repoLabels.includes("source-health-state");
+    if (req.method === "POST" && url.pathname.endsWith("/labels")) {
+      const { name } = (await readJson(req)) as { name: string };
+      if (labelStatus) return send(labelStatus, { message: "label call refused" });
+      if (repoLabels.includes(name)) return send(422, { errors: [{ code: "already_exists" }] });
+      repoLabels.push(name);
+      return send(201, { name });
     }
     if (req.method === "POST" && url.pathname.endsWith("/issues")) {
       const body = await readJson(req);
+      if (unknownLabel(body.labels)) return send(422, { message: "Validation Failed: label does not exist" });
       const issue = {
         number: issues.length + 1,
         state: "open",
+        labels: [],
         created_at: "2026-09-23T00:00:00Z",
+        user: { login: "github-actions[bot]", type: "Bot" },
         ...body,
-      } as FakeIssue;
+      } as unknown as FakeIssue;
+      if (dropUnknownLabels)
+        issue.labels = issue.labels.filter((l) => l !== "source-health-state" || repoLabels.includes(l));
       issues.push(issue);
       return send(201, issue);
     }
@@ -60,7 +110,9 @@ beforeAll(async () => {
     }
     if (req.method === "PATCH" && one) {
       const issue = issues.find((i) => i.number === Number(one[1]));
-      Object.assign(issue ?? {}, await readJson(req));
+      const patch = await readJson(req);
+      if (unknownLabel(patch.labels)) return send(422, { message: "Validation Failed: label does not exist" });
+      Object.assign(issue ?? {}, patch);
       return send(200, issue);
     }
     send(404, { message: "not faked" });
@@ -80,7 +132,27 @@ afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 beforeEach(() => {
   issues = [];
   comments = [];
+  repoLabels = [];
+  labelStatus = undefined;
+  dropUnknownLabels = false;
+  rejectUnknownLabels = false;
+  // Only the clock is faked, so each sync below can be a separate hourly run.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(START);
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const START = new Date("2026-10-02T06:00:00.000Z");
+const HOUR = 60 * 60 * 1000;
+
+/** Syncs as a run that starts `ms` later than the previous one. */
+async function later(ms: number, results: Result[]): Promise<void> {
+  vi.setSystemTime(new Date(Date.now() + ms));
+  await syncIssues(results);
+}
 
 const broken: Result = {
   id: "apple",
@@ -92,30 +164,432 @@ const broken: Result = {
 };
 const healthy: Result = { ...broken, ok: true, failure: undefined };
 
+const sourceIssues = () => issues.filter((i) => i.labels.includes("source-health"));
+const stateIssues = () => issues.filter((i) => i.labels.includes("source-health-state"));
+
 describe("source-health issue sync", () => {
-  it("opens one labelled issue for a failing source, then updates it instead of opening another", async () => {
-    await syncIssues([broken]);
-    await syncIssues([broken]);
-    expect(issues).toHaveLength(1);
-    expect(issues[0].title).toBe("Collector failure: Apple");
-    expect(issues[0].labels).toEqual(["source-health", "source:apple"]);
-    expect(issues[0].body).toContain("`parser`");
-    expect(issues[0].body).toContain("/owner/repo/actions/runs/42");
+  it("holds a first failure back, then opens one labelled issue on the second and updates it on the third", async () => {
+    await later(0, [broken]);
+    expect(sourceIssues()).toHaveLength(0);
+
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].title).toBe("Collector failure: Apple");
+    expect(sourceIssues()[0].labels).toEqual(["source-health", "source:apple"]);
+    expect(sourceIssues()[0].body).toContain("`parser`");
+    expect(sourceIssues()[0].body).toContain("/owner/repo/actions/runs/42");
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+    expect(sourceIssues()[0].body).toContain("in 2 consecutive runs, and in all 3 attempts");
+
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 3 |");
     expect(comments).toHaveLength(0);
   });
 
+  it("dates the first failure from the run that saw it, and the latest from the run that opened it", async () => {
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
+    const body = sourceIssues()[0].body;
+    expect(body).toContain(`| First failure | ${START.toISOString()} |`);
+    expect(body).toContain(`| Latest failure | ${new Date(START.getTime() + 4 * HOUR).toISOString()} |`);
+  });
+
+  it("opens nothing for a source that fails once and then reads cleanly", async () => {
+    await later(0, [broken]);
+    await later(4 * HOUR, [healthy]);
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(0);
+    expect(comments).toHaveLength(0);
+  });
+
+  it("does not count a re-run started minutes after the failing run", async () => {
+    await later(0, [broken]);
+    await later(MIN_RUN_GAP_MS - 1000, [broken]);
+    expect(sourceIssues()).toHaveLength(0);
+    // The gap is measured from the last counted run, so the next hourly run counts.
+    await later(HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+  });
+
+  it("keeps its memory in one closed state issue that is edited, never duplicated", async () => {
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
+    await later(4 * HOUR, [healthy]);
+    expect(stateIssues()).toHaveLength(1);
+    expect(stateIssues()[0].state).toBe("closed");
+    expect(stateIssues()[0].state_reason).toBe("not_planned");
+    expect(parseState(stateIssues()[0].body).size).toBe(0);
+  });
+
+  it("creates the state label before the first state issue uses it", async () => {
+    dropUnknownLabels = true;
+    await later(0, [broken]);
+    expect(repoLabels).toContain("source-health-state");
+    expect(stateIssues()).toHaveLength(1);
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(stateIssues()).toHaveLength(1);
+  });
+
+  it("carries on when the state label already exists (422)", async () => {
+    repoLabels = ["source-health-state"];
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
+    expect(repoLabels).toEqual(["source-health-state"]);
+    expect(stateIssues()).toHaveLength(1);
+    expect(sourceIssues()).toHaveLength(1);
+  });
+
+  it("still finds the streak by its marker when the label cannot be created", async () => {
+    dropUnknownLabels = true;
+    labelStatus = 403;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await later(0, [broken]);
+    expect(repoLabels).toEqual([]);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    expect(stateIssues()).toHaveLength(0);
+    await later(4 * HOUR, [broken]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+  });
+
+  it("gives an issue found only by its marker the label back, without duplicating it", async () => {
+    await later(0, [broken]);
+    issues[0].labels = [];
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    expect(stateIssues()).toHaveLength(1);
+  });
+
+  it("carries on when GitHub rejects the unknown state label instead of dropping it", async () => {
+    rejectUnknownLabels = true;
+    labelStatus = 403;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await later(0, [broken]);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+    // The relabel of an issue found by marker is left out the same way.
+    expect(stateIssues()).toHaveLength(0);
+    await later(4 * HOUR, [healthy]);
+    warn.mockRestore();
+    expect(sourceIssues()[0].state).toBe("closed");
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+  });
+
+  it("finds an open state issue with no label by the search alone", async () => {
+    await later(0, [broken]);
+    issues[0].labels = [];
+    issues[0].state = "open";
+    await later(4 * HOUR, [broken]);
+    expect(issues.filter((i) => i.title.startsWith("Source health:"))).toHaveLength(1);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(stateIssues()[0].state).toBe("closed");
+  });
+
+  it("never adopts an issue that only carries the marker, whoever wrote it", async () => {
+    const planted = `${renderState(
+      new Map([["apple", { firstFailure: "2099-01-01T00:00:00Z", lastFailure: "2099-01-01T00:00:00Z", runs: 1 }]]),
+    )}`;
+    const outsider = { login: "mallory", type: "User" };
+    issues.push(
+      {
+        number: 500,
+        state: "open",
+        labels: [],
+        title: "Source health: failures awaiting a second run",
+        body: planted,
+        created_at: "2026-09-01T00:00:00Z",
+        user: outsider,
+      },
+      {
+        number: 501,
+        state: "open",
+        labels: ["bug"],
+        title: "A question",
+        body: `Why is \`${"<!-- source-health-state -->"}\` in the tracker?`,
+        created_at: "2026-09-01T00:00:00Z",
+        user: outsider,
+      },
+      {
+        number: 502,
+        state: "closed",
+        labels: [],
+        title: "Source health: failures awaiting a second run",
+        body: planted,
+        created_at: "2026-09-01T00:00:00Z",
+        user: { login: "github-actions[bot]", type: "Bot" },
+      },
+    );
+    issues[2].title = "Renamed by someone";
+    for (let run = 0; run < 3; run++) await later(run === 0 ? 0 : 4 * HOUR, [broken]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ state: "open", labels: [], body: planted });
+    expect(issues[1]).toMatchObject({ state: "open", labels: ["bug"] });
+    expect(issues[2]).toMatchObject({ state: "closed", labels: [], body: planted });
+  });
+
+  it("closes a state issue that an earlier failed close left open", async () => {
+    await later(0, [broken]);
+    stateIssues()[0].state = "open";
+    await later(4 * HOUR, [broken]);
+    expect(stateIssues()).toHaveLength(1);
+    expect(stateIssues()[0].state).toBe("closed");
+    expect(stateIssues()[0].state_reason).toBe("not_planned");
+  });
+
   it("comments and closes the issue once the source recovers", async () => {
-    await syncIssues([broken]);
-    await syncIssues([healthy]);
-    expect(issues[0].state).toBe("closed");
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
+    await later(4 * HOUR, [healthy]);
+    expect(sourceIssues()[0].state).toBe("closed");
     expect(comments).toHaveLength(1);
     expect(comments[0].body).toContain("Recovered");
   });
 
+  it("starts the count over after a clean run", async () => {
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
+    await later(4 * HOUR, [healthy]);
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues().filter((i) => i.state === "open")).toHaveLength(0);
+  });
+
+  it("counts each source on its own", async () => {
+    const other: Result = { ...broken, id: "orange", name: "Orange" };
+    await later(0, [broken, { ...other, ok: true, failure: undefined }]);
+    await later(4 * HOUR, [broken, other]);
+    expect(sourceIssues().map((i) => i.title)).toEqual(["Collector failure: Apple"]);
+  });
+
+  it("continues the count of an open issue after the memory went stale or was lost", async () => {
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 3 |");
+    // A gap past the maximum age: the entry is stale, the issue is still open.
+    await later(PENDING_MAX_AGE_MS + HOUR, [broken]);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 4 |");
+    expect(sourceIssues()[0].body).toContain("in 4 consecutive runs");
+    // An issue from before the two-run rule has no memory and no count row.
+    stateIssues()[0].body = renderState(new Map());
+    sourceIssues()[0].body = sourceIssues()[0].body.replace(/\| Failing runs in a row \| \d+ \|\n/, "");
+    await later(4 * HOUR, [broken]);
+    expect(sourceIssues()[0].body).toContain("| Failing runs in a row | 2 |");
+  });
+
   it("does nothing for a healthy source with no open issue", async () => {
-    await syncIssues([healthy]);
+    await later(0, [healthy]);
     expect(issues).toHaveLength(0);
     expect(comments).toHaveLength(0);
+  });
+});
+
+describe("release feeds in the report", () => {
+  it("are rows of their own, named for the feed and keyed apart from their card", () => {
+    expect(
+      releaseFeedResult({ id: "gitlab", label: "GitLab releases", ok: true, latencyMs: 240, bytes: 10 }, 2),
+    ).toEqual({
+      id: "gitlab-releases",
+      name: "GitLab releases",
+      ok: true,
+      latencyMs: 240,
+      attempts: 2,
+      failure: undefined,
+    });
+    const failure = { kind: "parser" as const, message: "GitLab releases had no readable entries." };
+    expect(
+      releaseFeedResult({ id: "cs2-europe", label: "CS2 releases", ok: false, latencyMs: 12, bytes: 0, failure }, 3),
+    ).toMatchObject({ id: "cs2-europe-releases", name: "CS2 releases", ok: false, failure });
+  });
+
+  it("open an issue of their own that names the release feed reader and says the card keeps its health", async () => {
+    const result = releaseFeedResult(
+      {
+        id: "gitlab",
+        label: "GitLab releases",
+        ok: false,
+        latencyMs: 12,
+        bytes: 0,
+        failure: { kind: "parser", message: "GitLab releases was not an RSS or Atom feed." },
+      },
+      3,
+    );
+    const card = { ...healthy, id: "gitlab", name: "GitLab" };
+    await later(0, [result, card]);
+    expect(sourceIssues()).toHaveLength(0);
+    await later(4 * HOUR, [result, card]);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].title).toBe("Collector failure: GitLab releases");
+    expect(sourceIssues()[0].labels).toEqual(["source-health", "source:gitlab-releases"]);
+    expect(sourceIssues()[0].body).toContain("release feed");
+    expect(sourceIssues()[0].body).toContain("release-feeds.server.ts");
+    expect(sourceIssues()[0].body).toContain("keeps its health");
+    expect(sourceIssues()[0].body).toContain("in 2 consecutive runs");
+  });
+
+  it("are held back until the second failing run, remembered in the state issue, and closed when they recover", async () => {
+    const feed: Result = { ...broken, id: "gitlab-releases", name: "GitLab releases" };
+    await later(0, [feed, { ...healthy, id: "gitlab", name: "GitLab" }]);
+    expect(sourceIssues()).toHaveLength(0);
+    expect(stateIssues()).toHaveLength(1);
+    expect([...parseState(stateIssues()[0].body).keys()]).toEqual(["gitlab-releases"]);
+
+    await later(4 * HOUR, [feed]);
+    expect(sourceIssues()).toHaveLength(1);
+    await later(4 * HOUR, [{ ...feed, ok: true, failure: undefined }]);
+    expect(sourceIssues()[0].state).toBe("closed");
+    expect(comments).toHaveLength(1);
+    expect(parseState(stateIssues()[0].body).size).toBe(0);
+  });
+});
+
+describe("planRun", () => {
+  const now = "2026-10-02T12:00:00.000Z";
+  const earlier = (ms: number) => new Date(Date.parse(now) - ms).toISOString();
+  const entry = (ago: number, runs = 1): Pending => ({ firstFailure: earlier(ago), lastFailure: earlier(ago), runs });
+  const source = (id: string, ok: boolean): Result => ({
+    ...broken,
+    id,
+    name: id,
+    ok,
+    failure: ok ? undefined : broken.failure,
+  });
+
+  it("remembers a first failure without allowing an issue", () => {
+    const { next, mayOpen } = planRun([source("a", false)], new Map(), now);
+    expect([...mayOpen]).toEqual([]);
+    expect(next.get("a")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
+  });
+
+  it("allows an issue once the source has failed in CONSECUTIVE_RUNS runs, keeping the first failure time", () => {
+    expect(CONSECUTIVE_RUNS).toBe(2);
+    const before = entry(4 * 60 * 60 * 1000);
+    const { next, mayOpen } = planRun([source("a", false)], new Map([["a", before]]), now);
+    expect([...mayOpen]).toEqual(["a"]);
+    expect(next.get("a")).toEqual({ firstFailure: before.firstFailure, lastFailure: now, runs: 2 });
+  });
+
+  it("does not count a run closer than the minimum gap, and keeps the entry as it was", () => {
+    const before = entry(MIN_RUN_GAP_MS - 1000);
+    const { next, mayOpen } = planRun([source("a", false)], new Map([["a", before]]), now);
+    expect(mayOpen.size).toBe(0);
+    expect(next.get("a")).toEqual(before);
+  });
+
+  it("counts a run exactly at the minimum gap", () => {
+    const { mayOpen } = planRun([source("a", false)], new Map([["a", entry(MIN_RUN_GAP_MS)]]), now);
+    expect(mayOpen.has("a")).toBe(true);
+  });
+
+  it("forgets a source that read cleanly", () => {
+    const { next } = planRun([source("a", true)], new Map([["a", entry(1000)]]), now);
+    expect(next.size).toBe(0);
+  });
+
+  it("keeps a source missing from this run's catalog until it ages out", () => {
+    const kept = entry(2 * 60 * 60 * 1000);
+    const { next } = planRun(
+      [source("a", true)],
+      new Map([
+        ["gone", kept],
+        ["old", entry(PENDING_MAX_AGE_MS + 1000)],
+      ]),
+      now,
+    );
+    expect([...next.keys()]).toEqual(["gone"]);
+    expect(next.get("gone")).toEqual(kept);
+  });
+
+  it("treats a failure remembered longer ago than the maximum age as a new one", () => {
+    const { next, mayOpen } = planRun([source("a", false)], new Map([["a", entry(PENDING_MAX_AGE_MS + 1000, 5)]]), now);
+    expect(mayOpen.size).toBe(0);
+    expect(next.get("a")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
+  });
+
+  it("still counts a failure remembered exactly at the maximum age", () => {
+    const { mayOpen } = planRun([source("a", false)], new Map([["a", entry(PENDING_MAX_AGE_MS)]]), now);
+    expect(mayOpen.has("a")).toBe(true);
+  });
+
+  it("continues from the count of an open issue when the memory is stale, missing or lower", () => {
+    const open = new Map([["a", 5]]);
+    expect(planRun([source("a", false)], new Map(), now, open).next.get("a")?.runs).toBe(6);
+    expect(
+      planRun([source("a", false)], new Map([["a", entry(PENDING_MAX_AGE_MS + 1000, 2)]]), now, open).next.get("a")
+        ?.runs,
+    ).toBe(6);
+    expect(planRun([source("a", false)], new Map([["a", entry(HOUR, 2)]]), now, open).next.get("a")?.runs).toBe(6);
+    const quick = planRun([source("a", false)], new Map([["a", entry(1000, 2)]]), now, open);
+    expect(quick.next.get("a")?.runs).toBe(5);
+    expect(quick.mayOpen.has("a")).toBe(true);
+  });
+});
+
+describe("planRun with remembered times in the future", () => {
+  const now = "2026-10-02T12:00:00.000Z";
+  const future = "2099-01-01T00:00:00.000Z";
+  const failing: Result = { ...broken, id: "a" };
+
+  it("clamps them to now, so a later run still counts", () => {
+    const planted = new Map<string, Pending>([["a", { firstFailure: future, lastFailure: future, runs: 1 }]]);
+    const first = planRun([failing], planted, now);
+    expect(first.next.get("a")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
+    const later = planRun([failing], first.next, new Date(Date.parse(now) + 4 * HOUR).toISOString());
+    expect(later.next.get("a")?.runs).toBe(2);
+    expect(later.mayOpen.has("a")).toBe(true);
+  });
+
+  it("clamps a source missing from this run too", () => {
+    const planted = new Map<string, Pending>([["gone", { firstFailure: future, lastFailure: future, runs: 1 }]]);
+    expect(planRun([healthy], planted, now).next.get("gone")).toEqual({ firstFailure: now, lastFailure: now, runs: 1 });
+  });
+});
+
+describe("failure memory", () => {
+  it("round-trips through the issue body", () => {
+    const state = new Map<string, Pending>([
+      ["a", { firstFailure: "2026-10-02T10:00:00.000Z", lastFailure: "2026-10-02T11:00:00.000Z", runs: 2 }],
+    ]);
+    expect(parseState(renderState(state))).toEqual(state);
+    expect(parseState(renderState(state).replaceAll("\n", "\r\n"))).toEqual(state);
+  });
+
+  it("reads anything unusable as no memory, and skips malformed entries", () => {
+    expect(parseState(undefined).size).toBe(0);
+    expect(parseState("no code block").size).toBe(0);
+    expect(parseState("```json\nnot json\n```").size).toBe(0);
+    expect(parseState("```json\n[1]\n```").size).toBe(0);
+    const body =
+      '```json\n{"bad":{"firstFailure":"x","lastFailure":"y","runs":1},"zero":{"firstFailure":"2026-10-02T10:00:00Z","lastFailure":"2026-10-02T10:00:00Z","runs":0},"__proto__":null,"ok":{"firstFailure":"2026-10-02T10:00:00Z","lastFailure":"2026-10-02T10:00:00Z","runs":3}}\n```';
+    expect([...parseState(body).keys()]).toEqual(["ok"]);
+  });
+});
+
+describe("retryDelayMs", () => {
+  const fail = (kind: "http" | "timeout" | "network" | "parser"): Result => ({
+    ...broken,
+    failure: { kind, message: "x" },
+  });
+
+  it("waits the short delay after the first attempt", () => {
+    expect(retryDelayMs(1, [fail("timeout")], 20, 90)).toBe(20);
+  });
+
+  it("waits the long delay after later attempts while a source times out or cannot connect", () => {
+    expect(retryDelayMs(2, [fail("timeout")], 20, 90)).toBe(90);
+    expect(retryDelayMs(2, [fail("parser"), fail("network")], 20, 90)).toBe(90);
+  });
+
+  it("keeps the short delay for failures that waiting does not clear", () => {
+    expect(retryDelayMs(2, [fail("parser"), fail("http")], 20, 90)).toBe(20);
   });
 });
 
@@ -148,8 +622,15 @@ describe("deploy-health issue sync", () => {
   });
 
   it("leaves collector issues alone", async () => {
-    await syncIssues([broken]);
+    await later(0, [broken]);
+    await later(4 * HOUR, [broken]);
     await syncDeployHealth(ready);
+    expect(sourceIssues()).toHaveLength(1);
+    expect(sourceIssues()[0].state).toBe("open");
+  });
+
+  it("opens on the first failure, with no second run needed", async () => {
+    await syncDeployHealth(notReady);
     expect(issues).toHaveLength(1);
     expect(issues[0].state).toBe("open");
   });

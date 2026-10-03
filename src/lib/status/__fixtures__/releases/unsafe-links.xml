@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Links that must not reach a card</title>
+    <link>https://aws.amazon.com/new/</link>
+    <item>
+      <title>Plain http link</title>
+      <link>http://aws.amazon.com/about-aws/whats-new/2026/10/http/</link>
+      <pubDate>Thu, 01 Oct 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>A script link</title>
+      <link>javascript:alert(1)</link>
+      <pubDate>Wed, 30 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Another host</title>
+      <link>https://evil.example/aws.amazon.com/about-aws/whats-new/</link>
+      <pubDate>Tue, 29 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>A look-alike host</title>
+      <link>https://aws.amazon.com.evil.example/new/</link>
+      <pubDate>Mon, 28 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Credentials in the link</title>
+      <link>https://user:secret@aws.amazon.com/new/</link>
+      <pubDate>Sun, 27 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>No link at all</title>
+      <pubDate>Sat, 26 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>A relative link</title>
+      <link>/about-aws/whats-new/2026/09/relative/</link>
+      <pubDate>Fri, 25 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>A good link</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/09/good/</link>
+      <pubDate>Thu, 24 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

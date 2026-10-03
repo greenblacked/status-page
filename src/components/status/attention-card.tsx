@@ -4,6 +4,7 @@ import { useServiceHistoryDays } from "@/components/status/board-history-provide
 import { HistoryStrip } from "@/components/status/history-strip";
 import { PenLoop } from "@/components/status/pen";
 import { openDetailsFromCard, ReleaseDetails } from "@/components/status/release-details";
+import { ReleaseFeedLine } from "@/components/status/release-line";
 import {
   ComponentRow,
   HealthyComponents,
@@ -63,7 +64,8 @@ export function AttentionCard({
 }: ServiceCardProps) {
   const days = useServiceHistoryDays(service.id);
   const changelog = service.category === "updates";
-  const details = hasReleaseDetails(service);
+  // A tracker's Details button sits in its footer; a status card's release line has its own (ReleaseFeedLine).
+  const details = changelog && hasReleaseDetails(service);
   const summary = norm(service.summary);
   const outage = service.health === "outage";
 
@@ -153,6 +155,7 @@ export function AttentionCard({
               </>
             ) : null}
           </p>
+          <ReleaseFeedLine service={service} />
         </div>
         <StarButton
           name={service.name}

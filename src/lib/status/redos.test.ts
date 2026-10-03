@@ -4,12 +4,24 @@ import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./ch
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
+  decodeHtmlNames,
+  dropScripts,
+  gitlabVersion,
+  htmlBlocks,
+  jsonEntries,
+  parseFeedItems,
+  RELEASE_SOURCES,
+  steamNoteLines,
+  xmlEntries,
+} from "./release-feeds.server.ts";
+import {
   azureItemHealth,
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
   MAX_RSS_ITEMS,
   MAX_RSS_SCANNED,
+  MAX_SCANNED_ROWS,
   parseRssItems,
 } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
@@ -204,5 +216,152 @@ describe("parsers stay linear on crafted vendor input", () => {
       incidents: [{ id: "1", title: "t", health: "outage", url: `https://status.example.com/${"/".repeat(SIZE)}x` }],
     } as ServiceSnapshot;
     expect(elapsed(() => incidentLink(service))).toBeLessThan(BUDGET_MS);
+  });
+
+  // The release feeds (release-feeds.server.ts): every regex there runs on vendor text.
+  describe("release feeds", () => {
+    const steam = RELEASE_SOURCES.find((candidate) => candidate.id === "cs2-europe");
+    const aws = RELEASE_SOURCES.find((candidate) => candidate.id === "aws");
+    const gitlab = RELEASE_SOURCES.find((candidate) => candidate.id === "gitlab");
+    if (!steam || !aws || !gitlab) throw new Error("a release source is missing");
+
+    it.each(["title", "description", "content", "summary", "pubDate", "published", "updated", "link", "dc:date"])(
+      "parseFeedItems: a repeated unclosed <%s> in an item and in an entry",
+      (tag) => {
+        for (const kind of ["item", "entry"] as const) {
+          const xml = `<${kind}>${`<${tag}>`.repeat(SIZE / 8)}`;
+          let items: ReturnType<typeof parseFeedItems> = [];
+          expect(elapsed(() => (items = parseFeedItems(xml, kind)))).toBeLessThan(BUDGET_MS);
+          expect(items).toHaveLength(1);
+        }
+      },
+    );
+
+    it("parseFeedItems: unclosed openers, empty items and a long run of spaces", () => {
+      for (const kind of ["item", "entry"] as const) {
+        expect(elapsed(() => parseFeedItems(`<${kind}>`.repeat(SIZE / 6), kind))).toBeLessThan(BUDGET_MS * 2);
+        expect(elapsed(() => parseFeedItems(`<${kind}></${kind}>`.repeat(SIZE / 13), kind))).toBeLessThan(
+          BUDGET_MS * 2,
+        );
+        expect(elapsed(() => parseFeedItems(`<${kind}>${" ".repeat(SIZE)}`.repeat(4), kind))).toBeLessThan(BUDGET_MS);
+      }
+    });
+
+    it("parseFeedItems: link tags with long attributes, many links and a href that never ends", () => {
+      const cases = [
+        `<entry>${'<link rel="x" href="a"/>'.repeat(SIZE / 24)}</entry>`,
+        `<entry><link ${"href ".repeat(SIZE / 5)}</entry>`,
+        `<entry><link href=${" ".repeat(SIZE)}"x"</entry>`,
+        `<entry><link href="${"a".repeat(SIZE)}</entry>`,
+        `<entry>${"<link ".repeat(SIZE / 6)}</entry>`,
+        `<entry><link${" rel='".repeat(SIZE / 6)}</entry>`,
+      ];
+      for (const xml of cases) expect(elapsed(() => parseFeedItems(xml, "entry"))).toBeLessThan(BUDGET_MS);
+    });
+
+    it("parseFeedItems: a feed past the scan bound is read in linear time and capped", () => {
+      const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
+      let items: ReturnType<typeof parseFeedItems> = [];
+      expect(elapsed(() => (items = parseFeedItems(xml, "item")))).toBeLessThan(BUDGET_MS * 4);
+      expect(items.length).toBeLessThanOrEqual(12);
+    });
+
+    it("htmlBlocks: repeated block tags, unclosed tags, comments and a tag that never ends", () => {
+      const cases = [
+        "<p>".repeat(SIZE / 3),
+        "<p ".repeat(SIZE / 3),
+        `<p${" ".repeat(SIZE)}`,
+        `<li ${"a=b ".repeat(SIZE / 4)}`,
+        "<br/>".repeat(SIZE / 5),
+        "<!--".repeat(SIZE / 4),
+        `<h2>${"<".repeat(SIZE)}`,
+        `${"<div>x</div>".repeat(SIZE / 12)}`,
+        `<p>${"a ".repeat(SIZE / 2)}</p>`,
+      ];
+      for (const html of cases) expect(elapsed(() => htmlBlocks(html))).toBeLessThan(BUDGET_MS);
+    });
+
+    it("dropScripts: many openers, unclosed ones and a closer that never comes", () => {
+      const cases = [
+        "<script>".repeat(SIZE / 8),
+        "<script></script>".repeat(SIZE / 17),
+        `<script>${"</scrip ".repeat(SIZE / 8)}`,
+        `<style${" ".repeat(SIZE)}`,
+        `<script>${"a".repeat(SIZE)}`,
+        `${"<styl".repeat(SIZE / 5)}`,
+      ];
+      for (const html of cases) expect(elapsed(() => dropScripts(html))).toBeLessThan(BUDGET_MS);
+      expect(dropScripts("a<script>x</script>b<style>y</style>c")).toBe("abc");
+      expect(dropScripts("a<script>never closed")).toBe("a");
+    });
+
+    it("gitlabVersion: a lead of spaces, a long list of versions and lookalikes", () => {
+      const cases = [
+        `GitLab${" ".repeat(SIZE)}18.4 released`,
+        `GitLab 18.4${" ".repeat(SIZE)}released`,
+        `GitLab 19.4${" ".repeat(SIZE)}release notes`,
+        `GitLab 19.4 release${" ".repeat(SIZE)}notes`,
+        `GitLab 19.4 release${" ".repeat(SIZE)}`,
+        `GitLab AI Gateway Critical Patch Release: ${"19.4.1, ".repeat(SIZE / 8)}`,
+        `GitLab Patch Release: ${"18.4.1, ".repeat(SIZE / 8)}`,
+        `GitLab Patch Release: ${"1.".repeat(SIZE / 2)}`,
+        `GitLab critical${" ".repeat(SIZE)}patch release`,
+        `${"GitLab ".repeat(SIZE / 7)}`,
+        `GitLab Patch Release: ${"9999.9999.9999 ".repeat(SIZE / 15)}`,
+      ];
+      for (const title of cases) expect(elapsed(() => gitlabVersion(title))).toBeLessThan(BUDGET_MS);
+      expect(gitlabVersion("GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7")).toBe("18.4.1");
+      expect(gitlabVersion("GitLab 19.4 release notes")).toBe("19.4");
+    });
+
+    it("decodeHtmlNames: ampersands, long names and references that never end", () => {
+      const cases = [
+        "&".repeat(SIZE),
+        "&a".repeat(SIZE / 2),
+        `&${"a".repeat(SIZE)}`,
+        "&hellip".repeat(SIZE / 7),
+        "&hellip;".repeat(SIZE / 8),
+        `${"&abcdefgh".repeat(SIZE / 9)};`,
+        "&;".repeat(SIZE / 2),
+        "&amp;rsquo;".repeat(SIZE / 11),
+      ];
+      for (const text of cases) expect(elapsed(() => decodeHtmlNames(text))).toBeLessThan(BUDGET_MS);
+      expect(decodeHtmlNames("a&hellip;&rsquo;b")).toBe("a\u2026\u2019b");
+    });
+
+    it("steamNoteLines: brackets, placeholders and equals signs without end", () => {
+      const cases = [
+        "[".repeat(SIZE),
+        "[b=".repeat(SIZE / 3),
+        `[url=${"a".repeat(SIZE)}`,
+        `[b${"c".repeat(SIZE)}]`,
+        "{STEAM_CLAN_IMAGE}/".repeat(SIZE / 19),
+        `{STEAM_CLAN_IMAGE}/${"a".repeat(SIZE)}`,
+        "[*]\n".repeat(SIZE / 4),
+        "\r\n".repeat(SIZE / 2),
+      ];
+      for (const contents of cases) expect(elapsed(() => steamNoteLines(contents, "t"))).toBeLessThan(BUDGET_MS);
+    });
+
+    it("the readers as a whole: one huge description, one huge title and a payload of thousands of posts", () => {
+      const description = `<rss><channel><item><title>t</title><description>${"<p>word </p>".repeat(SIZE / 12)}</description></item></channel></rss>`;
+      expect(elapsed(() => xmlEntries(aws, description))).toBeLessThan(BUDGET_MS * 2);
+      const title = `<rss><channel><item><title>${"a ".repeat(SIZE / 2)}</title></item></channel></rss>`;
+      expect(elapsed(() => xmlEntries(aws, title))).toBeLessThan(BUDGET_MS * 2);
+      const posts = JSON.stringify({
+        appnews: {
+          newsitems: Array.from({ length: MAX_SCANNED_ROWS * 2 }, (_, i) => ({
+            gid: String(i),
+            title: `Update ${i}`,
+            date: i,
+          })),
+        },
+      });
+      let count = 0;
+      expect(elapsed(() => (count = jsonEntries(steam, posts).length))).toBeLessThan(BUDGET_MS * 4);
+      expect(count).toBe(5);
+      const gitlabBody = `<feed><entry><title>${"GitLab Patch Release: 18.4.1, ".repeat(SIZE / 30)}</title></entry></feed>`;
+      expect(elapsed(() => xmlEntries(gitlab, gitlabBody))).toBeLessThan(BUDGET_MS * 2);
+    });
   });
 });

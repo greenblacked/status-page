@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Feeds whose HTML uses named character references</title>
+    <link>https://github.blog/changelog/</link>
+    <item>
+      <title><![CDATA[Copilot&hellip; now generally available &mdash; for everyone]]></title>
+      <link>https://github.blog/changelog/2026-10-01-copilot-ga/</link>
+      <description><![CDATA[<p>Copilot now does X &#8212; and Y&hellip; It&rsquo;s &ldquo;ready&rdquo; &copy; 2026 &trade; &bull; &unknown;</p>]]></description>
+      <pubDate>Thu, 01 Oct 2026 16:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Rock &amp;rsquo;n&amp;rsquo; roll &amp;ndash; double escaped</title>
+      <link>https://github.blog/changelog/2026-09-30-double-escaped/</link>
+      <description>&lt;p&gt;It&amp;rsquo;s ready &amp;mdash; really&amp;hellip;&lt;/p&gt;&lt;p&gt;Price &amp;pound;5 &amp;amp; up&lt;/p&gt;</description>
+      <pubDate>Wed, 30 Sep 2026 16:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

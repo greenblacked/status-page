@@ -1,0 +1,60 @@
+{
+  "appnews": {
+    "appid": 730,
+    "newsitems": [
+      {
+        "gid": "5123456789012345678",
+        "title": "Counter-Strike 2 Update",
+        "url": "https://steamstore-a.akamaihd.net/news/externalpost/steam_community_announcements/5123456789012345678",
+        "is_external_url": true,
+        "author": "Valve",
+        "contents": "[list]\n[*] Added the new Anubis match map to the Premier map pool.\n[*] Fixed a crash when spectating a bot.\n[*] Updated the radar for {STEAM_CLAN_IMAGE}/3381077/aaaa.png [url=https://steamcommunity.com/games/CSGO]Overpass[/url].\n[/list]",
+        "feedlabel": "Community Announcements",
+        "date": 1790874000,
+        "feedname": "steam_community_announcements",
+        "feed_type": 1,
+        "appid": 730
+      },
+      {
+        "gid": "5123456789012345001",
+        "title": "Counter-Strike 2 Update",
+        "url": "https://steamstore-a.akamaihd.net/news/externalpost/steam_community_announcements/5123456789012345001",
+        "is_external_url": true,
+        "author": "Valve",
+        "contents": "[h1]Gameplay[/h1]\n[list]\n[*] Adjusted the recoil of the AK-47.\n[/list]",
+        "feedlabel": "Community Announcements",
+        "date": 1790529600,
+        "feedname": "steam_community_announcements",
+        "feed_type": 1,
+        "appid": 730
+      },
+      {
+        "gid": "5123456789012344000",
+        "title": "Operation Broken Fang returns this week",
+        "url": "https://steamstore-a.akamaihd.net/news/externalpost/steam_community_announcements/5123456789012344000",
+        "is_external_url": true,
+        "author": "Valve",
+        "contents": "An event post that is not a patch.",
+        "feedlabel": "Community Announcements",
+        "date": 1790700000,
+        "feedname": "steam_community_announcements",
+        "feed_type": 1,
+        "appid": 730
+      },
+      {
+        "gid": "5123456789012343000",
+        "title": "Release Notes for 9/22/2026",
+        "url": "https://steamstore-a.akamaihd.net/news/externalpost/steam_community_announcements/5123456789012343000",
+        "is_external_url": true,
+        "author": "Valve",
+        "contents": "[list]\n[*] Fixed a map loading hang on Vertigo.\n[/list]",
+        "feedlabel": "Community Announcements",
+        "date": 1790080800,
+        "feedname": "steam_community_announcements",
+        "feed_type": 1,
+        "appid": 730
+      }
+    ],
+    "count": 4
+  }
+}

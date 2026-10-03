@@ -175,8 +175,11 @@ describe("rows with history", () => {
     for (const withHistory of [document, history({ aws: { days: [] } }), undefined]) {
       expect(row(withHistory, { components })).toContain(wrapped);
     }
-    // And a flag-off render has no such wrapper.
+    // A row that opens always has that wrapper (it also holds the release line), with the flag off too; the
+    // flag adds the strip and the outer wrapper around it, nothing else.
     vi.stubEnv("VITE_STATUS_HISTORY", "0");
-    expect(row(document, { components })).not.toContain(wrapped);
+    const off = row(document, { components });
+    expect(off).toContain(wrapped);
+    expect(off).not.toMatch(STRIP);
   });
 });

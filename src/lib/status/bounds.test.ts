@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   boundId,
+  boundReleaseFeed,
   boundSnapshot,
   clip,
+  MAX_FEED_ENTRIES,
+  MAX_FEED_TITLE_CHARS,
   MAX_ID_CHARS,
   MAX_NAME_CHARS,
   MAX_NOTE_CHARS,
@@ -270,5 +273,52 @@ describe("boundSnapshot: a release's Details", () => {
       name: "n",
       health: "operational",
     });
+  });
+});
+
+describe("boundReleaseFeed", () => {
+  const long = "x".repeat(10_000);
+  const entry = (title: string, release = {}) => ({ title, release: { version: "", ...release } });
+
+  it("keeps at most five entries, cuts each title to one line's worth and holds each release as a tracker's is", () => {
+    const feed = boundReleaseFeed({
+      sourceName: long,
+      sourceUrl: "https://example.com/feed",
+      entries: Array.from({ length: 9 }, (_, at) =>
+        entry(`${at}${long}`, { url: `https://example.com/${long}`, notes: [long, long, long, long, long, long] }),
+      ),
+    });
+    expect(feed?.entries).toHaveLength(MAX_FEED_ENTRIES);
+    expect(feed?.sourceName).toHaveLength(120);
+    for (const item of feed?.entries ?? []) {
+      expect(item.title).toHaveLength(MAX_FEED_TITLE_CHARS);
+      expect(item.release.url).toBeUndefined();
+      expect(item.release.notes).toHaveLength(MAX_NOTE_LINES);
+    }
+  });
+
+  it("drops an entry with no title, and a whole feed with no entry or no usable page", () => {
+    const ok = { sourceName: "Feed", sourceUrl: "https://example.com/feed" };
+    expect(boundReleaseFeed({ ...ok, entries: [entry(""), entry("   "), entry("Kept")] })?.entries).toHaveLength(1);
+    expect(boundReleaseFeed({ ...ok, entries: [] })).toBeUndefined();
+    expect(boundReleaseFeed({ ...ok, entries: [entry("")] })).toBeUndefined();
+    expect(
+      boundReleaseFeed({ ...ok, sourceUrl: `https://example.com/${long}`, entries: [entry("Kept")] }),
+    ).toBeUndefined();
+    expect(boundReleaseFeed({ ...ok, entries: "nope" as never })).toBeUndefined();
+    expect(boundReleaseFeed({ ...ok, entries: [null, 3, { title: 4 }] as never })).toBeUndefined();
+  });
+
+  it("boundSnapshot bounds a snapshot's feed and leaves a snapshot without one without the field", () => {
+    const bounded = boundSnapshot({
+      ...base,
+      releaseFeed: { sourceName: "Feed", sourceUrl: "https://example.com/feed", entries: [entry(long)] },
+    });
+    expect(bounded.releaseFeed?.entries[0]?.title).toHaveLength(MAX_FEED_TITLE_CHARS);
+    expect("releaseFeed" in boundSnapshot(base)).toBe(false);
+    expect(
+      "releaseFeed" in
+        boundSnapshot({ ...base, releaseFeed: { sourceName: "F", sourceUrl: "https://a.b", entries: [] } }),
+    ).toBe(false);
   });
 });
