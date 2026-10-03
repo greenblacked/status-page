@@ -283,7 +283,7 @@ test("renders every service with no console errors or hydration warnings", async
   const html = (await response?.text()) ?? "";
   expect(html).toContain('data-health="outage"');
   expect(html).toContain('data-health="degraded"');
-  expect(html).toMatch(/[Ss]ince \d\d:\d\d(?:\s|&nbsp;|\u202f)UTC/);
+  expect(html).toMatch(/[Ss]ince <time [^>]*>\d\d:\d\d\sUTC<\/time>/);
   // After hydration the title leads with how many services need attention: "(2) Status".
   await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -4255,18 +4255,34 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
     }).observe({ type: "layout-shift", buffered: true });
   }, saved);
   const releaseBoard = await holdBoardFetches(page);
-  await page.goto("/");
-  await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
-  // The load's own check, then the saved ones with the quiet run as one row.
-  await expect(feedRows(page)).toHaveCount(7);
-  await page.evaluate(
-    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-  );
-  await page.waitForTimeout(500);
-  const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
-  await releaseBoard();
-  expect(shift, "cumulative layout shift").toBeLessThan(0.02);
+  // Inter's arrival is another test's subject ("when the self-hosted Inter arrives late"). It reflows the hero's
+  // lede whenever that wraps differently in the fallback face, which depends on the board's words, so the font is
+  // held back until the measure is done: what is counted here is the saved checks filling the list.
+  let releaseFont = () => {};
+  const fontHeld = new Promise<void>((resolve) => {
+    releaseFont = resolve;
+  });
+  await page.route("**/fonts/inter-var.woff2", async (route) => {
+    await fontHeld;
+    await route.continue().catch(() => {});
+  });
+  try {
+    // The held font keeps the load event from firing.
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    // The load's own check, then the saved ones with the quiet run as one row.
+    await expect(feedRows(page)).toHaveCount(7);
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    await page.waitForTimeout(500);
+    const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+    await releaseBoard();
+    expect(shift, "cumulative layout shift").toBeLessThan(0.02);
+  } finally {
+    releaseFont();
+  }
 });
 
 // The reserve is measured from the markup the page draws, so it holds at any
@@ -4860,10 +4876,17 @@ for (const [name, makeBoard] of [
 
 test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
-  // Hold the font back so the page is drawn in its fallback first, and count every layout shift that follows.
+  // Hold the font back so the page is drawn in its fallback first, and count the layout shift of the swap alone.
+  // The font is released by the test, once the page is hydrated and a calm board is on it: how a long hero lede
+  // wraps in the fallback face depends on the board's words, and the swap is measured on a board whose words are
+  // the same whatever a server's first render had (the canned payloads' board has a long lede).
+  let releaseFont = () => {};
+  const fontHeld = new Promise<void>((resolve) => {
+    releaseFont = resolve;
+  });
   await page.route("**/fonts/inter-var.woff2", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    await route.continue();
+    await fontHeld;
+    await route.continue().catch(() => {});
   });
   await page.addInitScript(() => {
     const tracked = window as Window & { __cls?: number };
@@ -4874,9 +4897,19 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
       }
     }).observe({ type: "layout-shift", buffered: true });
   });
-  await page.goto("/");
+  await serveBoard(page, () => calmBoard(Date.now()));
+  // The held font keeps the load event from firing.
+  await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(cards(page)).toHaveCount(SERVICES);
-  await hydrated(page);
+  await refreshIntoServedBoard(page, { id: "aws", label: "Operational" });
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+  // Only the swap is counted: what the first paint and the calm board's arrival moved is not this test's subject.
+  await page.evaluate(() => {
+    (window as Window & { __cls?: number }).__cls = 0;
+  });
+  releaseFont();
   // Whether this machine has any font the fallback faces name (the local() names in styles.css).
   const fallbackFound = await page.evaluate(async () => {
     // A face whose local() names match no installed font fails to load and matches nothing.
