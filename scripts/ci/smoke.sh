@@ -133,13 +133,15 @@ wait_for_server() {
 # check_asset_cache: the hashed font under /assets/ has to be cacheable for a
 # year, or font-display: optional never draws Inter on a return visit. It goes
 # from the page to its stylesheet to the font, so the file is the one a browser
-# would request, answered by the same asset server. Not checked for the Worker
-# version: on Cloudflare a matching static asset is served without invoking the
-# Worker, so it carries no X-Worker-Version, and --expect-version would fail
-# every attempt. The dynamic endpoints already establish which version is live.
+# would request, answered by the same asset server. The page that names the
+# stylesheet is held to --expect-version, so the font checked belongs to the
+# expected version. The font itself is not: on Cloudflare a matching static
+# asset is served without invoking the Worker, so it carries no X-Worker-Version
+# and --expect-version would fail every attempt.
 check_asset_cache() {
   local sheets css font cache
   get /
+  check_version /
   [ "$status" = 200 ] || { fail "/: $status, so no stylesheet to check the font cache with"; return; }
   sheets="$(grep -aoE '/assets/[^"'"'"' ]+\.css' "$work/body" | sort -u || true)"
   font=""
