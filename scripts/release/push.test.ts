@@ -213,9 +213,7 @@ describe("release.yml: merge main into stage and dev", () => {
   let runner: string;
   let output: string;
 
-  // main has a release commit that stage and dev lack; dev also holds a change
-  // that conflicts with main's, as the paused dev did.
-  function seedBranches(devPaused: boolean, dev: "conflict" | "clean" | "none" = "conflict"): void {
+  function copyScripts(): void {
     for (const dir of ["scripts/ci", "scripts/release"]) mkdirSync(join(work, dir), { recursive: true });
     for (const file of [
       "ci/dev-paused",
@@ -226,6 +224,12 @@ describe("release.yml: merge main into stage and dev", () => {
     ]) {
       cpSync(join(SCRIPTS, file), join(work, "scripts", file));
     }
+  }
+
+  // main has a release commit that stage and dev lack; dev also holds a change
+  // that conflicts with main's, as the paused dev did.
+  function seedBranches(devPaused: boolean, dev: "conflict" | "clean" | "none" = "conflict"): void {
+    copyScripts();
     writeFileSync(join(work, "scripts/ci/dev-paused"), `${devPaused}\n`);
     writeFileSync(join(work, "file.txt"), "base\n");
     git(work, "add", "-A");
@@ -245,6 +249,45 @@ describe("release.yml: merge main into stage and dev", () => {
       git(devClone, "add", "-A");
       git(devClone, "commit", "--quiet", "-m", "feat: dev only");
       git(devClone, "push", "--quiet", "origin", "dev");
+    }
+    git(work, "fetch", "--quiet", "origin");
+  }
+
+  // A CHANGELOG.md far enough apart that a release at its top and a line added
+  // at its bottom merge cleanly. main is released (turns Unreleased into a
+  // dated section); stage then changes the changelog, something else, or nothing.
+  function seedChangelog(stage: "changelog" | "other" | "none"): void {
+    copyScripts();
+    const filler = Array.from({ length: 12 }, (_, i) => `- old ${i}`).join("\n");
+    writeFileSync(join(work, "scripts/ci/dev-paused"), "true\n");
+    writeFileSync(
+      join(work, "CHANGELOG.md"),
+      `# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-01-01\n\n${filler}\n`,
+    );
+    git(work, "add", "-A");
+    commit(work, "chore: scripts");
+    git(work, "push", "--quiet", "origin", "main");
+    git(work, "push", "--quiet", "origin", "HEAD:refs/heads/stage");
+
+    const released = `# Changelog\n\n## [Unreleased]\n\n## [0.6.0] - 2026-02-01\n\n- shipped\n\n## [0.5.0] - 2026-01-01\n\n${filler}\n`;
+    writeFileSync(join(work, "CHANGELOG.md"), released);
+    git(work, "commit", "--quiet", "-am", "chore(release): 0.6.0");
+    git(work, "push", "--quiet", "origin", "main");
+
+    if (stage !== "none") {
+      const stageClone = clone("stageclone");
+      git(stageClone, "switch", "--quiet", "stage");
+      if (stage === "changelog") {
+        writeFileSync(
+          join(stageClone, "CHANGELOG.md"),
+          `# Changelog\n\n## [Unreleased]\n\n## [0.5.0] - 2026-01-01\n\n${filler}\n- stage only\n`,
+        );
+      } else {
+        writeFileSync(join(stageClone, "stage.txt"), "stage\n");
+      }
+      git(stageClone, "add", "-A");
+      git(stageClone, "commit", "--quiet", "-m", "feat: stage only");
+      git(stageClone, "push", "--quiet", "origin", "stage");
     }
     git(work, "fetch", "--quiet", "origin");
   }
@@ -334,5 +377,35 @@ describe("release.yml: merge main into stage and dev", () => {
     expect(result.output).not.toContain("trying again");
     expect(remoteTip("stage")).toBe(stageBefore);
     expect(result.outputs).not.toContain("stage_pushed");
+  });
+
+  const CHANGELOG_WARNING =
+    "::warning::stage moved while the release was open; check that its CHANGELOG [Unreleased] lines";
+
+  it("warns, but still merges and pushes, when stage and main both changed the changelog", () => {
+    seedChangelog("changelog");
+    const result = run();
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(CHANGELOG_WARNING);
+    expect(result.output).toContain("(CONTRIBUTING.md#releases)");
+    expect(containsMain("stage")).toBe(true);
+    expect(result.outputs).toContain("stage_pushed=true");
+  });
+
+  it("does not warn when the sync is a fast-forward", () => {
+    seedChangelog("none");
+    const result = run();
+    expect(result.status).toBe(0);
+    expect(result.output).not.toContain("::warning::");
+    expect(containsMain("stage")).toBe(true);
+  });
+
+  it("does not warn when only main changed the changelog", () => {
+    seedChangelog("other");
+    const result = run();
+    expect(result.status).toBe(0);
+    expect(result.output).not.toContain("::warning::");
+    expect(containsMain("stage")).toBe(true);
+    expect(remoteTip("stage")).not.toBe(remoteTip("main"));
   });
 });

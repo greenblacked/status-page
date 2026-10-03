@@ -619,6 +619,18 @@ jobs:
                 synced=true
                 break
               fi
+              # A branch that took changes while the release was open and
+              # touched CHANGELOG.md on both sides of the merge base may have
+              # its new Unreleased lines inside the released section after a
+              # merge that git calls clean. Nothing here can tell, so it only
+              # warns; a fast-forward changes nothing on the branch's side.
+              changelog_both=false
+              base="$(git merge-base origin/main "origin/$branch")" || base=""
+              if [ -n "$base" ] &&
+                ! git diff --quiet "$base" origin/main -- CHANGELOG.md &&
+                ! git diff --quiet "$base" "origin/$branch" -- CHANGELOG.md; then
+                changelog_both=true
+              fi
               # A plain merge, never a rebase or force-push: the branch is shared.
               if ! git merge --no-edit -m "Merge branch 'main' into $branch" origin/main; then
                 # A release on main while the branch has Unreleased lines
@@ -637,6 +649,9 @@ jobs:
                   synced=true
                   break
                 fi
+              fi
+              if [ "$changelog_both" = true ]; then
+                echo "::warning::$branch moved while the release was open; check that its CHANGELOG [Unreleased] lines did not land in the released section (CONTRIBUTING.md#releases)"
               fi
               # Only a branch that really moved since the fetch above is
               # worth another attempt (push.sh looks it up again). A push the
