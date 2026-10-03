@@ -4830,6 +4830,23 @@ for (const [name, makeBoard] of [
   });
 }
 
+/** The local() names the fallback faces in styles.css look for, which this machine may have none of. */
+const NO_FALLBACK_FONT =
+  'this machine has none of the fonts the fallback faces look for, so there is no fallback to resize: local() "Arial", "ArialMT", "Liberation Sans", "LiberationSans", "Arimo" (Inter Fallback) and "Roboto", "Roboto Regular", "Roboto-Regular" (Inter Fallback Roboto)';
+
+/** Whether this machine has any font the fallback faces name (the local() names in styles.css). */
+async function fallbackFaceFound(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    // A face whose local() names match no installed font fails to load and matches nothing.
+    const loaded = await Promise.all(
+      ['"Inter Fallback"', '"Inter Fallback Roboto"'].map((family) =>
+        document.fonts.load(`16px ${family}`).catch(() => [] as FontFace[]),
+      ),
+    );
+    return loaded.some((faces) => faces.length > 0);
+  });
+}
+
 test("shifts nothing much when the self-hosted Inter arrives late", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
   // Hold the font back so the page is drawn in its fallback first, and count every layout shift that follows.
@@ -4849,20 +4866,7 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
-  // Whether this machine has any font the fallback faces name (the local() names in styles.css).
-  const fallbackFound = await page.evaluate(async () => {
-    // A face whose local() names match no installed font fails to load and matches nothing.
-    const loaded = await Promise.all(
-      ['"Inter Fallback"', '"Inter Fallback Roboto"'].map((family) =>
-        document.fonts.load(`16px ${family}`).catch(() => [] as FontFace[]),
-      ),
-    );
-    return loaded.some((faces) => faces.length > 0);
-  });
-  test.skip(
-    !fallbackFound,
-    'this machine has none of the fonts the fallback faces look for, so there is no fallback to resize: local() "Arial", "ArialMT", "Liberation Sans", "LiberationSans", "Arimo" (Inter Fallback) and "Roboto", "Roboto Regular", "Roboto-Regular" (Inter Fallback Roboto)',
-  );
+  test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
   // The first paint was in the fallback; the swap has happened once Inter reports loaded.
   await page.waitForFunction(
     () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
@@ -4876,6 +4880,73 @@ test("shifts nothing much when the self-hosted Inter arrives late", async ({ pag
   const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
   expect(shift, "cumulative layout shift").toBeLessThan(0.1);
 });
+
+// The line under the headline wraps at whatever width the font gives it, and its links jump with the wrap. The
+// fallback faces in styles.css are sized so that Inter, arriving, leaves the lines where they were; this holds Inter
+// back, lets the board draw, then releases it and counts the shift on a board with no such line, a short one and the
+// longest one. The page is a phone, a tablet and a desktop in turn: the wrap differs with the width.
+for (const [name, makeBoard, ready] of [
+  ["a calm board", calmBoard, { id: "aws", label: "Operational" }],
+  ["the plain fixture", fixtureBoard, { id: "aws", label: "Outage" }],
+  ["the longest hero", longHeroBoard, { id: "aws", label: "Outage" }],
+] as const) {
+  test(`keeps the hero in place when the self-hosted Inter replaces its fallback on ${name}`, async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName !== "chromium", "the fallback faces are what Chromium draws on Android, Windows and Linux");
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.route("**/fonts/inter-var.woff2", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await page.addInitScript(() => {
+      const tracked = window as Window & { __cls?: number; __shifts?: PerformanceObserver };
+      tracked.__cls = 0;
+      tracked.__shifts = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
+          if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
+        }
+      });
+      tracked.__shifts.observe({ type: "layout-shift", buffered: true });
+    });
+    await serveBoard(page, () => makeBoard(Date.now()));
+    // Not "load": a font that is still being fetched holds the load event back.
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+    test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
+    await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+    await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
+    // Not vacuous: the board is drawn in the fallback, Inter still on its way.
+    const interStatus = () =>
+      page.evaluate(
+        () => [...document.fonts].find((face) => face.family.replaceAll('"', "") === "Inter")?.status ?? "missing",
+      );
+    expect(await interStatus()).toBe("loading");
+    // Count only what the swap does: drop what the first draws and the refresh moved.
+    await page.evaluate(() => {
+      const tracked = window as Window & { __cls?: number; __shifts?: PerformanceObserver };
+      tracked.__shifts?.takeRecords();
+      tracked.__cls = 0;
+    });
+    release();
+    await page.waitForFunction(
+      () => [...document.fonts].some((face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded"),
+      undefined,
+      { timeout: 15_000 },
+    );
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    await page.waitForTimeout(500);
+    const shift = await page.evaluate(() => (window as Window & { __cls?: number }).__cls ?? 0);
+    expect(shift, "cumulative layout shift of the font swap").toBeLessThan(0.1);
+  });
+}
 
 /** The fixture board with twelve services degraded, so the Issues count has two digits. */
 function busyBoard(): BoardSnapshot {

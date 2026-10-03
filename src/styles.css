@@ -29,6 +29,38 @@
   (Android). local() needs the font's own name: fontconfig's Arial-to-Liberation
   substitution does not count, so each name is listed. A system with none of
   them falls to system-ui, and the swap then reflows the page once.
+
+  The numbers are measured, not copied from a generic table (the usual
+  107.4% for Arial moved the hero's second sentence by a whole line on a
+  phone). Inter's width against a fallback depends on the weight, on the size
+  (its opsz axis narrows the letters from 14px up to 32px) and on the
+  character, and a line wraps where the next word stops fitting, so a fraction
+  of a percent decides which word that is.
+
+  Regular (weights 100-500, the text sizes 12-15px, the hero's second sentence
+  among them): Inter's advance widths at weight 400 and opsz 15 against Liberation
+  Sans (Arial's twin), over 120 generated hero sentences, differ by kind of
+  character: lowercase letters and punctuation 1.0715, the space 1.0053,
+  capitals 0.9886, digits 0.9467. One size-adjust cannot be right for all of
+  them, so the face is cut by unicode-range into those four, each sized for
+  its own; the space is the one that matters most (a line is a sixth spaces).
+  With that, in 90% of 70 sentences x 44 widths (288-770px) the lines break at
+  the same words in Inter and in the fallback and 98% end on the same line count
+  (one size-adjust at its best, 105.2%: 82% and 97%; at 107.4%: 59% and 94%).
+  Roboto is one face at 107.2%, the value of the same sweep with the Roboto
+  files loaded as fonts (this machine has none installed): cutting it by
+  character moved no line more than that, so it is not cut.
+
+  Semibold and bold (weights 600-900; the text sizes at 570-620 take it): Arial
+  Bold 100.7%, Roboto Bold 107.3%, the ratio of the widths over the board's
+  labels. Display, the <h1> (34px and 56px, weight 640; Inter's opsz is at its
+  narrowest cut there, so it needs a much smaller fallback): Arial Bold 94.9%,
+  Roboto Bold 101.1%, the ratio over the headlines the board can say.
+
+  ascent-override and descent-override are Inter's own (1984 and 494 of 2048
+  units, which is 96.875% and 24.12%) divided by the face's size-adjust, because
+  the overrides are scaled by it; line-gap-override is Inter's 0. That keeps the
+  baseline where Inter puts it, so the glyphs do not step down or up on the swap.
 */
 @font-face {
   font-family: "Inter";
@@ -41,9 +73,65 @@
 @font-face {
   font-family: "Inter Fallback";
   src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans"), local("Arimo");
-  size-adjust: 107.4%;
-  ascent-override: 90.2%;
-  descent-override: 22.48%;
+  font-weight: 100 500;
+  size-adjust: 107.1%;
+  ascent-override: 90.45%;
+  descent-override: 22.52%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans"), local("Arimo");
+  font-weight: 100 500;
+  unicode-range: U+0020, U+00A0;
+  size-adjust: 100.5%;
+  ascent-override: 96.4%;
+  descent-override: 24%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans"), local("Arimo");
+  font-weight: 100 500;
+  unicode-range: U+0041-005A;
+  size-adjust: 98.9%;
+  ascent-override: 97.95%;
+  descent-override: 24.39%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans"), local("Arimo");
+  font-weight: 100 500;
+  unicode-range: U+0030-0039;
+  size-adjust: 94.7%;
+  ascent-override: 102.3%;
+  descent-override: 25.47%;
+  line-gap-override: 0%;
+}
+
+/* The bold cut is its own face: a synthesised bold keeps the regular's widths, and Inter's semibold is wider than that. */
+@font-face {
+  font-family: "Inter Fallback";
+  src: local("Arial Bold"), local("Arial-BoldMT"), local("Liberation Sans Bold"), local("LiberationSans-Bold"), local("Arimo Bold"), local("Arimo-Bold");
+  font-weight: 600 900;
+  size-adjust: 100.7%;
+  ascent-override: 96.2%;
+  descent-override: 23.95%;
+  line-gap-override: 0%;
+}
+
+/* The headline: Inter at 34px and up is its narrow, display-sized cut, so it takes the bold fallback much smaller. */
+@font-face {
+  font-family: "Inter Fallback Display";
+  src: local("Arial Bold"), local("Arial-BoldMT"), local("Liberation Sans Bold"), local("LiberationSans-Bold"), local("Arimo Bold"), local("Arimo-Bold");
+  font-weight: 600 900;
+  size-adjust: 94.9%;
+  ascent-override: 102.08%;
+  descent-override: 25.42%;
   line-gap-override: 0%;
 }
 
@@ -51,9 +139,30 @@
 @font-face {
   font-family: "Inter Fallback Roboto";
   src: local("Roboto"), local("Roboto Regular"), local("Roboto-Regular");
-  size-adjust: 105.8%;
-  ascent-override: 91.6%;
-  descent-override: 22.8%;
+  font-weight: 100 500;
+  size-adjust: 107.2%;
+  ascent-override: 90.37%;
+  descent-override: 22.5%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Inter Fallback Roboto";
+  src: local("Roboto Bold"), local("Roboto-Bold");
+  font-weight: 600 900;
+  size-adjust: 107.3%;
+  ascent-override: 90.28%;
+  descent-override: 22.48%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Inter Fallback Display Roboto";
+  src: local("Roboto Bold"), local("Roboto-Bold");
+  font-weight: 600 900;
+  size-adjust: 101.1%;
+  ascent-override: 95.82%;
+  descent-override: 23.86%;
   line-gap-override: 0%;
 }
 
@@ -75,6 +184,8 @@
 @theme static {
   --font-*: initial;
   --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Inter Fallback", "Inter Fallback Roboto", system-ui, sans-serif;
+  /* The <h1> only: the same stack with the display-sized fallbacks first (the base layer sets it). */
+  --font-display: -apple-system, BlinkMacSystemFont, "Inter", "Inter Fallback Display", "Inter Fallback Display Roboto", "Inter Fallback", "Inter Fallback Roboto", system-ui, sans-serif;
   /* The signature only: two uses on a page at most, never body text or a control. */
   --font-hand: "Hand", "Bradley Hand", "Segoe Print", cursive;
 
@@ -207,6 +318,10 @@
     caret-color: var(--color-accent);
     scrollbar-width: thin;
     scrollbar-color: var(--color-hairline) transparent;
+  }
+
+  h1 {
+    font-family: var(--font-display);
   }
 
   body {
