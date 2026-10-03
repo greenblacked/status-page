@@ -100,9 +100,9 @@ The branch rules are in [CONTRIBUTING.md#branches](CONTRIBUTING.md#branches) and
 - `main` takes pull requests only from `stage` (and `release/vX.Y.Z`); `main` is never a head branch.
 - One pull request per request, one logical change per commit. Keep pull requests small enough to review in one sitting.
 - Commit subject: Conventional Commit `<type>(<optional scope>): <imperative summary>`.
-  - Type is one of `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`, `build`, `style`, `revert`; at most 72 characters (a trailing ` (#123)` does not count); no trailing period; no "added"/"fixed" past tense. `commits.sh` enforces all of this.
+  - Type is one of `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`, `build`, `style`, `revert`, `release` (only for a release commit or pull request: `release: 0.6.0`, `release: v0.6.0`; no scope, no `!`); at most 72 characters (a trailing ` (#123)` does not count); no trailing period; no "added"/"fixed" past tense. `commits.sh` enforces all of this.
   - The `pull request title` check (`pr-title.yml`) applies it to the PR title, which becomes the squash commit.
-  - The title's type picks the release: `feat` is minor, `fix`, `perf` and `revert` are patch, `!` is major, the rest release nothing ([table](CONTRIBUTING.md#releases)).
+  - The title's type picks the release: `feat` is minor, `fix`, `perf` and `revert` are patch, `!` is major, the rest (including `release`) release nothing ([table](CONTRIBUTING.md#releases)).
 - Commits carry the real GitHub author who owns the change ([authorship](CONTRIBUTING.md#authorship)). No tool attribution anywhere that is published: no "generated with" footers, no tool `Co-authored-by` trailers, no session links in commit messages, PR bodies or code.
 - **CHANGELOG.** A pull request with a user-visible change adds lines under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), written for someone reading the board, not the diff. Docs-only, CI-only and refactor-only changes need none. A release turns that section into the GitHub Release notes; `release.yml` cuts a version only when work reaches `main` ([releases](CONTRIBUTING.md#releases)).
 - The PR body follows [`.github/pull_request_template.md`](.github/pull_request_template.md): what changes, why, and the checklist.

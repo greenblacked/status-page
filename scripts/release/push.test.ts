@@ -77,7 +77,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 describe("push.sh", () => {
   it("pushes and exits 0", () => {
     const planned = git(work, "rev-parse", "HEAD");
-    const next = commit(work, "chore(release): 0.6.0");
+    const next = commit(work, "release: 0.6.0");
     const result = push("main", planned);
     expect(result.status).toBe(0);
     expect(git(remote, "rev-parse", "main")).toBe(next);
@@ -88,7 +88,7 @@ describe("push.sh", () => {
     const other = clone("other");
     commit(other, "fix: someone merged first");
     git(other, "push", "--quiet", "origin", "main");
-    commit(work, "chore(release): 0.6.0");
+    commit(work, "release: 0.6.0");
     const result = push("main", planned);
     expect(result.status).toBe(10);
     expect(result.output).not.toContain("::error::");
@@ -97,7 +97,7 @@ describe("push.sh", () => {
   it("fails with the ruleset cause and the fix when a ruleset rejects the push and nothing moved", () => {
     rejectPushesTo("refs/heads/main", GH013);
     const planned = git(work, "rev-parse", "HEAD");
-    commit(work, "chore(release): 0.6.0");
+    commit(work, "release: 0.6.0");
     const result = push("main", planned);
     expect(result.status).toBe(1);
     expect(result.output).toContain("GH013");
@@ -127,7 +127,7 @@ describe("push.sh", () => {
   it("fails with a generic error for any other rejection, still not reporting a move", () => {
     rejectPushesTo("refs/heads/main", "remote: the disk is full");
     const planned = git(work, "rev-parse", "HEAD");
-    commit(work, "chore(release): 0.6.0");
+    commit(work, "release: 0.6.0");
     const result = push("main", planned);
     expect(result.status).toBe(1);
     expect(result.output).toContain("::error::push to main failed for a reason other than a ruleset or a newer push");
@@ -136,7 +136,7 @@ describe("push.sh", () => {
 
   it("exits 0 when the server applied the push but the client saw an error", () => {
     const planned = git(work, "rev-parse", "HEAD");
-    const next = commit(work, "chore(release): 0.6.0");
+    const next = commit(work, "release: 0.6.0");
     // A git that pushes for real and then reports a failure, like a dropped connection.
     const bin = join(root, "bin");
     mkdirSync(bin);
@@ -159,7 +159,7 @@ describe("push.sh", () => {
 
   it("fails when the remote cannot be asked again, rather than guess", () => {
     const planned = git(work, "rev-parse", "HEAD");
-    commit(work, "chore(release): 0.6.0");
+    commit(work, "release: 0.6.0");
     git(work, "remote", "set-url", "origin", join(root, "gone.git"));
     const result = push("main", planned);
     expect(result.status).toBe(1);
@@ -239,7 +239,7 @@ describe("release.yml: merge main into stage and dev", () => {
     if (dev !== "none") git(work, "push", "--quiet", "origin", "HEAD:refs/heads/dev");
 
     writeFileSync(join(work, "file.txt"), "main\n");
-    git(work, "commit", "--quiet", "-am", "chore(release): 0.6.0");
+    git(work, "commit", "--quiet", "-am", "release: 0.6.0");
     git(work, "push", "--quiet", "origin", "main");
 
     if (dev !== "none") {
@@ -271,7 +271,7 @@ describe("release.yml: merge main into stage and dev", () => {
 
     const released = `# Changelog\n\n## [Unreleased]\n\n## [0.6.0] - 2026-02-01\n\n- shipped\n\n## [0.5.0] - 2026-01-01\n\n${filler}\n`;
     writeFileSync(join(work, "CHANGELOG.md"), released);
-    git(work, "commit", "--quiet", "-am", "chore(release): 0.6.0");
+    git(work, "commit", "--quiet", "-am", "release: 0.6.0");
     git(work, "push", "--quiet", "origin", "main");
 
     if (stage !== "none") {

@@ -78,7 +78,7 @@ describe("bump.sh (local)", () => {
     const result = bump("patch");
     expect(result.status).toBe(0);
     expect(git(work, "branch", "--show-current")).toBe("release/v0.5.1");
-    expect(git(work, "log", "-1", "--format=%s")).toBe("chore(release): 0.5.1");
+    expect(git(work, "log", "-1", "--format=%s")).toBe("release: 0.5.1");
   });
 
   it("releases from the tip of origin/stage when it contains main", () => {
@@ -90,7 +90,7 @@ describe("bump.sh (local)", () => {
     expect(result.output).not.toContain("bump:");
     expect(result.status).toBe(0);
     expect(git(work, "branch", "--show-current")).toBe("release/v0.6.0");
-    expect(git(work, "log", "-1", "--format=%s")).toBe("chore(release): 0.6.0");
+    expect(git(work, "log", "-1", "--format=%s")).toBe("release: 0.6.0");
     // The release commit sits on top of stage's commits.
     expect(git(work, "log", "-2", "--format=%s", "HEAD")).toContain("feat: ahead of main");
   });

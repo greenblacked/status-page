@@ -6,7 +6,7 @@
 #     it the commit on dev, and release.yml reads its type once it reaches main.
 set -euo pipefail
 
-types='feat|fix|docs|refactor|test|chore|perf|ci|build|style|revert'
+types='feat|fix|docs|refactor|test|chore|perf|ci|build|style|revert|release'
 fail=0
 
 # Prints "ok" or the problems with one subject; sets fail=1 on a problem.
@@ -18,6 +18,14 @@ check() {
     echo "         expected <type>(<optional scope>): <imperative summary>, type one of: ${types//|/, }" >&2
     fail=1
     return
+  fi
+
+  # release marks a release commit or release pull request ("release: 0.6.0",
+  # "release: v0.6.0"). It is never a breaking or scoped change: next.sh skips
+  # it, so a scope or a `!` would only mislead.
+  if grep -qE '^release(\(|!)' <<<"$subject"; then
+    echo "::error::$label  release takes no scope and no !: $subject" >&2
+    fail=1; bad=1
   fi
 
   # A squash merge appends " (#123)" to the title, which was held to 72

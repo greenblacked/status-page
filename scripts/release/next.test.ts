@@ -74,9 +74,22 @@ describe("next.sh level", () => {
   });
 
   it("ignores release bump commits and non-conventional subjects", () => {
-    commit("chore(release): 0.2.0");
+    commit("release: 0.2.0");
+    commit("chore(release): 0.1.1");
     commit("Merge something by hand");
     expect(next("level")).toBe("none\n");
+  });
+
+  it("ignores release and legacy chore(release) commits while feat and fix still count", () => {
+    commit("release: 0.2.0");
+    commit("chore(release): 0.1.1");
+    expect(next("level")).toBe("none\n");
+    commit("fix: keep the badge");
+    expect(next("level")).toBe("patch\n");
+    commit("feat: add a feed");
+    commit("release: 0.3.0");
+    commit("chore(release): 0.2.1");
+    expect(next("level")).toBe("minor\n");
   });
 
   it("fails on a range it cannot resolve instead of reporting none", () => {
@@ -109,6 +122,15 @@ describe("next.sh notes", () => {
         "",
       ].join("\n"),
     );
+  });
+
+  it("leaves release and legacy chore(release) commits out", () => {
+    commit("release: 0.2.0");
+    commit("chore(release): 0.1.1");
+    commit("fix: link incidents correctly (#18)");
+    expect(next("notes")).toBe(["### Fixed", "", "- Link incidents correctly (#18)", ""].join("\n"));
+    commit("release: 0.2.1");
+    expect(next("notes", "v0.1.0..HEAD")).not.toContain("0.2");
   });
 
   it("prints nothing when no commit is worth a line", () => {
