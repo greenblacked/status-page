@@ -30,7 +30,7 @@ actionlint && uvx zizmor .github   # the workflow lint job: syntax, then a secur
 ./scripts/ci/smoke.sh http://127.0.0.1:4173   # after `npm run preview`: the smoke test CI and the deploy run
 ./scripts/ci/verify-deploy.sh   # by hand after a deploy (no workflow runs it): headers, robots and TLS of the live hosts
 ./scripts/ci/commits.sh origin/dev..HEAD   # origin/stage..HEAD for a promotion
-./scripts/ci/commits.sh --subject "feat: add a feed"   # a PR title, as pr-title.yml checks it
+./scripts/ci/commits.sh --subject "feat: add a feed" --base dev --head feature/add-a-feed   # a PR title and its branches, as pr-title.yml checks it (a release: title passes only from release/vX.Y.Z into main)
 ./scripts/ci/branch.sh "$(git branch --show-current)" stage   # the branch name and its base, as CI checks them (dev, once it is back)
 ./scripts/release/next.sh level "v$(node -p "require('./package.json').version")..origin/stage"   # the bump merging stage into main would release
 ./scripts/ci/release-notes.sh           # the CHANGELOG.md section release.yml would publish
