@@ -21,10 +21,12 @@
 #
 # --expect-version <id> first waits, within --wait, until /healthz carries
 # X-Worker-Version: <id> (src/lib/worker-version.ts), then requires it on
-# every response it checks. After a Cloudflare deploy this is the version id
-# wrangler reported, so the checks run against the new version rather than
-# the old one it is still replacing somewhere, and a new version that never
-# starts answering fails instead of passing on the old one.
+# every dynamic response it checks (not a static asset: Cloudflare serves
+# those without invoking the Worker, so they carry no version). After a
+# Cloudflare deploy this is the version id wrangler reported, so the checks
+# run against the new version rather than the old one it is still replacing
+# somewhere, and a new version that never starts answering fails instead of
+# passing on the old one.
 #
 # --require-asset-cache also fetches the page's stylesheet, takes the first
 # /assets/*.woff2 it names and requires Cache-Control: max-age=31536000 and
@@ -131,7 +133,10 @@ wait_for_server() {
 # check_asset_cache: the hashed font under /assets/ has to be cacheable for a
 # year, or font-display: optional never draws Inter on a return visit. It goes
 # from the page to its stylesheet to the font, so the file is the one a browser
-# would request, answered by the same asset server.
+# would request, answered by the same asset server. Not checked for the Worker
+# version: on Cloudflare a matching static asset is served without invoking the
+# Worker, so it carries no X-Worker-Version, and --expect-version would fail
+# every attempt. The dynamic endpoints already establish which version is live.
 check_asset_cache() {
   local sheets css font cache
   get /
@@ -146,7 +151,6 @@ check_asset_cache() {
   done
   [ -n "$font" ] || { fail "/: no stylesheet under /assets/ names a .woff2 font"; return; }
   get "$font"
-  check_version "$font"
   [ "$status" = 200 ] || { fail "$font: $status, expected 200"; return; }
   cache="$(header Cache-Control)"
   if [[ "$cache" != *max-age=31536000* || "$cache" != *immutable* ]]; then
