@@ -1,6 +1,6 @@
 # Collector fixtures
 
-Vendor payloads for the collector tests in `../collectors.test.ts`. Each file stands in for one official endpoint that `../sources.server.ts` (and the parsers in `../changelog.ts`) read, so a test can run the real collector against a whole payload with no network.
+Vendor payloads for the collector tests in `../collectors.test.ts`, and for the preview server of the browser tests (`e2e/support/no-vendors.mjs` answers a vendor's URL from the file listed here, with its dates moved to the present; a fixture with no URL in its table has no route there, so add one when you add a collector). Each file stands in for one official endpoint that `../sources.server.ts` (and the parsers in `../changelog.ts`) read, so a test can run the real collector against a whole payload with no network.
 
 | File | Stands in for | Collector | Origin |
 | --- | --- | --- | --- |

@@ -313,7 +313,7 @@ test("the line sits under the health line while the row is shut and below the li
 // A link to a component's name ("#:~:text=...", a shared link or a search result) opens the row that lists it. The
 // list is inside the <details>, so the browser opens the row itself as it does for any shut <details>, with no
 // script of the page involved. The test loads the page cold: scripts are switched off on a fresh page that is
-// served the markup of the fixture board (the live vendors would make the name vary, or be missing offline), so it
+// served the markup of the fixture board (the server's own board, from canned payloads, lacks some components), so it
 // is the markup alone, which is what a slow phone shows before the page has hydrated. The name is taken from a row
 // that has no release feed. It must be found: a missing name fails the test, never skips it.
 test("a cold link to a component opens the shut row that lists it, before any script has run", async ({

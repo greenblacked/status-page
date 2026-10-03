@@ -45,13 +45,13 @@ async function hydrated(page: Page): Promise<void> {
 }
 
 /**
- * `serveBoard` only answers the client's server-function calls, and the first render comes from the server (live vendor data),
- * so press Refresh to bring the fixture in, and wait for it before measuring anything.
+ * `serveBoard` only answers the client's server-function calls, and the first render comes from the server (the
+ * preview's canned vendor payloads, e2e/support/no-vendors.mjs), so press Refresh to bring the fixture in, and wait for it before measuring anything.
  *
  * The wait does not depend on how the headline is worded, nor on what the vendors say today. Two things must hold:
  *   - AWS and Steam show the fixture's own latencies (143 and 166 ms, from `latencyMs` in fixture-board.ts). The
- *     server's board shows its vendors' real ones, or none at all for a source it could not read, so this is only
- *     true once the fixture is in, whatever the server drew first (offline, calm or not).
+ *     server's board shows its canned payloads' ones, or none at all for a source it could not read, so this is only
+ *     true once the fixture is in, whatever the server drew first.
  *   - The <h1> is the headline `verdict()` makes of this very board, so the variant asked for (usual, calm,
  *     longest hero) is the one on screen, not a board that merely loaded.
  */

@@ -12,8 +12,8 @@ import type {
 } from "../src/lib/status/types.ts";
 
 // A board with every state the page can show, for tests that must see
-// them all whatever the vendors say today (and offline, every vendor says
-// Unknown). Outage, degraded, maintenance that has not started, unknown,
+// them all, and every service of the board (the server's own board, from the
+// preview's canned payloads, has states on only some of them). Outage, degraded, maintenance that has not started, unknown,
 // operational services and release trackers, incidents with start times.
 // Two attention services differ in severity (AWS down, Google Cloud
 // degraded), so the most urgent one leads the board. Healthy ChatGPT and
