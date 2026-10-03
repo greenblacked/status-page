@@ -57,7 +57,7 @@ jobs:
       - name: Changelog covers package.json version
         run: ./scripts/ci/release-notes.sh >/dev/null
 
-      # packageManager (with its sha512) and pnpm-lock.yaml pin one pnpm.
+      # packageManager is pnpm@X.Y.Z+sha512.<128 hex>, the pin Corepack checks.
       - name: pnpm pin in sync
         run: ./scripts/ci/pnpm-pin.sh check
 

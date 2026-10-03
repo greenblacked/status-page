@@ -84,7 +84,7 @@ For local browser tests install the browsers once (`pnpm exec playwright install
 ./scripts/ci/commits.sh --subject "feat: add a feed"             # one subject, as the PR title check runs it
 ./scripts/ci/branch.sh "$(git branch --show-current)" stage      # branch name and base, as CI checks them
 ./scripts/ci/release-notes.sh                                    # the CHANGELOG section for the package.json version must exist
-./scripts/ci/pnpm-pin.sh check                                   # packageManager, its sha512 and pnpm-lock.yaml agree
+./scripts/ci/pnpm-pin.sh check                                   # packageManager is pnpm@X.Y.Z+sha512.<128 hex>
 ./scripts/ci/smoke.sh http://127.0.0.1:4173                      # after `pnpm run preview`: the smoke test CI and deploy run
 ```
 

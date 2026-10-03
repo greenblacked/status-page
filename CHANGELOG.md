@@ -79,7 +79,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - HSTS now covers subdomains.
 - Vendor status feeds with malformed markup or large product lists no longer stall status checks.
 - The advisories in the dependencies bundled inside the npm CLI that CI used to run (`http-cache-semantics` CVE-2026-93748, `brace-expansion`, `undici`, `ip-address`) no longer apply: pnpm 12 has none of them, so the scanner exceptions for them are gone and dependency review, trivy and OSV-Scanner accept no advisory at HIGH or above.
-- Every install still verifies the registry's signature of each locked package, and that the lockfile holds the integrity the registry signed. The Sigstore provenance check that `npm audit signatures` ran is not available in pnpm; installs fail instead when a version carries less publisher evidence than an earlier one (`trustPolicy: no-downgrade`).
+- Every install still verifies the registry's signature of each locked package, and that the integrity the lockfile holds carries a valid registry signature. The deploy workflow restores no package cache. The Sigstore provenance check that `npm audit signatures` ran is not available in pnpm; installs fail instead when a version carries less publisher evidence than an earlier one (`trustPolicy: no-downgrade`).
 
 ## [0.5.0] - 2026-09-30
 

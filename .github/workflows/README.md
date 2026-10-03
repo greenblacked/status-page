@@ -16,7 +16,7 @@
 | [`pr-title.yml`](pr-title.yml) | PRs into `main`, `stage` or `dev`, including title edits | The PR title is a Conventional Commit. A squash merge into `dev` makes it the commit that `release.yml` reads once it reaches `main` |
 | [`base-images.yml`](base-images.yml) | PRs that change `compose.yaml`, its script or the dependencies; weekly; manual | Runs `compose.yaml` against the real `ci-node22`, `ci-node24` and `ci-security` images, so a base-image change that breaks this repository shows up here first |
 
-Jobs that need Node use the shared [`../actions/setup`](../actions/setup/action.yml) action: Node from `.nvmrc` (or a given version), pnpm pinned to `packageManager` (installed by Corepack, which checks the sha512 in it, through `scripts/ci/pnpm-pin.sh`), `pnpm install --frozen-lockfile` and the registry signature check (`scripts/ci/audit-signatures.sh`). `deploy.yml` and `release.yml` install explicitly instead, so the workflows that publish can be read on their own, and the release gate never restores a shared cache.
+Jobs that need Node use the shared [`../actions/setup`](../actions/setup/action.yml) action: Node from `.nvmrc` (or a given version), pnpm pinned to `packageManager` (installed by Corepack, which checks the sha512 in it, through `scripts/ci/pnpm-pin.sh`), `pnpm install --frozen-lockfile` and the registry signature check (`scripts/ci/audit-signatures.sh`). `deploy.yml` and `release.yml` install explicitly instead, so the workflows that publish can be read on their own, and neither restores a shared package cache.
 
 Every check in `ci.yml` has a local equivalent:
 
@@ -24,7 +24,7 @@ Every check in `ci.yml` has a local equivalent:
 pnpm install --frozen-lockfile && pnpm run check   # lint, typecheck, tests, hygiene and links
 pnpm run test:coverage     # unit tests against the coverage thresholds
 pnpm run build && pnpm run test:e2e   # browser tests; `pnpm exec playwright install chromium` once
-./scripts/ci/pnpm-pin.sh check   # packageManager, its sha512 and pnpm-lock.yaml agree
+./scripts/ci/pnpm-pin.sh check   # packageManager is pnpm@X.Y.Z+sha512.<128 hex>
 ./scripts/ci/audit-signatures.sh   # registry signatures of every locked package, after `pnpm install`
 ./scripts/ci/hygiene.sh  # line endings, trailing whitespace, final newline, no `any`, no raw hex
 actionlint && uvx zizmor .github   # the workflow lint job: syntax, then a security audit
