@@ -1,4 +1,4 @@
-import { describeVersionChanges, versionFingerprint } from "./changelog.ts";
+import { describeVersionChanges, parseVersionMap, versionFingerprint } from "./changelog.ts";
 import { worseHealth } from "./health.ts";
 import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "./types.ts";
 
@@ -35,7 +35,24 @@ export function releaseChange(before: ServiceSnapshot, after: ServiceSnapshot): 
   const previousVersions = versionFingerprint(before.meta);
   const nextVersions = versionFingerprint(after.meta);
   if (!previousVersions || !nextVersions || previousVersions === nextVersions) return "";
+  if (isFingerprintMigration(previousVersions, nextVersions)) return "";
   return describeVersionChanges(previousVersions, nextVersions);
+}
+
+/**
+ * A fingerprint that kept its names but now gives each the fixed word
+ * "released" is a format change (Windows once carried each version's build),
+ * not a release: a board stored before the change must not read as one.
+ */
+function isFingerprintMigration(previous: string, next: string): boolean {
+  const before = Object.keys(parseVersionMap(previous));
+  const after = parseVersionMap(next);
+  const names = Object.keys(after);
+  return (
+    names.length > 0 &&
+    names.length === before.length &&
+    names.every((name) => after[name] === "released" && before.includes(name))
+  );
 }
 
 export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseChange[] {

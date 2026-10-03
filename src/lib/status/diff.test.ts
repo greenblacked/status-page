@@ -176,4 +176,35 @@ describe("diffBoards", () => {
       ["unknown"],
     );
   });
+
+  it("does not read a fingerprint format change as a release", () => {
+    const previous = board([
+      service("windows", {
+        health: "operational",
+        meta: { versions: "Windows 11 26H2=26300.1000|Windows 11 25H2=26200.6000" },
+      }),
+    ]);
+    const migrated = board([
+      service("windows", {
+        health: "operational",
+        meta: { versions: "Windows 11 26H2=released|Windows 11 25H2=released" },
+      }),
+    ]);
+    assert.deepEqual(diffBoards(previous, migrated), []);
+    // A version the page adds is still a release.
+    const added = board([
+      service("windows", {
+        health: "operational",
+        meta: { versions: "Windows 11 27H2=released|Windows 11 26H2=released|Windows 11 25H2=released" },
+      }),
+    ]);
+    assert.deepEqual(
+      diffBoards(migrated, added).map((change) => [change.summary, change.release]),
+      [["Windows 11 27H2 released", true]],
+    );
+    assert.deepEqual(
+      diffBoards(previous, added).map((change) => change.release),
+      [true],
+    );
+  });
 });

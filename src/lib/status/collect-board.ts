@@ -17,8 +17,8 @@ export function assembleBoard(services: ServiceSnapshot[], durationMs: number): 
 }
 
 /**
- * Sweeps every vendor once, adds the release feeds that are in hand, and
- * assembles the result into a board snapshot.
+ * Sweeps every vendor once, adds the release feeds and the MikroTik changelog
+ * notes that are in hand, and assembles the result into a board snapshot.
  * Shared by Node and Cloudflare Workers through the in-memory cache
  * (board.ts), so there is exactly one place that calls
  * `collectAllServices()` and exactly one that starts the release feeds (the
@@ -38,17 +38,24 @@ export function assembleBoard(services: ServiceSnapshot[], durationMs: number): 
  * the background (`waitUntil` on Workers, which is what keeps the request
  * alive for them; elsewhere the process simply carries on), and cached for
  * the next board, so a cold board shows its release lines one refresh later.
+ * The MikroTik changelogs (the notes in its Details and its summary line) are
+ * read the same way, right after the sweep and in the same `waitUntil`: the
+ * collector reads the version channels only, so a changelog host that is
+ * slow or down changes no result and no `durationMs`.
  */
 export async function collectBoard(): Promise<BoardSnapshot> {
   const started = Date.now();
-  const [{ collectAllServices }, { startReleaseFeeds, withReleaseFeeds }] = await Promise.all([
-    import("./sources.server"),
-    import("./release-feeds.server"),
-  ]);
+  const [{ collectAllServices }, { startReleaseFeeds, withReleaseFeeds }, { startMikrotikNotes, withMikrotikNotes }] =
+    await Promise.all([
+      import("./sources.server"),
+      import("./release-feeds.server"),
+      import("./mikrotik-notes.server"),
+    ]);
   const services = await collectAllServices();
   const durationMs = Date.now() - started;
   // Every health request has settled: only now may a feed take a connection.
   const reading = startReleaseFeeds();
-  findCloudflareContext()?.waitUntil(reading.settled);
-  return assembleBoard(withReleaseFeeds(services, reading.ready()), durationMs);
+  const notes = startMikrotikNotes(services);
+  findCloudflareContext()?.waitUntil(Promise.all([reading.settled, notes]).then(() => undefined));
+  return assembleBoard(withMikrotikNotes(withReleaseFeeds(services, reading.ready())), durationMs);
 }

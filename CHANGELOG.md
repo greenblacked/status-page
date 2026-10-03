@@ -70,6 +70,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - On a phone the search field no longer moves into the bar by script as you scroll, so there is no move in it that can jump or flicker; it scrolls away with the page, and the bar shows its own copy when you scroll up (not yet confirmed on an iPhone). Safari's toolbar sliding away or back still does not make the page measure itself again.
 - The "+N more" under a service counts every incident it has, not only the ones the board kept.
 - In Safari the board no longer jumps when a check adds a line to Recent changes above what you are reading, and the floating bar on a phone gets out of the way as soon as the headline grows under it.
+- A slow or unavailable MikroTik changelog no longer holds up the board. The RouterOS notes (the first note on the card and the first lines in **Details**) are read after the health checks have finished, in the background, and shown on the next board; a changelog that cannot be read is left alone for five minutes, and changes no health result and not how long the board took.
+- **Windows 11** no longer reports a new release (a "Changed" bar and a **Recent changes** entry) for the monthly update. The build still shows on the card and in **Details**; only a new Windows version appearing on Microsoft's page counts as a release.
 
 ### Security
 
