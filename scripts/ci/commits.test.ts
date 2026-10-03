@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -143,8 +146,32 @@ describe("commits.sh --subject with the pull request's branches", () => {
 });
 
 describe("commits.sh with a commit range", () => {
-  it("accepts the release commit bump.sh makes", () => {
-    const result = spawnSync(SCRIPT, ["HEAD..HEAD"], { encoding: "utf8" });
-    expect(result.status).toBe(0);
+  function git(cwd: string, ...args: string[]): void {
+    const result = spawnSync(
+      "git",
+      ["-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args],
+      { cwd, encoding: "utf8" },
+    );
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  }
+
+  it("accepts the release commit bump.sh makes and rejects a bad one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "commits-range-"));
+    try {
+      git(dir, "init", "--quiet", "--initial-branch=main");
+      git(dir, "commit", "--quiet", "--allow-empty", "-m", "chore: init");
+      git(dir, "branch", "base");
+      git(dir, "commit", "--quiet", "--allow-empty", "-m", "release: 0.6.0");
+
+      const good = spawnSync(SCRIPT, ["base..HEAD"], { cwd: dir, encoding: "utf8" });
+      expect(good.status).toBe(0);
+
+      git(dir, "commit", "--quiet", "--allow-empty", "-m", "release: add stuff");
+      const bad = spawnSync(SCRIPT, ["base..HEAD"], { cwd: dir, encoding: "utf8" });
+      expect(bad.status).toBe(1);
+      expect(`${bad.stdout}${bad.stderr}`).toContain("release takes only a version");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
