@@ -13,9 +13,11 @@ name: Release
 #     breaking change is major, feat minor, fix, perf or revert patch, and
 #     anything else releases nothing. CI commits the bump to main, authored
 #     by whoever merged, then tags it and drafts the release. The usual way
-#     to release.
+#     to release only where GitHub Actions may push to main; here main's
+#     ruleset refuses that push, so such a run fails at the bump.
 #   - Merging a pull request that sets an untagged version in package.json,
-#     for example one from scripts/release/bump.sh: releases that version.
+#     for example one from scripts/release/bump.sh: releases that version
+#     without pushing to main. This repository releases this way.
 #   - Run workflow with bump = patch, minor or major: the same bump, by hand.
 #   - Run workflow with bump = current: publishes the package.json version as
 #     it is, if it has no tag yet (a retry).
@@ -25,8 +27,13 @@ name: Release
 #   - Pushing a vX.Y.Z tag by hand.
 # The release has to be on main, have a changelog section and pass the same
 # checks as CI. After every run for main, released or not, main is merged back
-# into stage and then dev, so both carry the release commit and any fix
-# merged into main directly. Those merges are pushed with GITHUB_TOKEN, which
+# into stage and then dev (not while dev is paused: scripts/ci/dev-paused), so
+# both carry the release commit and any fix merged into main directly. A push
+# to main, stage or dev that fails fails the run, naming the cause, unless the
+# branch really moved meanwhile (scripts/release/push.sh); a ruleset that
+# refuses GitHub Actions' push is the usual cause, and the release then goes
+# through bump.sh and a pull request into main (CONTRIBUTING.md#releases).
+# Those merges are pushed with GITHUB_TOKEN, which
 # starts no workflow of its own, so when one actually moved stage this also
 # starts deploy.yml on stage by hand, or the stage preview would keep running
 # the pre-release code until an unrelated push to stage updated it (dev
@@ -306,8 +313,18 @@ jobs:
             exit 1
           fi
           # Fails without force if main moved since the checks above, so a
-          # concurrent merge is never overwritten.
-          git push origin "HEAD:refs/heads/main" || moved
+          # concurrent merge is never overwritten. push.sh looks main up again
+          # after a failed push: only a tip that is no longer $SHA is "moved"
+          # (status 10). Any other failure, a ruleset rejection (GH013)
+          # included, fails the run with its cause, because nothing was
+          # released and a green run would hide that.
+          pushed=0
+          ./scripts/release/push.sh main "$SHA" || pushed=$?
+          if [ "$pushed" = 10 ]; then
+            moved
+          elif [ "$pushed" != 0 ]; then
+            exit 1
+          fi
 
       - name: Tag and draft the GitHub Release
         id: release
@@ -338,7 +355,15 @@ jobs:
           if existing="$(git rev-parse -q --verify "refs/tags/$TAG^{commit}")"; then
             [ "$existing" = "$target" ] || { echo "::error::$TAG is on $existing, not $target"; exit 1; }
           else
-            gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$target" >/dev/null
+            # A ruleset on tags can reject this as it does a push to main:
+            # name the cause instead of leaving gh's bare message.
+            created=0
+            out="$(gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$target" 2>&1)" || created=$?
+            if [ "$created" != 0 ]; then
+              printf '%s\n' "$out" >&2
+              ./scripts/release/explain-failure.sh "creating tag $TAG" "$TAG" <<<"$out"
+              exit 1
+            fi
           fi
 
           # The release for this tag, a draft included (the releases list has
@@ -541,6 +566,11 @@ jobs:
           # main's copy: a branch's own may predate it.
           merge_changelog="$RUNNER_TEMP/merge-changelog.sh"
           cp scripts/release/merge-changelog.sh "$merge_changelog"
+          # push.sh (and the explain-failure.sh it runs, found next to it)
+          # runs with this job's write token, so it too comes from main, never
+          # from the branch checked out below.
+          mkdir -p "$RUNNER_TEMP/release"
+          cp scripts/release/push.sh scripts/release/explain-failure.sh "$RUNNER_TEMP/release/"
 
           # stage first, then dev. A problem that stops one branch does not
           # stop the other, but fails the job at the end. The script runs under
@@ -548,7 +578,16 @@ jobs:
           # (network, checkout) are guarded: a failure sets failed=1 instead of
           # ending the script, and stage_pushed is written the moment stage's
           # push succeeds, before dev is touched.
+          # While dev is paused (scripts/ci/dev-paused, the same switch the
+          # branch name check reads) nothing lands in it, so merging main
+          # would only conflict with its stale history on every release. Read
+          # once, while main is checked out.
+          dev_paused="$(./scripts/ci/dev-paused.sh)" || { dev_paused=true; failed=1; }
           for branch in stage dev; do
+            if [ "$branch" = dev ] && [ "$dev_paused" = true ]; then
+              echo "::notice::dev is paused (scripts/ci/dev-paused); not merging main into it. When dev is recreated from stage, set the file to false"
+              continue
+            fi
             listed=0
             git ls-remote --exit-code --heads origin "$branch" >/dev/null || listed=$?
             if [ "$listed" = 2 ]; then
@@ -580,6 +619,18 @@ jobs:
                 synced=true
                 break
               fi
+              # A branch that took changes while the release was open and
+              # touched CHANGELOG.md on both sides of the merge base may have
+              # its new Unreleased lines inside the released section after a
+              # merge that git calls clean. Nothing here can tell, so it only
+              # warns; a fast-forward changes nothing on the branch's side.
+              changelog_both=false
+              base="$(git merge-base origin/main "origin/$branch")" || base=""
+              if [ -n "$base" ] &&
+                ! git diff --quiet "$base" origin/main -- CHANGELOG.md &&
+                ! git diff --quiet "$base" "origin/$branch" -- CHANGELOG.md; then
+                changelog_both=true
+              fi
               # A plain merge, never a rebase or force-push: the branch is shared.
               if ! git merge --no-edit -m "Merge branch 'main' into $branch" origin/main; then
                 # A release on main while the branch has Unreleased lines
@@ -599,10 +650,23 @@ jobs:
                   break
                 fi
               fi
-              if git push origin "HEAD:refs/heads/$branch"; then
+              if [ "$changelog_both" = true ]; then
+                echo "::warning::$branch moved while the release was open; check that its CHANGELOG [Unreleased] lines did not land in the released section (CONTRIBUTING.md#releases)"
+              fi
+              # Only a branch that really moved since the fetch above is
+              # worth another attempt (push.sh looks it up again). A push the
+              # ruleset or the token rejects fails the job at once, with the
+              # cause, instead of looping and calling it "moved".
+              pushed=0
+              "$RUNNER_TEMP/release/push.sh" "$branch" "$(git rev-parse "origin/$branch")" || pushed=$?
+              if [ "$pushed" = 0 ]; then
                 if [ "$branch" = stage ]; then
                   echo "stage_pushed=true" >>"$GITHUB_OUTPUT"
                 fi
+                synced=true
+                break
+              elif [ "$pushed" != 10 ]; then
+                failed=1
                 synced=true
                 break
               fi

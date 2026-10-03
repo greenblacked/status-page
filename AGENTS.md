@@ -96,7 +96,7 @@ The branch rules are in [CONTRIBUTING.md#branches](CONTRIBUTING.md#branches) and
 
 - Name a branch `<prefix>/<short-kebab-description>` with a prefix from the table in [CONTRIBUTING.md#branches](CONTRIBUTING.md#branches) (`branch.sh` enforces it), lowercase letters, digits and single hyphens only, 50 characters at most. Run `branch.sh` before pushing.
 - `dependabot/...` and `release/vX.Y.Z` are named by tooling; never create them by hand. The prefix is not the commit type.
-- **`dev` is paused** (`DEV_PAUSED=true` at the top of `branch.sh`). A pull request goes into `stage` and is squash-merged. `stage` is promoted to `main` by the owner with a merge commit. Nothing is promoted by an agent. When `dev` returns, features go into `dev`, then `dev` to `stage` to `main`.
+- **`dev` is paused** (`true` in `scripts/ci/dev-paused`, read by `branch.sh` and `release.yml`). A pull request goes into `stage` and is squash-merged. `stage` is promoted to `main` by the owner with a merge commit. Nothing is promoted by an agent. When `dev` returns, features go into `dev`, then `dev` to `stage` to `main`.
 - `main` takes pull requests only from `stage` (and `release/vX.Y.Z`); `main` is never a head branch.
 - One pull request per request, one logical change per commit. Keep pull requests small enough to review in one sitting.
 - Commit subject: Conventional Commit `<type>(<optional scope>): <imperative summary>`.
