@@ -5,6 +5,10 @@ updates:
   # below back to dev when dev returns. Security updates ignore
   # target-branch and open against the default branch, without the groups and
   # ignores below: retarget one at stage, since main takes only stage.
+  # Dependabot's ecosystem for pnpm is `npm`: it reads pnpm-lock.yaml and
+  # keeps it in step with package.json. Moving the pnpm that CI runs
+  # (packageManager and its hash) is a change made by hand, which
+  # scripts/ci/pnpm-pin.sh checks (CONTRIBUTING.md#dependencies).
   - package-ecosystem: npm
     directory: /
     target-branch: stage
@@ -35,16 +39,6 @@ updates:
       # this major by hand together with engines.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
-  # The npm CLI that CI installs by hash (tools/npm, scripts/ci/npm-pin.sh).
-  # A bump here stays red until packageManager in package.json moves to the
-  # same version: `npm-pin.sh check` says so.
-  - package-ecosystem: npm
-    directory: /tools/npm
-    target-branch: stage
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     target-branch: stage

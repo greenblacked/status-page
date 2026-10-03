@@ -29,15 +29,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Set up the toolchain (npm ci)
+      - name: Set up the toolchain (pnpm install)
         uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
-      - run: npm run build
+      - run: pnpm run build
 
       - name: Capture the board
         shell: bash
         run: |
           set -euo pipefail
-          setsid npm run preview -- --port 4173 --strictPort >"$RUNNER_TEMP/preview.log" 2>&1 &
+          setsid pnpm run preview --port 4173 --strictPort >"$RUNNER_TEMP/preview.log" 2>&1 &
           preview_pid=$!
           trap 'kill -- -"$preview_pid" 2>/dev/null || true' EXIT
 

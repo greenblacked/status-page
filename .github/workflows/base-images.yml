@@ -10,10 +10,10 @@ on:
     paths:
       - compose.yaml
       - scripts/ci/container-checks.sh
-      - scripts/ci/npm-pin.sh
-      - tools/npm/**
+      - scripts/ci/pnpm-pin.sh
       - package.json
-      - package-lock.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
       - .github/workflows/base-images.yml
   schedule:
     # Weekly, Wednesday morning UTC, after the images' weekly rebuild.

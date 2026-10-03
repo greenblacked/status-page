@@ -162,14 +162,15 @@ Collection runs on the server, so the browser never deals with vendor CORS. Each
 
 ## Quick start
 
-You need Node 22.22.2 (pinned in `.nvmrc`), npm 12.1.0, and outbound HTTPS to the vendors above.
+You need Node 22.22.2 (pinned in `.nvmrc`), pnpm 12.8.1 (Corepack, which ships with Node, installs the exact one `package.json` pins and checks its hash), and outbound HTTPS to the vendors above.
 
 ```bash
 git clone https://github.com/greenblacked/status-page.git
 cd status-page
 nvm use
-npm ci
-npm run dev
+corepack enable pnpm
+pnpm install
+pnpm run dev
 ```
 
 Open the local URL that Vite prints. The first load reads all twenty sources, which can take a few seconds.
@@ -202,7 +203,7 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Switch on Notifications** (the bell) for a browser notification when a service changes while the tab is in the background.
 - **Open any card's vendor page** for the full story.
 
-A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 npm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
+A build made with `VITE_STATUS_HISTORY=1` also asks `/api/history.json` for uptime history and, for each service with days in it, adds a 30-day uptime strip to the card. The strip appears on every card except the changelog ("updates") cards, and not for a service whose days all fall outside the last 30 UTC days. The flag is read at build time and is off by default; without it the board makes no history request. Enable it with `VITE_STATUS_HISTORY=1 pnpm run build` locally or `VITE_STATUS_HISTORY=1 docker compose up preview`. The strip needs a history source that serves that endpoint. The current Worker and Node server return an empty document, so the strip shows nothing today.
 
 ## Integrations
 
@@ -327,7 +328,7 @@ groups:
 | Where | How |
 | --- | --- |
 | **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `main` to the `status-page` Worker at [status.szolotov.com](https://status.szolotov.com) and creates `stage` as a Worker Preview named `stage` of that same Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com); `dev` deploys nothing. Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested, and a production deploy is rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
-| **Any Node host** | `npm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice. `npm run preview` is a smoke test of that build, not a production host |
+| **Any Node host** | `pnpm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice. `pnpm run preview` is a smoke test of that build, not a production host |
 | **Docker** | `docker compose up preview` serves the built board from the public CI images, for a local run or a quick demo |
 
 The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
@@ -371,7 +372,7 @@ Not necessarily. No data (`unknown` in the API) means Status Page could not read
 
 Usually under three minutes old. Each board asks the server every two minutes.
 
-Running on Node (`npm run build`/`npm run preview`, or any other Node host), the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago. Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
+Running on Node (`pnpm run build`/`pnpm run preview`, or any other Node host), the server reuses a snapshot for up to 45 seconds so that many open boards share one set of vendor requests. **Refresh** skips the cache and asks every vendor at once, unless the last check was under 15 seconds ago. Opening the page never waits on the slowest vendor: if the cached snapshot expired within the last 75 seconds, the page renders from it, the server collects a new one behind it, and the board fetches that one straight away.
 
 Running on Cloudflare Workers, each isolate collects on demand and keeps its own in-memory cache. A cold request can wait for vendor responses, and **Refresh** requests a new sweep within that isolate (throttled to once per 15 seconds). Different isolates can show different collection times and issue more vendor requests.
 
@@ -410,19 +411,19 @@ React 19 on TanStack Start, Tailwind CSS 4, TypeScript in strict mode, Vitest an
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Development server with hot reload |
-| `npm run check` | Lint, typecheck, unit tests, and the hygiene and link checks: run it before you push |
-| `npm run lint` / `npm run lint:fix` | Biome lint, format and import order; `:fix` applies the fixes |
-| `npm run typecheck` | Type-check without emitting |
-| `npm test` | Unit tests and a property-based fuzz of the vendor parsers (fast-check, fixed seed), fully offline |
-| `npm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
-| `npm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `npm run build` first, and `npx playwright install chromium webkit` once |
-| `npm run build` / `npm run preview` | Production build into `dist/`, and a local server for it |
-| `npm run build:cf` / `npm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
-| `npm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
-| `npm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
+| `pnpm run dev` | Development server with hot reload |
+| `pnpm run check` | Lint, typecheck, unit tests, and the hygiene and link checks: run it before you push |
+| `pnpm run lint` / `pnpm run lint:fix` | Biome lint, format and import order; `:fix` applies the fixes |
+| `pnpm run typecheck` | Type-check without emitting |
+| `pnpm test` | Unit tests and a property-based fuzz of the vendor parsers (fast-check, fixed seed), fully offline |
+| `pnpm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
+| `pnpm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `pnpm run build` first, and `pnpm exec playwright install chromium webkit` once |
+| `pnpm run build` / `pnpm run preview` | Production build into `dist/`, and a local server for it |
+| `pnpm run build:cf` / `pnpm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
+| `pnpm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
+| `pnpm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
 
-The scripts that set variables inline (`build:cf`, `preview:cf`, `deploy:dry-run`) and `check` need a POSIX shell: on Windows, use WSL or [point npm at Git Bash](CONTRIBUTING.md#locally).
+The scripts that set variables inline (`build:cf`, `preview:cf`, `deploy:dry-run`) and `check` need a POSIX shell: on Windows, use WSL or [point pnpm at Git Bash](CONTRIBUTING.md#locally).
 
 ```text
 src/lib/status/        catalog, health model, collectors, cache and schedule
@@ -482,7 +483,7 @@ Outside pull requests, an hourly job calls every real vendor and opens an issue 
 [`compose.yaml`](compose.yaml) runs the same checks inside the public images from [greenblacked/github-base-images](https://github.com/greenblacked/github-base-images), so a failure can be reproduced with the exact toolchain a container job uses. Only Docker is needed, no local Node:
 
 ```bash
-docker compose run --rm node22         # ci-node22: npm ci, lint, typecheck, tests, build, repository checks
+docker compose run --rm node22         # ci-node22: pnpm install, lint, typecheck, tests, build, repository checks
 docker compose run --rm node24         # the same on ci-node24
 docker compose up preview              # ci-node22: serve the built board on http://127.0.0.1:4173
 docker compose run --rm security       # ci-security: trivy (HIGH/CRITICAL) and gitleaks

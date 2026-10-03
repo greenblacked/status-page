@@ -1,0 +1,18 @@
+# gitleaks configuration, read automatically by `gitleaks git .` (the security
+# service in compose.yaml and the base-images workflow) from the scanned directory.
+title = "status-page"
+
+[extend]
+# Keep every default rule.
+useDefault = true
+
+[allowlist]
+description = "npm's public registry signing keys"
+# The two ECDSA public keys pinned as NPM_KEYS in scripts/ci/lockfile-integrity.ts
+# (base64 SPKI). They are npm's public registry signing keys, published at
+# https://registry.npmjs.org/-/npm/v1/keys, so they are not secrets. Each regex is
+# anchored and matches one exact key; any other high-entropy string still fails.
+regexes = [
+  '''^MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1Olb3zMAFFxXKHiIkQO5cJ3Yhl5i6UPp\+IhuteBJbuHcA5UogKo0EWtlWwW6KSaKoTNEYL7JlCQiVnkhBktUgg==$''',
+  '''^MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEY6Ya7W\+\+7aUPzvMTrezH6Ycx3c\+HOKYCcNGybJZSCJq/fd7Qa8uuAKtdIkUQtQiEKERhAmE5lMMJhP8OkDOa2g==$''',
+]
