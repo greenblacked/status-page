@@ -25,6 +25,14 @@ const run = process.env.E2E_RUN;
 // the Chromium projects only; the WebKit ones always use Playwright's own.
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 
+// Chromium may resolve this machine and nothing else, so a page that asks another host fails to connect (and e2e/test.ts
+// fails the test). It is done here, not with a route, because a routed page has no HTTP cache, which the tests of the
+// self-hosted Inter need.
+const chromiumLaunch = {
+  executablePath,
+  args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"],
+};
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
@@ -50,8 +58,8 @@ export default defineConfig({
   // every test too: a Mac, an iPhone and an iPad, alongside Chromium on a
   // desktop, an Android phone and an iPad-sized tablet. `pnpm exec playwright install chromium webkit`.
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"], launchOptions: { executablePath } } },
-    { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: { executablePath } } },
+    { name: "desktop", use: { ...devices["Desktop Chrome"], launchOptions: chromiumLaunch } },
+    { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: chromiumLaunch } },
     // An iPad's size in Chromium: 834px is still the narrow layout (below 64rem) but wide enough (from 40rem)
     // for the bar's lead text to sit in the flow before the field's slot, which only WebKit's iPad would
     // otherwise cover. It runs the tests of the search reveal (the bar's copy of the field), the field's fill, the
@@ -60,7 +68,7 @@ export default defineConfig({
     {
       name: "tablet",
       grep: /search reveal|floating bar|field's fill|self-hosted Inter/i,
-      use: { ...devices["iPad Pro 11"], defaultBrowserType: "chromium", launchOptions: { executablePath } },
+      use: { ...devices["iPad Pro 11"], defaultBrowserType: "chromium", launchOptions: chromiumLaunch },
     },
     { name: "Desktop Safari", use: { ...devices["Desktop Safari"] } },
     { name: "iPhone 17 Pro", use: { ...devices["iPhone 17 Pro"] } },
