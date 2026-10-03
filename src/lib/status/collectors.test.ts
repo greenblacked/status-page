@@ -1956,7 +1956,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       // The changelogs are the board's business, after the sweep (mikrotik-notes.server.ts): the collector
       // never asks for one, so its result cannot depend on how fast or whether the changelog host answers.
       expect(asked).toEqual([]);
-      expect(mikrotik.summary).toBe("Latest RouterOS 7.20.2 · Sep 19");
+      expect(mikrotik.summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
       // Released within 14 days reads as "maintenance": a fresh release is
       // worth a look, not an all-clear.
       expect(mikrotik.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual([
@@ -1986,6 +1986,17 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         linkLabel: "Release notes",
       });
       expect(mikrotik.components.every((component) => component.release?.notes === undefined)).toBe(true);
+    });
+
+    it("MikroTik: the headline pairs the displayed channel's version with its own date", async () => {
+      // Stable (7.20.2, Sep 15) is shown even though development (7.21beta4) is newer, Sep 19.
+      stubFetch(mikrotikChannels((file) => fixture(`mikrotik/${file}`)));
+      expect((await collect("mikrotik")).summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
+      // Without a stable channel the newest one is displayed, with its own date.
+      const routes = mikrotikChannels((file) => fixture(`mikrotik/${file}`));
+      delete routes[`${URLS.mikrotikUpgrade}NEWESTa7.stable`];
+      stubFetch(routes);
+      expect((await collect("mikrotik")).summary).toBe("Latest RouterOS 7.21beta4 · Sep 19");
     });
 
     it("MikroTik: channel files that answer but hold no version are unknown with a parser failure", async () => {

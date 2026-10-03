@@ -207,4 +207,55 @@ describe("diffBoards", () => {
       [true],
     );
   });
+
+  it("treats fewer names during the fingerprint format change as no release", () => {
+    const previous = board([
+      service("windows", {
+        health: "operational",
+        meta: {
+          versions:
+            "Windows 11 26H2=26300.1000|Windows 11 25H2=26200.6000|Windows 11 24H2=26100.5000|Windows 10 22H2=19045.5000",
+        },
+      }),
+    ]);
+    // Microsoft removed an end-of-life row before the first refresh after the deploy.
+    const subset = board([
+      service("windows", {
+        health: "operational",
+        meta: { versions: "Windows 11 26H2=released|Windows 11 25H2=released|Windows 11 24H2=released" },
+      }),
+    ]);
+    assert.deepEqual(diffBoards(previous, subset), []);
+    // The same, with one version that is genuinely new: only it is a release.
+    const subsetPlusNew = board([
+      service("windows", {
+        health: "operational",
+        meta: {
+          versions:
+            "Windows 11 27H2=released|Windows 11 26H2=released|Windows 11 25H2=released|Windows 11 24H2=released",
+        },
+      }),
+    ]);
+    assert.deepEqual(
+      diffBoards(previous, subsetPlusNew).map((change) => [change.summary, change.release]),
+      [["Windows 11 27H2 released", true]],
+    );
+  });
+
+  it("still reads a version dropped from an already-released list as no release", () => {
+    const previous = board([
+      service("android-os", { health: "operational", meta: { versions: "Android 17=released|Android 16=released" } }),
+    ]);
+    const dropped = board([
+      service("android-os", { health: "operational", meta: { versions: "Android 17=released" } }),
+    ]);
+    assert.deepEqual(diffBoards(previous, dropped), []);
+    const renamed = board([
+      service("android-os", { health: "operational", meta: { versions: "Android 18=released|Android 17=released" } }),
+    ]);
+    assert.deepEqual(
+      diffBoards(previous, renamed).map((change) => change.summary),
+      ["Android 18 released"],
+    );
+  });
 });

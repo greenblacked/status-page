@@ -5,7 +5,7 @@ import { type Handler, text } from "../../test/stub-fetch.ts";
 import { runWithCloudflareContext } from "./cloudflare-context.ts";
 import { collectBoard } from "./collect-board.ts";
 import { clearMikrotikNotesCache, startMikrotikNotes, withMikrotikNotes } from "./mikrotik-notes.server.ts";
-import { clearReleaseFeedCache, RELEASE_FEED_RETRY_MS } from "./release-feeds.server.ts";
+import { clearReleaseFeedCache, RELEASE_FEED_RETRY_MS, RELEASE_SOURCES } from "./release-feeds.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
 
 // The MikroTik changelog notes are advisory: read after the health sweep, in the background, cached like a
@@ -60,7 +60,7 @@ function changelogs(): Record<string, Handler> {
 function card(): ServiceSnapshot {
   return service("mikrotik", {
     category: "updates",
-    summary: "Latest RouterOS 7.20.2 · Sep 19",
+    summary: "Latest RouterOS 7.20.2 · Sep 15",
     components: VERSIONS.map((version, index) => ({
       name: CHANGELOG_FILES[index],
       health: "operational" as const,
@@ -225,7 +225,7 @@ describe("MikroTik changelog notes", () => {
         route({ ...changelogs(), [changelog("7.21beta4")]: text("<html>oops</html>") });
         await startMikrotikNotes([card()]);
         const [after] = withMikrotikNotes([card()]);
-        expect(after.summary).toBe("Latest RouterOS 7.20.2 · Sep 19");
+        expect(after.summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
         expect(after.components[0].release?.notes).toBeTruthy();
       });
     });
@@ -290,6 +290,9 @@ describe("MikroTik changelog notes", () => {
           return upgrade[url]?.() ?? new Response("not found", { status: 404, statusText: "Not Found" });
         });
         const { board, background } = await collectInWorker();
+        // The changelogs start once the release feeds have settled, after the board went out.
+        await settle();
+        await settle();
         for (const release of hung.splice(0)) release();
         await background();
         results.push({ name, durationMs: board.durationMs, judged: judged(board) });
@@ -362,7 +365,7 @@ describe("MikroTik changelog notes", () => {
       const first = await collectInWorker();
       const mikrotik = first.board.services.find((card) => card.id === "mikrotik");
       // The cold board went out without the notes...
-      expect(mikrotik?.summary).toBe("Latest RouterOS 7.20.2 · Sep 19");
+      expect(mikrotik?.summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
       expect(mikrotik?.components.some((component) => component.release?.notes)).toBe(false);
       // ...the changelogs were started, once, after the sweep, and the Worker was asked to stay alive for them.
       await settle();
@@ -385,6 +388,71 @@ describe("MikroTik changelog notes", () => {
       expect(after?.components[0].release?.notes?.[0]).toContain("lte - fixed a crash");
       expect(after?.health).toBe("operational");
       expect(calls).toEqual([]);
+    });
+
+    it("starts the changelogs only once the feeds have settled, so queueing for a connection cannot time them out", async () => {
+      // A Worker holds six outgoing connections and queues the rest; the release feeds are six requests, so they
+      // take every slot. A request's own 4 s timeout starts with its fetch call, queued or not.
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      vi.setSystemTime(Date.parse("2026-10-02T12:00:00.000Z"));
+      const upgrade = channels();
+      const known = changelogs();
+      const feedHosts = new Set(RELEASE_SOURCES.map((source) => source.url));
+      const slots = { free: 6, waiting: [] as Array<() => void> };
+      const requested: string[] = [];
+      const reached: string[] = [];
+      vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = urlOf(input);
+        if (!feedHosts.has(url) && !feedUrls(url)) {
+          return Promise.resolve(
+            url === CLAUDE
+              ? new Response(JSON.stringify(degraded))
+              : (upgrade[url]?.() ?? new Response("not found", { status: 404, statusText: "Not Found" })),
+          );
+        }
+        requested.push(url);
+        const signal = init?.signal;
+        return new Promise<Response>((resolve, reject) => {
+          let granted = false;
+          const aborted = () => {
+            if (granted) release();
+            else slots.waiting.splice(slots.waiting.indexOf(grant), 1);
+            reject(new DOMException("aborted", "AbortError"));
+          };
+          const release = () => {
+            slots.free += 1;
+            slots.waiting.shift()?.();
+          };
+          const grant = () => {
+            granted = true;
+            slots.free -= 1;
+            reached.push(url);
+            // A feed hangs until its timeout; a changelog answers at once.
+            if (feedUrls(url)) {
+              signal?.removeEventListener("abort", aborted);
+              resolve(known[url]?.() ?? new Response("", { status: 404 }));
+              release();
+            }
+          };
+          signal?.addEventListener("abort", aborted, { once: true });
+          if (slots.free > 0) grant();
+          else slots.waiting.push(grant);
+        });
+      });
+      const { board, background } = await collectInWorker();
+      expect(board.services.find((card) => card.id === "mikrotik")?.health).toBe("operational");
+      // The feeds hold every connection until just before their deadline. No changelog has been asked for yet.
+      await vi.advanceTimersByTimeAsync(3900);
+      expect(requested.filter((url) => feedHosts.has(url))).toHaveLength(RELEASE_SOURCES.length);
+      expect(requested.filter(feedUrls)).toEqual([]);
+      // The feeds time out and settle; only now do the changelogs start, each with its full timeout.
+      await vi.advanceTimersByTimeAsync(200);
+      await background();
+      expect(requested.filter(feedUrls).sort()).toEqual(VERSIONS.map(changelog).sort());
+      expect(reached.filter(feedUrls)).toHaveLength(VERSIONS.length);
+      // None was failure-cached for queueing: the next board has the notes.
+      const next = await collectBoard();
+      expect(next.services.find((card) => card.id === "mikrotik")?.summary).toContain("What's new in 7.21beta4");
     });
   });
 });

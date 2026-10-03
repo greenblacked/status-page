@@ -1890,8 +1890,10 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
       };
     });
 
-    const latest = value.stable?.version ?? value.newest?.version ?? value.channels[0]?.version ?? "";
-    const latestDate = formatReleaseAge(value.newest?.releasedAt ?? value.stable?.releasedAt);
+    // The headline is one channel's version and that same channel's date: the stable one, else the newest.
+    const headline = value.stable ?? value.newest ?? value.channels[0];
+    const latest = headline?.version ?? "";
+    const latestDate = formatReleaseAge(headline?.releasedAt);
     // The notes of the changelogs (the newest release's first note as the summary, each version's first notes in
     // its Details) are not read here: they come after the sweep, from the cache (mikrotik-notes.server.ts), so a
     // slow or failing changelog host can never delay or change this card's result.

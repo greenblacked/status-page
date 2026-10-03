@@ -39,9 +39,11 @@ export function assembleBoard(services: ServiceSnapshot[], durationMs: number): 
  * alive for them; elsewhere the process simply carries on), and cached for
  * the next board, so a cold board shows its release lines one refresh later.
  * The MikroTik changelogs (the notes in its Details and its summary line) are
- * read the same way, right after the sweep and in the same `waitUntil`: the
- * collector reads the version channels only, so a changelog host that is
- * slow or down changes no result and no `durationMs`.
+ * read the same way, in the same `waitUntil`, but only once the feeds have
+ * settled: their timeout starts with the request, so beside the feeds they
+ * could spend it queued for a connection and fail unread. The collector reads
+ * the version channels only, so a changelog host that is slow or down changes
+ * no result and no `durationMs`.
  */
 export async function collectBoard(): Promise<BoardSnapshot> {
   const started = Date.now();
@@ -55,7 +57,9 @@ export async function collectBoard(): Promise<BoardSnapshot> {
   const durationMs = Date.now() - started;
   // Every health request has settled: only now may a feed take a connection.
   const reading = startReleaseFeeds();
-  const notes = startMikrotikNotes(services);
+  // The notes wait for the feeds to settle: a note's own 4 s timeout starts with its request, so started beside
+  // six feeds on a Worker's six connections it could time out in the queue and be failure-cached.
+  const notes = reading.settled.then(() => startMikrotikNotes(services));
   findCloudflareContext()?.waitUntil(Promise.all([reading.settled, notes]).then(() => undefined));
   return assembleBoard(withMikrotikNotes(withReleaseFeeds(services, reading.ready())), durationMs);
 }
