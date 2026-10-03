@@ -24,11 +24,13 @@ import { vendorUrl } from "./vendor-url.ts";
 
 // What a vendor's own release or changelog feed adds to a status card: the
 // newest entry on the card's second line, a few more behind its Details. It is
-// advisory. Nothing here touches a card's health: the feeds are read beside the
-// health collectors and never waited for (a board takes the feeds that are in
-// hand when its health sweep ends, and a slower one joins the next board), a
-// feed that cannot be read is logged (`release_feed_failed`), reported by
-// `npm run source-health`, and leaves the card exactly as it was.
+// advisory. Nothing here touches a card's health: the feeds are read only after
+// the health sweep has settled (never beside it, so they cannot take a
+// connection slot from a health request) and never waited for (a board takes
+// the feeds the cache already holds when its sweep ends, and a feed read
+// after it joins the next board), a feed that cannot be read is logged
+// (`release_feed_failed`), reported by `npm run source-health`, and leaves the
+// card exactly as it was.
 //
 // Release feeds change slowly, so they are not part of every sweep. Each one is
 // read at most once per RELEASE_FEED_TTL_MS in an isolate (RELEASE_FEED_RETRY_MS
@@ -39,7 +41,7 @@ import { vendorUrl } from "./vendor-url.ts";
 export const RELEASE_FEED_TTL_MS = 30 * 60_000;
 /** How long an isolate leaves a feed that failed alone before trying it again. */
 export const RELEASE_FEED_RETRY_MS = 5 * 60_000;
-/** The deadline of one feed read: short, like every side request. The board never waits on it (collect-board.ts). */
+/** The deadline of one feed read: short, like every side request. The board never waits on it and it starts after the sweep (collect-board.ts). */
 const RELEASE_TIMEOUT_MS = 4000;
 /** Most of one entry's text looked at: only its first lines are ever shown. */
 const MAX_ENTRY_CHARS = 100_000;
@@ -726,6 +728,10 @@ export type ReleaseFeedReading = {
  * feed that misses the board is cached when it arrives and is on the next
  * one. A feed that failed is absent and not asked again for
  * RELEASE_FEED_RETRY_MS.
+ *
+ * Call it only once the health sweep has settled (collect-board.ts does): it
+ * starts every due request at once, and on a Worker six connections are all
+ * there are, so a feed started earlier would queue health behind it.
  */
 export function startReleaseFeeds(): ReleaseFeedReading {
   const feeds = new Map<ServiceId, ReleaseFeed>();

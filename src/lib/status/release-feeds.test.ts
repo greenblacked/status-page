@@ -982,8 +982,21 @@ describe("the advisory rule", () => {
       })),
     });
 
+    /** One board build as a Worker runs it: what it returns, and what it asked `waitUntil` to keep alive. */
+    async function collectInWorker() {
+      const waiting: Promise<unknown>[] = [];
+      const board = await runWithCloudflareContext({ env: {}, waitUntil: (promise) => waiting.push(promise) }, () =>
+        collectBoard(),
+      );
+      return { board, waiting, background: () => Promise.all(waiting) };
+    }
+
     it("a card keeps its real health whether its release feed reads, fails or is gone", async () => {
       stubFetch({ ...allFeedsUp(), [CLAUDE]: () => new Response(JSON.stringify(degraded)) });
+      // A cold board has no release lines: the feeds are read after its sweep, and the next board has them.
+      const cold = await collectInWorker();
+      expect(cold.board.services.some((card) => card.releaseFeed)).toBe(false);
+      await cold.background();
       const withFeeds = await collectBoard();
       expect(withFeeds.services.filter((card) => card.releaseFeed).map((card) => card.id)).toEqual([
         "gcp",
@@ -1044,17 +1057,19 @@ describe("the advisory rule", () => {
     }
     const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    it("never waits for a slow feed: the board ends with the health sweep, without that card's line", async () => {
+    it("never waits for a slow feed: the board ends with the health sweep, and the feeds are read after it", async () => {
       const gitlab = heldFeed("gitlab");
       stubFetch({ ...allFeedsUp(), [URLS.gitlab]: gitlab.handler });
       // This resolves while the GitLab feed is still unanswered: awaiting it would hang the test.
-      const board = await collectBoard();
-      expect(board.durationMs).toBe(0);
-      expect(board.services.find((card) => card.id === "gitlab")?.releaseFeed).toBeUndefined();
-      // The feeds that were quick are on it.
-      expect(board.services.find((card) => card.id === "github")?.releaseFeed).toBeDefined();
-      expect(board.services.find((card) => card.id === "gitlab")?.failure?.message).not.toMatch(/release/i);
+      const cold = await collectInWorker();
+      expect(cold.board.durationMs).toBe(0);
+      expect(cold.board.services.find((card) => card.id === "gitlab")?.releaseFeed).toBeUndefined();
+      expect(cold.board.services.find((card) => card.id === "gitlab")?.failure?.message).not.toMatch(/release/i);
       gitlab.answer();
+      await cold.background();
+      // The quick feeds and the slow one are all cached by now, for the next board.
+      const warm = await collectBoard();
+      expect(warm.services.filter((card) => card.releaseFeed)).toHaveLength(RELEASE_SOURCES.length);
     });
 
     it("finishes a slow feed in the background, keeps the request alive for it, and puts it on the next board", async () => {
@@ -1104,6 +1119,175 @@ describe("the advisory rule", () => {
       // Nothing to read the second time: all of it is in hand at once.
       const again = startReleaseFeeds();
       expect(again.ready().size).toBe(RELEASE_SOURCES.length);
+    });
+
+    // The Worker allows six simultaneous outgoing connections and queues the rest, while every health request's
+    // own timeout is already running. So a feed may never be in flight, or queued, while a health request is.
+    describe("order: the feeds start only after the health sweep has settled", () => {
+      const feedUrls = new Set(RELEASE_SOURCES.map((candidate) => candidate.url));
+      const urlOf = (input: RequestInfo | URL) =>
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+
+      it("starts no feed request before every health request has settled, with more health requests than slots", async () => {
+        const SLOTS = 6;
+        const feedRoutes = allFeedsUp();
+        let seq = 0;
+        let lastHealthStart = -1;
+        let firstFeedStart = -1;
+        let healthStarted = 0;
+        let feedStarted = 0;
+        let healthUnsettled = 0;
+        let mostHealthAtOnce = 0;
+        const feedWhileHealthPending: string[] = [];
+        const held: Array<() => void> = [];
+        vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+          const url = urlOf(input);
+          seq += 1;
+          const feedHandler = feedUrls.has(url) ? feedRoutes[url] : undefined;
+          if (feedHandler) {
+            if (healthUnsettled > 0) feedWhileHealthPending.push(url);
+            if (firstFeedStart < 0) firstFeedStart = seq;
+            feedStarted += 1;
+            return Promise.resolve(feedHandler());
+          }
+          lastHealthStart = seq;
+          healthStarted += 1;
+          healthUnsettled += 1;
+          mostHealthAtOnce = Math.max(mostHealthAtOnce, healthUnsettled);
+          return new Promise<Response>((resolve) => {
+            held.push(() => {
+              healthUnsettled -= 1;
+              resolve(new Response("not found", { status: 404, statusText: "Not Found" }));
+            });
+          });
+        });
+
+        let finished = false;
+        const run = collectInWorker().then((result) => {
+          finished = true;
+          return result;
+        });
+        // Answer the health requests a slot-load at a time, so the sweep takes many rounds, and some
+        // collectors ask again after an answer; check on every round that no feed has started.
+        for (let round = 0; round < 500 && !finished; round += 1) {
+          await settle();
+          if (held.length > 0) expect(feedStarted).toBe(0);
+          for (const answer of held.splice(0, SLOTS)) answer();
+        }
+        const { board, background } = await run;
+        await background();
+
+        expect(healthStarted).toBeGreaterThan(SLOTS);
+        expect(mostHealthAtOnce).toBeGreaterThan(SLOTS);
+        expect(feedWhileHealthPending).toEqual([]);
+        expect(feedStarted).toBe(RELEASE_SOURCES.length);
+        expect(firstFeedStart).toBeGreaterThan(lastHealthStart);
+        // The cold board went out without the feeds; they were read afterwards, in the same invocation.
+        expect(board.services.some((card) => card.releaseFeed)).toBe(false);
+        // ...and are in the cache for the next one.
+        expect(startReleaseFeeds().ready().size).toBe(RELEASE_SOURCES.length);
+      });
+
+      it("starts no feed request until the slowest health request has finished", async () => {
+        let slowest: (() => void) | undefined;
+        const feedStartsBeforeSlowest: string[] = [];
+        let slowestDone = false;
+        const feedRoutes = allFeedsUp();
+        vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+          const url = urlOf(input);
+          const feedHandler = feedUrls.has(url) ? feedRoutes[url] : undefined;
+          if (feedHandler) {
+            if (!slowestDone) feedStartsBeforeSlowest.push(url);
+            return Promise.resolve(feedHandler());
+          }
+          if (url === CLAUDE) {
+            return new Promise<Response>((resolve) => {
+              slowest = () => {
+                slowestDone = true;
+                resolve(new Response(JSON.stringify(degraded)));
+              };
+            });
+          }
+          return Promise.resolve(new Response("not found", { status: 404, statusText: "Not Found" }));
+        });
+        let finished = false;
+        const run = collectInWorker().then((result) => {
+          finished = true;
+          return result;
+        });
+        // Every other source has answered, one is still out: nothing may have started.
+        await settle();
+        await settle();
+        expect(finished).toBe(false);
+        expect(feedStartsBeforeSlowest).toEqual([]);
+        slowest?.();
+        const { board, background } = await run;
+        await background();
+        expect(feedStartsBeforeSlowest).toEqual([]);
+        expect(board.services.find((card) => card.id === "claude")?.health).toBe("degraded");
+      });
+
+      it("feeds that are failing, hanging or slow change no health result and not the board's duration", async () => {
+        // Each health answer moves the clock on, so the board has a duration to compare.
+        const stubWith = (feed: (url: string, init?: RequestInit) => Promise<Response>) => {
+          vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = urlOf(input);
+            if (feedUrls.has(url)) return feed(url, init);
+            vi.setSystemTime(Date.now() + 250);
+            if (url === CLAUDE) return new Response(JSON.stringify(degraded));
+            return new Response("not found", { status: 404, statusText: "Not Found" });
+          });
+        };
+        const feedRoutes = allFeedsUp();
+        const hung: Array<() => void> = [];
+        const scenarios: Record<string, (url: string, init?: RequestInit) => Promise<Response>> = {
+          up: async (url) => (feedRoutes[url] as () => Response)(),
+          "failing (500)": async () => new Response("", { status: 500 }),
+          "network error": async () => Promise.reject(new TypeError("fetch failed")),
+          hanging: (_url) =>
+            new Promise<Response>((resolve) => {
+              hung.push(() => resolve(new Response("", { status: 500 })));
+            }),
+        };
+
+        const results: Array<{ name: string; durationMs: number; judged: ReturnType<typeof judged> }> = [];
+        for (const [name, feed] of Object.entries(scenarios)) {
+          clearReleaseFeedCache();
+          vi.setSystemTime(T0);
+          stubWith(feed);
+          // Let the feeds of the last scenario end first: a late read must not land in this one's cache.
+          const { board, background } = await collectInWorker();
+          for (const release of hung.splice(0)) release();
+          await background();
+          results.push({ name, durationMs: board.durationMs, judged: judged(board) });
+          expect(board.services.some((card) => card.releaseFeed)).toBe(false);
+        }
+
+        const [baseline, ...others] = results;
+        expect(baseline.durationMs).toBeGreaterThan(0);
+        expect(baseline.judged.services.find((card) => card.id === "claude")?.health).toBe("degraded");
+        for (const other of others) {
+          expect(other.durationMs, other.name).toBe(baseline.durationMs);
+          expect(other.judged, other.name).toEqual(baseline.judged);
+        }
+      });
+
+      it("a Worker isolate without waitUntil still reads the due feeds after the sweep", async () => {
+        const calls: string[] = [];
+        vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+          const url = urlOf(input);
+          calls.push(url);
+          const handler = allFeedsUp()[url];
+          return handler ? handler() : new Response("nope", { status: 404 });
+        });
+        const cold = await collectBoard();
+        expect(cold.services.some((card) => card.releaseFeed)).toBe(false);
+        // Nothing keeps the request alive for them, but they were started and finish on their own.
+        await vi.waitFor(() => expect(calls.filter((url) => feedUrls.has(url))).toHaveLength(RELEASE_SOURCES.length));
+        await settle();
+        const warm = await collectBoard();
+        expect(warm.services.filter((card) => card.releaseFeed)).toHaveLength(RELEASE_SOURCES.length);
+      });
     });
 
     it("costs the board no extra requests inside the half hour", async () => {
