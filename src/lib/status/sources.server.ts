@@ -7,12 +7,9 @@ import {
   isFreshRelease,
   latestAppleOsByFamily,
   MIKROTIK_CHANNELS,
-  mikrotikChangelogIsFor,
-  mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   parseMikrotikNewest,
   splitAppleBuild,
-  summarizeMikrotikChangelog,
 } from "./changelog.ts";
 import { fingerprint } from "./fingerprint.ts";
 import {
@@ -76,9 +73,6 @@ export const MAX_NESTED_ROWS = 500;
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
 const EXTRA_TIMEOUT_MS = 4000;
-// RouterOS changelogs run to hundreds of kilobytes, and the newest release's notes are the first lines: ask for
-// this much of the start.
-const CHANGELOG_RANGE_BYTES = 65_536;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
 
 // Every field a vendor could omit is optional: a missing one must cost a
@@ -1844,26 +1838,6 @@ async function collectClaude(): Promise<ServiceSnapshot> {
   }
 }
 
-// What the Details and the summary take from one version's changelog.
-type MikrotikNotes = { summary: string; notes: string[] };
-const MIKROTIK_NOTES_REMEMBERED = 16;
-const mikrotikNotesCache = new Map<string, MikrotikNotes>();
-
-function rememberMikrotikNotes(version: string, read: MikrotikNotes): void {
-  // Oldest first out: a Map iterates in insertion order. The channels list five versions at most.
-  while (mikrotikNotesCache.size >= MIKROTIK_NOTES_REMEMBERED) {
-    const oldest = mikrotikNotesCache.keys().next();
-    if (oldest.done) break;
-    mikrotikNotesCache.delete(oldest.value);
-  }
-  mikrotikNotesCache.set(version, read);
-}
-
-/** Forgets the changelogs read so far; for tests, which serve different files under the same version. */
-export function clearMikrotikNotesCache(): void {
-  mikrotikNotesCache.clear();
-}
-
 async function collectMikrotik(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -1899,54 +1873,10 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
         const nextTime = Date.parse(channel.releasedAt ?? "") || 0;
         return nextTime > currentTime ? channel : current;
       }, channels[0]);
-      // The changelog of every version the channels list (often fewer than five: stable and testing can share
-      // one): the newest one's first note is the summary, and each version's first few notes are on its Details.
-      // A released version's changelog does not change, so each is read once per isolate and remembered
-      // (failures and bodies that do not parse are not): a sweep asks only for versions it has not read,
-      // which is none on most sweeps.
-      // The newest section is at the top of the file, so a short ranged read is enough; a server that ignores
-      // the range sends the whole file, which fetchText caps. A changelog that fails costs that version its
-      // notes, and nothing else.
-      const notesVersion = newest?.version ?? stable?.version;
-      const changelogs = new Map<string, MikrotikNotes>();
-      await Promise.all(
-        [...new Set(channels.map((channel) => channel.version))].map(async (version) => {
-          const known = mikrotikNotesCache.get(version);
-          if (known) {
-            changelogs.set(version, known);
-            return;
-          }
-          // parseMikrotikNewest already refuses a malformed version; building
-          // the URL through the same check keeps it that way if that changes.
-          const url = mikrotikChangelogUrl(version);
-          if (!url) return;
-          try {
-            // The summary's changelog keeps the default deadline; the others are side requests.
-            const { body } = await fetchText(url, {
-              headers: { Range: `bytes=0-${CHANGELOG_RANGE_BYTES - 1}` },
-              ...(version === notesVersion ? {} : { timeoutMs: EXTRA_TIMEOUT_MS }),
-            });
-            // A body with no "What's new in" section and a bullet under it (empty, truncated, an HTML
-            // error page served with a 200), or one whose section is for another version, is a failed read,
-            // not this version's changelog: it neither gives the summary nor is remembered, so the next
-            // sweep asks again instead of keeping a generic card or another version's notes.
-            if (!mikrotikChangelogIsFor(body, version)) return;
-            const notes = mikrotikChangelogNotes(body);
-            if (notes.length === 0) return;
-            const read = { summary: summarizeMikrotikChangelog(body), notes };
-            rememberMikrotikNotes(version, read);
-            changelogs.set(version, read);
-          } catch {
-            // No notes for this version, and nothing remembered: the next sweep tries again.
-          }
-        }),
-      );
-      const notes = (notesVersion ? changelogs.get(notesVersion)?.summary : undefined) ?? "";
-      return { channels, notes, stable, newest, changelogs };
+      return { channels, stable, newest };
     });
 
     const components: ComponentHealth[] = value.channels.map((channel) => {
-      const notes = value.changelogs.get(channel.version)?.notes ?? [];
       const url = mikrotikChangelogUrl(channel.version);
       return {
         name: channel.name,
@@ -1956,16 +1886,20 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
           version: channel.version,
           ...(channel.releasedAt ? { releasedAt: channel.releasedAt } : {}),
           ...(url ? { url, linkLabel: "Release notes" } : {}),
-          ...(notes.length > 0 ? { notes } : {}),
         },
       };
     });
 
-    const latest = value.stable?.version ?? value.newest?.version ?? value.channels[0]?.version ?? "";
-    const latestDate = formatReleaseAge(value.newest?.releasedAt ?? value.stable?.releasedAt);
-    const summary =
-      value.notes ||
-      (latest ? `Latest RouterOS ${latest}${latestDate ? ` · ${latestDate}` : ""}` : "RouterOS channels loaded.");
+    // The headline is one channel's version and that same channel's date: the stable one, else the newest.
+    const headline = value.stable ?? value.newest ?? value.channels[0];
+    const latest = headline?.version ?? "";
+    const latestDate = formatReleaseAge(headline?.releasedAt);
+    // The notes of the changelogs (the newest release's first note as the summary, each version's first notes in
+    // its Details) are not read here: they come after the sweep, from the cache (mikrotik-notes.server.ts), so a
+    // slow or failing changelog host can never delay or change this card's result.
+    const summary = latest
+      ? `Latest RouterOS ${latest}${latestDate ? ` · ${latestDate}` : ""}`
+      : "RouterOS channels loaded.";
 
     return {
       ...base("mikrotik", new Date().toISOString(), ms),
@@ -2046,8 +1980,10 @@ async function collectWindows(): Promise<ServiceSnapshot> {
     if (!releases.length) throw new PayloadError("Windows release page had no readable version table.");
 
     // Only a new feature update counts as a new release: every serviced
-    // version gets a monthly update, so its revision date would flag the card
-    // nearly all the time. The latest revision stays in the detail line.
+    // version gets a monthly cumulative update, so its build (and revision date) would flag the card nearly
+    // every month. The latest build stays in the detail line and the Details; the release fingerprint
+    // (meta.versions) names each feature version with a fixed word, as Android's does, so it changes only when
+    // the page adds a version.
     // The table gives a day, not a moment, so the dates stay bare days (UTC) and the Details read them as such.
     // It has no notes text: the Details link the page itself.
     const components: ComponentHealth[] = releases.map((release) => ({
@@ -2079,7 +2015,7 @@ async function collectWindows(): Promise<ServiceSnapshot> {
         versions: formatVersionMap(
           releases.map((release) => ({
             name: `${WINDOWS_NAME} ${release.version}`,
-            version: release.build ?? release.availableAt.slice(0, 10),
+            version: "released",
           })),
         ),
       },

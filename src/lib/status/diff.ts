@@ -1,4 +1,4 @@
-import { describeVersionChanges, versionFingerprint } from "./changelog.ts";
+import { describeVersionChanges, parseVersionMap, versionFingerprint } from "./changelog.ts";
 import { worseHealth } from "./health.ts";
 import type { BoardSnapshot, Health, ServiceId, ServiceSnapshot } from "./types.ts";
 
@@ -35,7 +35,32 @@ export function releaseChange(before: ServiceSnapshot, after: ServiceSnapshot): 
   const previousVersions = versionFingerprint(before.meta);
   const nextVersions = versionFingerprint(after.meta);
   if (!previousVersions || !nextVersions || previousVersions === nextVersions) return "";
+  const previousMap = parseVersionMap(previousVersions);
+  const nextMap = parseVersionMap(nextVersions);
+  // A format change is no release for the names the board already had; a name it did not have still is one.
+  if (isFingerprintMigration(previousMap, nextMap)) {
+    return Object.keys(nextMap)
+      .filter((name) => !(name in previousMap))
+      .map((name) => `${name} ${nextMap[name]}`)
+      .join(" · ");
+  }
   return describeVersionChanges(previousVersions, nextVersions);
+}
+
+/**
+ * A fingerprint that gives every name the fixed word "released" where a name it shares with the previous one
+ * carried something else is a format change (Windows once carried each version's build), not a release: a board
+ * stored before the change must not read as one. The names may be fewer than before (Microsoft dropped an
+ * end-of-life row before the first refresh) or include a new one; only a new one is a release. A fingerprint
+ * that was already all "released" (Android) has nothing to migrate and is compared as usual.
+ */
+function isFingerprintMigration(before: Record<string, string>, after: Record<string, string>): boolean {
+  const names = Object.keys(after);
+  return (
+    names.length > 0 &&
+    names.every((name) => after[name] === "released") &&
+    names.some((name) => name in before && before[name] !== "released")
+  );
 }
 
 export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseChange[] {
