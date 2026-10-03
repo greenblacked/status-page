@@ -1,12 +1,16 @@
+import { pathToFileURL } from "node:url";
 import { defineConfig, devices } from "@playwright/test";
+import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 
 // Browser tests against the production build, served the way CI's smoke
 // test serves it: run `npm run build` first. `npm run test:e2e` runs them.
 //
-// The board reads live vendors on the server, so what the cards say varies
-// from run to run (and is all Unknown without network access). The tests
-// only assert what holds either way: the page, its accessibility, keyboard
-// paths and URL state, never a particular vendor's health.
+// The board reads vendors on the server, which the tests must not depend on:
+// the preview is started with e2e/support/no-vendors.mjs, which refuses every
+// request to a host other than this machine. The page's first render is then
+// the same all-Unknown board wherever the suite runs, and a test that needs a
+// particular state serves a fixture board (e2e/fixture-board.ts). The setup
+// proves the cut-off before the first test and reports it after the last.
 // PLAYWRIGHT_PORT moves the preview off 4173 when something else holds it.
 const port = Number(process.env.PLAYWRIGHT_PORT) || 4173;
 const baseURL = `http://127.0.0.1:${port}`;
@@ -25,8 +29,9 @@ export default defineConfig({
   // "list" prints each test as it starts and ends, so a job that hits its
   // timeout shows which tests were running; "github" alone shows only dots.
   reporter: process.env.CI ? [["github"], ["list"], ["html", { open: "never" }]] : [["list"]],
-  // The first page load reads every vendor, up to their 9-second timeout.
+  // Generous on purpose: some tests wait out the board's own two-minute refetch clock.
   timeout: 45_000,
+  globalSetup: "./e2e/support/global-setup.ts",
   use: {
     baseURL,
     trace: "retain-on-failure",
@@ -59,7 +64,12 @@ export default defineConfig({
     command: `npm run preview -- --port ${port} --strictPort`,
     // /healthz never reads the board, so the server is up before any vendor answers.
     url: `${baseURL}/healthz`,
-    reuseExistingServer: !process.env.CI,
+    // Always its own: a server that was started by hand does not have the vendors cut off.
+    reuseExistingServer: false,
+    env: {
+      NODE_OPTIONS: `--import=${pathToFileURL("./e2e/support/no-vendors.mjs").href}`,
+      E2E_VENDOR_LOG: vendorLogPath(port),
+    },
     timeout: 60_000,
   },
 });
