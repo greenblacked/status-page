@@ -13,9 +13,11 @@ name: Release
 #     breaking change is major, feat minor, fix, perf or revert patch, and
 #     anything else releases nothing. CI commits the bump to main, authored
 #     by whoever merged, then tags it and drafts the release. The usual way
-#     to release.
+#     to release only where GitHub Actions may push to main; here main's
+#     ruleset refuses that push, so such a run fails at the bump.
 #   - Merging a pull request that sets an untagged version in package.json,
-#     for example one from scripts/release/bump.sh: releases that version.
+#     for example one from scripts/release/bump.sh: releases that version
+#     without pushing to main. This repository releases this way.
 #   - Run workflow with bump = patch, minor or major: the same bump, by hand.
 #   - Run workflow with bump = current: publishes the package.json version as
 #     it is, if it has no tag yet (a retry).

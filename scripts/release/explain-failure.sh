@@ -13,7 +13,7 @@ output="$(cat)"
 if grep -qiE 'GH013|Repository rule violations' <<<"$output"; then
   case "$ref" in
     main)
-      echo "::error::$what: main's ruleset refused GitHub Actions' push; nothing was released. Release with ./scripts/release/bump.sh <level|X.Y.Z> on release/vX.Y.Z and a pull request into main (merge commit) - CONTRIBUTING.md#releases. Adding GitHub Actions to the bypass list is an alternative only where the GitHub settings offer it (organisation repositories, or via the API)"
+      echo "::error::$what: main's ruleset refused GitHub Actions' push; nothing was released. Release with ./scripts/release/bump.sh <level|X.Y.Z> from an up-to-date main or origin/stage (it creates release/vX.Y.Z) and a pull request into main (merge commit) - CONTRIBUTING.md#releases. Adding GitHub Actions to the bypass list is an alternative only where the GitHub settings offer it (organisation repositories, or via the API)"
       ;;
     stage | dev)
       echo "::error::$what: ${ref}'s ruleset refused GitHub Actions' push; bring main in through a chore/sync-main branch and a pull request (merge commit) - CONTRIBUTING.md#releases"

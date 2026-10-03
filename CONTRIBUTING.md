@@ -93,11 +93,11 @@ Rules:
 - Bring `dev` in with a merge, not a rebase, once the branch is pushed. Others may have it checked out (see [docs/git-and-readme.md](docs/git-and-readme.md#authorship)).
 - Keep the name when the work grows: a pull request cannot move to another branch, so renaming one means opening a new pull request.
 - Delete the branch once it is merged.
-- `dev`, `stage` and `main` take changes only through pull requests, apart from what CI pushes: the release commit on `main`, and `main` merged back into `stage` and `dev` after each release.
+- `dev`, `stage` and `main` take changes only through pull requests, apart from what CI pushes: `main` merged back into `stage` and `dev` after each release, and the release commit on `main` where a ruleset lets GitHub Actions push it (on this repository `bump.sh` makes that commit in a pull request instead).
 
 ### Branch protection
 
-Branch protection lives in GitHub's settings, not in the code, so the owner sets it once. The recommended rulesets (**Settings → Rules → Rulesets**, target: branch) are the same for the three branches except for how a pull request may be merged:
+Branch protection lives in GitHub's settings, not in the code, so the owner sets it once. The recommended rulesets (**Settings → Rules → Rulesets**, target: branch) are the same for the three branches except for how a pull request may be merged and who may bypass them. This table is the recommended setup, not what this repository has today (see below):
 
 | Setting | `dev` | `stage` | `main` |
 | --- | --- | --- | --- |
@@ -108,35 +108,36 @@ Branch protection lives in GitHub's settings, not in the code, so the owner sets
 | Require the branch to be up to date | no | no | no |
 | Block force pushes | yes | yes | yes |
 | Restrict deletions | yes | yes | yes |
-| Restrict updates: only the bypass list may push or merge | yes | yes | yes |
+| Restrict updates: only the bypass list may push or merge | yes | yes | no (with no bypass actor it would block every merge, pull requests included) |
 | Require linear history | no | no | no |
-| Bypass list | `dev`, `stage`: Repository admin (the owner); `main`: none | the same as `dev` | none |
+| Bypass list | Repository admin (the owner) | Repository admin (the owner) | none |
 
-`main`'s ruleset has no bypass actors on this repository. GitHub's web UI offers GitHub Actions in a ruleset's bypass list only for organisation repositories; a repository owned by a personal account shows no such actor (only "GitHub Code Quality agent"), so the workflow cannot push to `main`, and a release goes through a pull request instead ([Releases](#releases)). If a release run fails with `GH013` (or "Repository rule violations"), recover by where it failed, which the error names:
+This repository's live rulesets are lighter than the table. `protect main` blocks deletion and force pushes and requires a pull request and the `CI OK` and `CodeQL` checks, with no bypass actor and no `update` rule. `protect stage` only blocks deletion and force pushes (no pull request rule, no update restriction, no bypass actor), and `dev` has no ruleset while it is paused. So a direct push to `main` is rejected, and a direct push to `stage` is not. `main`'s ruleset has no bypass actors. GitHub's web UI offers GitHub Actions in a ruleset's bypass list only for organisation repositories; a repository owned by a personal account shows no such actor (only "GitHub Code Quality agent"), so the workflow cannot push to `main`, and a release goes through a pull request instead ([Releases](#releases)). The merge of `main` back into `stage` (and into `dev`, when it is back) is a different matter: it succeeds on this repository, because `stage`'s ruleset does not stop the workflow's push. If a release run fails with `GH013` (or "Repository rule violations"), recover by where it failed, which the error names:
 
-- **The push to `main` was rejected** (the annotation says `push to main`): the ruleset refused GitHub Actions' push, so nothing was released: no bump commit, no tag, no release. Release with `./scripts/release/bump.sh <level|X.Y.Z>` on a `release/vX.Y.Z` branch and a pull request into `main` merged with a merge commit ([Releases](#releases)); the run that merge starts publishes that version without pushing to `main`. Where the settings do offer GitHub Actions as a bypass actor (an organisation repository, or the API, see below), adding it lets the usual merge-triggered release push the bump itself.
+- **The push to `main` was rejected** (the annotation says `push to main`): the ruleset refused GitHub Actions' push, so nothing was released: no bump commit, no tag, no release. Release with `./scripts/release/bump.sh <level|X.Y.Z>` from an up-to-date `main` or from `origin/stage` (it creates the `release/vX.Y.Z` branch) and a pull request into `main` merged with a merge commit ([Releases](#releases)); the run that merge starts publishes that version without pushing to `main`. Where the settings do offer GitHub Actions as a bypass actor (an organisation repository, or the API, see below), adding it lets the usual merge-triggered release push the bump itself.
 - **Creating the tag was rejected** (`creating tag vX.Y.Z`): a ruleset that covers tags refused the API call. When the release came from a bump commit already on `main`, `package.json` there holds an untagged version. Do not re-run the jobs: the re-run sees `main` ahead of its planned commit and ends green without releasing. Fix the tag ruleset, then run `gh workflow run release.yml --ref main -f bump=current`.
-- **The merge of `main` back into `stage` or `dev` was rejected** (`push to stage`): the release itself is done. Bring `main` in through a `chore/sync-main` branch and a pull request merged with a merge commit ([Releases](#releases)).
+- **The merge of `main` back into `stage` or `dev` was rejected** (`push to stage`; not the case on this repository today, where `stage` takes the workflow's push): the release itself is done. Bring `main` in through a `chore/sync-main` branch and a pull request merged with a merge commit ([Releases](#releases)).
 
-Squash on `dev` keeps one commit per pull request, except for a `chore/sync-main` pull request, which needs a merge commit (see [Releases](#releases)), so `dev` allows both methods. The merge commits on `stage` and `main` keep every one of them, so the release reads each type and changelog line (see [Releases](#releases)). Linear history would forbid those merge commits. The bypass list has the owner, who promotes and merges, on `dev` and `stage`; `main`'s has no one, so even the owner reaches `main` only through a pull request. [`release.yml`](.github/workflows/release.yml) would need GitHub Actions on the list to push the release commit to `main` or to merge `main` back into `stage` and `dev`, but the web UI does not offer it for a repository owned by a personal account, so on this repository those pushes are rejected and a release goes through `bump.sh` and a pull request, and `main` is brought into `stage` and `dev` through a `chore/sync-main` pull request ([Releases](#releases)). The repository settings **Allow merge commits** and **Allow squash merging** (**Settings → General → Pull Requests**) must both stay enabled, or a ruleset's allowed method has nothing to use. The owner's bypass is `always`, so the owner can push to `dev` and `stage` directly, and rulesets and checks apply to everyone else; set `bypass_mode` to `"pull_request"` for the owner (in `ruleset()` below, on the `RepositoryRole` actor) to make the owner use a pull request too. `CI OK` sums up the other CI jobs, so a renamed or added job never needs a protection change. Optionally turn on required review from Code Owners ([`.github/CODEOWNERS`](.github/CODEOWNERS)) or the merge queue: `ci.yml` already runs on `merge_group`.
+Squash on `dev` keeps one commit per pull request, except for a `chore/sync-main` pull request, which needs a merge commit (see [Releases](#releases)), so `dev` allows both methods. The merge commits on `stage` and `main` keep every one of them, so the release reads each type and changelog line (see [Releases](#releases)). Linear history would forbid those merge commits. The bypass list has the owner, who promotes and merges, on `dev` and `stage`; `main`'s has no one, so even the owner reaches `main` only through a pull request. [`release.yml`](.github/workflows/release.yml) would need GitHub Actions on the list to push the release commit to `main` or to merge `main` back into `stage` and `dev`, but the web UI does not offer it for a repository owned by a personal account, so on this repository the push to `main` is rejected and a release goes through `bump.sh` and a pull request ([Releases](#releases)). The merge of `main` back into `stage` is not rejected here, since `stage`'s ruleset has no pull request rule; where a ruleset does refuse it, `main` is brought into `stage` and `dev` through a `chore/sync-main` pull request. The repository settings **Allow merge commits** and **Allow squash merging** (**Settings → General → Pull Requests**) must both stay enabled, or a ruleset's allowed method has nothing to use. The owner's bypass is `always`, so the owner can push to `dev` and `stage` directly, and rulesets and checks apply to everyone else; set `bypass_mode` to `"pull_request"` for the owner (in `ruleset()` below, on the `RepositoryRole` actor) to make the owner use a pull request too. `CI OK` sums up the other CI jobs, so a renamed or added job never needs a protection change. Optionally turn on required review from Code Owners ([`.github/CODEOWNERS`](.github/CODEOWNERS)) or the merge queue: `ci.yml` already runs on `merge_group`.
 
-The same three rulesets through the API, run once by the repository admin with the GitHub CLI signed in (`gh auth login`). The actor ids are GitHub's: role 5 is Repository admin, and integration 15368 is GitHub Actions. GitHub may refuse the GitHub Actions actor for a repository owned by a personal account, as the web UI does not offer it there either; drop that line from `bypass_actors` then, which leaves the owner's role as the only bypass actor (or none on `main`, as set up on this repository), and release through the pull request route.
+The same three rulesets through the API, run once by the repository admin with the GitHub CLI signed in (`gh auth login`). The actor ids are GitHub's: role 5 is Repository admin, and integration 15368 is GitHub Actions. GitHub may refuse the GitHub Actions actor for a repository owned by a personal account, as the web UI does not offer it there either; drop that line from `bypass_actors` then, which leaves the owner's role as the only bypass actor, and release through the pull request route. The function takes `none` as its third argument for a branch with no bypass actor, as `main` has on this repository; it then leaves out the `update` rule, which with an empty bypass list would block every merge.
 
 ```bash
-ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash>
-  jq -n --arg branch "$1" --arg method "$2" '{
+ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash> [none: no bypass actor, no update rule]
+  jq -n --arg branch "$1" --arg method "$2" --arg bypass "${3:-owner}" '{
     name: ("protect " + $branch),
     target: "branch",
     enforcement: "active",
     conditions: { ref_name: { include: ["refs/heads/" + $branch], exclude: [] } },
-    bypass_actors: [
+    bypass_actors: (if $bypass == "none" then [] else [
       { actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always" },
       { actor_id: 15368, actor_type: "Integration", bypass_mode: "always" }
-    ],
-    rules: [
+    ] end),
+    rules: ([
       { type: "deletion" },
-      { type: "non_fast_forward" },
-      { type: "update" },
+      { type: "non_fast_forward" } ]
+      + (if $bypass == "none" then [] else [ { type: "update" } ] end)
+      + [
       { type: "pull_request", parameters: {
           required_approving_review_count: 0,
           dismiss_stale_reviews_on_push: false,
@@ -152,10 +153,10 @@ ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash>
             { context: "analyze (javascript-typescript)" },
             { context: "analyze (actions)" },
             { context: "dependency-review" } ] } }
-    ]
+    ])
   }' | gh api --method POST repos/greenblacked/status-page/rulesets --input -
 }
-ruleset main merge
+ruleset main merge none
 ruleset stage merge
 ruleset dev squash,merge
 ```
@@ -218,15 +219,17 @@ The largest type among the commits since the last tag picks the version:
 | `fix`, `perf`, `revert` | patch |
 | `docs`, `ci`, `build`, `chore`, `refactor`, `test`, `style` | none |
 
-**On this repository, release through a pull request made by `bump.sh`.** `main`'s ruleset has no bypass actors and the web UI does not offer GitHub Actions for a repository owned by a personal account (see [Branch protection](#branch-protection)), so the workflow cannot push the bump commit to `main`. Instead, from an up-to-date checkout of `stage` once its preview looks right:
+**On this repository, release through a pull request made by `bump.sh`.** `main`'s ruleset has no bypass actors and the web UI does not offer GitHub Actions for a repository owned by a personal account (see [Branch protection](#branch-protection)), so the workflow cannot push the bump commit to `main`. Instead, once `stage`'s preview looks right and `stage` contains `main` (the merge of `main` back into `stage` after the last release does that):
 
 ```bash
-git fetch origin && git switch -c release/vX.Y.Z origin/stage
-./scripts/release/bump.sh <level|X.Y.Z>     # commits chore(release): X.Y.Z
+git fetch origin && git switch --detach origin/stage
+./scripts/release/bump.sh <level|X.Y.Z>     # creates release/vX.Y.Z, commits chore(release): X.Y.Z
 git push -u origin release/vX.Y.Z
 ```
 
-Open the pull request into `main` and merge it with **Create a merge commit**. The merged `package.json` holds an untagged version, so `release.yml` runs in `current` mode: it checks the release, creates the `vX.Y.Z` tag through the API (no push to `main`), drafts, signs and publishes the release, and merges `main` back into `stage`. Where a ruleset does let GitHub Actions push to `main` (an organisation repository), the plain merge of `stage` into `main` also releases, with the workflow committing the bump itself; the steps below describe that flow, and the push in step 3 is the one this repository's ruleset refuses.
+`bump.sh` creates the `release/vX.Y.Z` branch itself, so do not create it first. It starts from an up-to-date `main`, or from the tip of `origin/stage` when that contains `main`, and refuses any other checkout. From `stage`, the branch carries `stage`'s commits plus the bump commit, so one pull request both promotes `stage` and releases it. If `main` has a commit `stage` lacks (a fix that reached `main` directly), merge `main` into `stage` first (a `chore/sync-main` pull request, see step 6), or run `bump.sh` on `main` for a release of `main` alone.
+
+Open the pull request into `main` (not a plain `stage` pull request: if its commits release anything, its merge starts a run that tries the bump push and fails with `GH013`) and merge it with **Create a merge commit**. The merged `package.json` holds an untagged version, so `release.yml` runs in `current` mode: it checks the release, creates the `vX.Y.Z` tag through the API (no push to `main`), drafts, signs and publishes the release, and merges `main` back into `stage`. Where a ruleset does let GitHub Actions push to `main` (an organisation repository), the plain merge of `stage` into `main` also releases, with the workflow committing the bump itself; the steps below describe that flow, and the push in step 3 is the one this repository's ruleset refuses.
 
 When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 
@@ -256,7 +259,7 @@ Other ways in, with the same checks:
 | --- | --- |
 | **Run workflow** with bump `patch`, `minor` or `major` | A release by hand, for merged changes whose types release nothing, such as a `refactor` worth shipping. It needs lines under Unreleased. `gh workflow run release.yml --ref main -f bump=patch` |
 | **Run workflow** with bump `current` | Publishes the `package.json` version as it is, if it has no tag yet, or, run from that tag, finishes its draft. Use it to retry a run that committed the bump but did not publish. |
-| [`scripts/release/bump.sh`](scripts/release/bump.sh) `minor` | The way to release on this repository. Makes the same bump commit locally on `release/vX.Y.Z` for review in a pull request into `main`. Merging it (merge commit) releases that version as it is. |
+| [`scripts/release/bump.sh`](scripts/release/bump.sh) `minor` | The way to release on this repository. Run from an up-to-date `main` or from `origin/stage` (once it contains `main`). Makes the same bump commit locally on a new `release/vX.Y.Z` branch for review in a pull request into `main`. Merging it (merge commit) releases that version as it is. |
 | **Run workflow** with `version` and `commit` | Backfills an older release: tags that commit on `main` with a version whose section is already in `main`'s changelog, and publishes it without taking Latest from a newer published release. `gh workflow run release.yml --ref main -f version=0.1.1 -f commit=4cf30fd` |
 | A tag pushed by hand | `git tag -a v0.4.0 -m "Status Page 0.4.0" && git push origin v0.4.0` publishes that tag, if it matches `package.json` and is on `main`. |
 

@@ -103,7 +103,9 @@ describe("push.sh", () => {
     expect(result.output).toContain("GH013");
     expect(result.output).toContain("::error::push to main: main's ruleset refused GitHub Actions' push");
     expect(result.output).toContain("nothing was released");
-    expect(result.output).toContain("./scripts/release/bump.sh <level|X.Y.Z> on release/vX.Y.Z");
+    expect(result.output).toContain(
+      "./scripts/release/bump.sh <level|X.Y.Z> from an up-to-date main or origin/stage (it creates release/vX.Y.Z)",
+    );
     expect(result.output).toContain("pull request into main (merge commit)");
     expect(result.output).toContain("CONTRIBUTING.md#releases");
     expect(result.output).not.toContain("integration 15368");
