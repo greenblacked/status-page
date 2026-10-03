@@ -21,6 +21,12 @@ export PATH="$pnpm_bin:$PATH"
 PNPM_PIN_BIN="$pnpm_bin" ./scripts/ci/pnpm-pin.sh verify
 echo "node $(node --version), pnpm $(pnpm --version)"
 
+# pnpm's package store stays in the container too. /workspace is a bind mount
+# and node_modules a volume, so pnpm cannot hardlink from a store on the
+# container's own filesystem; left to itself it then falls back to
+# /workspace/.pnpm-store, a root-owned directory in the host's checkout. (pnpm
+# 12 reads pnpm_config_store_dir; it ignores npm_config_store_dir.)
+export pnpm_config_store_dir="${HOME}/.local/share/pnpm/store"
 pnpm install --frozen-lockfile
 
 case "$mode" in

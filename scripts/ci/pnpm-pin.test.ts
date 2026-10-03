@@ -220,4 +220,9 @@ describe("a restored pnpm store is not trusted", () => {
     expect(setups).toHaveLength(3);
     expect(deploy.match(/package-manager-cache: false/g)).toHaveLength(setups.length);
   });
+
+  it("keeps pnpm's store inside the container, not in the host's checkout", () => {
+    expect(read("scripts/ci/container-checks.sh")).toMatch(/^export pnpm_config_store_dir=/m);
+    expect(read(".gitignore")).toMatch(/^\.pnpm-store$/m);
+  });
 });
