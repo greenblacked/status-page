@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Rebuilds public/fonts/*.woff2 from the two upstream font files. A one-off:
+# Rebuilds src/fonts/*.woff2 from the two upstream font files. A one-off:
 # the outputs are committed, so a normal build never runs this.
 #
 #   INTER_TTF=/path/to/InterVariable.ttf HAND_TTF=/path/to/NothingYouCouldDo-Regular.ttf scripts/fonts.sh
 #
-# Inputs (both SIL Open Font License 1.1, see public/fonts/OFL.txt):
+# Inputs (both SIL Open Font License 1.1, see public/fonts/OFL.txt, which ships with the site):
 #   InterVariable.ttf  from https://github.com/rsms/inter/releases/tag/v4.1 (Inter-4.1.zip)
 #   NothingYouCouldDo-Regular.ttf  from Google Fonts (Kimberly Geswein)
 # Needs fonttools and brotli: python3 -m pip install fonttools brotli
@@ -17,7 +17,7 @@ set -euo pipefail
 : "${INTER_TTF:?set INTER_TTF to InterVariable.ttf}"
 : "${HAND_TTF:?set HAND_TTF to NothingYouCouldDo-Regular.ttf}"
 
-out="$(cd "$(dirname "$0")/.." && pwd)/public/fonts"
+out="$(cd "$(dirname "$0")/.." && pwd)/src/fonts"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$out"

@@ -4872,11 +4872,13 @@ async function drawnFonts(page: Page, selector: string): Promise<string[]> {
   }
 }
 
-// The self-hosted Inter is font-display: optional (src/styles.css). Inter that is there within the browser's short
-// block period is the page's font from the first paint; Inter that comes later is fetched and cached, but the page
-// view keeps the system font it was drawn in, so nothing re-wraps and the hero's links do not jump. The next load
-// draws in Inter from the first paint. The page is a phone, a tablet and a desktop in turn, over a board with no
-// line to move (calm), the plain fixture and the longest hero (the most lines on a phone).
+// The self-hosted Inter is font-display: optional (src/styles.css). Chromium uses an optional font that was not
+// preloaded only if it is ready when the page starts to render (in practice, already cached); Inter that comes later
+// is fetched and cached, but the page view keeps the system font it was drawn in, so nothing re-wraps and the hero's
+// links do not jump. A later load can draw in Inter from the first paint (e2e/font-cache.spec.ts covers a return
+// visit in a new browser session; the second view below stays in one session, where the font is in memory). The page
+// is a phone, a tablet and a desktop in turn, over a board with no line to move (calm), the plain fixture and the
+// longest hero (the most lines on a phone).
 //
 // A shift of "none" is under 0.0005: a relative time that ticks over while the test waits ("since 4 min") moves its
 // chip by 0.00002 to 0.00012, and a swap to Inter (font-display: swap) moves these boards by 0.0013 to 0.0023.
@@ -4897,7 +4899,7 @@ for (const [name, makeBoard, ready] of FONT_BOARDS) {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    await page.route("**/fonts/inter-var.woff2", async (route) => {
+    await page.route("**/inter-var*.woff2", async (route) => {
       await held;
       await route.continue();
     });
@@ -4932,7 +4934,7 @@ for (const [name, makeBoard, ready] of FONT_BOARDS) {
     test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
     await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
     await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
-    // Not vacuous: Inter is still on its way, long past the block period, and the board is drawn without it.
+    // Not vacuous: Inter is still on its way, long past the page's first render, and the board is drawn without it.
     expect(await interStatus(page)).toBe("loading");
     const before = await drawnFonts(page, "h1");
     expect(before.length, "the headline is drawn in some font").toBeGreaterThan(0);
