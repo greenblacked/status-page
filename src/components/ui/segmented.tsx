@@ -20,7 +20,11 @@ export type SegmentedOption<T extends string> = {
  * Inter (which is wider than the fallback face here, by about 14px) and in
  * the fallback alike. The row does not wrap there (it is nowrap), so a face
  * wider still scrolls the segments by the difference instead of dropping the
- * toggles below them.
+ * toggles below them. The trade-off: the track has no scrollbar, so on that
+ * overflow the last options are cut off with no cue (a mouse reaches them with
+ * shift+wheel or Tab). The row is sized to fit in both faces, and the e2e test
+ * asserts every option is visible there; only a wider face than either would
+ * clip.
  */
 export function Segmented<T extends string>({
   label,
