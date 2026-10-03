@@ -26,6 +26,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 feat(cs2): surface Europe datagram pops with relay counts
 fix(aws): ignore Health events older than 14 days
 docs: add official source table to README
+release: 0.6.0
 ```
 
 Rules:
@@ -36,7 +37,7 @@ Rules:
 - Body explains *why* when the diff is not obvious
 - Never commit secrets, `.env` files, or vendor credentials (Status Page does not need any)
 
-Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`.
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`, `build`, `style`, `revert`, `release`. `release` is only for a release commit (`release: 0.6.0`) and its pull request (`release: v0.6.0`); it takes no scope and no `!`, and never counts toward a version. Because it never counts, the **PR title** check accepts it only on the `release/vX.Y.Z` pull request into `main` that [`bump.sh`](scripts/release/bump.sh) prepares, and only when the title's version is the branch's (`release: v0.6.0` or `release: 0.6.0` on `release/v0.6.0`); on any other pull request a squash merge would turn a real change into a commit that releases nothing. The commit check on a range still accepts the `release: X.Y.Z` commits `bump.sh` makes, since a `chore/sync-main` pull request carries them into `stage`.
 
 ## Branches
 
@@ -70,9 +71,9 @@ Name the branch `<prefix>/<short-kebab-description>`:
 - **An issue number** goes first in the description when there is one: `fix/42-aws-stale-events`.
 - **Pick the prefix that fits most of the change.** Work that fixes a bug is `fix/`, whatever it touches. The prefixes follow the Conventional Commit types, except that `feature/` is the branch for `feat:`; `feat/`, `style/`, `revert/` and the former `fb/` are not accepted.
 - **The prefix is not the commit type.** The pull request title is still a [Conventional Commit](#commits), and it picks the [release](#releases): a `feature/` branch has a `feat:` title.
-- **Tooling names its own branches.** Dependabot opens `dependabot/…`, and [`scripts/release/bump.sh`](scripts/release/bump.sh) opens `release/vX.Y.Z`. Don't create either by hand.
+- **Tooling names its own branches.** Dependabot opens `dependabot/…`, and [`scripts/release/bump.sh`](scripts/release/bump.sh) creates `release/vX.Y.Z`. Don't create either by hand.
 
-The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request whose branch breaks these rules. It also checks where the pull request goes: `main` takes only `stage` (and the `release/vX.Y.Z` branch that [`scripts/release/bump.sh`](scripts/release/bump.sh) opens), `stage` takes only `dev` (and `chore/sync-main`, see [Releases](#releases)), and `dev` takes everything else. While `dev` is paused, `stage` also takes everything else, a fork's feature branch included, and `main` still takes only `stage` and `release/vX.Y.Z`. `dev` and `stage` are accepted as head branches for those two promotions only, and never from a fork; `main` is never a head branch. A Dependabot security update opens against `main`, the default branch: change its base to `dev` (to `stage` while `dev` is paused). Check a name before pushing, with the base branch as a second argument for the full check:
+The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request whose branch breaks these rules. It also checks where the pull request goes: `main` takes only `stage` (and the `release/vX.Y.Z` branch that [`scripts/release/bump.sh`](scripts/release/bump.sh) creates), `stage` takes only `dev` (and `chore/sync-main`, see [Releases](#releases)), and `dev` takes everything else. While `dev` is paused, `stage` also takes everything else, a fork's feature branch included, and `main` still takes only `stage` and `release/vX.Y.Z`. `dev` and `stage` are accepted as head branches for those two promotions only, and never from a fork; `main` is never a head branch. A Dependabot security update opens against `main`, the default branch: change its base to `dev` (to `stage` while `dev` is paused). Check a name before pushing, with the base branch as a second argument for the full check:
 
 ```bash
 ./scripts/ci/branch.sh "$(git branch --show-current)" dev   # stage while dev is paused
@@ -217,13 +218,13 @@ The largest type among the commits since the last tag picks the version:
 | `!` after the type, or a `BREAKING CHANGE:` footer | major |
 | `feat` | minor |
 | `fix`, `perf`, `revert` | patch |
-| `docs`, `ci`, `build`, `chore`, `refactor`, `test`, `style` | none |
+| `docs`, `ci`, `build`, `chore`, `refactor`, `test`, `style`, `release` | none |
 
 **On this repository, release through a pull request made by `bump.sh`.** `main`'s ruleset has no bypass actors and the web UI does not offer GitHub Actions for a repository owned by a personal account (see [Branch protection](#branch-protection)), so the workflow cannot push the bump commit to `main`. Instead, once `stage`'s preview looks right and `stage` contains `main` (the merge of `main` back into `stage` after the last release does that):
 
 ```bash
 git fetch origin && git switch --detach origin/stage
-./scripts/release/bump.sh <level|X.Y.Z>     # creates release/vX.Y.Z, commits chore(release): X.Y.Z
+./scripts/release/bump.sh <level|X.Y.Z>     # creates release/vX.Y.Z, commits release: X.Y.Z
 git push -u origin release/vX.Y.Z
 ```
 
@@ -231,7 +232,7 @@ Cut `release/vX.Y.Z` from the current `stage` tip right before opening the pull 
 
 `bump.sh` creates the `release/vX.Y.Z` branch itself, so do not create it first. It starts from an up-to-date `main`, or from the tip of `origin/stage` when that contains `main`, and refuses any other checkout. From `stage`, the branch carries `stage`'s commits plus the bump commit, so one pull request both promotes `stage` and releases it. If `main` has a commit `stage` lacks (a fix that reached `main` directly), merge `main` into `stage` first (a `chore/sync-main` pull request, see step 6), or run `bump.sh` on `main` for a release of `main` alone.
 
-Open the pull request into `main` (not a plain `stage` pull request: if its commits release anything, its merge starts a run that tries the bump push and fails with `GH013`) and merge it with **Create a merge commit**. `main` currently allows every merge method, so nothing stops a squash or a rebase merge here. A squash leaves one commit titled like the pull request, so the release no longer sees the types of the commits in it, and a rebase merge rewrites the commits, so `stage` would no longer be contained in `main`. Use **Create a merge commit** every time. The merged `package.json` holds an untagged version, so `release.yml` runs in `current` mode: it checks the release, creates the `vX.Y.Z` tag through the API (no push to `main`), drafts, signs and publishes the release, and merges `main` back into `stage`. Where a ruleset does let GitHub Actions push to `main` (an organisation repository), the plain merge of `stage` into `main` also releases, with the workflow committing the bump itself; the steps below describe that flow, and the push in step 3 is the one this repository's ruleset refuses.
+Open the pull request into `main`, titled `release: vX.Y.Z`, the version of its `release/vX.Y.Z` branch (the [PR title](.github/workflows/pr-title.yml) check rejects a `release:` title on any other pull request, or with another version) (not a plain `stage` pull request: if its commits release anything, its merge starts a run that tries the bump push and fails with `GH013`) and merge it with **Create a merge commit**. `main` currently allows every merge method, so nothing stops a squash or a rebase merge here. A squash leaves one commit titled like the pull request, so the release no longer sees the types of the commits in it, and a rebase merge rewrites the commits, so `stage` would no longer be contained in `main`. Use **Create a merge commit** every time. The merged `package.json` holds an untagged version, so `release.yml` runs in `current` mode: it checks the release, creates the `vX.Y.Z` tag through the API (no push to `main`), drafts, signs and publishes the release, and merges `main` back into `stage`. Where a ruleset does let GitHub Actions push to `main` (an organisation repository), the plain merge of `stage` into `main` also releases, with the workflow committing the bump itself; the steps below describe that flow, and the push in step 3 is the one this repository's ruleset refuses.
 
 When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 
@@ -239,7 +240,7 @@ When a merge lands on `main`, [`release.yml`](.github/workflows/release.yml):
 2. Checks the release:
    - the new tag doesn't exist yet;
    - typecheck, tests and build pass.
-3. Commits `chore(release): X.Y.Z` to `main` (skipped for a `bump.sh` pull request, whose merge already holds the bump commit), authored by the account that merged. The commit updates `package.json`, `package-lock.json` and the changelog, and turns `## [Unreleased]` into the dated `## [X.Y.Z]` section. If the pull request added nothing under Unreleased, the section is written from the merged commits' subjects instead.
+3. Commits `release: X.Y.Z` to `main` (skipped for a `bump.sh` pull request, whose merge already holds the bump commit), authored by the account that merged. The commit updates `package.json`, `package-lock.json` and the changelog, and turns `## [Unreleased]` into the dated `## [X.Y.Z]` section. If the pull request added nothing under Unreleased, the section is written from the merged commits' subjects instead.
 4. Tags the commit `vX.Y.Z` and creates the GitHub Release as a draft on that tag, with that section as its notes. A draft is visible only to people who can write to the repository.
 5. Signs and publishes the release. A separate `sign release` job archives the tag (`git archive`) as `status-page-vX.Y.Z.tar.gz`, signs it keylessly with [Sigstore cosign](https://docs.sigstore.dev/cosign/signing/overview/) under the workflow's GitHub identity, checks the signature with `cosign verify-blob` (a bad one fails the run before anything is attached), uploads the archive and its bundle, `status-page-vX.Y.Z.tar.gz.sigstore.json`, to the draft, and only then publishes it. It fails instead of signing if the tag no longer names the commit the run tagged. The Latest badge is worked out from the published releases at that moment, so a backfill never takes it from a newer release. A release that is already public (made before signing was added, by hand, or by an earlier run) only gets whichever of the two assets it lacks, and existing ones are never replaced, but they are checked first: a present pair must pass `cosign verify-blob`, a lone archive must match the freshly built one byte for byte (same sha256), and a lone bundle must verify the fresh archive. Any mismatch fails the run instead of attaching a signature for different bytes. The job is the only one in `release.yml` with `id-token: write`, and it runs no project code.
 6. Merges `main` back into `stage` and then `dev`, released or not (while `dev` is paused it skips `dev` with a notice, since nothing lands there and the merge would only conflict), so both carry the release commit and anything that reached `main` without going through `stage`, such as a `release/vX.Y.Z` bump. When that merge actually moves `stage`, it also starts [`deploy.yml`](.github/workflows/deploy.yml) on `stage` by hand: the merge is pushed with a token that starts no workflow of its own, so without this, the preview would keep running the pre-release code until an unrelated push to `stage` updated it. `dev` deploys nothing, so its merge needs no follow-up. A release on `main` while `stage` or `dev` has lines under Unreleased can conflict on `CHANGELOG.md`. The job resolves that conflict itself when `main`'s Unreleased section is empty (as after a release) and the branch changed nothing in the file outside Unreleased: it keeps `main`'s released section and puts the branch's lines back under Unreleased ([`scripts/release/merge-changelog.sh`](scripts/release/merge-changelog.sh)). It does nothing about a merge git calls clean. If the branch moved while the release was open and both it and `main` changed `CHANGELOG.md` since their merge base, the job merges as usual and prints a `::warning::` to check that the branch's Unreleased lines did not land in the released section (see the rule above). Any other conflict fails the job, after it has tried the other branch, and you resolve it on a branch from the one that conflicted:
