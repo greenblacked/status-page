@@ -124,7 +124,8 @@ export function withMikrotikNotes(services: ServiceSnapshot[]): ServiceSnapshot[
       changed = true;
       return { ...component, release: { ...component.release, notes } };
     });
-    // The newest release by date (the first channel when none is dated), as the collector's headline is.
+    // The notes summary is the newest release by date (the first channel when none is dated). The collector's
+    // own no-notes line names the stable channel when there is one, so the two can describe different releases.
     const newest = service.components.reduce((current, next) => {
       const currentTime = Date.parse(current.release?.releasedAt ?? "") || 0;
       const nextTime = Date.parse(next.release?.releasedAt ?? "") || 0;
