@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FullConfig } from "@playwright/test";
-import type { BoardSnapshot } from "../../src/lib/status/types.ts";
+import type { BoardSnapshot, Health } from "../../src/lib/status/types.ts";
 import { VENDOR_LOG_PREFIX, vendorLogPath } from "./vendor-log.ts";
 
 type Entry = { kind: "active" | "served" | "refused"; host?: string; path?: string };
@@ -15,14 +15,46 @@ const entries = (file: string): Entry[] =>
         .map((line) => JSON.parse(line) as Entry)
     : [];
 
+/**
+ * What each of the catalog's services reads on the canned first render: the health its collector gives from the
+ * fixture that stands in for the vendor (src/lib/status/__fixtures__, routed in canned-vendors.mjs), or Unknown
+ * for the services with no canned payload. Pinned so that a collector whose URL changed (the fixture is then no
+ * longer served, and the service quietly reads Unknown), a fixture that drifted, or a window that no longer
+ * holds an outage fails here, by name, and not as a test that cannot find its card. Change an entry when you
+ * change the fixture or the collector on purpose.
+ */
+const EXPECTED_HEALTH: Record<string, Health> = {
+  gcp: "outage",
+  aws: "degraded",
+  azure: "outage",
+  steam: "unknown",
+  "cs2-europe": "unknown",
+  epic: "unknown",
+  fortnite: "unknown",
+  spotify: "unknown",
+  apple: "unknown",
+  android: "degraded",
+  github: "degraded",
+  gitlab: "degraded",
+  confluence: "outage",
+  grok: "degraded",
+  chatgpt: "unknown",
+  claude: "unknown",
+  mikrotik: "operational",
+  "apple-os": "operational",
+  windows: "operational",
+  "android-os": "operational",
+};
+
 const count = (list: Entry[], kind: Entry["kind"]) => list.filter((entry) => entry.kind === kind).length;
 
 /**
  * Proves, before the first test, that the preview server cannot reach a vendor (support/no-vendors.mjs is
  * loaded into it): asks it for a board and checks that its vendor requests were answered from the canned
  * payloads or refused, and that the board it built has states on it (not all Unknown), so the first render
- * and the hydration after it are tested with outages, incidents and release lines. If the server were reading
- * live vendors, or the preload did not load, this fails instead of the suite quietly depending on them. The
+ * and the hydration after it are tested with outages, incidents and release lines, and that every service reads
+ * the health pinned for it (EXPECTED_HEALTH). If the server were reading live vendors, or the preload did not
+ * load, this fails instead of the suite quietly depending on them. The
  * returned function reports the counts of the whole run after the last test.
  */
 export default async function globalSetup(config: FullConfig): Promise<() => Promise<void>> {
@@ -48,6 +80,17 @@ export default async function globalSetup(config: FullConfig): Promise<() => Pro
   if (count(seen, "active") === 0 || served + refused === 0 || unknown === board.services.length) {
     throw new Error(
       `The preview server is not running with e2e/support/no-vendors.mjs (${unknown} of ${board.services.length} services Unknown, ${served} vendor requests answered from fixtures, ${refused} refused). The browser tests must not read live vendors: stop whatever holds port ${port}, or set PLAYWRIGHT_PORT.`,
+    );
+  }
+  const actual = Object.fromEntries(board.services.map((service) => [service.id, service.health]));
+  const drift = [...new Set([...Object.keys(EXPECTED_HEALTH), ...Object.keys(actual)])]
+    .filter((id) => EXPECTED_HEALTH[id] !== actual[id])
+    .map(
+      (id) => `${id}: expected ${EXPECTED_HEALTH[id] ?? "no such service"}, read ${actual[id] ?? "no such service"}`,
+    );
+  if (drift.length > 0) {
+    throw new Error(
+      `The canned first render does not read as pinned in e2e/support/global-setup.ts (EXPECTED_HEALTH):\n  ${drift.join("\n  ")}\nA service that reads Unknown here usually means its collector asked a URL e2e/support/canned-vendors.mjs does not route, or its fixture no longer parses; otherwise update the map if the change is on purpose.`,
     );
   }
   console.log(
