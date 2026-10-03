@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Azure Status</title>
+  <updated>2026-09-20T11:50:00Z</updated>
+  <entry>
+    <title>Virtual Machines - UK South - Service unavailable</title>
+    <id>azure-2026-09-20-vm-uk-south</id>
+    <updated>2026-09-20T07:05:00Z</updated>
+  </entry>
+</feed>

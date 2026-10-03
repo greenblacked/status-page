@@ -6,25 +6,37 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-03
+
 ### Added
 
-- A new look, quieter and more like a page than a dashboard. The top of the board is one sentence that says what needs a look, with the services it names linked to their cards, a pen line under the count and a loop around anything down; when all fourteen are up it says "Everything is up." and writes "all quiet" by hand. Below it, what needs a look is a card each, what could not be read has its own short list, and everything healthy is a compact row in a list per category.
+- A quiet **release line** under the health line of the cards whose vendors publish an official release or changelog feed: **AWS** (What's New), **Google Cloud** (release notes), **Microsoft Azure** (Azure Updates), **GitHub** (Changelog), **GitLab** (the newest version, such as "GitLab 18.4 · Sep 18") and **CS2 Europe** (the latest update post on Steam). **Details** opens the vendor's recent entries with a few notes and a link to the vendor's own post. It never changes a card's health or anything derived from it, and a feed that cannot be read just leaves the line out. Each feed is read at most every 30 minutes, after the health checks have finished so it can never slow one, and the board never waits for one.
+- The **source-health** check also probes each release feed and reports it apart ("GitLab releases"). A failing feed gets its own issue after two failing runs in a row, like any other source.
+- Cards for **Microsoft Azure** (under Cloud), and **GitHub**, **GitLab** and **Atlassian Confluence** (under Platforms), each read from the vendor's own status page or feed (GitLab's page runs on Status.io, so it is read from there). The board now has twenty services.
+- An **Android releases** card under Releases. I read Google's Android releases page and list the four newest versions (today Android 17, 16, 15 and 14), newest first. When Google adds the next one, it appears on its own, and a browser that already had the board sees "Android 18 released" in **Recent changes** (and gets an alert if alerts are on). The page gives no release dates, so the card never says "New release" (a first-time visitor sees only the list), and the quarterly platform releases are not listed because the page links only their betas. Google publishes no feed for this, so it is the second source read as HTML.
+- A **Details** pop-up on every Releases card, opened from the row or its button: each channel, OS or version it tracks with its version, build, release day and "New release" flag, a link to the vendor's notes, and for RouterOS the first lines of each version's changelog.
+- A **Windows 11** card under Releases. I read the versions table on Microsoft's release health page and show the four newest versions with their latest build, and "New release" when a new version became available in the last 14 days. When Microsoft adds the next version, it appears on its own. Microsoft publishes no feed for this, so it is one of two sources read as HTML.
+- A new look, quieter and more like a page than a dashboard. The top of the board is one sentence that says what needs a look, with the services it names linked to their cards, a pen line under the count and a loop around anything down; when every service is up it says "Everything is up." and writes "all quiet" by hand. Below it, what needs a look is a card each, what could not be read has its own short list, and everything healthy is a compact row in a list per category.
 - **Background** in **Settings**: **Quiet** (the default) is flat paper, **Glass** brings back the frosted panels over a still glow, and **Full** adds the slow drift, the lenses, a light that wanders across the cards and the small period dial beside the live line. Reduce glass still turns any of them solid.
 - Times show in your own time zone once the page has loaded (UTC before that, and in the tooltip).
 - The live line under the headline reads "Checked 12:04 CET · next in 1:52", and says "Stale" when a check has been missed for too long.
-- Four glass lenses on the **Full** background that bend the glow and, with a mouse or trackpad, catch a slow highlight. They are not drawn on Quiet or Glass, they stay still on touch screens, the highlight stops with Reduce Motion, and they go with Reduce glass and Increase Contrast.
-- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON, the Atom feed and the badges, and is signed "Made and kept by Serhii." It no longer explains how often the board is checked.
+- Small glass bubbles on the **Full** background that bend the glow: eleven on a wide screen, nine on a laptop or tablet and six on a phone or small tablet, at the screen's edges where no text runs, each with a thin bright rim, a glint and a faint rainbow edge, and with a mouse or trackpad each one drifts and breathes slowly on its own. They are not drawn on Quiet or Glass, they stay still on touch screens and with Reduce Motion, and they go with Reduce glass and Increase Contrast.
+- The page footer says the board is not affiliated with the vendors it reads, links to the source on GitHub, the MIT License, the JSON and the Atom feed, and is signed "Made by [greenblacked](https://github.com/greenblacked)". It no longer explains how often the board is checked.
 - A page for an address that is not on the board ("Nothing here.") and one for a page that broke ("Something broke on my side."), in place of the router's unbranded defaults.
 - A link preview image, canonical address and a maskable app icon of their own.
 - **Tilt lighting** switch in **Settings** for phones and tablets (iPhone, iPad, Android): the light on the glass follows how you tilt the device. It needs the Glass or Full background, is off by default, on iPhone and iPad asks for motion access, and pauses under Reduce glass and Reduce Motion.
-- Search field docks into the floating bar as the page scrolls; the bar now appears once the summary has scrolled clear, so it no longer floats over the live bar. On a phone it comes in on its own first, as the live line scrolls out from under it, with the field a clear stretch below it; the field then rises with the page, and only when it reaches the bar does it merge into it. The field has its own clear button, a full-size touch target.
+- Search field and floating bar. The bar appears once the summary has scrolled clear, so it no longer floats over the live bar, and the field has its own clear button, a full-size touch target. In a wide window (1024px or wider, an iPad held sideways too) the field docks into the bar as the page scrolls, and docked it sits exactly in the bar's slot. On a phone or an iPad held upright (narrower than 1024px) the field scrolls away with the page like the rest of the board; scroll up a little and a copy of it appears in the bar, scroll down and it hides again. It stays while you are typing in it or have a search written in it, `/` brings it up, and under Reduce Motion it appears and goes without a fade. Turning an iPad between upright and sideways while you type moves what you were typing, with the cursor, to the field that is there.
 - Every service whose official status page lists components now has the same dropdown on its row. "+N more" is now a "Show all N" button that opens the whole list and closes it again ("Show fewer"), keeping your place.
 - A card for a service with a problem lists its affected components first, then a collapsible "Working components · N".
 
 ### Changed
 
-- Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until the search field takes its place). The settings button is called **Settings**.
-- The site is called **Status**, and the words are plainer and in the first person. The headline counts what needs a look ("Two things need a look.") or says "Everything is up."; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The line under the headline names one or two of them, linked ("I couldn't read Android."), and counts more than that ("I couldn't read three of them."). The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.
+- The headline says what is wrong instead of counting things that need a look: "Two services are down.", "One service is degraded.", or, when the states differ, "One is down, one is degraded." The line under it names the services state by state ("ChatGPT is down. Apple is degraded."), the floating bar reads "1 down · 1 degraded", and the JSON API, the feed and the board badge use the same words.
+- The thin bar beside a card that changed in the latest check now shows how serious it is: red for an outage, amber for degraded, green for a recovery, and the maintenance tone for maintenance. A new release keeps the neutral bar; a release tracker whose source came back with the same versions gets the green one.
+- The page footer no longer says what the site is built with, and no longer links the badges.
+- The name at the top of the page reads Status Page and sits in the middle.
+- Notifications and Refresh are icon buttons with a tooltip. The floating bar is the only see-through element on a Quiet page, and it now shows the verdict in short with when the board was last checked (on a phone, the verdict alone, until you scroll up and the search field appears). The settings button is called **Settings**.
+- The site is called **Status**, and the words are plainer and in the first person. The headline says "Everything is up." when all is well; a source that could not be read is called **No data** and is not counted as a problem, so it no longer puts a number in the tab title or in **Issues only**. The line under the headline names one or two of them, linked ("I couldn't read Android."), and counts more than that ("I couldn't read three of them."). The Updates category is **Releases**. Notifications read "Grok is degraded", "Steam is back" and "New release: X". Ages read "3 min ago", and clock times keep their zone code on the same line.
 - Unknown now ranks above Maintenance, and the order is one everywhere: Outage, Degraded, Unknown, Maintenance. Cards already put Degraded above Unknown (0.5.0); the overall health, `/api/status.json` `overall`, the badge and the history days now follow them, where they used to rank Unknown above Degraded, so a confirmed Degraded no longer reads as Unknown there. This replaces the order listed under 0.5.0.
 - `/feed.xml` entry ids are now stable per service, health and incident, so a reworded incident is not posted again but an escalation, such as Degraded to Outage, is. Feed readers will show the current entries once more after this update. Services whose status is Unknown are no longer in the feed.
 - An alert for a change to or from Unknown now waits for two updates in a row, so a single failed check no longer sends one.
@@ -39,6 +51,11 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- On a Releases card a date no longer breaks across two lines ("Sep" at the end of one, "28" at the start of the next, or "Oct" and "1 Details"). Each "version · date" stays whole, the line wraps between them, and **Details** stays with the last one.
+- A Statuspage reply with no status (Spotify, ChatGPT, Claude, Epic, Fortnite, and the new GitHub and Confluence cards) now reads No data instead of Operational.
+- Steam no longer shows Degraded when the store only refuses the board's check (403 or 429): the Store row reads Unknown, "Store refused the check", and the card follows what could be measured.
+- A service with an active incident now shows that incident's state, even when the vendor still lists every component as working, so it is counted at the top of the page.
+- Dates and times stay in English when the browser is set to another language; they still follow your time zone.
 - Statuspage notices, partial outages and upcoming maintenance are shown as what they are. An upcoming maintenance reads "scheduled for" its time, and "was due" once that time has passed while the vendor still lists it as not started.
 - Apple's upcoming events no longer change a service's health.
 - The live bar keeps one height on a phone.
@@ -52,7 +69,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - The summary says "2 outages", not "2 outage".
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
-- On an iPhone the search field no longer jumps or flickers as it docks into the bar while you scroll. It moves in with a short animation of its own instead of following your finger frame by frame, and Safari's toolbar sliding away or back no longer makes the page measure it again. Under Reduce Motion it steps in with no animation.
+- On a phone the search field no longer moves into the bar by script as you scroll, so there is no move in it that can jump or flicker; it scrolls away with the page, and the bar shows its own copy when you scroll up (not yet confirmed on an iPhone). Safari's toolbar sliding away or back still does not make the page measure itself again.
 - The "+N more" under a service counts every incident it has, not only the ones the board kept.
 - In Safari the board no longer jumps when a check adds a line to Recent changes above what you are reading, and the floating bar on a phone gets out of the way as soon as the headline grows under it.
 
@@ -193,7 +210,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/greenblacked/status-page/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/greenblacked/status-page/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/greenblacked/status-page/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/greenblacked/status-page/compare/v0.2.0...v0.3.0

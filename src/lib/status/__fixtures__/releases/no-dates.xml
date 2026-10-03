@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Entries without a usable date</title>
+    <link>https://aws.amazon.com/new/</link>
+    <item>
+      <title>No date element</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/10/no-date/</link>
+      <description>This entry has no pubDate.</description>
+    </item>
+    <item>
+      <title>A date nobody can read</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/10/garbage-date/</link>
+      <description>This entry has a pubDate that is not a date.</description>
+      <pubDate>sometime last week</pubDate>
+    </item>
+    <item>
+      <title>An empty date</title>
+      <link>https://aws.amazon.com/about-aws/whats-new/2026/10/empty-date/</link>
+      <pubDate></pubDate>
+    </item>
+  </channel>
+</rss>

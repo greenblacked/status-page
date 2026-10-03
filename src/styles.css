@@ -164,10 +164,9 @@
 
   /* A hairline is a device pixel: 0.5px on a 2x screen. */
   --hair: 1px;
-  /* Four durations: hover, press and the chevron; a reveal; the search field merging into the bar on a phone (DOCK_MS in dock.ts says the same); a pen stroke drawn once. */
+  /* Three durations: hover, press and the chevron (also the bar's field leaving); a reveal (also the bar's field coming in); a pen stroke drawn once. */
   --t-quick: 150ms;
   --t-reveal: 250ms;
-  --t-dock: 180ms;
   --t-draw: 400ms;
 
   /* The one translucent layer in Quiet: the floating bar, over whatever scrolls under it. */
@@ -565,9 +564,9 @@
 .compact-header {
   /* Here, not as a utility: the material's own rules would otherwise be the ones read. */
   /*
-    On a phone the bar is out of the flow, fixed at the top, so it can come up on
-    its own while the search field is still on its way (see useSearchDock). Its
-    sides are the page content's: the body's gutters, which sit inside the safe area.
+    Below 64rem the bar is out of the flow, fixed at the top, so it can come up while the hero's search field is
+    still on its way off the page (see useSearchDock). Its sides are the page content's: the body's gutters, which
+    sit inside the safe area.
   */
   position: fixed;
   top: calc(env(safe-area-inset-top) + 0.5rem);
@@ -597,23 +596,53 @@
 }
 
 /*
-  On a phone the short verdict sits where the field docks; it gives way as the field merges in. Opacity
-  only, over the same time as the field's move (--t-dock, from the moment it docks), so it is on the
-  compositor with it and nothing is redrawn.
+  Under 40rem the short verdict sits where the bar's field shows; it gives way while the field is revealed
+  (data-revealed, written from the dock's state). Opacity only, over the same time as the field leaving (--t-quick),
+  and the field coming in takes a little longer, so the two are never both there at full strength.
 */
 @media (width < 40rem) {
   [data-bar-verdict] {
-    transition: opacity var(--t-dock) var(--ease-out);
+    transition: opacity var(--t-quick) var(--ease-out);
   }
 
-  .compact-header[data-docked] [data-bar-verdict] {
+  .compact-header[data-revealed] [data-bar-verdict] {
     opacity: 0;
   }
 }
 
 /*
-  Hidden, it stays in layout (visibility, not display: none): the search
-  field docks into its middle slot, which must stay measurable. It is
+  The bar's own copy of the search field (below 64rem, hidden from 64rem up in the markup), in the slot between the
+  verdict and the buttons. It is always rendered and always in the same place, so nothing about it is measured or
+  moved by script: a scroll up reveals it (data-revealed on the bar, from the dock's state) with a transition of
+  opacity and translate, which the compositor plays, and a scroll down takes it away. Hidden it is not clickable;
+  it stays focusable once the hero's field is behind the bar (the markup makes it inert before), so Tab from the
+  bar's lead lands on it and not on the hero's field far above, and focus reveals it. It comes in over --t-reveal and
+  leaves over --t-quick. Its 4px rise is half of the 8px the bar itself slides in from (BAR_RISE in dock.ts).
+*/
+.bar-search {
+  --bar-search-rise: -4px;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  translate: 0 var(--bar-search-rise);
+  pointer-events: none;
+  transition:
+    opacity var(--t-quick) var(--ease-out),
+    translate var(--t-quick) var(--ease-out);
+}
+
+.compact-header[data-revealed] .bar-search {
+  opacity: 1;
+  translate: 0 0;
+  pointer-events: auto;
+  transition-duration: var(--t-reveal);
+}
+
+/*
+  Hidden, it stays in layout (visibility, not display: none): its middle slot,
+  which the search field docks into from 64rem and holds the bar's copy of it
+  below that, must stay measurable. It is
   invisible, inert and out of the accessibility tree once the fade ends.
   Its blur goes at once (not animated), so a hidden bar keeps no blurred
   layer for the compositor to hold.
@@ -633,11 +662,12 @@
 /*
   The board body holds the bar, the search field, the filter chips and the
   cards. It is at least one screen tall, so a search with few or no results
-  cannot shorten the page under a docked field and scroll it back out.
+  cannot shorten the page under the bar's field and scroll it out of use. Below 64rem the bar's field can
+  be used once the hero's field is behind the bar, which is a little after the hero itself has scrolled
+  away (the field's margin and its height, less the bar's bottom edge): 2rem more than a screen holds it.
 */
 .board-body {
-  /* On a phone the field docks a little way into the body (its margin less its pin, and the merge), so the page needs some more to hold it there; 5rem is ample (the margin is 4rem at most). */
-  min-height: calc(100lvh + 5rem);
+  min-height: calc(100lvh + 2rem);
 }
 
 @media (min-width: 64rem) {
@@ -647,127 +677,83 @@
 }
 
 /*
-  The search field: sticky, so the browser docks it. Two pixels under the bar's
-  top, centred in its 48px. From 64rem, --dock (0 to 1, written by useSearchDock)
-  lives on the search dock and the field's width and x follow it, so a write
-  restyles the field and nothing else. Below 64rem the bar comes up on its own
-  before the field merges into it, and it must not cover the live line, so the
-  field sits 5rem under the live line: the bar's 3rem, the 8px it slides in
-  from, and 24px of clear page between the bar and the field when the bar
-  appears, at the moment the live line has just scrolled out from under it
-  (dockGeometry). The hero's own bottom padding is part of that (1rem, then
-  1.5rem from 48rem), so the dock adds the rest. The 24px is px, not rem: it
-  is scrolling the bar has to itself, and that does not grow with the text.
+  The search field, in the hero. Below 64rem it is ordinary content: it scrolls away with the page, and the bar has
+  its own copy of it (.bar-search). From 64rem the dock is sticky, two pixels under the bar's top, centred in its
+  48px, --dock (0 to 1, written by useSearchDock) lives on the search dock, and the field's width and x follow it, so
+  a write restyles the field and nothing else.
 */
 .search-dock {
-  position: sticky;
-  top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
-  z-index: 41;
+  position: relative;
   height: 2.75rem;
   min-width: 0;
-  margin-top: calc(2rem + 32px);
+  margin-top: 2rem;
   pointer-events: none;
-  --dock: 0;
-  --dock-x: 0px;
-  --dock-w: 12rem;
+}
+
+@media (min-width: 48rem) {
+  .search-dock {
+    margin-top: 1.5rem;
+  }
 }
 
 .search-field {
   position: absolute;
   inset-block: 0;
   left: 0;
+  width: 100%;
   contain: layout style;
   pointer-events: auto;
-  width: calc(100% - (100% - var(--dock-w)) * var(--dock));
-  transform: translateX(calc(var(--dock-x) * var(--dock)));
-  /*
-    Always its own layer, never promoted on the way: the field is one 44px strip, so the layer costs next to
-    nothing, while promoting it as the merge starts (and dropping it when it ends) re-rasterises the input
-    mid-scroll, which iOS shows as the text flashing or shifting.
-  */
-  will-change: transform;
+}
+
+@media (min-width: 64rem) {
+  .search-dock {
+    position: sticky;
+    top: calc(env(safe-area-inset-top) + 0.5rem + 2px);
+    z-index: 41;
+    margin-top: 2px;
+    --dock: 0;
+    --dock-x: 0px;
+    --dock-w: 12rem;
+  }
+
+  .search-field {
+    width: calc(100% - (100% - var(--dock-w)) * var(--dock));
+    transform: translateX(calc(var(--dock-x) * var(--dock)));
+    /*
+      Always its own layer, never promoted on the way: the field is one 44px strip, so the layer costs next to
+      nothing, while promoting it as the move starts (and dropping it when it ends) re-rasterises the input
+      mid-scroll.
+    */
+    will-change: transform;
+  }
+
+  /* The field's fill is a layer of its own here as well, as it always has been. */
+  .search-chrome {
+    transform-origin: left center;
+    will-change: transform;
+  }
+}
+
+/* The bar's copy takes its clicks from the box it is in: none while that is hidden (.bar-search, above). */
+.bar-search .search-field {
+  pointer-events: inherit;
 }
 
 /*
-  The field's fill, behind the input: the input is see-through, so that the fill can be moved on its own. The
-  fill is a .control like the input was, so every material (Glass, Reduce glass, forced colours) draws it as
-  before. It is the size of the field; below 64rem, useSearchDock plays it from its old width to its new one
-  with a scaleX when the field docks or leaves (flipFill), and CSS runs that as a transition of transform.
+  The field's fill, behind the input: the input is see-through, and the fill is a .control like the input was, so
+  every material (Glass, Reduce glass, forced colours) draws it. It is the size of the field, in the hero and in
+  the bar alike.
 */
 .search-chrome {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  transform-origin: left center;
-  will-change: transform;
 }
 
 .search-field input {
   background-color: transparent;
   box-shadow: none;
   border-width: 0;
-}
-
-@media (min-width: 48rem) {
-  .search-dock {
-    margin-top: calc(1.5rem + 32px);
-  }
-}
-
-/*
-  Below 64rem the bar is fixed and z 40, and the field does not follow the scroll: it docks, in one step, when
-  the page reaches it (data-docked, written by useSearchDock), and moves into the bar's slot over --t-dock,
-  with transform and opacity only, which the compositor plays whatever the page's own thread is doing.
-  The input takes its docked width at once, under the fill's transition, so nothing is laid out as it moves.
-  The field is over the bar (z 41) all the time. With motion that is safe: an undocked field is always below
-  the bar's bottom edge, by the page's own geometry (dockGeometry), and a field that a flick carried into the
-  bar before the page could dock it must be drawn over it, full width, as it shrinks, not hidden under it for
-  a late frame and then popped on top.
-  Under Reduce Motion the field steps into the bar only when it reaches its pin, after rising through the bar's
-  own place, so until it docks it stays under the bar and can never cover the bar's buttons.
-*/
-@media not all and (min-width: 64rem) {
-  @media (prefers-reduced-motion: reduce) {
-    .search-dock:not([data-docked]) {
-      z-index: 39;
-    }
-  }
-
-  .search-field,
-  .search-chrome {
-    transition: transform var(--t-dock) var(--ease-out);
-  }
-
-  /*
-    The first pose is not a move (useSearchDock, writeDocked): while the page opens, and for two frames after
-    a pose is written without one, the field, its fill and the bar's verdict take their place at once.
-  */
-  .search-dock[data-instant] .search-field,
-  .search-dock[data-instant] .search-chrome,
-  .compact-header[data-instant] [data-bar-verdict] {
-    transition: none;
-  }
-
-  .search-dock[data-docked] .search-field {
-    width: var(--dock-w);
-    transform: translateX(var(--dock-x));
-  }
-
-  /*
-    The Clear button sits at the input's right edge, which jumps with the input's width while the fill is still
-    on its way. It is hidden for the move (data-moving, written by useSearchDock) and comes back by the opacity
-    transition .pressable gives it, once the field has stopped.
-  */
-  .search-dock[data-moving] .search-field button {
-    opacity: 0;
-    transition-property: none;
-  }
-}
-
-@media (min-width: 64rem) {
-  .search-dock {
-    margin-top: 2px;
-  }
 }
 
 /* Our own clear button replaces the browser's, which is too small a target on a phone. */
@@ -803,7 +789,7 @@
 /*
   A link to a card, the skip link and a revealed service stop below the bar,
   not under it. Per target rather than scroll-padding on the page: padding
-  would count the docked field and the bar's buttons, which sit inside it, as
+  would count the bar's field and buttons, which sit inside it, as
   out of view and scroll the page back up whenever one of them took focus.
 */
 article[id^="service-"],
@@ -836,6 +822,68 @@ article[id^="service-"],
 
   .settings-dialog[open]::backdrop {
     opacity: 0;
+  }
+}
+
+/*
+  A release tracker's Details. A small centred panel, the settings dialog's
+  size and entrance. On a phone it is a sheet from the bottom edge instead:
+  full width, square at the bottom, clear of the home indicator, rising from
+  below. Same rules as the settings dialog for the rest: transform only, and
+  it closes at once.
+*/
+.details-dialog {
+  margin: auto;
+  width: min(26rem, calc(100vw - 2rem));
+  max-width: none;
+  max-height: calc(100dvh - 2rem);
+  /* The panel is not the scroller (the UA gives a dialog overflow: auto): its list is, under a header that stays. */
+  overflow: hidden;
+}
+
+.details-dialog > .sheet {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+}
+
+.details-dialog[open] {
+  transform: none;
+  transition: transform var(--t-reveal) var(--ease-out);
+}
+
+.details-dialog[open]::backdrop {
+  opacity: 1;
+  transition: opacity var(--t-reveal) var(--ease-out);
+}
+
+@starting-style {
+  .details-dialog[open] {
+    transform: translateY(0.5rem) scale(0.97);
+  }
+
+  .details-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+@media (width < 40rem) {
+  .details-dialog {
+    margin: auto 0 0;
+    width: 100%;
+    max-height: min(85dvh, calc(100dvh - 3rem));
+  }
+
+  .details-dialog > .sheet {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom-width: 0;
+    padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+  }
+
+  @starting-style {
+    .details-dialog[open] {
+      transform: translateY(100%);
+    }
   }
 }
 
@@ -945,7 +993,9 @@ article[id^="service-"],
   .compact-header,
   .compact-header[data-shown="false"],
   .settings-dialog[open],
-  .settings-dialog[open]::backdrop {
+  .settings-dialog[open]::backdrop,
+  .details-dialog[open],
+  .details-dialog[open]::backdrop {
     transform: none;
     transition: none;
   }
@@ -954,9 +1004,8 @@ article[id^="service-"],
     transition: none;
   }
 
-  /* The search field steps into the bar and out of it: no move in time (useSearchDock plays none either). */
-  .search-field,
-  .search-chrome,
+  /* The bar's field and the verdict it replaces step in and out: no move in time. */
+  .bar-search,
   [data-bar-verdict] {
     transition: none;
   }

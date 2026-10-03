@@ -7,6 +7,7 @@ import {
   instatusComponent,
   overallSummary,
   SEVERITY_ORDER,
+  statusIoHealth,
   statuspageComponentDetail,
   statuspageIncidentImpact,
   urgencyOf,
@@ -128,4 +129,24 @@ describe("statuspageComponentDetail", () => {
     expect(statuspageComponentDetail("degraded_performance")).toBeUndefined();
     expect(statuspageComponentDetail(undefined)).toBeUndefined();
   });
+});
+
+describe("statusIoHealth", () => {
+  it.each([
+    [100, "operational"],
+    [200, "maintenance"],
+    [300, "degraded"],
+    [400, "degraded"],
+    [500, "outage"],
+    [600, "degraded"],
+  ])("code %i is %s", (code, health) => {
+    expect(statusIoHealth(code)).toBe(health);
+  });
+
+  it.each([[undefined], [null], ["100"], [0], [-100], [150], [700], [Number.NaN], [{}], [[100]]])(
+    "%j is unknown, never an all-clear",
+    (code) => {
+      expect(statusIoHealth(code)).toBe("unknown");
+    },
+  );
 });

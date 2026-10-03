@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>tag:google.com,2016:gcp-release-notes</id>
+  <title>Google Cloud release notes</title>
+  <link rel="self" href="https://cloud.google.com/feeds/gcp-release-notes.xml"/>
+  <link rel="alternate" href="https://cloud.google.com/release-notes"/>
+  <updated>2026-10-01T00:00:00-07:00</updated>
+  <entry>
+    <id>tag:google.com,2016:gcp-release-notes#October_01_2026</id>
+    <title>October 01, 2026</title>
+    <updated>2026-10-01T00:00:00-07:00</updated>
+    <link rel="alternate" href="https://cloud.google.com/release-notes#October_01_2026"/>
+    <content type="html"><![CDATA[<h2 class="release-note-product-title">Cloud Run</h2><h3 class="release-note-type-title">Feature</h3><p>Cloud Run now supports GPU-backed worker pools in <code>europe-west1</code>.</p><h2 class="release-note-product-title">BigQuery</h2><h3 class="release-note-type-title">Announcement</h3><p>BigQuery now supports vector search over partitioned tables.</p><h2 class="release-note-product-title">Cloud Storage</h2><h3 class="release-note-type-title">Change</h3><p>Soft delete is now on by default for new buckets.</p><h2 class="release-note-product-title">Cloud SQL</h2><p>Cloud SQL for PostgreSQL adds minor version 17.7.</p>]]></content>
+  </entry>
+  <entry>
+    <id>tag:google.com,2016:gcp-release-notes#September_30_2026</id>
+    <title>September 30, 2026</title>
+    <updated>2026-09-30T00:00:00-07:00</updated>
+    <link rel="alternate" href="https://cloud.google.com/release-notes#September_30_2026"/>
+    <content type="html"><![CDATA[<h2 class="release-note-product-title">Compute Engine</h2><h3 class="release-note-type-title">Feature</h3><p>C4D machine types are generally available.</p><h2 class="release-note-product-title">Cloud Build</h2><h3 class="release-note-type-title">Fixed</h3><p>Fixed a delay in build triggers for GitHub repositories.</p>]]></content>
+  </entry>
+  <entry>
+    <id>tag:google.com,2016:gcp-release-notes#September_29_2026</id>
+    <title>September 29, 2026</title>
+    <updated>2026-09-29T00:00:00-07:00</updated>
+    <link rel="alternate" href="https://cloud.google.com/release-notes#September_29_2026"/>
+    <content type="html"><![CDATA[<h2 class="release-note-product-title">Vertex AI</h2><h3 class="release-note-type-title">Feature</h3><p>Batch prediction supports more models.</p>]]></content>
+  </entry>
+  <entry>
+    <id>tag:google.com,2016:gcp-release-notes#September_28_2026</id>
+    <title>September 28, 2026</title>
+    <updated>2026-09-28T00:00:00-07:00</updated>
+    <link rel="alternate" href="https://cloud.google.com/release-notes#September_28_2026"/>
+    <content type="html"><![CDATA[<h2 class="release-note-product-title">Cloud Functions</h2><h3 class="release-note-type-title">Change</h3><p>The Node.js 26 runtime is available in preview.</p>]]></content>
+  </entry>
+</feed>

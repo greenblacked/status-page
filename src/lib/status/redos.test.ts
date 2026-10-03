@@ -1,16 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { parseAppleOsTitle } from "./changelog.ts";
+import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
+import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
 import { unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
+  decodeHtmlNames,
+  dropScripts,
+  gitlabVersion,
+  htmlBlocks,
+  jsonEntries,
+  parseFeedItems,
+  RELEASE_SOURCES,
+  steamNoteLines,
+  xmlEntries,
+} from "./release-feeds.server.ts";
+import {
+  azureItemHealth,
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
   MAX_RSS_ITEMS,
   MAX_RSS_SCANNED,
+  MAX_SCANNED_ROWS,
   parseRssItems,
 } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
+import { readHtmlTables, windowsReleases } from "./windows-release.ts";
 
 // Vendor bodies are untrusted input that is parsed on the Worker, so no
 // parser may take more than linear time on one. Each case below is a crafted
@@ -38,6 +53,29 @@ describe("parsers stay linear on crafted vendor input", () => {
   it("unwrapJsonp: many unclosed parentheses and a long identifier", () => {
     expect(elapsed(() => unwrapJsonp(`f${"(".repeat(SIZE)}`))).toBeLessThan(BUDGET_MS);
     expect(elapsed(() => unwrapJsonp(`${"a".repeat(SIZE)}(1)${" ".repeat(10)}x`))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("azureItemHealth: long runs of the words and prefixes it looks for, and of spaces and brackets", () => {
+    const cases = [
+      `${"resolved ".repeat(SIZE / 9)}x`,
+      `${" ".repeat(SIZE)}resolved`,
+      `${"[(".repeat(SIZE / 2)}resolved`,
+      `${"[ ".repeat(SIZE / 2)}x`,
+      `${"post incident ".repeat(SIZE / 14)}`,
+      `${"post-".repeat(SIZE / 5)}`,
+      `${"preliminary ".repeat(SIZE / 12)}x`,
+      `${"final-".repeat(SIZE / 6)}pir`,
+      `preliminary${" ".repeat(SIZE)}x`,
+      `${"service ".repeat(SIZE / 8)}unavailable`,
+      `${"d".repeat(SIZE)}own`,
+      `${"o".repeat(SIZE)}utage`,
+    ];
+    for (const body of cases) expect(elapsed(() => azureItemHealth(body))).toBeLessThan(BUDGET_MS);
+    expect(azureItemHealth(`${"resolved ".repeat(10)}x`)).toBe("operational");
+    expect(azureItemHealth(`${"unresolved ".repeat(10)}x`)).toBe("degraded");
+    expect(azureItemHealth("Preliminary Post Incident Review (PIR) – Networking – Outage")).toBe("operational");
+    expect(azureItemHealth("Final PIR – Networking")).toBe("operational");
+    expect(azureItemHealth(`${"preliminary ".repeat(10)}x`)).toBe("degraded");
   });
 
   it.each(["title", "description", "pubDate", "link"])("parseRssItems: a repeated unclosed <%s>", (tag) => {
@@ -112,11 +150,218 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(parsed).toBeNull();
   });
 
+  it.each([
+    ["unclosed tag openers", "<a".repeat(SIZE / 2)],
+    ["tag openers with a space", "<a ".repeat(SIZE / 3)],
+    ["bare angle brackets", "<".repeat(SIZE)],
+    ["a tag that never ends", `<a href="/about/versions/17"${"x".repeat(SIZE)}`],
+    ["a link that never closes", `<a href="/about/versions/17">${"Android 17".repeat(SIZE / 10)}`],
+    ["many version links that never close", '<a href="/about/versions/17">Android 17'.repeat(SIZE / 38)],
+    ["many version links closed far away", `${'<a href="/about/versions/17">x'.repeat(SIZE / 27)}</a>`],
+    ["tags with long runs of attributes", `<a ${'href="/about/versions/17" '.repeat(SIZE / 26)}>Android 17</a>`],
+    ["an unclosed quote in the href", `<a href="${"/about/versions/17".repeat(SIZE / 17)}`],
+    ["long link text of tag openers", `<a href="/about/versions/17">${"<".repeat(SIZE)}</a>`],
+    ["a long link text of spaces", `<a href="/about/versions/17">${" ".repeat(SIZE)}Android 17</a>`],
+    ["a long run of digits", `<a href="/about/versions/${"1".repeat(SIZE)}">Android 17</a>`],
+    ["many valid links", '<a href="/about/versions/17">Android 17</a>'.repeat(SIZE / 41)],
+    ["many empty links", "<a ></a>".repeat(SIZE / 8)],
+  ])("readAndroidVersionLinks: %s", (_label, html) => {
+    expect(elapsed(() => readAndroidVersionLinks(html))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("androidReleases: a long list of versions", () => {
+    const versions = Array.from({ length: SIZE }, (_, i) => String(i % 100));
+    expect(elapsed(() => androidReleases(versions))).toBeLessThan(BUDGET_MS);
+  });
+
+  it.each([
+    ["unclosed tag openers", "<td".repeat(SIZE / 3)],
+    ["unclosed comment openers", "<!--".repeat(SIZE / 4)],
+    ["bare angle brackets", "<".repeat(SIZE)],
+    ["a tag that never ends", `<table><tr><td${"x".repeat(SIZE)}`],
+    ["a script that never ends", `<script>${"<table>".repeat(SIZE / 7)}`],
+    ["empty tables", "<table></table>".repeat(SIZE / 15)],
+    ["rows and cells without end", `<table>${"<tr><td>x".repeat(SIZE / 9)}`],
+    ["nested tables", `${"<table><tr><td>".repeat(SIZE / 16)}x`],
+    ["a long cell of entity-like text", `<table><tr><td>${"&#".repeat(SIZE / 2)}`],
+    ["a long cell of spaces and tags", `<table><tr><td>${" <b>".repeat(SIZE / 4)}`],
+  ])("readHtmlTables: %s", (_label, html) => {
+    let tables: ReturnType<typeof readHtmlTables> = [];
+    expect(elapsed(() => (tables = readHtmlTables(html)))).toBeLessThan(BUDGET_MS);
+    expect(tables.length).toBeLessThanOrEqual(40);
+    expect(elapsed(() => windowsReleases(tables))).toBeLessThan(BUDGET_MS);
+  });
+
+  it.each([
+    ["one line with no newline", `What's new in 7.2:\n*) ${"a".repeat(SIZE)}`],
+    ["a long run of blank lines", `${"\n".repeat(SIZE)}What's new in 7.2:\n*) a;`],
+    ["a long run of spaces and carriage returns", `What's new in 7.2:\n${" \r".repeat(SIZE / 2)}*) a;`],
+    ["headings and no bullets", "What's new in 7.2:\n".repeat(SIZE / 20)],
+    ["bullets with nothing in them", `What's new in 7.2:\n${"*)\n".repeat(SIZE / 3)}`],
+    ["text with no heading at all", "*) a;\n".repeat(SIZE / 6)],
+    ["a heading marker that never ends", `What's new in ${" ".repeat(SIZE)}`],
+  ])("mikrotikChangelogNotes: %s", (_label, text) => {
+    expect(elapsed(() => mikrotikChangelogNotes(text))).toBeLessThan(BUDGET_MS);
+  });
+
+  it("splitAppleBuild: a version made of parentheses and of spaces", () => {
+    expect(elapsed(() => splitAppleBuild(`${"(".repeat(SIZE)})`))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => splitAppleBuild(`${" ".repeat(SIZE)}(24B5089g)`))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => splitAppleBuild(`1 (${" ".repeat(SIZE)})`))).toBeLessThan(BUDGET_MS);
+  });
+
   it("incidentLink: an incident URL whose path is a long run of slashes", () => {
     const service = {
       sourceUrl: "https://status.example.com/",
       incidents: [{ id: "1", title: "t", health: "outage", url: `https://status.example.com/${"/".repeat(SIZE)}x` }],
     } as ServiceSnapshot;
     expect(elapsed(() => incidentLink(service))).toBeLessThan(BUDGET_MS);
+  });
+
+  // The release feeds (release-feeds.server.ts): every regex there runs on vendor text.
+  describe("release feeds", () => {
+    const steam = RELEASE_SOURCES.find((candidate) => candidate.id === "cs2-europe");
+    const aws = RELEASE_SOURCES.find((candidate) => candidate.id === "aws");
+    const gitlab = RELEASE_SOURCES.find((candidate) => candidate.id === "gitlab");
+    if (!steam || !aws || !gitlab) throw new Error("a release source is missing");
+
+    it.each(["title", "description", "content", "summary", "pubDate", "published", "updated", "link", "dc:date"])(
+      "parseFeedItems: a repeated unclosed <%s> in an item and in an entry",
+      (tag) => {
+        for (const kind of ["item", "entry"] as const) {
+          const xml = `<${kind}>${`<${tag}>`.repeat(SIZE / 8)}`;
+          let items: ReturnType<typeof parseFeedItems> = [];
+          expect(elapsed(() => (items = parseFeedItems(xml, kind)))).toBeLessThan(BUDGET_MS);
+          expect(items).toHaveLength(1);
+        }
+      },
+    );
+
+    it("parseFeedItems: unclosed openers, empty items and a long run of spaces", () => {
+      for (const kind of ["item", "entry"] as const) {
+        expect(elapsed(() => parseFeedItems(`<${kind}>`.repeat(SIZE / 6), kind))).toBeLessThan(BUDGET_MS * 2);
+        expect(elapsed(() => parseFeedItems(`<${kind}></${kind}>`.repeat(SIZE / 13), kind))).toBeLessThan(
+          BUDGET_MS * 2,
+        );
+        expect(elapsed(() => parseFeedItems(`<${kind}>${" ".repeat(SIZE)}`.repeat(4), kind))).toBeLessThan(BUDGET_MS);
+      }
+    });
+
+    it("parseFeedItems: link tags with long attributes, many links and a href that never ends", () => {
+      const cases = [
+        `<entry>${'<link rel="x" href="a"/>'.repeat(SIZE / 24)}</entry>`,
+        `<entry><link ${"href ".repeat(SIZE / 5)}</entry>`,
+        `<entry><link href=${" ".repeat(SIZE)}"x"</entry>`,
+        `<entry><link href="${"a".repeat(SIZE)}</entry>`,
+        `<entry>${"<link ".repeat(SIZE / 6)}</entry>`,
+        `<entry><link${" rel='".repeat(SIZE / 6)}</entry>`,
+      ];
+      for (const xml of cases) expect(elapsed(() => parseFeedItems(xml, "entry"))).toBeLessThan(BUDGET_MS);
+    });
+
+    it("parseFeedItems: a feed past the scan bound is read in linear time and capped", () => {
+      const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
+      let items: ReturnType<typeof parseFeedItems> = [];
+      expect(elapsed(() => (items = parseFeedItems(xml, "item")))).toBeLessThan(BUDGET_MS * 4);
+      expect(items.length).toBeLessThanOrEqual(12);
+    });
+
+    it("htmlBlocks: repeated block tags, unclosed tags, comments and a tag that never ends", () => {
+      const cases = [
+        "<p>".repeat(SIZE / 3),
+        "<p ".repeat(SIZE / 3),
+        `<p${" ".repeat(SIZE)}`,
+        `<li ${"a=b ".repeat(SIZE / 4)}`,
+        "<br/>".repeat(SIZE / 5),
+        "<!--".repeat(SIZE / 4),
+        `<h2>${"<".repeat(SIZE)}`,
+        `${"<div>x</div>".repeat(SIZE / 12)}`,
+        `<p>${"a ".repeat(SIZE / 2)}</p>`,
+      ];
+      for (const html of cases) expect(elapsed(() => htmlBlocks(html))).toBeLessThan(BUDGET_MS);
+    });
+
+    it("dropScripts: many openers, unclosed ones and a closer that never comes", () => {
+      const cases = [
+        "<script>".repeat(SIZE / 8),
+        "<script></script>".repeat(SIZE / 17),
+        `<script>${"</scrip ".repeat(SIZE / 8)}`,
+        `<style${" ".repeat(SIZE)}`,
+        `<script>${"a".repeat(SIZE)}`,
+        `${"<styl".repeat(SIZE / 5)}`,
+      ];
+      for (const html of cases) expect(elapsed(() => dropScripts(html))).toBeLessThan(BUDGET_MS);
+      expect(dropScripts("a<script>x</script>b<style>y</style>c")).toBe("abc");
+      expect(dropScripts("a<script>never closed")).toBe("a");
+    });
+
+    it("gitlabVersion: a lead of spaces, a long list of versions and lookalikes", () => {
+      const cases = [
+        `GitLab${" ".repeat(SIZE)}18.4 released`,
+        `GitLab 18.4${" ".repeat(SIZE)}released`,
+        `GitLab 19.4${" ".repeat(SIZE)}release notes`,
+        `GitLab 19.4 release${" ".repeat(SIZE)}notes`,
+        `GitLab 19.4 release${" ".repeat(SIZE)}`,
+        `GitLab AI Gateway Critical Patch Release: ${"19.4.1, ".repeat(SIZE / 8)}`,
+        `GitLab Patch Release: ${"18.4.1, ".repeat(SIZE / 8)}`,
+        `GitLab Patch Release: ${"1.".repeat(SIZE / 2)}`,
+        `GitLab critical${" ".repeat(SIZE)}patch release`,
+        `${"GitLab ".repeat(SIZE / 7)}`,
+        `GitLab Patch Release: ${"9999.9999.9999 ".repeat(SIZE / 15)}`,
+      ];
+      for (const title of cases) expect(elapsed(() => gitlabVersion(title))).toBeLessThan(BUDGET_MS);
+      expect(gitlabVersion("GitLab Patch Release: 18.4.1, 18.3.3, 18.2.7")).toBe("18.4.1");
+      expect(gitlabVersion("GitLab 19.4 release notes")).toBe("19.4");
+    });
+
+    it("decodeHtmlNames: ampersands, long names and references that never end", () => {
+      const cases = [
+        "&".repeat(SIZE),
+        "&a".repeat(SIZE / 2),
+        `&${"a".repeat(SIZE)}`,
+        "&hellip".repeat(SIZE / 7),
+        "&hellip;".repeat(SIZE / 8),
+        `${"&abcdefgh".repeat(SIZE / 9)};`,
+        "&;".repeat(SIZE / 2),
+        "&amp;rsquo;".repeat(SIZE / 11),
+      ];
+      for (const text of cases) expect(elapsed(() => decodeHtmlNames(text))).toBeLessThan(BUDGET_MS);
+      expect(decodeHtmlNames("a&hellip;&rsquo;b")).toBe("a\u2026\u2019b");
+    });
+
+    it("steamNoteLines: brackets, placeholders and equals signs without end", () => {
+      const cases = [
+        "[".repeat(SIZE),
+        "[b=".repeat(SIZE / 3),
+        `[url=${"a".repeat(SIZE)}`,
+        `[b${"c".repeat(SIZE)}]`,
+        "{STEAM_CLAN_IMAGE}/".repeat(SIZE / 19),
+        `{STEAM_CLAN_IMAGE}/${"a".repeat(SIZE)}`,
+        "[*]\n".repeat(SIZE / 4),
+        "\r\n".repeat(SIZE / 2),
+      ];
+      for (const contents of cases) expect(elapsed(() => steamNoteLines(contents, "t"))).toBeLessThan(BUDGET_MS);
+    });
+
+    it("the readers as a whole: one huge description, one huge title and a payload of thousands of posts", () => {
+      const description = `<rss><channel><item><title>t</title><description>${"<p>word </p>".repeat(SIZE / 12)}</description></item></channel></rss>`;
+      expect(elapsed(() => xmlEntries(aws, description))).toBeLessThan(BUDGET_MS * 2);
+      const title = `<rss><channel><item><title>${"a ".repeat(SIZE / 2)}</title></item></channel></rss>`;
+      expect(elapsed(() => xmlEntries(aws, title))).toBeLessThan(BUDGET_MS * 2);
+      const posts = JSON.stringify({
+        appnews: {
+          newsitems: Array.from({ length: MAX_SCANNED_ROWS * 2 }, (_, i) => ({
+            gid: String(i),
+            title: `Update ${i}`,
+            date: i,
+          })),
+        },
+      });
+      let count = 0;
+      expect(elapsed(() => (count = jsonEntries(steam, posts).length))).toBeLessThan(BUDGET_MS * 4);
+      expect(count).toBe(5);
+      const gitlabBody = `<feed><entry><title>${"GitLab Patch Release: 18.4.1, ".repeat(SIZE / 30)}</title></entry></feed>`;
+      expect(elapsed(() => xmlEntries(gitlab, gitlabBody))).toBeLessThan(BUDGET_MS * 2);
+    });
   });
 });

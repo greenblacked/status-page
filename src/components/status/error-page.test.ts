@@ -11,8 +11,15 @@ describe("MessageShell", () => {
     const html = renderToStaticMarkup(shell("Nothing here.", "body"));
     expect(html).toMatch(/^<main /);
     expect(html).toContain('<h1 class="mt-12 text-headline text-balance md:text-display">Nothing here.</h1>');
-    expect(html).toContain("szolotov.com");
+    expect(html).toContain(">Status Page</p>");
+    expect(html).not.toContain("szolotov.com");
     expect(html.match(/<h1/g)).toHaveLength(1);
+  });
+
+  it("centres the wordmark", () => {
+    expect(renderToStaticMarkup(shell("x", "y"))).toMatch(
+      /<p [^>]*class="[^"]*\btext-center\b[^"]*"[^>]*>Status Page<\/p>/,
+    );
   });
 
   it("uses tokens only: no raw colours, no fonts of its own, no hand note", () => {

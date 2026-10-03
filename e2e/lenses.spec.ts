@@ -1,15 +1,17 @@
 import { expect, type Page, test } from "@playwright/test";
-import { fixtureBoard, serveBoard } from "./fixture-board";
+import type { BoardSnapshot } from "../src/lib/status/types.ts";
+import { verdict } from "../src/lib/status/verdict.ts";
+import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
 
-// The liquid-glass lens layer (src/components/status/lens-field.tsx and the
-// .lens rules in src/background.css): its markup and asset, the rules that hide,
-// still or place it, and a per-pixel contrast check. The layer is Full's: the
+// The bubble layer (src/components/status/lens-field.tsx and the .lens rules in
+// src/background.css; the class is still "lens"): its markup and asset, the rules
+// that hide, still, thin or place it, and a per-pixel contrast check. The layer is Full's: the
 // default Quiet background and Glass hide it, and the markup is there either way.
 //
 // Contrast: board.spec.ts's contrastFailures strips pseudo-elements and every
 // background-image before it runs axe, so it cannot see the lens layer. The
 // last test here measures it instead: with the content hidden and motion off,
-// it screenshots each lens disc and checks --color-subtle and --color-muted
+// it screenshots each bubble and checks --color-subtle and --color-muted
 // against every pixel more than 3px inside the rim, in light and dark. The
 // budget is 4.5:1 there; only the rim hairline (the outer
 // 3px) is exempt. The lens colours are alpha tokens in src/background.css, so
@@ -41,6 +43,30 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
 }
 
+/**
+ * `serveBoard` only answers the client's server-function calls, and the first render comes from the server (live vendor data),
+ * so press Refresh to bring the fixture in, and wait for it before measuring anything.
+ *
+ * The wait does not depend on how the headline is worded, nor on what the vendors say today. Two things must hold:
+ *   - AWS and Steam show the fixture's own latencies (143 and 166 ms, from `latencyMs` in fixture-board.ts). The
+ *     server's board shows its vendors' real ones, or none at all for a source it could not read, so this is only
+ *     true once the fixture is in, whatever the server drew first (offline, calm or not).
+ *   - The <h1> is the headline `verdict()` makes of this very board, so the variant asked for (usual, calm,
+ *     longest hero) is the one on screen, not a board that merely loaded.
+ */
+async function loadFixture(page: Page, build: (now: number) => BoardSnapshot): Promise<void> {
+  const board = build(Date.now());
+  await page.getByRole("button", { name: "Refresh status now" }).first().click();
+  for (const id of ["aws", "steam"] as const) {
+    const latencyMs = board.services.find((service) => service.id === id)?.latencyMs;
+    // An attention card adds a screen-reader copy after the figure, so match the start.
+    await expect(page.locator(`#service-${id}`).getByTitle("How long the vendor took to answer")).toHaveText(
+      new RegExp(`^${latencyMs}\\s*ms`),
+    );
+  }
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(verdict(board).title);
+}
+
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
 function watchConsole(page: Page): string[] {
   const problems: string[] = [];
@@ -60,13 +86,13 @@ async function cssLoaded(page: Page): Promise<boolean> {
 }
 
 test.describe("markup", () => {
-  test("has a hidden layer of four lenses", async ({ page }) => {
+  test("has a hidden layer of eleven bubbles", async ({ page }) => {
     await page.goto("/");
     await hydrated(page);
     await expect(lenses(page)).toHaveCount(1);
     await expect(lenses(page)).toHaveAttribute("aria-hidden", "true");
-    await expect(page.locator(".lenses > .lens")).toHaveCount(4);
-    await expect(page.locator(".lenses > .lens > .lens-fx")).toHaveCount(4);
+    await expect(page.locator(".lenses > .lens")).toHaveCount(11);
+    await expect(page.locator(".lenses > .lens > .lens-fx")).toHaveCount(11);
     // The filter definitions are hidden from a screen reader too.
     await expect(page.locator('svg[aria-hidden="true"]:has(#lens-refract)')).toHaveCount(1);
   });
@@ -127,7 +153,7 @@ test.describe("background", () => {
     await expect(page.locator("html")).not.toHaveAttribute("data-background");
     for (const layer of layers) expect(await shown(page, layer), layer).toBe(false);
     // The markup is there all the same: the server and the browser render one page.
-    await expect(page.locator(".lenses > .lens")).toHaveCount(4);
+    await expect(page.locator(".lenses > .lens")).toHaveCount(11);
   });
 
   test("Glass shows the still glow, and no lenses", async ({ page }) => {
@@ -293,7 +319,7 @@ test.describe("styling", () => {
     const filters = await page
       .locator(".lens-fx")
       .evaluateAll((all) => all.map((node) => getComputedStyle(node).filter));
-    expect(filters).toHaveLength(4);
+    expect(filters).toHaveLength(11);
     // Browsers serialise the reference with or without quotes.
     for (const filter of filters) expect(filter).toMatch(/^url\(("|')?#lens-refract("|')?\)$/);
   });
@@ -310,30 +336,233 @@ test.describe("styling", () => {
     await expect(lenses(page)).toBeHidden();
   });
 
-  test("reduced motion stills the rim light", async ({ page }) => {
+  /** Each drawn bubble's running animations, by name: what moves it. (A bubble a width does not draw has none.) */
+  const motion = (page: Page) =>
+    page
+      .locator(".lens")
+      .evaluateAll((all) =>
+        all
+          .filter((lens) => getComputedStyle(lens).display !== "none")
+          .map((lens) => lens.getAnimations().map((animation) => (animation as CSSAnimation).animationName)),
+      );
+
+  test("reduced motion stills the bubbles", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     const names = await page
       .locator(".lens")
-      .evaluateAll((all) => all.map((lens) => getComputedStyle(lens, "::after").animationName));
-    expect(names).toEqual(["none", "none", "none", "none"]);
+      .evaluateAll((all) => all.map((lens) => getComputedStyle(lens).animationName));
+    expect(names).toEqual(Array(11).fill("none"));
+    expect((await motion(page)).flat()).toEqual([]);
   });
 
-  test("the rim light orbits under a fine pointer and stands still under touch", async ({ page }) => {
+  test("the bubbles drift and breathe under a fine pointer, each on its own pace, and stand still under touch", async ({
+    page,
+  }) => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
     expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
     const fine = await page.evaluate(() => matchMedia("(hover: hover) and (pointer: fine)").matches);
-    const names = await page
-      .locator(".lens")
-      .evaluateAll((all) => all.map((lens) => getComputedStyle(lens, "::after").animationName));
-    expect(names).toHaveLength(4);
-    for (const name of names) {
-      if (fine) expect(name).not.toBe("none");
-      else expect(name).toBe("none");
+    const running = await motion(page);
+    expect(running.length).toBeGreaterThanOrEqual(6);
+    if (!fine) {
+      expect(running.flat()).toEqual([]);
+      return;
+    }
+    // Sideways, up and down, and a breath: compositor properties only, never a layout or paint property.
+    for (const names of running) expect(names).toEqual(["bubble-sway", "bubble-bob", "bubble-breathe"]);
+    const timing = await page.locator(".lens").evaluateAll((all) =>
+      all
+        .filter((lens) => getComputedStyle(lens).display !== "none")
+        .map((lens) =>
+          lens.getAnimations().map((animation) => {
+            const effect = animation.effect as KeyframeEffect;
+            const properties = new Set(effect.getKeyframes().flatMap((frame) => Object.keys(frame)));
+            return { duration: effect.getTiming().duration, properties: [...properties].sort().join(",") };
+          }),
+        ),
+    );
+    for (const bubble of timing) {
+      expect(bubble.map((a) => a.properties)).toEqual([
+        "composite,computedOffset,easing,offset,translate",
+        "composite,computedOffset,easing,offset,transform",
+        "composite,computedOffset,easing,offset,scale",
+      ]);
+      // Every loop is slow (the breath is the shortest, and every iteration is a style recalculation on the main thread): ten seconds or more.
+      for (const animation of bubble) expect(Number(animation.duration)).toBeGreaterThanOrEqual(10_000);
+    }
+    // Their own timing: no two bubbles share a drift duration.
+    const drifts = timing.map((bubble) => bubble[0].duration);
+    expect(new Set(drifts).size).toBe(drifts.length);
+  });
+
+  /**
+   * The drawn bubbles, each with the box it sweeps (its own box and its float's reach: --dx and --dy are cqmin),
+   * against the bare text of the page at the top: text outside every panel, whose blur would soften a bubble.
+   * Also, from 48rem (768px), where it becomes a column, against the margin column's whole x-range, which the text runs down as the page scrolls under the fixed layer.
+   * With `anyHeight`, a text counts wherever it is on the page (the layer is fixed and the page scrolls under it), so the answer
+   * holds at every scroll position and for any board, not only for what happens to be under a bubble now.
+   */
+  async function bubblesOnText(page: Page, anyHeight = false) {
+    return page.evaluate((anyHeight) => {
+      // What of a text is actually painted: its sides cut at every ancestor that clips sideways (a strip that scrolls
+      // sideways, like the filter tabs on a narrow screen, runs its text out under the screen's edge by design, but is
+      // clipped at its own box). The part left, if any, is what a bubble can meet.
+      const painted = (element: Element, box: DOMRect) => {
+        let left = box.left;
+        let right = box.right;
+        for (let up: Element | null = element; up; up = up.parentElement) {
+          if (getComputedStyle(up).overflowX === "visible") continue;
+          const clip = up.getBoundingClientRect();
+          left = Math.max(left, clip.left);
+          right = Math.min(right, clip.right);
+        }
+        return right - left > 0.5 ? { left, right } : null;
+      };
+      const unit = Math.min(innerWidth, innerHeight) / 100;
+      const sweeps = [...document.querySelectorAll<HTMLElement>(".lens")]
+        .filter((lens) => getComputedStyle(lens).display !== "none")
+        .map((lens, index) => {
+          const style = getComputedStyle(lens);
+          const box = lens.getBoundingClientRect();
+          const dx = Number.parseFloat(style.getPropertyValue("--dx")) * unit;
+          const dy = Number.parseFloat(style.getPropertyValue("--dy")) * unit;
+          return { index, left: box.left - dx, right: box.right + dx, top: box.top - dy, bottom: box.bottom + dy };
+        });
+      const texts: { label: string; left: number; right: number; top: number; bottom: number }[] = [];
+      const walker = document.createTreeWalker(document.querySelector(".liquid-content") as Node, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const element = node.parentElement;
+        if (!element || !node.textContent?.trim()) continue;
+        if (element.closest(".surface, .sr-only, [aria-hidden=true], .float")) continue;
+        if (getComputedStyle(element).visibility === "hidden") continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const box of range.getClientRects()) {
+          const sides = box.width > 0 ? painted(element, box) : null;
+          if (sides)
+            texts.push({
+              label: node.textContent.trim().slice(0, 24),
+              ...box.toJSON(),
+              ...sides,
+              ...(anyHeight ? { top: -Infinity, bottom: Infinity } : {}),
+            });
+        }
+      }
+      const margin = [...document.querySelectorAll(".board-margin")].map((el) => el.getBoundingClientRect());
+      const hits: string[] = [];
+      for (const sweep of sweeps) {
+        for (const text of texts)
+          if (text.left < sweep.right && text.right > sweep.left && text.top < sweep.bottom && text.bottom > sweep.top)
+            hits.push(`bubble ${sweep.index + 1} over "${text.label}"`);
+        for (const column of margin)
+          if (innerWidth >= 768 && column.width > 0 && column.left < sweep.right && column.right > sweep.left)
+            hits.push(
+              `bubble ${sweep.index + 1} inside the margin column (${Math.round(column.left)}-${Math.round(column.right)})`,
+            );
+      }
+      return hits;
+    }, anyHeight);
+  }
+
+  for (const [width, height] of [
+    [1024, 768],
+    [1180, 820],
+    [1280, 720],
+    [1366, 768],
+    [1440, 900],
+    [1600, 900],
+    [1601, 900],
+    [2560, 1440],
+    [1920, 1080],
+  ] as const) {
+    test(`at ${width}x${height} no bubble sits over the margin column or any bare text`, async ({ page }, testInfo) => {
+      test.skip(testInfo.project.name !== "desktop", "needs a desktop-width page");
+      await page.setViewportSize({ width, height });
+      await serveBoard(page, () => fixtureBoard(Date.now()));
+      await page.goto("/");
+      await hydrated(page);
+      await loadFixture(page, fixtureBoard);
+      expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+      expect(await bubblesOnText(page)).toEqual([]);
+    });
+  }
+
+  test("a narrow screen draws fewer, smaller bubbles in its own places", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await serveBoard(page, () => fixtureBoard(Date.now()));
+    await page.goto("/");
+    await hydrated(page);
+    await loadFixture(page, fixtureBoard);
+    expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+    const boxes = await page.locator(".lens").evaluateAll((all) =>
+      all.map((lens) => {
+        const box = lens.getBoundingClientRect();
+        return { shown: getComputedStyle(lens).display !== "none", d: box.width, cx: box.x + box.width / 2 };
+      }),
+    );
+    const drawn = boxes.filter((box) => box.shown);
+    expect(drawn).toHaveLength(6);
+    for (const box of drawn) expect(box.d).toBeLessThanOrEqual(48);
+    // On the edges (some partly off the screen), clear of the middle of the column the text runs down.
+    for (const box of drawn) expect(Math.abs(box.cx - 195)).toBeGreaterThan(120);
+    expect(await bubblesOnText(page)).toEqual([]);
+  });
+
+  // The layer is fixed and the page scrolls under it, so "off the text" cannot depend on how tall the cards happen to
+  // be: it has to hold at every scroll position, for every board. The bubbles stay in the side gutter, where no text is.
+  for (const [width, height] of [
+    [320, 568],
+    [360, 740],
+    [390, 844],
+    [430, 932],
+    [600, 900],
+    [767, 1024],
+  ] as const) {
+    for (const [shape, board] of [
+      ["the usual board", fixtureBoard],
+      ["a calm board", calmBoard],
+      ["the longest hero", longHeroBoard],
+    ] as const) {
+      test(`at ${width}x${height} no bubble can reach any text, on ${shape}`, async ({ page }, testInfo) => {
+        test.skip(testInfo.project.name !== "desktop", "one Chromium run covers the geometry");
+        await page.setViewportSize({ width, height });
+        await serveBoard(page, () => board(Date.now()));
+        await page.goto("/");
+        await hydrated(page);
+        await loadFixture(page, board);
+        expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+        expect(await page.locator(".lens:visible").count()).toBe(6);
+        expect(await bubblesOnText(page, true)).toEqual([]);
+      });
+    }
+  }
+
+  test("bubbles are small, and laptop and tablet widths draw nine", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "needs a desktop-width page");
+    for (const [width, height, count] of [
+      [1440, 900, 9],
+      [1920, 1080, 11],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto("/");
+      await hydrated(page);
+      expect(await cssLoaded(page), "the lens rules are in the build").toBe(true);
+      const sizes = await page
+        .locator(".lens")
+        .evaluateAll((all) =>
+          all
+            .filter((lens) => getComputedStyle(lens).display !== "none")
+            .map((lens) => lens.getBoundingClientRect().width),
+        );
+      expect(sizes).toHaveLength(count);
+      for (const size of sizes) {
+        expect(size).toBeGreaterThanOrEqual(12);
+        expect(size).toBeLessThanOrEqual(80);
+      }
     }
   });
 
@@ -558,11 +787,12 @@ test.describe("contrast", () => {
   });
 
   /**
-   * The lens discs are painted layers behind the content, so axe cannot see
-   * them. With the content hidden and motion off (the aurora and the rim
-   * light stand still), this screenshots the page, then checks the WCAG
-   * contrast of the two weakest text colours against every pixel that is more
-   * than 3px inside a lens's rim. The rim hairline itself is exempt.
+   * The bubbles are painted layers behind the content, so axe cannot see
+   * them. With the content hidden and motion off (the aurora and the bubbles
+   * stand still, at the places the colour copy is aligned for), this
+   * screenshots the page, then checks the WCAG contrast of the two weakest
+   * text colours against every pixel that is more than 3px inside a bubble's
+   * rim, its highlights included. The rim hairline itself is exempt.
    */
   for (const colorScheme of ["light", "dark"] as const) {
     test(`keeps subtle and muted text at 4.5:1 inside the lenses (${colorScheme})`, async ({
@@ -593,7 +823,7 @@ test.describe("contrast", () => {
           }),
         };
       });
-      expect(setup.discs).toHaveLength(4);
+      expect(setup.discs).toHaveLength(11);
       const shot = await page.screenshot({ animations: "disabled" });
 
       // Decode and measure on a blank page: the board's CSP would refuse a data: fetch.
@@ -646,8 +876,8 @@ test.describe("contrast", () => {
           },
           { b64: Buffer.from(shot).toString("base64"), discs: setup.discs, colours: setup.colours },
         );
-        // Not vacuous: most of four large discs is on screen.
-        expect(result.checked).toBeGreaterThan(50_000);
+        // Not vacuous: nine small bubbles are drawn at this width, a couple of thousand pixels between them.
+        expect(result.checked).toBeGreaterThan(1_500);
         expect(result.failures, `worst ratios ${JSON.stringify(result.worst)}`).toEqual({ subtle: 0, muted: 0 });
       } finally {
         await helper.close();

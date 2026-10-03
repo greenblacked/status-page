@@ -1,19 +1,25 @@
 import { formatUtcTime, THIN_SPACE } from "@/lib/status/schedule";
 
 /**
- * Times on the board are the viewer's own once the page has hydrated, and UTC
- * before that: the server cannot know the viewer's zone, and a hydrating render
- * must print what the server printed. This file is the pure part (the
- * formatters, all taking the zone and locale as arguments so a test can pin
- * them); src/components/status/local-time.tsx does the switching.
+ * Times on the board are in the viewer's own zone once the page has hydrated
+ * (always in English, whatever the browser's language), and UTC before that:
+ * the server cannot know the viewer's zone, and a hydrating render must print
+ * what the server printed. This file is the pure part (the formatters, all
+ * taking the zone as an argument so a test can pin it);
+ * src/components/status/local-time.tsx does the switching.
  *
  *   clock  "12:04 CET"  (a date first when it is not the reference's day)
  *   slot   "12:04 CET"  (never a date: a slot is one of the last few checks)
  *   date   "Wednesday 30 September"
+ *   day    "Sep 29"  (the year too when it is not the reference's: "Sep 29, 2025"), month first like a release row
  */
-export type LocalTimeFormat = "clock" | "date" | "slot";
+export type LocalTimeFormat = "clock" | "date" | "slot" | "day";
 
-/** Which zone and locale to format in; the viewer's own when left out. */
+/**
+ * Which zone to format in; the viewer's own when left out. `locale` is the
+ * viewer's language and is accepted so a caller can pass it, but it never
+ * changes the output: dates and times are always English.
+ */
 export type ZoneOptions = { timeZone?: string; locale?: string };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -41,55 +47,111 @@ export function formatUtcTitle(at: number): string {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
 }
 
+/** A day as "Sep 29", from the UTC calendar, with the year when it is not the reference's UTC year ("Sep 29, 2025"). Never a time. */
+export function formatUtcDay(at: number, reference: number = at): string {
+  const date = new Date(at);
+  const day = `${MONTHS[date.getUTCMonth()]} ${date.getUTCDate()}`;
+  return date.getUTCFullYear() === new Date(reference).getUTCFullYear() ? day : `${day}, ${date.getUTCFullYear()}`;
+}
+
 /** The server's and the hydrating render's date, "Wednesday 30 September", from the UTC calendar. */
 export function formatUtcDate(at: number): string {
   const date = new Date(at);
   return `${WEEKDAYS[date.getUTCDay()]} ${date.getUTCDate()} ${MONTHS_LONG[date.getUTCMonth()]}`;
 }
 
-/** The calendar day of `at` in a zone, as a comparable key. */
-function dayKey(at: number, { timeZone, locale }: ZoneOptions): string {
-  return new Intl.DateTimeFormat(locale, { timeZone, year: "numeric", month: "numeric", day: "numeric" }).format(at);
+/** One moment read in a zone: numbers and the zone's English abbreviation, nothing from the viewer's language. */
+type Moment = { year: number; month: number; day: number; hour: number; minute: number; zone: string };
+
+const formatters = new Map<string, Intl.DateTimeFormat>();
+const zoneNames = new Map<string, Intl.DateTimeFormat>();
+
+const isOffset = (name: string) => /^GMT[+-]/.test(name);
+
+/** en-GB names Europe's zones (CET, BST) and en-US the Americas' (EDT, PST); an offset when neither has one. */
+function zoneName(at: number, timeZone: string | undefined, fromGb: string): string {
+  if (!isOffset(fromGb)) return fromGb;
+  const key = timeZone ?? "";
+  let us = zoneNames.get(key);
+  if (!us) {
+    us = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "short" });
+    zoneNames.set(key, us);
+  }
+  const fromUs = us.formatToParts(at).find((part) => part.type === "timeZoneName")?.value ?? "";
+  return fromUs && !isOffset(fromUs) ? fromUs : fromGb;
 }
 
 /**
- * A moment as a clock time with its zone, "12:04 CET". With `reference` given,
- * a moment on another local day than the reference gets its date first
- * ("26 Sep 12:04 CET", and the year too when it differs), the way
- * formatUtcTime does for UTC.
+ * The moment's parts in a zone. The language is pinned to English on purpose:
+ * the whole site is English, so a browser set to Russian must not turn the
+ * weekday, the digits, the 24-hour clock or the zone name ("GMT+3") into its
+ * own. Only the numeric parts are read, and the words come from the arrays above.
  */
-export function formatLocalTime(at: number, reference: number = at, options: ZoneOptions = {}): string {
-  const { timeZone, locale } = options;
-  // A thin no-break space before the zone, like formatUtcTime's, so "12:04 CET" never breaks in two.
-  const clock = new Intl.DateTimeFormat(locale, {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZoneName: "short",
-  })
-    .format(at)
-    .replace(/\s+(?=\S+$)/, THIN_SPACE);
-  if (dayKey(at, options) === dayKey(reference, options)) return clock;
-  const parts = (moment: number) =>
-    Object.fromEntries(
-      new Intl.DateTimeFormat("en-GB", { timeZone, day: "numeric", month: "numeric", year: "numeric" })
-        .formatToParts(moment)
-        .map((part) => [part.type, part.value]),
-    );
-  const mine = parts(at);
-  const day = `${mine.day} ${MONTHS[Number(mine.month) - 1]}`;
-  return mine.year === parts(reference).year ? `${day} ${clock}` : `${day} ${mine.year} ${clock}`;
+function momentIn(at: number, timeZone: string | undefined): Moment {
+  const key = timeZone ?? "";
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+      timeZoneName: "short",
+    });
+    formatters.set(key, formatter);
+  }
+  const value = Object.fromEntries(formatter.formatToParts(at).map((part) => [part.type, part.value]));
+  return {
+    year: Number(value.year),
+    month: Number(value.month),
+    day: Number(value.day),
+    hour: Number(value.hour) % 24,
+    minute: Number(value.minute),
+    zone: zoneName(at, timeZone, value.timeZoneName ?? ""),
+  };
 }
 
-/** The date in the viewer's own zone and language, "Wednesday 30 September". */
+const sameDay = (a: Moment, b: Moment) => a.year === b.year && a.month === b.month && a.day === b.day;
+
+/**
+ * A moment as a clock time with its zone, "12:04 CET", in 24 hours with an
+ * English zone abbreviation. With `reference` given, a moment on another local
+ * day than the reference gets its date first ("26 Sep 12:04 CET", and the year
+ * too when it differs), the way formatUtcTime does for UTC. `options.locale`
+ * does not change the language of the result.
+ */
+export function formatLocalTime(at: number, reference: number = at, options: ZoneOptions = {}): string {
+  const mine = momentIn(at, options.timeZone);
+  // A thin no-break space before the zone, like formatUtcTime's, so "12:04 CET" never breaks in two.
+  const clock = `${pad(mine.hour)}:${pad(mine.minute)}${THIN_SPACE}${mine.zone}`;
+  const other = momentIn(reference, options.timeZone);
+  if (sameDay(mine, other)) return clock;
+  const day = `${mine.day} ${MONTHS[mine.month - 1]}`;
+  return mine.year === other.year ? `${day} ${clock}` : `${day} ${mine.year} ${clock}`;
+}
+
+/** The date in the viewer's own zone, in English, "Wednesday 30 September" (no comma, like formatUtcDate). */
 export function formatLocalDate(at: number, options: ZoneOptions = {}): string {
-  const { timeZone, locale } = options;
-  return new Intl.DateTimeFormat(locale, { timeZone, weekday: "long", day: "numeric", month: "long" }).format(at);
+  const { year, month, day } = momentIn(at, options.timeZone);
+  // The weekday of a calendar date does not depend on the zone, so read it off the date in UTC.
+  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+  return `${WEEKDAYS[weekday]} ${day} ${MONTHS_LONG[month - 1]}`;
+}
+
+/** The day in the viewer's own zone, "Sep 29", in English and month first like a release row; the year too when it is not the reference's ("Sep 29, 2025"). */
+export function formatLocalDay(at: number, reference: number = at, options: ZoneOptions = {}): string {
+  const mine = momentIn(at, options.timeZone);
+  const day = `${MONTHS[mine.month - 1]} ${mine.day}`;
+  return mine.year === momentIn(reference, options.timeZone).year ? day : `${day}, ${mine.year}`;
 }
 
 /** What a time reads before the page has hydrated: UTC, the same text on the server and in the browser. */
 export function formatBeforeHydration(at: number, reference: number, format: LocalTimeFormat): string {
   if (format === "date") return formatUtcDate(at);
+  if (format === "day") return formatUtcDay(at, reference);
   return formatUtcTime(at, format === "slot" ? at : reference);
 }
 
@@ -101,5 +163,6 @@ export function formatAfterHydration(
   options: ZoneOptions = {},
 ): string {
   if (format === "date") return formatLocalDate(at, options);
+  if (format === "day") return formatLocalDay(at, reference, options);
   return formatLocalTime(at, format === "slot" ? at : reference, options);
 }

@@ -190,4 +190,83 @@ describe("the scanner exception for the pinned npm's bundled dependencies", () =
   it("has no plain .trivyignore beside it", () => {
     expect(existsSync(join(ROOT, ".trivyignore"))).toBe(false);
   });
+
+  describe("for OpenSSF Scorecard (OSV-Scanner)", () => {
+    // OSV-Scanner reads osv-scanner.toml from the directory of the lockfile it scans.
+    const OSV_IDS = [
+      "GHSA-2vr4-cq9g-pvrc",
+      "GHSA-3wwx-pv8p-q78v",
+      "GHSA-6j4f-fj2g-mc7p",
+      "GHSA-h3mg-xc3c-68pw",
+      "GHSA-j6r3-76f7-8jcv",
+      "GHSA-q2hr-2g5m-vwhr",
+      "GHSA-qhr7-859c-m2p7",
+      "GHSA-r53p-7pc4-xj5r",
+      "GHSA-rfgv-xxqx-mfg5",
+      "GHSA-rpw4-54j3-4h4q",
+    ];
+    const OSV_EXPIRY = "2026-12-01T00:00:00Z";
+
+    const osvEntries = () =>
+      read("tools/npm/osv-scanner.toml")
+        .split("\n")
+        .filter((line) => !/^\s*#/.test(line))
+        .join("\n")
+        .split(/^\[\[IgnoredVulns\]\]$/m)
+        .slice(1)
+        .map((entry) => ({
+          id: /^id = "([^"]+)"$/m.exec(entry)?.[1],
+          until: /^ignoreUntil = (\S+)$/m.exec(entry)?.[1],
+          reason: /^reason = "(.+)"$/m.exec(entry)?.[1],
+        }));
+
+    it("ignores exactly those advisories, each with an expiry and a reason", () => {
+      const entries = osvEntries();
+      expect(entries.map((e) => e.id).sort()).toEqual(OSV_IDS);
+      for (const entry of entries) {
+        expect(entry.until, `${entry.id} needs ignoreUntil`).toBe(OSV_EXPIRY);
+        expect(entry.reason, `${entry.id} needs a reason`).toMatch(/pinned in tools\/npm/);
+      }
+    });
+
+    it("configures nothing else: no package overrides, no other top-level table", () => {
+      const body = read("tools/npm/osv-scanner.toml")
+        .split("\n")
+        .filter((line) => !/^\s*#/.test(line))
+        .join("\n");
+      expect([...body.matchAll(/^\[+([^\]]+)\]+/gm)].map((m) => m[1])).toEqual(OSV_IDS.map(() => "IgnoredVulns"));
+      expect(body).not.toMatch(/PackageOverrides|GoVersionOverride/);
+    });
+
+    it("is the only osv-scanner.toml in the repository", () => {
+      // OSV-Scanner applies the file to every lockfile in its directory, so a copy beside the app's
+      // package-lock.json (or anywhere else) would hide advisories in the app's own dependencies.
+      const tracked = spawnSync("git", ["ls-files", "--", "*osv-scanner.toml"], { cwd: ROOT, encoding: "utf8" });
+      expect(tracked.status, tracked.stderr).toBe(0);
+      expect(tracked.stdout.split("\n").filter(Boolean)).toEqual(["tools/npm/osv-scanner.toml"]);
+    });
+
+    it("names only packages the pinned npm bundles, none of which the app lockfile resolves", () => {
+      const tools = JSON.parse(read("tools/npm/package-lock.json")).packages as Record<
+        string,
+        { version: string; inBundle?: boolean }
+      >;
+      const app = JSON.parse(read("package-lock.json")).packages as Record<string, { version: string }>;
+      for (const [name, version] of [
+        ["brace-expansion", "5.0.9"],
+        ["ip-address", "10.5.0"],
+        ["undici", "6.28.0"],
+      ] as const) {
+        const bundled = tools[`node_modules/npm/node_modules/${name}`];
+        expect(bundled?.inBundle, `${name} must be bundled in npm`).toBe(true);
+        expect(bundled?.version).toBe(version);
+        // Any depth: a copy nested under another package counts too.
+        for (const [key, entry] of Object.entries(app)) {
+          if (key === `node_modules/${name}` || key.endsWith(`/node_modules/${name}`)) {
+            expect(entry.version, `${key} must not be the vulnerable version in the app`).not.toBe(version);
+          }
+        }
+      }
+    });
+  });
 });

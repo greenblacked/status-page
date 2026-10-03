@@ -77,6 +77,33 @@ export function statuspageComponentDetail(status: string | undefined): string | 
   return (status ?? "").toLowerCase() === "partial_outage" ? "Partial outage" : undefined;
 }
 
+/**
+ * A Status.io status code (the `status_code` of a page, a component or a
+ * container in its public status API) as a health. 100 is operational, 200
+ * planned maintenance, 300 degraded performance, 400 partial service
+ * disruption, 500 service disruption and 600 a security event. A partial
+ * disruption and a security event are Degraded, not Outage: the vendor says
+ * some of the service, or that it is affected without saying it is down. A
+ * code that is not one of these (or not a number) is "unknown", never an
+ * all-clear.
+ */
+export function statusIoHealth(code: unknown): Health {
+  switch (code) {
+    case 100:
+      return "operational";
+    case 200:
+      return "maintenance";
+    case 300:
+    case 400:
+    case 600:
+      return "degraded";
+    case 500:
+      return "outage";
+    default:
+      return "unknown";
+  }
+}
+
 export function statuspageComponent(status: string | undefined): Health {
   switch ((status ?? "").toLowerCase()) {
     case "operational":

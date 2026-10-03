@@ -12,11 +12,15 @@ describe("SiteFooter", () => {
   it("is a footer landmark that says what the page is and is not, in the owner's voice", () => {
     expect(html).toMatch(/^<footer /);
     expect(html).toContain("Not affiliated with any of these vendors. I only read their public status pages.");
-    expect(html).toContain("Built with TanStack Start on Cloudflare Workers.");
+    expect(html).not.toContain("TanStack");
+    expect(html).not.toContain("Cloudflare Workers");
   });
 
   it("is signed in plain words, not initials", () => {
-    expect(html).toContain("Made and kept by Serhii.");
+    expect(html).toMatch(
+      /Made by <a [^>]*href="https:\/\/github\.com\/greenblacked"[^>]*>greenblacked<svg[\s\S]*?<\/svg><\/a>\./,
+    );
+    expect(html).not.toContain("Serhii");
     expect(html).not.toMatch(/s\.z\./i);
     expect(html).not.toContain("font-hand");
   });
@@ -27,7 +31,8 @@ describe("SiteFooter", () => {
     expect(html).toContain('rel="noopener noreferrer license"');
     expect(html).toMatch(/<a [^>]*href="\/api\/status\.json"[^>]*>JSON<\/a>/);
     expect(html).toMatch(/<a [^>]*href="\/feed\.xml"[^>]*>Atom feed<\/a>/);
-    expect(html).toMatch(/<a [^>]*href="\/api\/badge\/board"[^>]*>Badges<\/a>/);
+    expect(html).not.toMatch(/\/api\/badge\//);
+    expect(html).not.toContain("Badges");
     expect(html).toMatch(/<button [^>]*type="button"[^>]*>Settings<\/button>/);
   });
 

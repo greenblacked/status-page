@@ -3,6 +3,7 @@ import { useId, useLayoutEffect, useRef, useState } from "react";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { CATALOG } from "@/lib/status/catalog";
+import { quietScroll } from "@/lib/status/dock";
 import { healthLabel } from "@/lib/status/health";
 import { incidentStart, parseTimestamp } from "@/lib/status/schedule";
 import type { ComponentHealth, Health, ServiceId, ServiceSnapshot } from "@/lib/status/types";
@@ -23,6 +24,12 @@ export type ServiceCardProps = {
   highlight?: boolean;
   /** The service changed in the latest check: a "Changed" tag and an accent bar. */
   emphasized?: boolean;
+  /**
+   * The change was a new release (the newest versions moved from known versions), not a health
+   * change. Only a release tracker reads it: its Changed bar is neutral for a release and the
+   * state's colour for a recovery, including a source coming back from unread.
+   */
+  released?: boolean;
   starred: boolean;
   onToggleStar: (id: ServiceSnapshot["id"]) => void;
   /** The client clock (0 until mounted), for how long an incident has run. */
@@ -210,7 +217,7 @@ export function ListToggle({
     closedFrom.current = null;
     if (from === null || !button.current) return;
     const moved = button.current.getBoundingClientRect().top - from;
-    if (moved !== 0) window.scrollBy({ top: moved, behavior: "instant" });
+    if (moved !== 0) quietScroll(() => window.scrollBy({ top: moved, behavior: "instant" }));
   }, [expanded]);
   return (
     <button

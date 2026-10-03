@@ -1,7 +1,7 @@
 import type { ErrorComponentProps } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { APP_NAME } from "@/lib/status/catalog";
+import { WORDMARK } from "@/lib/status/catalog";
 
 /**
  * The frame the pages off the happy path share: the wordmark row and one
@@ -12,8 +12,8 @@ import { APP_NAME } from "@/lib/status/catalog";
 export function MessageShell({ title, children }: { title: string; children: ReactNode }) {
   return (
     <main className="page-gutter mx-auto max-w-[62rem] pt-6 pb-18 md:pt-12">
-      <p className="text-row">
-        {APP_NAME} <span className="font-normal text-subtle">szolotov.com</span>
+      <p data-testid="wordmark" className="text-center text-row">
+        {WORDMARK}
       </p>
       <h1 className="mt-12 text-headline text-balance md:text-display">{title}</h1>
       <div className="mt-2 text-body text-muted">{children}</div>

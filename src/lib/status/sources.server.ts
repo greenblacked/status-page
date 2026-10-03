@@ -1,3 +1,4 @@
+import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { boundSnapshot, clip, MAX_TEXT_CHARS } from "./bounds.ts";
 import { CATALOG_BY_ID } from "./catalog.ts";
 import {
@@ -6,8 +7,11 @@ import {
   isFreshRelease,
   latestAppleOsByFamily,
   MIKROTIK_CHANNELS,
+  mikrotikChangelogIsFor,
+  mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   parseMikrotikNewest,
+  splitAppleBuild,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
 import { fingerprint } from "./fingerprint.ts";
@@ -15,6 +19,7 @@ import {
   googleImpactInfo,
   instatusComponent,
   overallSummary,
+  statusIoHealth,
   statuspageComponent,
   statuspageComponentDetail,
   statuspageIncidentImpact,
@@ -22,7 +27,16 @@ import {
   urgencyOf,
   worseHealth,
 } from "./health.ts";
-import { fetchJson, fetchText, meterBytes, meteredBytes, NotJsonError, PayloadError, SourceError } from "./http.ts";
+import {
+  fetchJson,
+  fetchText,
+  isRefusal,
+  meterBytes,
+  meteredBytes,
+  NotJsonError,
+  PayloadError,
+  SourceError,
+} from "./http.ts";
 import { sortIncidents } from "./layout.ts";
 import type {
   ComponentHealth,
@@ -34,6 +48,7 @@ import type {
   UpcomingMaintenance,
 } from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
+import { readHtmlTables, WINDOWS_NAME, windowsReleases, windowsShippedAt } from "./windows-release.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 // Upper bound on components kept per card. The largest real vendor list is
@@ -45,10 +60,25 @@ const MAX_COMPONENTS = 300;
 // Applied by sortIncidents after the board's ordering, so the cut drops the
 // mildest, oldest rows and never the outage.
 const MAX_INCIDENTS = 50;
+/**
+ * Most entries read from any one array of a Statuspage or Status.io payload
+ * (components, incidents, maintenance), in document order; the rest are not
+ * looked at. The other JSON readers are bounded by the body cap alone. The
+ * 4 MiB body cap alone allows a million `{}` entries, and mapping them
+ * allocated hundreds of MiB before the caps above applied. This is the bound
+ * for the work and memory a payload can cost, in the way MAX_RSS_SCANNED is
+ * for a feed: it sits an order of magnitude over the largest real list.
+ */
+export const MAX_SCANNED_ROWS = 5000;
+/** Most entries read from an array nested in one of those rows (a component's containers, an incident's messages). */
+export const MAX_NESTED_ROWS = 500;
 // Extra, optional fetches (component lists, the Steam connection managers)
 // get their own short deadline so a slow side request never holds up the
 // main feed. Each is fail-soft: a failure loses that list, not the card.
 const EXTRA_TIMEOUT_MS = 4000;
+// RouterOS changelogs run to hundreds of kilobytes, and the newest release's notes are the first lines: ask for
+// this much of the start.
+const CHANGELOG_RANGE_BYTES = 65_536;
 const EU_POPS = new Set(["ams", "fra", "fsn", "hel", "lhr", "mad", "par", "sto", "sto2", "vie", "waw"]);
 
 // Every field a vendor could omit is optional: a missing one must cost a
@@ -86,6 +116,28 @@ type StatuspageSummary = {
     shortlink?: string;
     components?: StatuspageRef[];
   }>;
+};
+
+// Status.io's public status API (the host behind status.gitlab.com). Every
+// field a vendor could omit is optional, like the Statuspage type above.
+type StatusIoContainer = { id?: string; name?: string; status?: string; status_code?: number };
+type StatusIoComponent = StatusIoContainer & { containers?: StatusIoContainer[] };
+type StatusIoMessage = { details?: string; state?: number; status?: number; datetime?: string };
+type StatusIoEvent = {
+  _id?: string;
+  name?: string;
+  datetime_open?: string;
+  datetime_planned_start?: string;
+  datetime_planned_end?: string;
+  messages?: StatusIoMessage[];
+};
+type StatusIoStatus = {
+  result?: {
+    status_overall?: { updated?: string; status?: string; status_code?: number };
+    status?: StatusIoComponent[];
+    incidents?: StatusIoEvent[];
+    maintenance?: { active?: StatusIoEvent[]; upcoming?: StatusIoEvent[] };
+  };
 };
 
 type GoogleIncident = {
@@ -239,9 +291,12 @@ function soonest(items: UpcomingMaintenance[], limit: number): UpcomingMaintenan
 
 /**
  * The incidents to list, in board order and cut to MAX_INCIDENTS, with what
- * the cut hides: `incidentCount` (everything the source listed) is set only
- * when some were cut, like `componentCount`, and `problems` counts the real
- * ones in the whole list, which is what a summary should say.
+ * the cut hides: `incidentCount` (the count read) is set only when some were
+ * cut, like `componentCount`, and `problems` counts the real
+ * ones in the whole list, which is what a summary should say. The count is at
+ * most MAX_SCANNED_ROWS only where the reader cuts its arrays first (the
+ * Statuspage and Status.io readers); the others are bounded by the 4 MiB body
+ * cap, and the RSS readers also by MAX_RSS_SCANNED and the 200 newest items.
  */
 function listIncidents(
   all: Incident[],
@@ -389,7 +444,8 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
 // Non-operational first, in the board's urgency order (SEVERITY_ORDER: outage,
 // degraded, unknown, maintenance; equals keep source order), then operational
 // in source order, capped at MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
-// the total the source listed, set only when the cap dropped some, so a card
+// the count read (at most MAX_SCANNED_ROWS where the reader cuts its arrays first, as the
+// Statuspage and Status.io readers do), set only when the cap dropped some, so a card
 // can say how many it is not showing.
 function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
   const isUp = (component: ComponentHealth) => component.health === "operational";
@@ -400,9 +456,15 @@ function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "c
     : { components: ranked };
 }
 
-/** The objects in a vendor array; anything else (a null entry, a non-array) is skipped, not a crash. */
-function records<T extends object>(value: unknown): T[] {
-  return Array.isArray(value) ? value.filter((item): item is T => typeof item === "object" && item !== null) : [];
+/**
+ * The objects in the first `limit` entries of a vendor array; anything else (a
+ * null entry, a non-array) is skipped, not a crash. The cut comes before the
+ * filter, so a payload of millions of entries costs `limit` of work and memory.
+ */
+export function records<T extends object>(value: unknown, limit = MAX_SCANNED_ROWS): T[] {
+  return Array.isArray(value)
+    ? value.slice(0, limit).filter((item): item is T => typeof item === "object" && item !== null)
+    : [];
 }
 
 const MAX_UPCOMING_MAINTENANCE = 3;
@@ -413,6 +475,12 @@ function fromStatuspage(
   latencyMs: number,
   componentFilter?: (name: string, groupName?: string) => boolean,
 ): ServiceSnapshot {
+  // A summary always carries `status`. A body without it is not a summary
+  // (a rate-limit or maintenance notice that happens to be JSON), and reading
+  // it as "none" would be an all-clear built on no data.
+  if (typeof data?.status !== "object" || data.status === null) {
+    throw new PayloadError("Statuspage summary has no status.");
+  }
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
@@ -463,7 +531,7 @@ function fromStatuspage(
   // item that lists none.
   const belongs = (item: { name?: string; components?: StatuspageRef[] }): boolean => {
     if (!componentFilter) return true;
-    const refs = records<StatuspageRef>(item.components);
+    const refs = records<StatuspageRef>(item.components, MAX_NESTED_ROWS);
     if (refs.length === 0) return componentFilter(item.name ?? "");
     return refs.some((ref) => {
       const known = ref.id ? componentsById.get(ref.id) : undefined;
@@ -479,25 +547,38 @@ function fromStatuspage(
     },
   );
 
-  const { incidents, problems, incidentCount } = listIncidents(
-    activeIncidents
-      .filter((incident) => belongs(incident))
-      .map((incident) => {
-        const name = incident.name || "Incident";
-        const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
-        return {
-          id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
-          title: name,
-          health: itemHealth,
-          ...(informational ? { informational: true } : {}),
-          startedAt: isoTimestamp(incident.started_at),
-          updatedAt: isoTimestamp(incident.updated_at),
-          // Statuspage writes incident shortlinks on stspg.io; the vendor's own
-          // status host is allowed too. No shortlink stays no link, as before.
-          url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
-        };
-      }),
-  );
+  const mapped: Incident[] = activeIncidents
+    .filter((incident) => belongs(incident))
+    .map((incident) => {
+      const name = incident.name || "Incident";
+      const { health: itemHealth, informational } = statuspageIncidentImpact(incident.impact);
+      return {
+        id: incident.id || `statuspage-${fingerprint(`${incident.name ?? ""}|${incident.started_at ?? ""}`)}`,
+        title: name,
+        health: itemHealth,
+        ...(informational ? { informational: true } : {}),
+        startedAt: isoTimestamp(incident.started_at),
+        updatedAt: isoTimestamp(incident.updated_at),
+        // Statuspage writes incident shortlinks on stspg.io; the vendor's own
+        // status host is allowed too. No shortlink stays no link, as before.
+        url: incident.shortlink ? vendorUrl(incident.shortlink, sourceUrl, statuspageHosts) : undefined,
+      };
+    });
+
+  // An active incident is a statement about the service in its own right:
+  // vendors often leave every component Operational while an incident is
+  // open (Claude's "Delayed credits"), so the components and the page
+  // indicator are only a floor. A card is never better than its worst active
+  // problem, taken over the whole list (not just the part kept below). A
+  // notice with no impact (informational) never raises it. An incident whose
+  // impact the vendor left out still is a problem: it counts as Degraded, not
+  // as "No data" (the incident's own row keeps its unknown state).
+  for (const incident of mapped) {
+    if (!incident.informational)
+      health = worseHealth(health, incident.health === "unknown" ? "degraded" : incident.health);
+  }
+
+  const { incidents, problems, incidentCount } = listIncidents(mapped);
 
   const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
     data.scheduled_maintenances,
@@ -896,23 +977,32 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     const apiOk = typeof servertime === "number";
     const storeOk = store.status === "fulfilled" && Array.isArray(store.value?.featured_win);
     if (!apiOk && !storeOk) {
-      if (info.status === "rejected") throw info.reason;
-      if (store.status === "rejected") throw store.reason;
-      throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      // Name the real fault: a refusal is only reported when nothing else went wrong.
+      const rejections = [info, store].flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+      const real = rejections.find((reason) => !isRefusal(reason));
+      if (real !== undefined) throw real;
+      if (info.status === "fulfilled" || store.status === "fulfilled") {
+        throw new PayloadError("Steam Web API and Store answered in an unexpected shape.");
+      }
+      throw rejections[0];
     }
     // The half that failed says why on its component, so a Degraded card is
-    // never left without a reason.
-    const why = (result: PromiseSettledResult<unknown>) =>
-      result.status === "rejected" ? classifyFailure(result.reason).message : "Unexpected response shape.";
-    const health: Health = apiOk && storeOk ? "operational" : "degraded";
-    const components: ComponentHealth[] = [
-      apiOk
-        ? { name: "Steam Web API", health: "operational" }
-        : { name: "Steam Web API", health: "outage", detail: why(info) },
-      storeOk
-        ? { name: "Steam Store", health: "operational" }
-        : { name: "Steam Store", health: "outage", detail: why(store) },
-    ];
+    // never left without a reason. A probe the vendor refused (403, 429, a bot
+    // challenge) proves nothing about the service, so it is Unknown and does not
+    // count against the card; only a probe that really failed does.
+    const probe = (name: string, ok: boolean, result: PromiseSettledResult<unknown>): ComponentHealth => {
+      if (ok) return { name, health: "operational" };
+      if (result.status === "rejected") {
+        if (isRefusal(result.reason)) {
+          const label = name.replace(/^Steam /, "");
+          return { name, health: "unknown", detail: `${label} refused the check (${result.reason.status})` };
+        }
+        return { name, health: "outage", detail: classifyFailure(result.reason).message };
+      }
+      return { name, health: "outage", detail: "Unexpected response shape." };
+    };
+    const components: ComponentHealth[] = [probe("Steam Web API", apiOk, info), probe("Steam Store", storeOk, store)];
+    const health: Health = components.some((c) => c.health === "outage") ? "degraded" : "operational";
     // A side list: when the directory cannot be read, or lists nothing, the
     // row is left out rather than shown as Unknown.
     const managers = cm.status === "fulfilled" ? steamCmCount(cm.value) : 0;
@@ -926,7 +1016,7 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     return {
       ...base("steam", new Date().toISOString(), mainMs),
       health,
-      summary: overallSummary(health, 0, health === "operational" ? "Web API and Store responding." : undefined),
+      summary: overallSummary(health, 0),
       components,
       incidents: [],
       meta: { servertime: apiOk ? servertime : 0 },
@@ -1197,7 +1287,7 @@ function isAsciiLetter(code: number): boolean {
   return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
 
-function stripHtml(value: string): string {
+export function stripHtml(value: string): string {
   return stripMarkup(value)
     .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
     .replace(/\s+/g, " ")
@@ -1482,6 +1572,254 @@ async function collectGrok(): Promise<ServiceSnapshot> {
   }
 }
 
+// GitHub and Confluence each publish a Statuspage of their own, so they are
+// the Spotify collector with a different address. Each fetches the vendor's
+// own host only (http.ts refuses a redirect off it). GitLab is not here: its
+// page runs on Status.io, which has no Statuspage API (see collectGitlab).
+const STATUSPAGE_SUMMARIES = {
+  github: "https://www.githubstatus.com/api/v2/summary.json",
+  confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+} as const;
+
+// A page's own pointer to itself ("Visit www.githubstatus.com for more
+// information") is listed by the vendor as a component. It is not a service,
+// and as a row it would read Operational and count as a working component.
+const NOT_A_SERVICE = /^Visit /;
+
+async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() => fetchJson<StatuspageSummary>(STATUSPAGE_SUMMARIES[id]));
+    if (value && Array.isArray(value.components)) {
+      // Cut before the filter, as records() does, so the pass is bounded too.
+      value.components = value.components
+        .slice(0, MAX_SCANNED_ROWS)
+        .filter((component) => !(typeof component?.name === "string" && NOT_A_SERVICE.test(component.name)));
+    }
+    return fromStatuspage(id, value, ms);
+  } catch (error) {
+    return failed(id, started, error);
+  }
+}
+
+// status.gitlab.com is a Status.io page. Status.io publishes no Statuspage
+// `api/v2` for it; its public status API takes the page's id.
+const GITLAB_STATUS_URL = "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7";
+const GITLAB_PAGE_ID = "5b36dc6502d06804c08349f7";
+
+/** The newest message of a Status.io event by its datetime; with none readable, the last listed. */
+function newestStatusIoMessage(event: StatusIoEvent): StatusIoMessage | undefined {
+  const messages = records<StatusIoMessage>(event.messages, MAX_NESTED_ROWS);
+  let newest: StatusIoMessage | undefined;
+  let newestAt = Number.NEGATIVE_INFINITY;
+  for (const message of messages) {
+    const at = typeof message.datetime === "string" ? Date.parse(message.datetime) : Number.NaN;
+    const value = Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+    if (newest === undefined || value >= newestAt) {
+      newest = message;
+      newestAt = value;
+    }
+  }
+  return newest;
+}
+
+/**
+ * A card from Status.io's public status API reply. The page's own
+ * `status_overall.status_code` is the health (100 operational, 200
+ * maintenance, 300/400/600 degraded, 500 outage; see statusIoHealth); a reply
+ * without a readable one is not a status and is a parser failure, never an
+ * all-clear. Components come from `status[]`, incidents from `incidents[]`
+ * and maintenance from `maintenance.active[]` and `maintenance.upcoming[]`.
+ * Status.io writes no link on an incident, so the link is the page's own
+ * incident page, kept to the vendor's host. Each array is cut to its first
+ * MAX_SCANNED_ROWS entries (MAX_NESTED_ROWS for containers and messages)
+ * before anything is mapped, so a reply of a million `{}` costs no more than
+ * a small one.
+ */
+export function fromStatusIo(id: ServiceId, data: StatusIoStatus, latencyMs: number, pageId: string): ServiceSnapshot {
+  const result = data?.result;
+  if (typeof result !== "object" || result === null) throw new PayloadError("Status.io reply has no result.");
+  let health = statusIoHealth(result.status_overall?.status_code);
+  if (health === "unknown") throw new PayloadError("Status.io reply has no readable overall status.");
+  const checkedAt = new Date().toISOString();
+  const { sourceUrl } = CATALOG_BY_ID[id];
+  const hosts = [hostOf(sourceUrl)];
+  // Vendor fields are not validated: only a string is text.
+  const text = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value : undefined);
+  const eventUrl = (kind: "incident" | "maintenance", event: StatusIoEvent): string | undefined => {
+    const eventId = text(event._id);
+    return eventId ? vendorUrl(`/pages/${kind}/${pageId}/${encodeURIComponent(eventId)}`, sourceUrl, hosts) : undefined;
+  };
+
+  const components: ComponentHealth[] = records<StatusIoComponent>(result.status).map((component) => {
+    const componentHealth = statusIoHealth(component.status_code);
+    const affected = records<StatusIoContainer>(component.containers, MAX_NESTED_ROWS)
+      .filter((container) => statusIoHealth(container.status_code) !== "operational")
+      .map((container) => text(container.name))
+      .filter((name): name is string => name !== undefined);
+    const detail =
+      componentHealth === "operational" || componentHealth === "unknown"
+        ? undefined
+        : [text(component.status), affected.length ? `(${affected.join(", ")})` : ""].filter(Boolean).join(" ") ||
+          undefined;
+    return {
+      name: text(component.name) ?? "Component",
+      health: componentHealth,
+      ...(detail ? { detail } : {}),
+    };
+  });
+
+  const mapped: Incident[] = records<StatusIoEvent>(result.incidents).map((incident) => {
+    const newest = newestStatusIoMessage(incident);
+    const incidentHealth = statusIoHealth(newest?.status);
+    return {
+      id:
+        text(incident._id) ??
+        `statusio-${fingerprint(`${text(incident.name) ?? ""}|${text(incident.datetime_open) ?? ""}`)}`,
+      title: text(incident.name) ?? "Incident",
+      health: incidentHealth,
+      // As Statuspage's impact "none": an incident whose newest update says
+      // the service is operational is a notice, listed but not counted.
+      ...(incidentHealth === "operational" ? { informational: true as const } : {}),
+      startedAt: isoTimestamp(incident.datetime_open),
+      updatedAt: isoTimestamp(newest?.datetime),
+      url: eventUrl("incident", incident),
+    };
+  });
+  // As for Statuspage: an open incident is a statement about the service in
+  // its own right, so the card is never better than the worst one; one whose
+  // status the vendor left out still is a problem (Degraded).
+  for (const incident of mapped)
+    health = worseHealth(health, incident.health === "unknown" ? "degraded" : incident.health);
+  const { incidents, problems, incidentCount } = listIncidents(mapped);
+
+  const maintenance = result.maintenance;
+  const active = records<StatusIoEvent>(maintenance?.active);
+  if (active.length && health === "operational") health = "maintenance";
+  const upcoming: UpcomingMaintenance[] = soonest(
+    records<StatusIoEvent>(maintenance?.upcoming).map((event) => ({
+      id:
+        text(event._id) ??
+        `statusio-${fingerprint(`${text(event.name) ?? ""}|${text(event.datetime_planned_start) ?? ""}`)}`,
+      title: text(event.name) ?? "Scheduled maintenance",
+      scheduledFor: isoTimestamp(event.datetime_planned_start),
+      scheduledUntil: isoTimestamp(event.datetime_planned_end),
+      url: eventUrl("maintenance", event),
+    })),
+    MAX_UPCOMING_MAINTENANCE,
+  );
+
+  const hint =
+    firstProblemTitle(incidents) ||
+    (health === "maintenance" ? text(active[0]?.name) : undefined) ||
+    text(result.status_overall?.status);
+  return {
+    ...base(id, checkedAt, latencyMs),
+    health,
+    summary: overallSummary(health, problems, hint),
+    ...rankComponents(components),
+    incidents,
+    ...(incidentCount ? { incidentCount } : {}),
+    ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),
+  };
+}
+
+async function collectGitlab(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() => fetchJson<StatusIoStatus>(GITLAB_STATUS_URL));
+    return fromStatusIo("gitlab", value, ms, GITLAB_PAGE_ID);
+  } catch (error) {
+    return failed("gitlab", started, error);
+  }
+}
+
+// An Azure feed item is over when its title begins with a resolution or a post
+// incident review, as Azure prefixes them ("RESOLVED - ...", "Post Incident
+// Review (PIR) - ...", also "Preliminary" or "Final" before the review). Only the title is read: "mitigated" or "restored"
+// inside an active item ("partially mitigated", "restored in East US; West
+// Europe remains impacted") says nothing about the whole incident being over.
+// Anchored at the start, so the test is linear.
+const AZURE_OVER = /^[\s[(]*(?:(?:preliminary|final)[\s-]+)?(?:resolved|mitigated|post[ -]incident review|pir)\b/i;
+// An outage only when the title says so; the feed has no severity and most
+// items are one service in one region.
+const AZURE_OUTAGE = /\b(?:outage|service unavailable)\b/i;
+
+/**
+ * What an Azure status feed item's title says about its incident. The feed is
+ * RSS 2.0 with no status field, so the reading is from the title alone,
+ * case-folded: a resolution or post incident review prefix means it is over
+ * ("operational"), "outage" or "service unavailable" means "outage",
+ * "maintenance" means "maintenance", and anything else the feed still lists is
+ * "degraded". Two anchored or bounded regexes and a substring test, so the
+ * cost is linear in the text.
+ */
+export function azureItemHealth(title: string): Health {
+  if (AZURE_OVER.test(title)) return "operational";
+  if (AZURE_OUTAGE.test(title)) return "outage";
+  if (title.toLowerCase().includes("maintenance")) return "maintenance";
+  return "degraded";
+}
+
+// Like Grok's feed, an item is evidence about right now only when it is
+// unresolved and recent; one with no readable date cannot be shown to be.
+export function azureItemActive(item: { title: string; pubDate?: string }, now: number): boolean {
+  if (azureItemHealth(item.title) === "operational") return false;
+  const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
+  return Number.isFinite(at) && now - at <= STALE_MS;
+}
+
+// The feed Microsoft documents for Azure status. Its host is a subdomain of
+// the card's, so item links on it pass vendorUrl too.
+const AZURE_FEED_URL = "https://rssfeed.azure.status.microsoft/en-us/status/feed/";
+
+async function collectAzure(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() => fetchText(AZURE_FEED_URL));
+    // A healthy Azure feed may hold no items at all, so "no items" is not a
+    // failure here. A body that is not an RSS channel (an HTML error page, an
+    // Atom feed) is: reading it as "operational" would be a confident
+    // all-clear built on no data.
+    if (!/<rss[\s>]/i.test(value.body) || !/<channel[\s>]/i.test(value.body)) {
+      throw new PayloadError("Azure feed was not an RSS channel.");
+    }
+    const items = parseRssItems(value.body);
+    const now = Date.now();
+    // Items that are not over, none of which has a readable date, cannot be
+    // told from current ones: a parser failure, not an all-clear.
+    const open = items.filter((item) => azureItemHealth(item.title) !== "operational");
+    if (open.length > 0 && !open.some((item) => Number.isFinite(Date.parse(item.pubDate ?? "")))) {
+      throw new PayloadError("Azure feed items have no readable date.");
+    }
+    const active = items.filter((item) => azureItemActive(item, now));
+    const health = active.reduce<Health>(
+      (worst, item) => worseHealth(worst, azureItemHealth(item.title)),
+      "operational",
+    );
+    const { sourceUrl } = CATALOG_BY_ID.azure;
+    const { incidents, problems, incidentCount } = listIncidents(
+      active.map((item, index) => ({
+        id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
+        title: item.title || "Azure incident",
+        health: azureItemHealth(item.title),
+        startedAt: isoTimestamp(item.pubDate),
+        url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
+      })),
+    );
+    return {
+      ...base("azure", new Date().toISOString(), ms),
+      health,
+      summary: overallSummary(health, problems, incidents[0]?.title),
+      components: [],
+      incidents,
+      ...(incidentCount ? { incidentCount } : {}),
+    };
+  } catch (error) {
+    return failed("azure", started, error);
+  }
+}
+
 async function collectChatGpt(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
@@ -1504,6 +1842,26 @@ async function collectClaude(): Promise<ServiceSnapshot> {
   } catch (error) {
     return failed("claude", started, error);
   }
+}
+
+// What the Details and the summary take from one version's changelog.
+type MikrotikNotes = { summary: string; notes: string[] };
+const MIKROTIK_NOTES_REMEMBERED = 16;
+const mikrotikNotesCache = new Map<string, MikrotikNotes>();
+
+function rememberMikrotikNotes(version: string, read: MikrotikNotes): void {
+  // Oldest first out: a Map iterates in insertion order. The channels list five versions at most.
+  while (mikrotikNotesCache.size >= MIKROTIK_NOTES_REMEMBERED) {
+    const oldest = mikrotikNotesCache.keys().next();
+    if (oldest.done) break;
+    mikrotikNotesCache.delete(oldest.value);
+  }
+  mikrotikNotesCache.set(version, read);
+}
+
+/** Forgets the changelogs read so far; for tests, which serve different files under the same version. */
+export function clearMikrotikNotesCache(): void {
+  mikrotikNotesCache.clear();
 }
 
 async function collectMikrotik(): Promise<ServiceSnapshot> {
@@ -1541,27 +1899,67 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
         const nextTime = Date.parse(channel.releasedAt ?? "") || 0;
         return nextTime > currentTime ? channel : current;
       }, channels[0]);
-      let notes = "";
+      // The changelog of every version the channels list (often fewer than five: stable and testing can share
+      // one): the newest one's first note is the summary, and each version's first few notes are on its Details.
+      // A released version's changelog does not change, so each is read once per isolate and remembered
+      // (failures and bodies that do not parse are not): a sweep asks only for versions it has not read,
+      // which is none on most sweeps.
+      // The newest section is at the top of the file, so a short ranged read is enough; a server that ignores
+      // the range sends the whole file, which fetchText caps. A changelog that fails costs that version its
+      // notes, and nothing else.
       const notesVersion = newest?.version ?? stable?.version;
-      // parseMikrotikNewest already refuses a malformed version; building
-      // the URL through the same check keeps it that way if that changes.
-      const notesUrl = notesVersion ? mikrotikChangelogUrl(notesVersion) : null;
-      if (notesUrl) {
-        try {
-          const changelog = await fetchText(notesUrl);
-          notes = summarizeMikrotikChangelog(changelog.body);
-        } catch {
-          notes = "";
-        }
-      }
-      return { channels, notes, stable, newest };
+      const changelogs = new Map<string, MikrotikNotes>();
+      await Promise.all(
+        [...new Set(channels.map((channel) => channel.version))].map(async (version) => {
+          const known = mikrotikNotesCache.get(version);
+          if (known) {
+            changelogs.set(version, known);
+            return;
+          }
+          // parseMikrotikNewest already refuses a malformed version; building
+          // the URL through the same check keeps it that way if that changes.
+          const url = mikrotikChangelogUrl(version);
+          if (!url) return;
+          try {
+            // The summary's changelog keeps the default deadline; the others are side requests.
+            const { body } = await fetchText(url, {
+              headers: { Range: `bytes=0-${CHANGELOG_RANGE_BYTES - 1}` },
+              ...(version === notesVersion ? {} : { timeoutMs: EXTRA_TIMEOUT_MS }),
+            });
+            // A body with no "What's new in" section and a bullet under it (empty, truncated, an HTML
+            // error page served with a 200), or one whose section is for another version, is a failed read,
+            // not this version's changelog: it neither gives the summary nor is remembered, so the next
+            // sweep asks again instead of keeping a generic card or another version's notes.
+            if (!mikrotikChangelogIsFor(body, version)) return;
+            const notes = mikrotikChangelogNotes(body);
+            if (notes.length === 0) return;
+            const read = { summary: summarizeMikrotikChangelog(body), notes };
+            rememberMikrotikNotes(version, read);
+            changelogs.set(version, read);
+          } catch {
+            // No notes for this version, and nothing remembered: the next sweep tries again.
+          }
+        }),
+      );
+      const notes = (notesVersion ? changelogs.get(notesVersion)?.summary : undefined) ?? "";
+      return { channels, notes, stable, newest, changelogs };
     });
 
-    const components: ComponentHealth[] = value.channels.map((channel) => ({
-      name: channel.name,
-      health: isFreshRelease(channel.releasedAt) ? "maintenance" : "operational",
-      detail: [channel.version, formatReleaseAge(channel.releasedAt)].filter(Boolean).join(" · "),
-    }));
+    const components: ComponentHealth[] = value.channels.map((channel) => {
+      const notes = value.changelogs.get(channel.version)?.notes ?? [];
+      const url = mikrotikChangelogUrl(channel.version);
+      return {
+        name: channel.name,
+        health: isFreshRelease(channel.releasedAt) ? "maintenance" : "operational",
+        detail: [channel.version, formatReleaseAge(channel.releasedAt)].filter(Boolean).join(" · "),
+        release: {
+          version: channel.version,
+          ...(channel.releasedAt ? { releasedAt: channel.releasedAt } : {}),
+          ...(url ? { url, linkLabel: "Release notes" } : {}),
+          ...(notes.length > 0 ? { notes } : {}),
+        },
+      };
+    });
 
     const latest = value.stable?.version ?? value.newest?.version ?? value.channels[0]?.version ?? "";
     const latestDate = formatReleaseAge(value.newest?.releasedAt ?? value.stable?.releasedAt);
@@ -1593,11 +1991,25 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
     const latest = latestAppleOsByFamily(items);
     if (!latest.length) throw new PayloadError("Apple OS release feed had no OS items.");
 
-    const components: ComponentHealth[] = latest.map((release) => ({
-      name: release.family,
-      health: isFreshRelease(release.publishedAt) ? "maintenance" : "operational",
-      detail: [release.version, formatReleaseAge(release.publishedAt)].filter(Boolean).join(" · "),
-    }));
+    // Apple's feed names a release and links its page, and has no notes text of its own: the Details say so
+    // rather than make some up. The link must stay on apple.com.
+    const sourceUrl = CATALOG_BY_ID["apple-os"].sourceUrl;
+    const components: ComponentHealth[] = latest.map((release) => {
+      const { version, build } = splitAppleBuild(release.version);
+      return {
+        name: release.family,
+        health: isFreshRelease(release.publishedAt) ? "maintenance" : "operational",
+        detail: [release.version, formatReleaseAge(release.publishedAt)].filter(Boolean).join(" · "),
+        release: {
+          version,
+          ...(build ? { build } : {}),
+          ...(release.publishedAt ? { releasedAt: release.publishedAt } : {}),
+          url: vendorUrl(release.link, sourceUrl, ["apple.com"]),
+          // The post links the downloads and the notes; it is not the notes.
+          linkLabel: "Apple Developer post",
+        },
+      };
+    });
 
     const headline = [...latest].sort((a, b) => {
       const aTime = Date.parse(a.publishedAt ?? "") || 0;
@@ -1621,6 +2033,101 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
     };
   } catch (error) {
     return failed("apple-os", started, error);
+  }
+}
+
+async function collectWindows(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() =>
+      fetchText(CATALOG_BY_ID.windows.sourceUrl, { headers: { Accept: "text/html, */*" } }),
+    );
+    const releases = windowsReleases(readHtmlTables(value.body));
+    if (!releases.length) throw new PayloadError("Windows release page had no readable version table.");
+
+    // Only a new feature update counts as a new release: every serviced
+    // version gets a monthly update, so its revision date would flag the card
+    // nearly all the time. The latest revision stays in the detail line.
+    // The table gives a day, not a moment, so the dates stay bare days (UTC) and the Details read them as such.
+    // It has no notes text: the Details link the page itself.
+    const components: ComponentHealth[] = releases.map((release) => ({
+      name: release.version,
+      health: isFreshRelease(release.availableAt) ? "maintenance" : "operational",
+      detail: [release.build, formatReleaseAge(windowsShippedAt(release))].filter(Boolean).join(" · "),
+      release: {
+        version: release.version,
+        ...(release.build ? { build: release.build } : {}),
+        releasedAt: release.availableAt.slice(0, 10),
+        ...(release.updatedAt && release.updatedAt > release.availableAt
+          ? { updatedAt: release.updatedAt.slice(0, 10) }
+          : {}),
+        url: CATALOG_BY_ID.windows.sourceUrl,
+      },
+    }));
+
+    const headline = releases[0];
+    const title = `${WINDOWS_NAME} ${headline.version}${headline.build ? ` (build ${headline.build})` : ""}`;
+
+    return {
+      ...base("windows", new Date().toISOString(), ms),
+      health: "operational",
+      summary: `Latest: ${title} · ${formatReleaseAge(windowsShippedAt(headline))}`,
+      components,
+      incidents: [],
+      meta: {
+        latest: title,
+        versions: formatVersionMap(
+          releases.map((release) => ({
+            name: `${WINDOWS_NAME} ${release.version}`,
+            version: release.build ?? release.availableAt.slice(0, 10),
+          })),
+        ),
+      },
+    };
+  } catch (error) {
+    return failed("windows", started, error);
+  }
+}
+
+async function collectAndroidOs(): Promise<ServiceSnapshot> {
+  const started = Date.now();
+  try {
+    const { value, ms } = await timed(() =>
+      fetchText(CATALOG_BY_ID["android-os"].sourceUrl, { headers: { Accept: "text/html, */*" } }),
+    );
+    const releases = androidReleases(readAndroidVersionLinks(value.body));
+    if (!releases.length) throw new PayloadError("Android releases page had no readable version list.");
+
+    // The page gives no dates, so a version is never marked fresh here: a
+    // version that appears on the page is announced as a release in the
+    // change feed, by the version map below, instead.
+    const components: ComponentHealth[] = releases.map((release) => ({
+      name: release.name,
+      health: "operational",
+      detail: "released",
+      // The page gives no date and no notes, so the Details have only the version's own page: nothing is made up.
+      // `version` is digits only (the parser checks), so the link cannot leave developer.android.com.
+      release: {
+        version: release.name,
+        url: `https://developer.android.com/about/versions/${release.version}`,
+        linkLabel: `${release.name} page`,
+      },
+    }));
+
+    const headline = releases[0];
+    return {
+      ...base("android-os", new Date().toISOString(), ms),
+      health: "operational",
+      summary: `Latest: ${headline.name}`,
+      components,
+      incidents: [],
+      meta: {
+        latest: headline.name,
+        versions: formatVersionMap(releases.map((release) => ({ name: release.name, version: "released" }))),
+      },
+    };
+  } catch (error) {
+    return failed("android-os", started, error);
   }
 }
 
@@ -1653,6 +2160,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
     [
       collectGcp,
       collectAws,
+      collectAzure,
       collectSteam,
       collectCs2Europe,
       () => collectEpic(sweep),
@@ -1660,11 +2168,16 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectSpotify,
       collectApple,
       collectAndroid,
+      () => collectStatuspage("github"),
+      collectGitlab,
+      () => collectStatuspage("confluence"),
       collectGrok,
       collectChatGpt,
       collectClaude,
       collectMikrotik,
       collectAppleOs,
+      collectWindows,
+      collectAndroidOs,
     ].map(metered),
   );
 }

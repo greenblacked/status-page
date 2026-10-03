@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { APP_NAME, CATALOG, CATALOG_BY_ID, CATEGORIES, SITE_ORIGIN } from "./catalog";
+import { APP_NAME, CATALOG, CATALOG_BY_ID, CATEGORIES, SITE_ORIGIN, WORDMARK } from "./catalog";
 
 describe("catalog", () => {
   it("names the site plainly and gives its origin without a trailing slash", () => {
     expect(APP_NAME).toBe("Status");
+    expect(WORDMARK).toBe("Status Page");
     expect(SITE_ORIGIN).toMatch(/^https:\/\/[^/]+$/);
   });
 
@@ -12,9 +13,9 @@ describe("catalog", () => {
     expect(CATEGORIES.find((category) => category.id === "updates")?.label).toBe("Releases");
   });
 
-  it("has fourteen services, each once, every one in a category", () => {
-    expect(CATALOG).toHaveLength(14);
-    expect(new Set(CATALOG.map((entry) => entry.id)).size).toBe(14);
+  it("has twenty services, each once, every one in a category", () => {
+    expect(CATALOG).toHaveLength(20);
+    expect(new Set(CATALOG.map((entry) => entry.id)).size).toBe(20);
     const categories = new Set(CATEGORIES.map((category) => category.id));
     for (const entry of CATALOG) expect(categories.has(entry.category)).toBe(true);
     expect(CATALOG_BY_ID.gcp.name).toBe("Google Cloud");

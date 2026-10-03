@@ -24,13 +24,18 @@ export type VerdictPart = { text: string; id?: ServiceId };
 export type Verdict = {
   /** The worst state that needs a look; unknown when only unreadable sources are left; operational when calm. */
   tone: Health;
-  /** The headline, "Two things need a look." Its first word is the count, spelled out. */
+  /** The headline, "Two services are down." or "One is down, one is degraded." Its first word is a count, spelled out. */
   title: string;
-  /** The floating bar's short form, "2 need a look". */
+  /** The floating bar's short form, "2 down" or "1 down · 1 degraded". */
   short: string;
+  /**
+   * The bar's form for a narrow space: the same as `short` for one state ("2 down"), otherwise the most urgent
+   * state and the rest counted, "1 down · 2 more".
+   */
+  compact: string;
   /** Services that need a look (outage, degraded, maintenance). Zero draws no pen underline. */
   count: number;
-  /** The line under the headline, "Steam and Fortnite. The other twelve are running normally." Empty when calm. */
+  /** The line under the headline, "Steam and Fortnite are down. The other thirteen are running normally." Empty when calm. */
   sub: string;
   /** The same line as runs, so the page can link the services it names. */
   subParts: VerdictPart[];
@@ -56,9 +61,15 @@ const WORDS = [
   "twelve",
   "thirteen",
   "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+  "twenty",
 ];
 
-/** A count as a word up to fourteen (the size of the catalog), numerals after. */
+/** A count as a word up to twenty (the size of the catalog), numerals after. */
 export function countWord(n: number): string {
   return Number.isInteger(n) && n >= 0 && n < WORDS.length ? WORDS[n] : String(n);
 }
@@ -93,6 +104,33 @@ function unreadParts(unread: ServiceSnapshot[], lead = ""): VerdictPart[] {
   ];
 }
 
+type AttentionState = "outage" | "degraded" | "maintenance";
+
+/** The states that need a look, most urgent first, with how each is said in the title, the bar and a clause. */
+const STATES: { health: AttentionState; phrase: string }[] = [
+  { health: "outage", phrase: "down" },
+  { health: "degraded", phrase: "degraded" },
+  { health: "maintenance", phrase: "in maintenance" },
+];
+
+const verbFor = (n: number) => (n === 1 ? "is" : "are");
+
+/**
+ * What is wrong, by state. One state names the services: "Two services are down."
+ * More than one counts each: "One is down, one is degraded." and, for three,
+ * "Two are down, one is degraded and one is in maintenance."
+ */
+function titleOf(groups: { phrase: string; n: number }[]): string {
+  if (groups.length === 1) {
+    const [{ phrase, n }] = groups;
+    return `${capital(countWord(n))} ${n === 1 ? "service" : "services"} ${verbFor(n)} ${phrase}.`;
+  }
+  const clauses = groups.map(({ phrase, n }) => `${countWord(n)} ${verbFor(n)} ${phrase}`);
+  const last = clauses.pop() as string;
+  const joined = clauses.length > 1 ? `${clauses.join(", ")} and ${last}` : `${clauses[0]}, ${last}`;
+  return `${capital(joined)}.`;
+}
+
 const textOf = (parts: VerdictPart[]) => parts.map((part) => part.text).join("");
 
 export function verdict(board: BoardSnapshot): Verdict {
@@ -108,8 +146,17 @@ export function verdict(board: BoardSnapshot): Verdict {
 
   if (n > 0) {
     const others = total - n - k;
-    const parts = namedParts(attention);
-    parts.push({ text: "." });
+    const groups = STATES.map((state) => ({
+      ...state,
+      services: attention.filter((service) => service.health === state.health),
+    }))
+      .filter((group) => group.services.length > 0)
+      .map((group) => ({ ...group, n: group.services.length }));
+    const parts: VerdictPart[] = [];
+    groups.forEach((group, at) => {
+      if (at > 0) parts.push({ text: " " });
+      parts.push(...namedParts(group.services), { text: ` ${verbFor(group.n)} ${group.phrase}.` });
+    });
     if (others > 0) {
       parts.push({ text: ` The other ${countWord(others)} ${others === 1 ? "is" : "are"} running normally.` });
     }
@@ -117,8 +164,12 @@ export function verdict(board: BoardSnapshot): Verdict {
     const sub = textOf(parts);
     return {
       tone: attention[0].health,
-      title: `${capital(countWord(n))} ${n === 1 ? "thing needs" : "things need"} a look.`,
-      short: `${n} ${n === 1 ? "needs" : "need"} a look`,
+      title: titleOf(groups),
+      short: groups.map((group) => `${group.n} ${group.phrase}`).join(" · "),
+      compact:
+        groups.length === 1
+          ? `${groups[0].n} ${groups[0].phrase}`
+          : `${groups[0].n} ${groups[0].phrase} · ${n - groups[0].n} more`,
       count: n,
       sub,
       subParts: parts,
@@ -134,6 +185,7 @@ export function verdict(board: BoardSnapshot): Verdict {
       tone: "unknown",
       title: "Nothing needs a look.",
       short: "Nothing needs a look",
+      compact: "Nothing needs a look",
       count: 0,
       sub,
       subParts: parts,
@@ -146,6 +198,7 @@ export function verdict(board: BoardSnapshot): Verdict {
     tone: "operational",
     title: "Everything is up.",
     short: "Everything is up",
+    compact: "Everything is up",
     count: 0,
     sub: "",
     subParts: [],

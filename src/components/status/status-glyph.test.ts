@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Health } from "@/lib/status/types";
-import { GLYPH_DETAIL_MIN, STATUS_TEXT, StatusGlyph } from "./status-glyph";
+import { CHANGED_BAR, GLYPH_DETAIL_MIN, STATUS_TEXT, StatusGlyph } from "./status-glyph";
 
 const HEALTHS: Health[] = ["operational", "degraded", "outage", "unknown", "maintenance"];
 
@@ -28,6 +28,14 @@ describe("StatusGlyph", () => {
       unknown: "text-unknown",
       maintenance: "text-muted",
     });
+  });
+
+  it("colours the Changed bar with the glyph's token, the accent for unknown", () => {
+    for (const health of HEALTHS) {
+      const token = health === "unknown" ? "accent" : STATUS_TEXT[health].replace("text-", "");
+      expect(CHANGED_BAR.card[health]).toBe(`bg-${token}`);
+      expect(CHANGED_BAR.row[health]).toBe(`after:bg-${token}`);
+    }
   });
 
   it("gives each state its own silhouette", () => {

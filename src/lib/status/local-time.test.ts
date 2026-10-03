@@ -3,8 +3,10 @@ import {
   formatAfterHydration,
   formatBeforeHydration,
   formatLocalDate,
+  formatLocalDay,
   formatLocalTime,
   formatUtcDate,
+  formatUtcDay,
   formatUtcTitle,
 } from "./local-time";
 
@@ -61,6 +63,74 @@ describe("formatLocalDate", () => {
   });
 });
 
+describe("formatUtcDay and formatLocalDay", () => {
+  it("name the day without a time, and the year only when it is not the reference's", () => {
+    expect(formatUtcDay(Date.parse("2026-09-29T00:00:00Z"), at)).toBe("Sep 29");
+    expect(formatUtcDay(Date.parse("2025-09-30T00:00:00Z"), at)).toBe("Sep 30, 2025");
+    expect(formatUtcDay(at)).toBe("Sep 30");
+    expect(formatLocalDay(Date.parse("2026-09-29T12:00:00Z"), at, utc)).toBe("Sep 29");
+    expect(formatLocalDay(Date.parse("2025-01-02T12:00:00Z"), at, berlin)).toBe("Jan 2, 2025");
+  });
+
+  it("read the day in the viewer's zone, English whatever the browser's language", () => {
+    const lateEvening = Date.parse("2026-09-30T23:30:00Z");
+    expect(formatLocalDay(lateEvening, at, berlin)).toBe("Oct 1");
+    expect(formatLocalDay(lateEvening, at, utc)).toBe("Sep 30");
+    expect(formatLocalDay(lateEvening, at, { timeZone: "Europe/Moscow", locale: "ru-RU" })).toBe("Oct 1");
+  });
+});
+
+// The whole site is English, so no browser language may change a date or a time: not the words, the
+// punctuation, the digits, the 12/24-hour clock, nor the zone's name.
+describe("in any browser language", () => {
+  const locales = ["ru-RU", "de-DE", "ar-EG", "en-US", "ja-JP", "fa-IR"];
+  const moscow = (locale: string) => ({ timeZone: "Europe/Moscow", locale });
+  const afternoon = Date.parse("2026-09-30T14:04:00Z");
+
+  it.each(locales)("prints the date in English for %s", (locale) => {
+    expect(formatLocalDate(Date.parse("2026-09-30T23:30:00Z"), { timeZone: "Europe/Moscow", locale })).toBe(
+      "Thursday 1 October",
+    );
+    expect(formatLocalDate(at, { timeZone: "Europe/Berlin", locale })).toBe(formatUtcDate(at));
+  });
+
+  it.each(locales)("prints a 24-hour clock with an English zone for %s", (locale) => {
+    expect(formatLocalTime(afternoon, afternoon, { timeZone: "Europe/Berlin", locale })).toBe("16:04\u202fCEST");
+    expect(formatLocalTime(afternoon, afternoon, moscow(locale))).toBe("17:04\u202fGMT+3");
+    expect(formatLocalTime(afternoon, afternoon, { timeZone: "UTC", locale })).toBe("14:04\u202fUTC");
+    // Midnight is 00:00, never 24:00 or 12:00 AM.
+    expect(formatLocalTime(Date.parse("2026-09-30T22:05:00Z"), undefined, { timeZone: "Europe/Berlin", locale })).toBe(
+      "00:05\u202fCEST",
+    );
+  });
+
+  it.each(locales)("names American zones the English way for %s", (locale) => {
+    const newYork = { timeZone: "America/New_York", locale };
+    expect(formatLocalTime(afternoon, afternoon, newYork)).toBe("10:04\u202fEDT");
+    const january = Date.parse("2027-01-15T14:04:00Z");
+    expect(formatLocalTime(january, january, newYork)).toBe("09:04\u202fEST");
+    expect(formatLocalTime(afternoon, afternoon, { timeZone: "America/Los_Angeles", locale })).toBe("07:04\u202fPDT");
+  });
+
+  it.each(locales)("prints the cross-day form in English for %s", (locale) => {
+    const reference = Date.parse("2026-09-30T10:04:00Z");
+    const options = { timeZone: "Europe/Berlin", locale };
+    expect(formatLocalTime(Date.parse("2026-09-26T10:04:00Z"), reference, options)).toBe("26 Sep 12:04\u202fCEST");
+    expect(formatLocalTime(Date.parse("2025-12-31T10:04:00Z"), reference, options)).toBe("31 Dec 2025 11:04\u202fCET");
+  });
+
+  it.each(locales)("uses only ASCII digits and letters for %s", (locale) => {
+    const options = { timeZone: "Asia/Kolkata", locale };
+    const text = [
+      formatLocalDate(afternoon, options),
+      formatLocalTime(afternoon, afternoon, options),
+      formatLocalTime(Date.parse("2025-12-31T10:04:00Z"), afternoon, options),
+    ].join(" ");
+    expect(text).toMatch(/^[ -~\u202f]+$/);
+    expect(text).toContain("19:34\u202fGMT+5:30");
+  });
+});
+
 describe("before and after hydration", () => {
   it("shows UTC first, in the text the server printed", () => {
     expect(formatBeforeHydration(at, at, "clock")).toBe("10:04\u202fUTC");
@@ -70,6 +140,7 @@ describe("before and after hydration", () => {
     expect(formatBeforeHydration(yesterday, at, "clock")).toBe("29 Sep 09:00\u202fUTC");
     // A slot never carries a date.
     expect(formatBeforeHydration(yesterday, at, "slot")).toBe("09:00\u202fUTC");
+    expect(formatBeforeHydration(yesterday, at, "day")).toBe("Sep 29");
   });
 
   it("then the viewer's own", () => {
@@ -79,5 +150,6 @@ describe("before and after hydration", () => {
     const yesterday = Date.parse("2026-09-29T09:00:00Z");
     expect(formatAfterHydration(yesterday, at, "clock", berlin)).toBe("29 Sep 11:00\u202fCEST");
     expect(formatAfterHydration(yesterday, at, "slot", berlin)).toBe("11:00\u202fCEST");
+    expect(formatAfterHydration(yesterday, at, "day", berlin)).toBe("Sep 29");
   });
 });

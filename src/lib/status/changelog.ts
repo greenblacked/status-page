@@ -1,4 +1,4 @@
-import { clip } from "./bounds.ts";
+import { clip, MAX_NOTE_CHARS } from "./bounds.ts";
 
 export type ChannelRelease = {
   name: string;
@@ -34,14 +34,18 @@ export function mikrotikChangelogUrl(version: string): string | null {
   return isMikrotikVersion(version) ? `https://download.mikrotik.com/routeros/${version}/CHANGELOG` : null;
 }
 
+// A date as ISO 8601, or undefined when it is not one a Date can hold:
+// `new Date(NaN).toISOString()` throws a RangeError, and a vendor field must
+// cost at most its own line of detail, not the whole card.
+function isoOrUndefined(value: string | number): string | undefined {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+}
+
 export function parseMikrotikNewest(body: string): { version: string; releasedAt?: string } | null {
   const match = body.trim().match(/^(\S+)(?:\s+(\d{9,}))?/);
   if (!match?.[1] || !isMikrotikVersion(match[1])) return null;
-  const timestamp = match[2] ? Number(match[2]) * 1000 : NaN;
-  return {
-    version: match[1],
-    releasedAt: Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined,
-  };
+  return { version: match[1], releasedAt: match[2] ? isoOrUndefined(Number(match[2]) * 1000) : undefined };
 }
 
 export function summarizeMikrotikChangelog(text: string): string {
@@ -54,6 +58,86 @@ export function summarizeMikrotikChangelog(text: string): string {
   const note = bullet ? bullet.replace(/^\*\)\s*/, "").replace(/;\s*$/, "") : "";
   if (heading && note) return `${heading.replace(/:$/, "")} — ${note}`;
   return heading?.replace(/:$/, "") || note || "RouterOS changelog loaded.";
+}
+
+/** How many bullets of a release's changelog its Details keep. */
+export const MAX_MIKROTIK_NOTES = 4;
+
+// The most of a changelog read for notes: its first section is at the top, and a file that never
+// reaches a second heading within this much is not read further.
+const MAX_NOTES_SCAN_CHARS = 64_000;
+
+/**
+ * The first few notes of a RouterOS changelog's newest section: the bullets
+ * ("*) bridge - fixed ...;" and the important "!) ..." ones) between the first
+ * "What's new in" heading and the next, without the marker or the trailing
+ * semicolon, each cut to MAX_NOTE_CHARS. Plain text only: the file is vendor
+ * text and is shown as text. An empty list when the file has no such section.
+ *
+ * One forward pass over at most MAX_NOTES_SCAN_CHARS, line by line with
+ * indexOf, that stops at the second heading or the fourth bullet.
+ */
+export function mikrotikChangelogNotes(text: string, max: number = MAX_MIKROTIK_NOTES): string[] {
+  const end = Math.min(text.length, MAX_NOTES_SCAN_CHARS);
+  const notes: string[] = [];
+  let inSection = false;
+  let pos = 0;
+  while (pos < end && notes.length < max) {
+    const newline = text.indexOf("\n", pos);
+    const lineEnd = newline === -1 || newline > end ? end : newline;
+    const line = text.slice(pos, lineEnd).trim();
+    pos = lineEnd + 1;
+    if (line.length === 0) continue;
+    if (line.slice(0, 13).toLowerCase() === "what's new in") {
+      if (inSection) break;
+      inSection = true;
+      continue;
+    }
+    if (!inSection || line.length < 2 || line[1] !== ")" || (line[0] !== "*" && line[0] !== "!")) continue;
+    const note = line.slice(2).trim().replace(/;$/, "").trim();
+    if (note) notes.push(clip(note, MAX_NOTE_CHARS));
+  }
+  return notes;
+}
+
+/**
+ * Whether a RouterOS changelog's first non-empty line is the "What's new in <version>" heading of
+ * exactly this version (case-insensitive): after the version comes the end of the line, a space,
+ * "(" or ":", so "7.2" does not match a "7.21" heading. Only the first line is read.
+ */
+export function mikrotikChangelogIsFor(text: string, version: string): boolean {
+  const end = Math.min(text.length, MAX_NOTES_SCAN_CHARS);
+  let pos = 0;
+  while (pos < end) {
+    const newline = text.indexOf("\n", pos);
+    const lineEnd = newline === -1 || newline > end ? end : newline;
+    const line = text.slice(pos, lineEnd).trim();
+    pos = lineEnd + 1;
+    if (line.length === 0) continue;
+    const prefix = "what's new in ";
+    if (line.slice(0, prefix.length).toLowerCase() !== prefix) return false;
+    const rest = line.slice(prefix.length);
+    if (rest.slice(0, version.length).toLowerCase() !== version.toLowerCase()) return false;
+    const next = rest[version.length];
+    return next === undefined || next === " " || next === "(" || next === ":";
+  }
+  return false;
+}
+
+/**
+ * An Apple OS version split from its build: "27.2 beta 2 (24B5089g)" is the
+ * version "27.2 beta 2" and the build "24B5089g". A version with no trailing
+ * parenthesis, or one whose parenthesis is not a build number (letters and
+ * digits only), is returned whole with no build.
+ */
+export function splitAppleBuild(version: string): { version: string; build?: string } {
+  const text = version.trim();
+  if (!text.endsWith(")")) return { version: text };
+  const open = text.lastIndexOf("(");
+  const build = open === -1 ? "" : text.slice(open + 1, -1).trim();
+  const head = open === -1 ? "" : text.slice(0, open).trim();
+  if (!head || build.length < 4 || build.length > 12 || !/^[0-9A-Za-z]+$/.test(build)) return { version: text };
+  return { version: head, build };
 }
 
 export function parseAppleOsTitle(title: string): { family: string; version: string; beta: boolean } | null {
@@ -87,7 +171,7 @@ export function appleOsReleases(items: Array<{ title: string; pubDate?: string; 
       title: item.title,
       version: parsed.version,
       beta: parsed.beta,
-      publishedAt: item.pubDate ? new Date(item.pubDate).toISOString() : undefined,
+      publishedAt: item.pubDate ? isoOrUndefined(item.pubDate) : undefined,
       link: item.link,
     });
   }

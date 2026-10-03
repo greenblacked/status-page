@@ -2,8 +2,10 @@
 # Prepare a release: bump the version, date the changelog and commit.
 #
 #   ./scripts/release/bump.sh patch|minor|major|X.Y.Z
-#     Locally: commits on a new release/vX.Y.Z branch. Merging its pull
-#     request makes release.yml tag the merge commit and publish.
+#     Locally: commits on a new release/vX.Y.Z branch (this script creates
+#     it), from an up-to-date main or from the tip of origin/stage once that
+#     contains main (git switch --detach origin/stage). Merging its pull
+#     request into main makes release.yml tag the merge commit and publish.
 #   ./scripts/release/bump.sh --ci patch|minor|major|X.Y.Z
 #     In release.yml (Run workflow, or a merge to main): commits on the
 #     checked-out main, which the workflow then pushes, tags and publishes.
@@ -41,9 +43,19 @@ if [ "$ci" = true ]; then
   [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
     die "main moved after this run started; run it again"
 else
+  # Release from an up-to-date main, or from the tip of stage once main is
+  # part of it (stage is promoted into main by the pull request this opens).
   git fetch --quiet origin main
-  [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] ||
-    die "release from an up-to-date main: git switch main && git pull --ff-only"
+  head="$(git rev-parse HEAD)"
+  if [ "$head" != "$(git rev-parse origin/main)" ]; then
+    stage_tip=""
+    if git fetch --quiet origin stage 2>/dev/null; then
+      stage_tip="$(git rev-parse -q --verify refs/remotes/origin/stage || true)"
+    fi
+    if [ -z "$stage_tip" ] || [ "$head" != "$stage_tip" ] || ! git merge-base --is-ancestor origin/main HEAD; then
+      die "release from an up-to-date main (git switch main && git pull --ff-only) or from origin/stage once it contains main (git switch --detach origin/stage)"
+    fi
+  fi
 fi
 
 current="$(node -p "require('./package.json').version")"

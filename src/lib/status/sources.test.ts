@@ -7,6 +7,8 @@ import {
   awsEventSubject,
   awsIncidentTitle,
   awsLatestLog,
+  azureItemActive,
+  azureItemHealth,
   classifyFailure,
   decodeXmlEntities,
   decodeXmlField,
@@ -966,5 +968,63 @@ describe("AWS event severity", () => {
     // Nothing named: still not the bare placeholder.
     assert.equal(awsEventSubject({ service_name: "Multiple services" }), "Multiple AWS services");
     assert.equal(awsEventSubject({}), "AWS");
+  });
+});
+
+describe("azure feed", () => {
+  it("reads an item's health from its title", () => {
+    assert.equal(azureItemHealth("Storage - East US - Increased latency"), "degraded");
+    assert.equal(azureItemHealth("Virtual Machines - Service unavailable"), "outage");
+    assert.equal(azureItemHealth("Regional OUTAGE"), "outage");
+    assert.equal(azureItemHealth("Preliminary Post Incident Review (PIR) – Azure Front Door – Outage"), "operational");
+    assert.equal(azureItemHealth("Final Post Incident Review (PIR) – Networking"), "operational");
+    assert.equal(azureItemHealth("Preliminary findings: Storage - East US"), "degraded");
+    assert.equal(azureItemHealth("Planned maintenance - Key Vault"), "maintenance");
+    // An outage wording beats maintenance: the service is down while it is worked on.
+    assert.equal(azureItemHealth("Maintenance overran: service unavailable"), "outage");
+  });
+
+  it("does not make an outage of a word that only suggests one", () => {
+    assert.equal(azureItemHealth("Requests may be intermittently unavailable in one region"), "degraded");
+    assert.equal(azureItemHealth("Drill down in Service Health"), "degraded");
+    assert.equal(azureItemHealth("Networking - Services down in West US"), "degraded");
+  });
+
+  it("calls an item over only when its title begins with a resolution or a review", () => {
+    assert.equal(azureItemHealth("RESOLVED - Storage"), "operational");
+    assert.equal(azureItemHealth("  Resolved: SQL"), "operational");
+    assert.equal(azureItemHealth("[Resolved] SQL"), "operational");
+    assert.equal(azureItemHealth("Mitigated - SQL"), "operational");
+    assert.equal(azureItemHealth("Post Incident Review (PIR) - Networking"), "operational");
+    assert.equal(azureItemHealth("Post-incident review - Networking"), "operational");
+    assert.equal(azureItemHealth("PIR - Networking"), "operational");
+    // A word later in the title, or one that only starts with it, does not end it.
+    assert.equal(azureItemHealth("SQL issue resolved in East US only"), "degraded");
+    assert.equal(azureItemHealth("Unresolved - SQL"), "degraded");
+    assert.equal(azureItemHealth("Pirate Cove Storage"), "degraded");
+  });
+
+  it("does not read an active item as over from the words of its text", () => {
+    // The four wordings a live incident can carry in its body or title.
+    const wordings = [
+      "We have partially mitigated the issue and are continuing to restore service.",
+      "The issue has not been fully mitigated.",
+      "Services have been restored in East US; West Europe remains impacted.",
+      "We will provide a root cause analysis once mitigated.",
+    ];
+    for (const wording of wordings) {
+      assert.notEqual(azureItemHealth(wording), "operational", wording);
+      const item = { title: wording, pubDate: new Date(NOW - DAY).toUTCString() };
+      assert.equal(azureItemActive(item, NOW), true, wording);
+    }
+  });
+
+  it("counts an item as active when it is unresolved and dated within 14 days", () => {
+    const item = (pubDate?: string, title = "App Service - Degraded performance") => ({ title, pubDate });
+    assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString()), NOW), true);
+    assert.equal(azureItemActive(item(new Date(NOW - 15 * DAY).toUTCString()), NOW), false);
+    assert.equal(azureItemActive(item(undefined), NOW), false);
+    assert.equal(azureItemActive(item("not a date"), NOW), false);
+    assert.equal(azureItemActive(item(new Date(NOW - DAY).toUTCString(), "RESOLVED - App Service"), NOW), false);
   });
 });

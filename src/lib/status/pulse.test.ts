@@ -65,6 +65,20 @@ describe("syncPulse", () => {
     assert.equal(posted.pulses[0]?.opening, false);
     assert.equal(posted.pulses[0]?.changes[0]?.summary, "RouterOS 7 stable 7.24.5");
   });
+
+  it("keeps a release a release when a later check in the slot only moves the health", () => {
+    const noon = Date.parse("2026-09-22T12:00:00.000Z");
+    const at = "2026-09-22T12:00:00.000Z";
+    const tracker = (version: string, health: Health): BoardSnapshot =>
+      board([service("mikrotik", { health, meta: { latest: version, versions: `RouterOS 7 stable=${version}` } })], {
+        generatedAt: at,
+      });
+    const opened = syncPulse(tracker("7.24.4", "operational"), noon + 1_000, emptyPulseStore());
+    const released = syncPulse(tracker("7.24.5", "operational"), noon + 20_000, opened);
+    const dipped = syncPulse(tracker("7.24.5", "unknown"), noon + 40_000, released);
+    assert.equal(dipped.pulses[0]?.changes[0]?.release, true);
+    assert.equal(dipped.pulses[0]?.changes[0]?.to, "unknown");
+  });
 });
 
 describe("loading the pulse store from storage", () => {

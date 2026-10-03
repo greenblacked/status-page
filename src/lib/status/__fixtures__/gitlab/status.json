@@ -1,0 +1,149 @@
+{
+  "result": {
+    "status_overall": {
+      "updated": "2026-09-20T10:12:00.000Z",
+      "status": "Partial Service Disruption",
+      "status_code": 400
+    },
+    "status": [
+      {
+        "id": "5b36dc6502d06804c08349f8",
+        "name": "Website",
+        "updated": "2026-09-20T09:00:00.000Z",
+        "status": "Operational",
+        "status_code": 100,
+        "containers": [
+          {
+            "id": "5b36dc6502d06804c08349f9",
+            "name": "Primary",
+            "updated": "2026-09-20T09:00:00.000Z",
+            "status": "Operational",
+            "status_code": 100
+          }
+        ]
+      },
+      {
+        "id": "5b36dc6502d06804c0834a01",
+        "name": "API",
+        "updated": "2026-09-20T09:00:00.000Z",
+        "status": "Operational",
+        "status_code": 100,
+        "containers": [
+          {
+            "id": "5b36dc6502d06804c0834a02",
+            "name": "Primary",
+            "updated": "2026-09-20T09:00:00.000Z",
+            "status": "Operational",
+            "status_code": 100
+          }
+        ]
+      },
+      {
+        "id": "5b36dc6502d06804c0834a11",
+        "name": "Git Operations",
+        "updated": "2026-09-20T10:12:00.000Z",
+        "status": "Partial Service Disruption",
+        "status_code": 400,
+        "containers": [
+          {
+            "id": "5b36dc6502d06804c0834a12",
+            "name": "SSH",
+            "updated": "2026-09-20T10:12:00.000Z",
+            "status": "Partial Service Disruption",
+            "status_code": 400
+          },
+          {
+            "id": "5b36dc6502d06804c0834a13",
+            "name": "HTTPS",
+            "updated": "2026-09-20T09:00:00.000Z",
+            "status": "Operational",
+            "status_code": 100
+          }
+        ]
+      },
+      {
+        "id": "5b36dc6502d06804c0834a21",
+        "name": "Container Registry",
+        "updated": "2026-09-20T08:30:00.000Z",
+        "status": "Degraded Performance",
+        "status_code": 300,
+        "containers": [
+          {
+            "id": "5b36dc6502d06804c0834a22",
+            "name": "Primary",
+            "updated": "2026-09-20T08:30:00.000Z",
+            "status": "Degraded Performance",
+            "status_code": 300
+          }
+        ]
+      },
+      {
+        "id": "5b36dc6502d06804c0834a31",
+        "name": "GitLab Pages",
+        "updated": "2026-09-20T09:00:00.000Z",
+        "status": "Operational",
+        "status_code": 100,
+        "containers": []
+      }
+    ],
+    "incidents": [
+      {
+        "name": "Elevated errors on Git over SSH",
+        "_id": "65f1c0de0000000000000001",
+        "datetime_open": "2026-09-20T10:05:00.000Z",
+        "messages": [
+          {
+            "details": "We are investigating elevated SSH errors.",
+            "state": 100,
+            "status": 300,
+            "datetime": "2026-09-20T10:05:00.000Z"
+          },
+          {
+            "details": "A fix is being rolled out.",
+            "state": 200,
+            "status": 400,
+            "datetime": "2026-09-20T10:12:00.000Z"
+          }
+        ],
+        "components_affected": [
+          {
+            "id": "5b36dc6502d06804c0834a11",
+            "name": "Git Operations"
+          }
+        ],
+        "containers_affected": [
+          {
+            "id": "5b36dc6502d06804c0834a12",
+            "name": "SSH"
+          }
+        ]
+      }
+    ],
+    "maintenance": {
+      "active": [],
+      "upcoming": [
+        {
+          "name": "Database upgrade",
+          "_id": "65f1c0de0000000000000002",
+          "datetime_planned_start": "2026-09-27T01:00:00.000Z",
+          "datetime_planned_end": "2026-09-27T03:00:00.000Z",
+          "messages": [
+            {
+              "details": "Brief read-only period.",
+              "state": 100,
+              "status": 200,
+              "datetime": "2026-09-20T08:00:00.000Z"
+            }
+          ],
+          "components_affected": [
+            {
+              "id": "5b36dc6502d06804c0834a01",
+              "name": "API"
+            }
+          ],
+          "containers_affected": []
+        }
+      ]
+    }
+  }
+}

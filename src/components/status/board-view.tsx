@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AlertsButton, FilterBar, RefreshButton, SearchField, WhileBarUp } from "@/components/status/board-controls";
 import { BoardSections } from "@/components/status/board-sections";
-import { CompactHeader, useSearchDock } from "@/components/status/compact-header";
+import { CompactHeader, useSearchDock, WIDE } from "@/components/status/compact-header";
 import { prefersReducedMotion, useWanderLight, withCardMotion } from "@/components/status/effects";
 import { Hero } from "@/components/status/hero";
 import { useHoldPlace } from "@/components/status/hold-place";
@@ -66,6 +66,7 @@ export function BoardView({
   const manualRefreshInFlight = useRef(false);
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const barSearchRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLElement>(null);
@@ -73,7 +74,7 @@ export function BoardView({
   const chipsRef = useRef<HTMLElement>(null);
   // The dock's two discrete states live outside this component: the board must not render mid-move.
   const [dock] = useState(createDockStore);
-  useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, chipsRef, store: dock });
+  useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, chipsRef, store: dock, keepRevealed: query !== "" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
@@ -120,9 +121,9 @@ export function BoardView({
   // Recent changes follows Needs a look (or leads the board when nothing needs a look).
   useHoldPlace(mainRef, store?.pulses);
   const feed = <UpdateFeed pulses={pulseStore.pulses} />;
-  const changedIds = new Set(
-    (pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? [])).map((change) => change.id),
-  );
+  const latestChanges = pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? []);
+  const changedIds = new Set(latestChanges.map((change) => change.id));
+  const releasedIds = new Set(latestChanges.filter((change) => change.release).map((change) => change.id));
 
   const slot = now > 0 ? lastPulseAt(now) : null;
 
@@ -285,14 +286,27 @@ export function BoardView({
   useShortcuts(
     (action) => {
       switch (action.type) {
-        case "focus-search":
+        case "focus-search": {
+          // Below 64rem, with the hero's field behind the bar, the bar's copy is the one to bring up. It shows
+          // itself when it takes focus, and the page stays where it is.
+          const barField = barSearchRef.current;
+          if (barField && !window.matchMedia(WIDE).matches && dock.get().heroAway) {
+            barField.focus({ preventScroll: true });
+            barField.select();
+            return;
+          }
           searchRef.current?.focus();
           searchRef.current?.select();
           return;
+        }
         case "leave-search":
           // First Escape clears the search, the next one leaves the field.
-          if (query && document.activeElement === searchRef.current) updateFilters({ query: "" });
-          else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+          if (
+            query &&
+            (document.activeElement === searchRef.current || document.activeElement === barSearchRef.current)
+          ) {
+            updateFilters({ query: "" });
+          } else if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
           return;
         case "refresh":
           void handleRefresh();
@@ -376,7 +390,10 @@ export function BoardView({
           ref={bodyRef}
           className="board-body page-gutter relative mx-auto flex max-w-[62rem] flex-wrap content-start items-start gap-x-4 lg:gap-x-8"
         >
-          {/* Right before the search field in the markup, so Tab goes from the bar's buttons to it. */}
+          {/*
+            First in the body. Below 64rem its slot holds a copy of the search field (the hero's is then behind
+            the bar and out of the Tab order), so Tab goes from the bar's field to the bar's buttons to the chips.
+          */}
           <CompactHeader
             store={dock}
             barRef={barRef}
@@ -385,6 +402,16 @@ export function BoardView({
             live={freshness.state}
             checkedAt={checkedAt}
             nextIn={nextInText(now, refetchJitter)}
+            search={
+              <SearchField
+                placement="bar"
+                store={dock}
+                inputRef={barSearchRef}
+                query={query}
+                onQuery={(next) => updateFilters({ query: next })}
+                showSlash={false}
+              />
+            }
           >
             <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
             <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
@@ -428,6 +455,7 @@ export function BoardView({
                 groups={groups}
                 mostUrgentId={mostUrgentId}
                 changedIds={changedIds}
+                releasedIds={releasedIds}
                 starred={starred}
                 onToggleStar={onToggleStar}
                 now={now}
