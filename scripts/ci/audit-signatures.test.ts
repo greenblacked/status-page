@@ -37,10 +37,13 @@ const SERVER_ERROR =
 
 // The registry's signing key, shaped the way npm publishes it.
 const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-const KEY = { keyid: "SHA256:test", key: publicKey.export({ format: "der", type: "spki" }).toString("base64") };
+const KEY = {
+  keyid: "SHA256:test",
+  key: Buffer.from(publicKey.export({ format: "der", type: "spki" })).toString("base64"),
+};
 const signature = (integrity: string) => ({
   keyid: KEY.keyid,
-  sig: sign("sha256", Buffer.from(`clsx@2.1.1:${integrity}`), privateKey).toString("base64"),
+  sig: Buffer.from(sign("sha256", Buffer.from(`clsx@2.1.1:${integrity}`), privateKey)).toString("base64"),
 });
 
 const dirs: string[] = [];

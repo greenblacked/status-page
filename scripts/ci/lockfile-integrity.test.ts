@@ -112,14 +112,16 @@ describe("parseLockfile", () => {
 /** An ECDSA P-256 signing key, shaped the way npm publishes its keys. */
 function signer(keyid: string) {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const key = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+  const key = Buffer.from(publicKey.export({ format: "der", type: "spki" })).toString("base64");
   return {
     keyid,
     listed: { keyid, keytype: "ecdsa-sha2-nistp256", scheme: "ecdsa-sha2-nistp256", expires: null, key },
     /** The signature npm makes: over `name@version:integrity`. */
     sign: (e: Entry, integrity = e.integrity) => ({
       keyid,
-      sig: sign("sha256", Buffer.from(`${e.name}@${e.version}:${integrity}`), privateKey).toString("base64"),
+      sig: Buffer.from(sign("sha256", Buffer.from(`${e.name}@${e.version}:${integrity}`), privateKey)).toString(
+        "base64",
+      ),
     }),
   };
 }
