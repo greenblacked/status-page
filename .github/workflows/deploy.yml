@@ -24,14 +24,15 @@ name: Deploy
 #     every installed package against the registry's signature
 #     (scripts/ci/audit-signatures.sh: pnpm audit signatures, and the
 #     lockfile's integrity against its signature), runs no build, no package
-#     script and no project JavaScript, and only uploads what the build job
+#     script and no dependency code, and only uploads what the build job
 #     made, so a compromised dependency's install script never runs beside
-#     it. The repository files it runs are shell scripts from the same
-#     protected branch as the deploy, each in a step without the token: the
-#     pnpm install (scripts/ci/pnpm-pin.sh: Corepack, pinned by the hash in
+#     it. The repository files it runs come from the same protected branch as
+#     the deploy, each in a step without the token: the pnpm install
+#     (scripts/ci/pnpm-pin.sh: Corepack, pinned by the hash in
 #     packageManager), the signature check (scripts/ci/audit-signatures.sh,
-#     which also runs scripts/ci/lockfile-integrity.ts) and the smoke test
-#     (scripts/ci/smoke.sh: bash, curl and jq).
+#     which also runs scripts/ci/lockfile-integrity.ts, a TypeScript file
+#     that Node runs directly and that imports only node: built-ins) and the
+#     smoke test (scripts/ci/smoke.sh: bash, curl and jq).
 #   - No job restores a package cache: a pnpm store taken from the Actions
 #     cache is installed without its files being checked against the
 #     lockfile, and these jobs make the Worker or hold the token.
