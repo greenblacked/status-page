@@ -68,6 +68,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 - Dark subtle text reaches 4.5:1 contrast.
 - The short search placeholder is used where the long one would be clipped.
 - The summary says "2 outages", not "2 outage".
+- Grok and Apple OS read No data instead of a guess when their feed has more than 5000 items, and Grok and AWS no longer count an incident dated in the future (beyond a few minutes of clock skew) as current.
 - Fixes for iPhone, iPad and Mac Safari: incident times now reach the browser only in ISO form, phone-number-like text is no longer turned into links, the Alerts button is hidden on iPhone and iPad where a page cannot show notifications, buttons no longer wait for a double-tap, the page stops scrolling behind an open dialog, and Android can shape the app icon to fit its launcher.
 - Search field no longer zooms the page on iPhone.
 - The "+N more" under a service counts every incident it has, not only the ones the board kept.
