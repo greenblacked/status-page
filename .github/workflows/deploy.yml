@@ -148,7 +148,7 @@ jobs:
             wait "$preview_pid" 2>/dev/null || true
           }
           trap cleanup EXIT
-          if ! ./scripts/ci/smoke.sh http://127.0.0.1:4181 --wait 90; then
+          if ! ./scripts/ci/smoke.sh http://127.0.0.1:4181 --wait 90 --require-asset-cache; then
             cat "$log_file"
             exit 1
           fi
@@ -334,7 +334,7 @@ jobs:
           if [ -n "$VERSION_ID" ]; then
             expect=(--expect-version "$VERSION_ID")
           fi
-          ./scripts/ci/smoke.sh "$DEPLOY_URL" "${expect[@]}" --wait 120 --attempts 3 --require-ready --ready-wait 60
+          ./scripts/ci/smoke.sh "$DEPLOY_URL" "${expect[@]}" --wait 120 --attempts 3 --require-ready --ready-wait 60 --require-asset-cache
 
       - name: Preview failed its smoke test
         # A preview takes no production traffic, so there is nothing to roll

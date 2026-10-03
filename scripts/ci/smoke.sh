@@ -6,6 +6,7 @@
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --attempts 6
 #   ./scripts/ci/smoke.sh https://status.example.com --expect-version <id> --wait 120
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --ready-wait 300
+#   ./scripts/ci/smoke.sh http://127.0.0.1:4181 --require-asset-cache
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
 # (20 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
@@ -25,6 +26,12 @@
 # the old one it is still replacing somewhere, and a new version that never
 # starts answering fails instead of passing on the old one.
 #
+# --require-asset-cache also fetches the page's stylesheet, takes the first
+# /assets/*.woff2 it names and requires Cache-Control: max-age=31536000 and
+# immutable on it (public/_headers). Only Cloudflare reads that file, so the
+# deploy asks for this check on the Worker (in workerd and live) and CI's Node
+# preview does not.
+#
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
 
@@ -32,7 +39,7 @@ SERVICES=20
 TITLE='<title>Status</title>'
 FOOTER='Not affiliated with any of these vendors. I only read their public status pages.'
 usage() {
-  echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
+  echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>] [--require-asset-cache]"
 }
 
 base=""
@@ -41,12 +48,14 @@ ready_wait=0
 attempts=1
 wait_s=60
 expect_version=""
+require_asset_cache=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --require-ready) require_ready=true; shift ;;
     --ready-wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; ready_wait="$2"; shift 2 ;;
     --attempts) [ $# -ge 2 ] || { usage >&2; exit 2; }; attempts="$2"; shift 2 ;;
     --wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; wait_s="$2"; shift 2 ;;
+    --require-asset-cache) require_asset_cache=true; shift ;;
     --expect-version) [ $# -ge 2 ] || { usage >&2; exit 2; }; expect_version="$2"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     -*) usage >&2; exit 2 ;;
@@ -119,6 +128,32 @@ wait_for_server() {
   done
 }
 
+# check_asset_cache: the hashed font under /assets/ has to be cacheable for a
+# year, or font-display: optional never draws Inter on a return visit. It goes
+# from the page to its stylesheet to the font, so the file is the one a browser
+# would request, answered by the same asset server.
+check_asset_cache() {
+  local sheets css font cache
+  get /
+  [ "$status" = 200 ] || { fail "/: $status, so no stylesheet to check the font cache with"; return; }
+  sheets="$(grep -aoE '/assets/[^"'"'"' ]+\.css' "$work/body" | sort -u || true)"
+  font=""
+  for css in $sheets; do
+    get "$css"
+    [ "$status" = 200 ] || { fail "$css: $status, expected 200"; return; }
+    font="$(grep -aoE '/assets/[^")'"'"' ]+\.woff2' "$work/body" | head -n 1 || true)"
+    [ -z "$font" ] || break
+  done
+  [ -n "$font" ] || { fail "/: no stylesheet under /assets/ names a .woff2 font"; return; }
+  get "$font"
+  check_version "$font"
+  [ "$status" = 200 ] || { fail "$font: $status, expected 200"; return; }
+  cache="$(header Cache-Control)"
+  if [[ "$cache" != *max-age=31536000* || "$cache" != *immutable* ]]; then
+    fail "$font: Cache-Control \"$cache\", expected max-age=31536000 and immutable (public/_headers)"
+  fi
+}
+
 run_checks() {
   failed=0
 
@@ -169,6 +204,8 @@ run_checks() {
   check_version /metrics
   [ "$status" = 200 ] || fail "/metrics: $status, expected 200"
 
+  if [ "$require_asset_cache" = true ]; then check_asset_cache; fi
+
   get /readyz
   check_version /readyz
   case "$status" in
@@ -212,6 +249,7 @@ until run_checks; do
   sleep 10
 done
 echo "ok  /healthz, /, /api/status.json, /api/history.json, /feed.xml, /metrics and /readyz answer on $base"
+[ "$require_asset_cache" != true ] || echo "ok  the font under /assets/ is cached for a year on $base"
 
 if [ "$require_ready" = true ]; then
   wait_for_ready || { echo "smoke: FAILED against $base" >&2; exit 1; }
