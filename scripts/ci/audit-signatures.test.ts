@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -34,6 +35,14 @@ const NO_KEYS =
 const SERVER_ERROR =
   "1 package has an invalid registry signature:\n\nThe packument endpoint (at https://registry.npmjs.org/clsx) responded with 503: Service Unavailable";
 
+// The registry's signing key, shaped the way npm publishes it.
+const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+const KEY = { keyid: "SHA256:test", key: publicKey.export({ format: "der", type: "spki" }).toString("base64") };
+const signature = (integrity: string) => ({
+  keyid: KEY.keyid,
+  sig: sign("sha256", Buffer.from(`clsx@2.1.1:${integrity}`), privateKey).toString("base64"),
+});
+
 const dirs: string[] = [];
 let server: Server | undefined;
 afterEach(() => {
@@ -67,9 +76,10 @@ echo "${OK.replaceAll("\n", "\\n")}"
   );
   chmodSync(pnpm, 0o755);
 
-  server = createServer((_req, res) => {
+  server = createServer((req, res) => {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ dist: { integrity: registryIntegrity } }));
+    if (req.url === "/-/npm/v1/keys") return void res.end(JSON.stringify({ keys: [KEY] }));
+    res.end(JSON.stringify({ dist: { integrity: registryIntegrity, signatures: [signature(registryIntegrity)] } }));
   });
   await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -108,7 +118,9 @@ describe("audit-signatures.sh", () => {
     // `pnpm audit signatures` checks the registry's own integrity, not the lockfile's: this is the gap.
     const { ok, output } = await run([], OTHER);
     expect(ok).toBe(false);
-    expect(output).toContain(`clsx@2.1.1: pnpm-lock.yaml records ${INTEGRITY}, but the registry signs ${OTHER}`);
+    expect(output).toContain(
+      `clsx@2.1.1: pnpm-lock.yaml records ${INTEGRITY}, which no registry signature covers (the registry reports ${OTHER})`,
+    );
   });
 
   it("fails at once on an invalid signature, without a retry", async () => {
