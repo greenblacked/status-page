@@ -21,10 +21,15 @@ check() {
   fi
 
   # release marks a release commit or release pull request ("release: 0.6.0",
-  # "release: v0.6.0"). It is never a breaking or scoped change: next.sh skips
-  # it, so a scope or a `!` would only mislead.
+  # "release: v0.6.0"). It is never a breaking or scoped change, and its summary
+  # is only a version: next.sh skips every release commit, so a real change
+  # titled "release: ..." would release nothing.
   if grep -qE '^release(\(|!)' <<<"$subject"; then
     echo "::error::$label  release takes no scope and no !: $subject" >&2
+    fail=1; bad=1
+  elif grep -qE '^release: ' <<<"$subject" &&
+    ! grep -qE '^release: v?[0-9]+\.[0-9]+\.[0-9]+( \(#[0-9]+\))?$' <<<"$subject"; then
+    echo "::error::$label  release takes only a version: release: X.Y.Z or release: vX.Y.Z: $subject" >&2
     fail=1; bad=1
   fi
 

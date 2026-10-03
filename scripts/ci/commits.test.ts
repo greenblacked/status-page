@@ -30,6 +30,15 @@ describe("commits.sh --subject", () => {
     },
   );
 
+  it.each(["release: add a feed", "release:  0.6.0", "release: 0.6", "release: v0.6.0 now", "release: 0.6.0."])(
+    "rejects %s, since release takes only a version",
+    (subject) => {
+      const result = checkSubject(subject);
+      expect(result.ok).toBe(false);
+      expect(result.output).toContain("release takes only a version");
+    },
+  );
+
   it.each(["release 0.6.0", "release:", "Release: 0.6.0", "added: a feed", "release: added 0.6.0"])(
     "rejects %s",
     (subject) => {

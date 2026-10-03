@@ -92,6 +92,17 @@ describe("next.sh level", () => {
     expect(next("level")).toBe("minor\n");
   });
 
+  it("keeps a ! or a BREAKING CHANGE footer on a release commit from forcing a major", () => {
+    commit("release!: 0.2.0");
+    expect(next("level")).toBe("none\n");
+    commit("release: 0.2.1", "BREAKING CHANGE: x");
+    expect(next("level")).toBe("none\n");
+    commit("chore(release)!: 0.2.2");
+    expect(next("level")).toBe("none\n");
+    commit("chore(release): 0.2.3", "BREAKING CHANGE: x");
+    expect(next("level")).toBe("none\n");
+  });
+
   it("fails on a range it cannot resolve instead of reporting none", () => {
     const result = spawnSync(SCRIPT, ["level", "v9.9.9..HEAD"], { cwd: repo, encoding: "utf8" });
     expect(result.status).toBe(1);
@@ -131,6 +142,12 @@ describe("next.sh notes", () => {
     expect(next("notes")).toBe(["### Fixed", "", "- Link incidents correctly (#18)", ""].join("\n"));
     commit("release: 0.2.1");
     expect(next("notes", "v0.1.0..HEAD")).not.toContain("0.2");
+  });
+
+  it("leaves a release commit out of the notes even when it carries a !", () => {
+    commit("release!: 0.2.0");
+    commit("chore(release)!: 0.2.1");
+    expect(next("notes")).toBe("");
   });
 
   it("prints nothing when no commit is worth a line", () => {
