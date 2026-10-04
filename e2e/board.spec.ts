@@ -301,7 +301,8 @@ test("renders every service with no console errors or hydration warnings", async
   const html = (await response?.text()) ?? "";
   expect(html).toContain('data-health="outage"');
   expect(html).toContain('data-health="degraded"');
-  expect(html).toMatch(/[Ss]ince <time [^>]*>\d\d:\d\d\sUTC<\/time>/);
+  // (A start from before 00:00 UTC shows its day too, "3 Oct 19:07 UTC", which is what the first hours of a UTC day see.)
+  expect(html).toMatch(/[Ss]ince <time [^>]*>(?:\d{1,2} [A-Z][a-z]{2} )?\d\d:\d\d\sUTC<\/time>/);
   // After hydration the title leads with how many services need attention: "(2) Status".
   await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   await expect(cards(page)).toHaveCount(SERVICES);
