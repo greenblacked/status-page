@@ -181,6 +181,117 @@ test("RouterOS lists every channel with its version, day, New release flag, note
   await expect(entries.nth(2)).toContainText("7.22beta3");
 });
 
+test("a tracker's row carries one note line under its versions, which are the line they were", async ({ page }) => {
+  await openBoard(page);
+  const versions = (id: string) => page.locator(`#service-${id} [data-card-header] p`).first();
+  const note = (id: string) => page.locator(`#service-${id} [data-card-header] [data-release-note]`);
+  // RouterOS: the versions with no note in them, then the fresh stable channel's note on a line of its own.
+  await expect(versions("mikrotik")).toContainText(/Stable 7\.21 · \w{3} \d{1,2} · Long-term 7\.18\.2 · \w{3} \d{1,2}/);
+  await expect(versions("mikrotik")).not.toContainText("changes");
+  await expect(note("mikrotik")).toHaveCount(1);
+  await expect(note("mikrotik")).toContainText(/^Stable\s· 23 changes: bgp, bridge, wifi \+9 more\s· 2 important$/);
+  // Windows: the update type of its newest version's latest build.
+  await expect(versions("windows")).toContainText(/26H2 26300\.1000 · \w{3} \d{1,2} · 26H1 28000\.1575/);
+  await expect(note("windows")).toHaveText(/^26H2\s· Security update$/);
+  // Apple's feed gives none, and the row is what it was.
+  await expect(page.locator("#service-apple-os [data-release-note]")).toHaveCount(0);
+  await expect(versions("apple-os")).toContainText(/^New release\s*iOS 27\.2 beta 2/);
+});
+
+test("a note adds at most one line to a tracker's row on a desktop and two on a phone", async ({ page }) => {
+  await openBoard(page);
+  // [width, most lines the note line may take]
+  for (const [width, lines] of [
+    [1280, 1],
+    [1024, 1],
+    [768, 1],
+    [390, 2],
+    [360, 2],
+    [320, 2],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const id of ["mikrotik", "windows"]) {
+      const card = page.locator(`#service-${id}`);
+      await card.scrollIntoViewIfNeeded();
+      const measure = await card.evaluate((article) => {
+        const header = article.querySelector("[data-card-header]") as HTMLElement;
+        const note = header.querySelector("[data-release-note]") as HTMLElement;
+        const lineHeight = Number.parseFloat(getComputedStyle(note).lineHeight);
+        const withNote = header.getBoundingClientRect().height;
+        const shown = note.style.display;
+        // The row as it was without the note: the same page with the note line taken out.
+        note.style.display = "none";
+        const without = header.getBoundingClientRect().height;
+        note.style.display = shown;
+        return { withNote, without, lineHeight, text: (note.textContent ?? "").length };
+      });
+      // The note's text is in the page whole; the clamp only cuts what is drawn.
+      expect(measure.text, `${id} note text at ${width}px`).toBeGreaterThan(0);
+      expect(measure.withNote - measure.without, `${id} row growth at ${width}px`).toBeLessThanOrEqual(
+        measure.lineHeight * lines + 1,
+      );
+      expect(measure.withNote - measure.without, `${id} row growth at ${width}px`).toBeGreaterThan(0);
+    }
+  }
+});
+
+test("the Details show a Windows version's update type, with the KB article linked only where the table links it", async ({
+  page,
+}) => {
+  await openBoard(page);
+  await trigger(page, "windows").click();
+  const entries = dialog(page).locator("[data-release-entry]");
+  await expect(entries.nth(0)).toContainText("2026-09 B: the monthly security update.");
+  const kb = entries.nth(0).getByRole("link", { name: /^KB5000000 for 26H2/ });
+  await expect(kb).toHaveAttribute("href", "https://support.microsoft.com/help/5000000");
+  await expect(kb).toHaveAttribute("target", "_blank");
+  await expect(kb).toHaveAttribute("rel", "noreferrer");
+  await expect(entries.nth(0)).not.toContainText("No notes text");
+  // 26H1's table links its article, so the link is the table's own.
+  await expect(entries.nth(1)).toContainText(
+    "2026-09 D: an optional, non-security preview of the next monthly update.",
+  );
+  await expect(entries.nth(1).getByRole("link", { name: /^KB5000050 for 26H1/ })).toHaveAttribute(
+    "href",
+    "https://support.microsoft.com/help/5000050",
+  );
+  // 25H2's table names its article in text only: the number, no link, and no link invented.
+  await expect(entries.nth(2)).toContainText("2026-09 OOB: an out-of-band fix");
+  await expect(entries.nth(2)).toContainText("KB5000060");
+  await expect(entries.nth(2).getByRole("link", { name: /KB5000060/ })).toHaveCount(0);
+});
+
+test("a note never widens a tracker's row on a phone or pushes Details off it", async ({ page }) => {
+  await openBoard(page);
+  for (const width of [320, 360, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const id of ["mikrotik", "windows"]) {
+      const card = page.locator(`#service-${id}`);
+      await card.scrollIntoViewIfNeeded();
+      const measure = await card.evaluate((article) => {
+        const box = article.getBoundingClientRect();
+        const header = article.querySelector("[data-card-header]")?.getBoundingClientRect();
+        const button = article.querySelector("[data-release-details-trigger]")?.getBoundingClientRect();
+        const note = article.querySelector("[data-release-note]")?.getBoundingClientRect();
+        return {
+          wide: article.scrollWidth > article.clientWidth + 1,
+          right: box.right,
+          headerRight: header?.right ?? 0,
+          buttonRight: button?.right ?? 0,
+          buttonLeft: button?.left ?? 0,
+          note: note ? { left: note.left, right: note.right } : undefined,
+        };
+      });
+      expect(measure.wide, `${id} at ${width}px`).toBe(false);
+      expect(measure.right, `${id} at ${width}px`).toBeLessThanOrEqual(width);
+      expect(measure.buttonLeft, `${id} Details at ${width}px`).toBeGreaterThanOrEqual(0);
+      expect(measure.buttonRight, `${id} Details at ${width}px`).toBeLessThanOrEqual(width);
+      expect(measure.note?.left, `${id} note at ${width}px`).toBeGreaterThanOrEqual(0);
+      expect(measure.note?.right ?? 0, `${id} note at ${width}px`).toBeLessThanOrEqual(measure.headerRight + 1);
+    }
+  }
+});
+
 test("Apple OS shows the build, the date and the page on apple.com, and says its feed has no notes", async ({
   page,
 }) => {
@@ -202,14 +313,14 @@ test("Windows 11 shows each version's build and UTC days, and links Microsoft's 
   await openBoard(page);
   await trigger(page, "windows").click();
   const entries = dialog(page).locator("[data-release-entry]");
-  await expect(entries).toHaveCount(2);
+  await expect(entries).toHaveCount(3);
   await expect(entries.nth(0).getByRole("heading", { level: 3 })).toHaveText("26H2");
   await expect(entries.nth(0)).toContainText("build 26300.1000");
   await expect(entries.nth(0)).toContainText("New release");
   await expect(entries.nth(1)).toContainText("build 28000.1575");
   await expect(entries.nth(1)).toContainText(/Feb 10/);
   await expect(entries.nth(1)).toContainText(/updated \w{3} \d+/);
-  await expect(entries.nth(1).getByRole("link")).toHaveAttribute("href", /^https:\/\/learn\.microsoft\.com\//);
+  await expect(entries.nth(1).getByRole("link").last()).toHaveAttribute("href", /^https:\/\/learn\.microsoft\.com\//);
 });
 
 test("Android shows each version with its own page and says the page gives no notes or date", async ({ page }) => {
@@ -255,7 +366,7 @@ test("a card that needs a look has the Details button too, opened from the butto
   await page.keyboard.press("Enter");
   await expect(dialog(page)).toBeVisible();
   await expect(dialog(page).getByRole("heading", { level: 2 })).toHaveText("Details · Windows 11");
-  await expect(dialog(page).locator("[data-release-entry]")).toHaveCount(2);
+  await expect(dialog(page).locator("[data-release-entry]")).toHaveCount(3);
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
   await expect(button).toBeFocused();

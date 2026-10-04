@@ -228,3 +228,82 @@ describe("a release row", () => {
     );
   });
 });
+
+describe("ReleaseDetailsDialog: the release note", () => {
+  const noted = tracker({
+    components: [
+      {
+        name: "RouterOS 7 stable",
+        health: "maintenance",
+        detail: "7.20.2 · Sep 29",
+        release: {
+          version: "7.20.2",
+          releasedAt: "2026-09-29T12:00:00.000Z",
+          notes: ["lte - fixed a crash", "bridge - fixed VLAN filtering"],
+          note: {
+            text: "6 changes: lte, bridge, ipsec +3 more · 1 important",
+            detail: "6 changes in 6 areas: lte, bridge, ipsec, ospf, wifi, bgp.",
+            important: ["lte - fixed a crash"],
+          },
+        },
+      },
+      {
+        name: "26H2",
+        health: "operational",
+        detail: "26300.1000 · Sep 29",
+        release: {
+          version: "26H2",
+          note: {
+            text: "Security update",
+            detail: "2026-09 B: the monthly security update.",
+            reference: { label: "KB5000000", url: "https://support.microsoft.com/help/5000000" },
+          },
+        },
+      },
+      {
+        name: "25H2",
+        health: "operational",
+        release: { version: "25H2", note: { text: "Out-of-band fix", reference: { label: "KB5000060" } } },
+      },
+      { name: "24H2", health: "operational", release: { version: "24H2" } },
+    ],
+  });
+  const html = dialog(noted);
+  const entry = (name: string) => {
+    const at = html.indexOf(`>${name}</h3>`);
+    return html.slice(
+      html.lastIndexOf("<li", at),
+      html.indexOf("</li><li", at) === -1 ? undefined : html.indexOf("</li><li", at),
+    );
+  };
+
+  it("shows the important lines first, then the full sentence, then the first changes without a repeat", () => {
+    const first = entry("RouterOS 7 stable");
+    expect(first).toContain("data-release-note-details");
+    expect(first).toContain('aria-label="Marked important"');
+    expect(first).toContain("Important</span> · lte - fixed a crash");
+    expect(first).toContain("6 changes in 6 areas: lte, bridge, ipsec, ospf, wifi, bgp.");
+    expect(first.indexOf("Marked important")).toBeLessThan(first.indexOf("6 changes in 6 areas"));
+    expect(first.indexOf("6 changes in 6 areas")).toBeLessThan(first.indexOf('aria-label="Changes"'));
+    // "lte - fixed a crash" is listed once, among the important lines.
+    expect(first.match(/lte - fixed a crash/g)).toHaveLength(1);
+    expect(first).toContain("bridge - fixed VLAN filtering");
+  });
+
+  it("links the KB article when the table did, names it in text when it did not, and says nothing is missing", () => {
+    const linked = entry("26H2");
+    expect(linked).toContain("2026-09 B: the monthly security update.");
+    expect(linked).toMatch(/<a href="https:\/\/support\.microsoft\.com\/help\/5000000"[^>]*>KB5000000/);
+    expect(linked).not.toContain("No notes text");
+    const plain = entry("25H2");
+    expect(plain).toContain("Out-of-band fix");
+    expect(plain).toContain(">KB5000060</p>");
+    expect(plain).not.toContain("support.microsoft.com");
+    expect(plain).not.toContain("No notes text");
+  });
+
+  it("a release with no note keeps its old text", () => {
+    expect(entry("24H2")).toContain("No notes text from MikroTik changelogs.");
+    expect(entry("24H2")).not.toContain("data-release-note-details");
+  });
+});

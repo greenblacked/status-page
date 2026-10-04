@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Added
+
+- A short note on each **MikroTik RouterOS** and **Windows 11** release, on a line under its row's versions and in its **Details**. RouterOS shows how many changes its own changelog lists and which areas they touch, such as "23 changes: bgp, wifi, container +9 more · 2 important", with the lines MikroTik marks important first in Details; Windows shows what kind of update the version's latest build is (Security update, Optional preview or Out-of-band fix), with its KB article, linked when Microsoft's table links it. A release whose changelog or update type cannot be read, or whose newest changelog section may have been cut off, has no note.
+
 ### Changed
 
 - The footer's disclaimer reads more formally: the board is an independent project, not affiliated with or endorsed by the vendors, and reads their official public status pages and feeds.
