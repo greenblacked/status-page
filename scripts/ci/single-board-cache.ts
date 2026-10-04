@@ -5,9 +5,9 @@
 // TanStack Start splits every module that calls `createServerFn` into a
 // separate server-function chunk and copies the module-level state of that
 // module into it. A cache declared beside a server function is therefore
-// built twice: the page's refetch reads one cache while the loader and the
-// server routes (/api/*, /feed.xml, /metrics, badges) read another, and an
-// isolate can run two vendor sweeps. The board cache lives in
+// built twice: the page's server functions (loader, refetch, Refresh) read one
+// cache while the server routes (/api/*, /feed.xml, /metrics, badges) read
+// another, and an isolate can run two vendor sweeps. The board cache lives in
 // src/lib/status/board-cache.server.ts, away from any server function, so the
 // build holds exactly one. This script counts where the built server
 // constructs it and fails on any other number.

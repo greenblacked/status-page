@@ -8,8 +8,8 @@ import type { BoardSnapshot } from "./types";
 // module and nowhere near a `createServerFn`: TanStack Start splits every
 // module that calls it into a separate server-function chunk and copies the
 // module-level state along, so a cache declared beside the server functions
-// is built twice and the page's refetch, the loader and the API routes stop
-// sharing it (up to two vendor sweeps per isolate). Everything that needs the
+// is built twice and the page's server functions (loader, refetch, Refresh)
+// and the server routes (the API, feed, metrics, badges) stop sharing it (up to two vendor sweeps per isolate). Everything that needs the
 // board, the server functions in `board.ts` included, goes through here.
 // `scripts/ci/single-board-cache.ts` fails the build if the built server
 // holds more than one.

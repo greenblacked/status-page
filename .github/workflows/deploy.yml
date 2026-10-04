@@ -125,6 +125,11 @@ jobs:
           DEPLOY_TARGET: cloudflare
         run: pnpm run build
 
+      - name: One board cache in the built Worker
+        # The Worker is what gets deployed: a cache declared beside a server
+        # function would be built twice in it too (see ci.yml).
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/single-board-cache.ts dist/server
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: worker
