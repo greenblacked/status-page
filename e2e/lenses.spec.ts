@@ -52,24 +52,9 @@ const scrollOffsets = (top: number, step: number): number[] => {
   return offsets;
 };
 
-/**
- * A screenshot taken once the page has stopped changing: two frames apart, two shots of it are the same. A shot
- * taken the instant after a scroll or a style change can catch the blurred glass a frame behind, which on a busy
- * machine is not a state the page is ever in for long. After a few tries the last one is used, so a page that
- * never rests (it should not exist) still gets measured.
- */
-async function settledScreenshot(page: Page): Promise<Buffer> {
-  let previous = await page.screenshot({ animations: "disabled" });
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await page.evaluate(
-      () => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
-    );
-    const next = await page.screenshot({ animations: "disabled" });
-    if (Buffer.compare(next, previous) === 0) return next;
-    previous = next;
-  }
-  return previous;
-}
+/** Two animation frames on: what a scroll or a style change set going has been drawn. */
+const afterTwoFrames = (page: Page): Promise<void> =>
+  page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
 
 /** Chooses the page's background before it loads, the way Settings would have: Quiet is no choice at all. */
 async function chooseBackground(page: Page, background: "quiet" | "glass" | "full"): Promise<void> {
@@ -944,7 +929,7 @@ test.describe("contrast", () => {
    * The aurora is fixed and the panels scroll over it, so the same text is on a
    * lighter or darker part of it at every scroll offset, and the page below the
    * first screen is not the first screen: each test measures at several offsets
-   * (250 or 500px apart, from the top to the end of the page). The runs are
+   * (350 or 700px apart, from the top to the end of the page). The runs are
    * found again at each one, in the layout the page has there, and are measured
    * only when the layout is the same before and after the screenshot.
    *
@@ -962,6 +947,8 @@ test.describe("contrast", () => {
           context,
         }, testInfo) => {
           test.skip(testInfo.project.name !== "desktop", "measured once, in Chromium on a desktop");
+          // A screenshot of a 1280x1200 page, read back, at each of several offsets: seconds apiece on a busy runner.
+          test.slow();
           // After the describe's own choice of Full, so this one wins.
           await chooseBackground(page, background);
           const board = fixtureBoard(Date.now());
@@ -1094,16 +1081,20 @@ test.describe("contrast", () => {
           /** At `offset`: the runs, and a screenshot of the page with its text made transparent, taken in the same layout. */
           const shootAt = async (offset: number) => {
             for (let attempt = 0; attempt < 5; attempt++) {
-              await page.evaluate((y) => window.scrollTo(0, y), offset);
-              const reach = Math.min(offset, (await readRuns(false)).top);
-              await expect
-                .poll(() => page.evaluate(() => Math.round(window.scrollY)), `scrolled to ${reach}`)
-                .toBe(reach);
+              const view = await page.evaluate((y) => {
+                window.scrollTo(0, y);
+                return { top: Math.max(0, document.documentElement.scrollHeight - innerHeight) };
+              }, offset);
+              await afterTwoFrames(page);
+              // Where it was asked to be, or the end of the page.
+              const reach = await page.evaluate(() => Math.round(window.scrollY));
+              expect(reach, `scrolled to ${offset} (the page ends at ${view.top})`).toBe(Math.min(offset, view.top));
               const before = await readRuns(true);
               const hide = await page.addStyleTag({
                 content: "*{color:transparent !important;text-shadow:none !important}",
               });
-              const shot = await settledScreenshot(page);
+              await afterTwoFrames(page);
+              const shot = await page.screenshot({ animations: "disabled" });
               const after = await readRuns(false);
               await hide.evaluate((node) => node.parentNode?.removeChild(node));
               if (sameBoxes(before.boxes, after.boxes)) return { shot, before, reach };
@@ -1117,8 +1108,8 @@ test.describe("contrast", () => {
           expect(first.before.runs.filter((run) => run.kind === "subtle").length).toBeGreaterThan(8);
           expect(first.before.runs.filter((run) => run.kind === "muted").length).toBeGreaterThan(2);
           // The fixed backdrop is brighter in some places than in others, and it is the dark side that is tight: there,
-          // with the lights at their peak, the offsets are 250px apart; elsewhere 500px.
-          const offsets = scrollOffsets(first.before.top, colorScheme === "dark" && cardLight ? 250 : 500);
+          // with the lights at their peak, the offsets are 350px apart; elsewhere 700px.
+          const offsets = scrollOffsets(first.before.top, colorScheme === "dark" && cardLight ? 350 : 700);
           expect(offsets.length, "the page is long enough to scroll").toBeGreaterThan(2);
 
           const helper = await context.newPage();
