@@ -80,9 +80,9 @@ For local browser tests install the browsers once (`pnpm exec playwright install
 ./scripts/ci/hygiene.sh                                          # LF endings, trailing whitespace, final newline, no `any`, no raw hex in JSX, no .env
 ./scripts/ci/tokens.sh                                           # design-token guard (retired utilities, arbitrary type sizes, raw colours)
 ./scripts/ci/links.sh                                            # every relative link in tracked Markdown resolves to a file
-./scripts/ci/commits.sh origin/stage..HEAD                       # Conventional Commits on a range
+./scripts/ci/commits.sh origin/stage..HEAD                       # Conventional Commits on a range (what the dev -> stage pull request carries)
 ./scripts/ci/commits.sh --subject "feat: add a feed"             # one subject, as the PR title check runs it
-./scripts/ci/branch.sh "$(git branch --show-current)" stage      # branch name and base, as CI checks them
+./scripts/ci/branch.sh dev stage                                  # the dev -> stage promotion, as CI checks it (a work branch: its name and `dev`)
 ./scripts/ci/release-notes.sh                                    # the CHANGELOG section for the package.json version must exist
 ./scripts/ci/pnpm-pin.sh check                                   # packageManager is pnpm@X.Y.Z+sha512.<128 hex>
 ./scripts/ci/smoke.sh http://127.0.0.1:4173                      # after `pnpm run preview`: the smoke test CI and deploy run
@@ -102,7 +102,7 @@ The branch rules are in [CONTRIBUTING.md#branches](CONTRIBUTING.md#branches) and
 - Commit subject: Conventional Commit `<type>(<optional scope>): <imperative summary>`.
   - Type is one of `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`, `build`, `style`, `revert`, `release` (only for a release commit or pull request: `release: 0.6.0`, `release: v0.6.0`; no scope, no `!`); at most 72 characters (a trailing ` (#123)` does not count); no trailing period; no "added"/"fixed" past tense. `commits.sh` enforces all of this.
   - The `pull request title` check (`pr-title.yml`) applies it to a PR title. A commit on `dev` is held to the same rule by the `commit messages` check on the promotion pull request.
-  - The title's type picks the release: `feat` is minor, `fix`, `perf` and `revert` are patch, `!` is major, the rest (including `release`) release nothing ([table](CONTRIBUTING.md#releases)).
+  - Each commit subject's type picks the release (the title of the `dev` → `stage` pull request picks nothing): `feat` is minor, `fix`, `perf` and `revert` are patch, `!` is major, the rest (including `release`) release nothing ([table](CONTRIBUTING.md#releases)).
 - Commits carry the real GitHub author who owns the change ([authorship](CONTRIBUTING.md#authorship)). No tool attribution anywhere that is published: no "generated with" footers, no tool `Co-authored-by` trailers, no session links in commit messages, PR bodies or code.
 - **CHANGELOG.** A commit (or pull request) with a user-visible change adds lines under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), written for someone reading the board, not the diff. Docs-only, CI-only and refactor-only changes need none. A release turns that section into the GitHub Release notes; `release.yml` cuts a version only when work reaches `main` ([releases](CONTRIBUTING.md#releases)).
 - The PR body follows [`.github/pull_request_template.md`](.github/pull_request_template.md): what changes, why, and the checklist.
@@ -150,7 +150,7 @@ The full list is [CONTRIBUTING.md#code-style](CONTRIBUTING.md#code-style) and [#
 
 ## Reviewing a pull request
 
-**Review scope: only pull requests whose base branch is `stage` or `main`.** Check the base branch first. For a pull request into any other branch (such as `dev`), or for a push to `dev`, do not review: reply that reviews run on pull requests into `stage` and `main`, and stop.
+**Review scope for automated reviews (Codex and other review bots): only pull requests whose base branch is `stage` or `main`.** Check the base branch first. For a pull request into any other branch (such as `dev`), or for a push to `dev`, do not review: reply that reviews run on pull requests into `stage` and `main`, and stop. A review the maintainer explicitly asks for, of a local change or of commits headed for `dev`, still follows this section.
 
 Applies to any agent asked to review a change here. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md#how-the-repository-defends-itself) first if you have not.
 
@@ -215,7 +215,7 @@ pnpm test
 ./scripts/ci/tokens.sh
 ./scripts/ci/links.sh
 ./scripts/ci/commits.sh origin/dev..HEAD
-./scripts/ci/branch.sh "$(git branch --show-current)" dev
+./scripts/ci/branch.sh dev stage                                  # the promotion check, for work committed to dev
 ```
 
 `pnpm run check` covers lint, typecheck, tests, hygiene and links. Also run `pnpm run test:coverage` if you changed logic, and `pnpm run build && pnpm run test:e2e --project=desktop` (plus a WebKit project when the change touches layout, motion or touch) if you changed the UI and the browsers are available. `release-notes.sh` and `pnpm-pin.sh check` if you touched `package.json` or `pnpm-lock.yaml`. Shell script changes: `shellcheck`. Workflow changes: actionlint and zizmor.

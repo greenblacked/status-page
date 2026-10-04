@@ -70,13 +70,14 @@ Name the branch `<prefix>/<short-kebab-description>`:
 - **The description** is two to five lowercase words joined by single hyphens, saying what changes. Use only `a-z`, `0-9` and `-`, and keep the whole name to 50 characters.
 - **An issue number** goes first in the description when there is one: `fix/42-aws-stale-events`.
 - **Pick the prefix that fits most of the change.** Work that fixes a bug is `fix/`, whatever it touches. The prefixes follow the Conventional Commit types, except that `feature/` is the branch for `feat:`; `feat/`, `style/`, `revert/` and the former `fb/` are not accepted.
-- **The prefix is not the commit type.** The pull request title is still a [Conventional Commit](#commits), and it picks the [release](#releases): a `feature/` branch has a `feat:` title.
+- **The prefix is not the commit type.** The commit subject is a [Conventional Commit](#commits), and its type picks the [release](#releases): work on a `feature/` branch is committed with a `feat:` subject.
 - **Tooling names its own branches.** Dependabot opens `dependabot/…`, and [`scripts/release/bump.sh`](scripts/release/bump.sh) creates `release/vX.Y.Z`. Don't create either by hand.
 
 The **branch name** job in [CI](.github/workflows/ci.yml) fails a pull request whose branch breaks these rules. It also checks where the pull request goes: `main` takes only `stage` (and the `release/vX.Y.Z` branch that [`scripts/release/bump.sh`](scripts/release/bump.sh) creates), `stage` takes only `dev` (and `chore/sync-main`, see [Releases](#releases)), and `dev` takes everything else (work is committed there directly, so the only pull requests it sees are Dependabot's and `chore/sync-main`). While `dev` is paused, `stage` also takes everything else, a fork's feature branch included, and `main` still takes only `stage` and `release/vX.Y.Z`. `dev` and `stage` are accepted as head branches for those two promotions only, and never from a fork; `main` is never a head branch. A Dependabot security update opens against `main`, the default branch: change its base to `dev` (to `stage` while `dev` is paused). Check a name before pushing, with the base branch as a second argument for the full check:
 
 ```bash
-./scripts/ci/branch.sh "$(git branch --show-current)" dev   # stage while dev is paused; `branch.sh dev stage` checks the promotion
+./scripts/ci/branch.sh dev stage   # the promotion check, for work committed to dev
+./scripts/ci/branch.sh "$(git branch --show-current)" dev   # a branch headed for dev: Dependabot's or chore/sync-main
 ```
 
 | Not | Instead | Why |
@@ -101,10 +102,10 @@ Branch protection lives in GitHub's settings, not in the code, so the owner sets
 
 | Setting | `dev` | `stage` | `main` |
 | --- | --- | --- | --- |
-| Require a pull request before merging | yes | yes | yes |
-| Allowed merge methods | squash (merge commit only for `chore/sync-main`) | merge commit | merge commit |
+| Require a pull request before merging | no (commits go straight to it) | yes | yes |
+| Allowed merge methods | merge commit (for `chore/sync-main` and Dependabot) | merge commit | merge commit |
 | Required approvals | 0 while there is one maintainer | 0 | 0 |
-| Require status checks to pass | `CI OK`, `pull request title`, `analyze (javascript-typescript)`, `analyze (actions)`, `dependency-review` | the same | the same |
+| Require status checks to pass | no (they would reject direct commits) | `CI OK`, `pull request title`, `analyze (javascript-typescript)`, `analyze (actions)`, `dependency-review` | the same |
 | Require the branch to be up to date | no | no | no |
 | Block force pushes | yes | yes | yes |
 | Restrict deletions | yes | yes | yes |
@@ -123,7 +124,7 @@ Without GitHub Actions on the bypass list, `stage` and `dev` must not get the up
 The same three rulesets through the API, run once by the repository admin with the GitHub CLI signed in (`gh auth login`). The actor ids are GitHub's: role 5 is Repository admin, and integration 15368 is GitHub Actions. GitHub may refuse the GitHub Actions actor for a repository owned by a personal account, as the web UI does not offer it there either; drop that line from `bypass_actors` then, which leaves the owner's role as the only bypass actor, and release through the pull request route. For `stage` and `dev` also drop the `update` and `pull_request` rules in that case, since nothing could then push the sync merge. The function takes `none` as its third argument for a branch with no bypass actor, as `main` has on this repository; it then leaves out the `update` rule, which with an empty bypass list would block every merge.
 
 ```bash
-ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash> [none: no bypass actor, no update rule]
+ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash, or direct: no pull request or status check rule> [none: no bypass actor, no update rule]
   jq -n --arg branch "$1" --arg method "$2" --arg bypass "${3:-owner}" '{
     name: ("protect " + $branch),
     target: "branch",
@@ -137,7 +138,7 @@ ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash> [n
       { type: "deletion" },
       { type: "non_fast_forward" } ]
       + (if $bypass == "none" then [] else [ { type: "update" } ] end)
-      + [
+      + (if $method == "direct" then [] else [
       { type: "pull_request", parameters: {
           required_approving_review_count: 0,
           dismiss_stale_reviews_on_push: false,
@@ -153,12 +154,12 @@ ruleset() { # ruleset <branch> <merge methods, comma-separated: merge|squash> [n
             { context: "analyze (javascript-typescript)" },
             { context: "analyze (actions)" },
             { context: "dependency-review" } ] } }
-    ])
+    ] end))
   }' | gh api --method POST repos/greenblacked/status-page/rulesets --input -
 }
 ruleset main merge none
 ruleset stage merge
-ruleset dev squash,merge
+ruleset dev direct
 ```
 
 `gh api repos/greenblacked/status-page/rulesets` lists them, and `gh api --method DELETE repos/greenblacked/status-page/rulesets/<id>` removes one. Replace any older ruleset or branch rule on `dev` and `main` rather than stacking the two. The required checks can only be picked once they have run on the repository, and `analyze (…)` and `dependency-review` start on pull requests, so if GitHub refuses a name, open a pull request into the branch first.
