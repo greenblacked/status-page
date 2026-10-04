@@ -34,6 +34,7 @@
     "lucide-react": "1.48.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "seroval": "1.6.7",
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
@@ -49,7 +50,6 @@
     "@vitejs/plugin-react": "6.1.1",
     "@vitest/coverage-v8": "5.0.2",
     "fast-check": "4.10.2",
-    "seroval": "1.6.7",
     "tailwindcss": "4.3.3",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "8.3.1",
