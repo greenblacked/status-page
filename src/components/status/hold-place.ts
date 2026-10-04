@@ -12,6 +12,9 @@ function anchorsScroll(): boolean {
 /** How long after a finger lifts the place it last touched still says what the reader is on. */
 const TOUCH_MEMORY_MS = 4_000;
 
+/** How soon the wait looks again after it has asked for the update, in case the page moved before it rendered. */
+const RECHECK_MS = 100;
+
 /** How long a press of Refresh keeps the board's update from waiting for the page to be still. */
 const HURRY_MS = 1_000;
 
@@ -134,7 +137,12 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
     const look = () => {
       const wait = motion().restsIn();
       if (wait > 0) timer = window.setTimeout(look, wait);
-      else again();
+      else {
+        again();
+        // A touch or a scroll can arrive between this and the render, which then holds the update again with no
+        // timer left; looking again keeps it from waiting for some other render. Cleared once it has landed.
+        timer = window.setTimeout(look, RECHECK_MS);
+      }
     };
     look();
     return () => clearTimeout(timer);
