@@ -42,6 +42,11 @@ export const FEED_ROW_CLASSES = {
  * one out. The script puts a quiet one first, with the newest saved check's counts, the usual outcome; a check that
  * found changes is taller, and the reserve is then short by the difference.
  *
+ * A first visit has nothing saved (or storage is blocked, or unreadable), and the load's own check is then the
+ * first row, "First check": a row of two lines in place of the one line of "Waiting for the first check.", ten
+ * pixels taller, which pushed the board down once, a third of a second after hydration. The script reserves that
+ * row, so the empty card is already its height.
+ *
  * The wording of the rows is a copy of `recentRows` (feed-reserve.test.ts
  * holds it to the real thing). It never throws: when it fails it leaves the
  * property unset, which reads as 0. Inline, and run under the
@@ -52,9 +57,11 @@ export const FEED_RESERVE_SCRIPT = `
 try{
 var s=document.currentScript,f=s&&s.previousElementSibling;
 if(!f)return;
-var z=JSON.parse(localStorage.getItem(${JSON.stringify(PULSE_STORAGE_KEY)})),p=z.pulses;
-if(!Array.isArray(p))return;
-if(!(p.length>0&&z.lastSlot===Math.floor(Date.now()/${PULSE_INTERVAL_MS})*${PULSE_INTERVAL_MS}))p=[{changes:[],counts:p[0]&&p[0].counts}].concat(p);
+var z=null;
+try{z=JSON.parse(localStorage.getItem(${JSON.stringify(PULSE_STORAGE_KEY)}))}catch(e){}
+var p=z&&Array.isArray(z.pulses)?z.pulses:[];
+if(!p.length)p=[{opening:true,changes:[],counts:{}}];
+else if(z.lastSlot!==Math.floor(Date.now()/${PULSE_INTERVAL_MS})*${PULSE_INTERVAL_MS})p=[{changes:[],counts:p[0]&&p[0].counts}].concat(p);
 p=p.slice(0,${RECENT_LIMIT});
 var E=function(t,c,x){var n=document.createElement(t);if(c)n.className=c;if(x!=null)n.textContent=x;return n};
 var N=function(o){return o&&typeof o.name==="string"?o.name:""};

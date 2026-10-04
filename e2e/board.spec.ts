@@ -194,7 +194,7 @@ async function openFixture(
  * openFixture, with the page's Date 30 s into a slot (pinToSlot) first, for a test that presses something on the
  * board. At the turn of a slot (every two minutes of the wall clock) the page refetches, adds a row to Recent
  * changes and clears the "Changed" tags, which moves every card under a tag by 36px to 108px, and where the browser
- * has no scroll anchoring (WebKit) useHoldPlace scrolls the page by the same distance a moment later. A press made
+ * has no scroll anchoring (WebKit) useHeldBoard scrolls the page by the same distance a moment later. A press made
  * in the second or two after a turn can find the board moving under it. With the page 30 s in, the next turn is 90 s
  * away, past the end of any of these tests. Tests that install page.clock and fast-forward it pin the page already.
  */
@@ -518,9 +518,13 @@ test("Quiet, the default background, blurs no panel and no control, only the flo
   const controls = await backdropFilters(page, CONTROLS);
   expect(controls.length).toBeGreaterThan(0);
   expect(controls.filter((value) => value !== "none")).toEqual([]);
-  // The bar is the one translucent layer: hidden it holds no blur, up it blurs.
+  // The bar is the one translucent layer: up it blurs. Hidden it holds no blur from 64rem; below that it keeps its
+  // layer, and the test after this one holds it to that.
   const bar = page.locator('section[aria-label="Board controls"]');
-  expect((await backdropFilters(page, BARS)).filter((value) => value !== "none")).toEqual([]);
+  const wide = (page.viewportSize()?.width ?? 0) >= 1024;
+  const hidden = (await backdropFilters(page, BARS)).filter((value) => value !== "none");
+  if (wide) expect(hidden).toEqual([]);
+  else expect(hidden.some((value) => value.includes("blur("))).toBe(true);
   await page.locator("footer").scrollIntoViewIfNeeded();
   await expect(bar).toHaveAttribute("data-shown", "true");
   expect((await backdropFilters(page, BARS)).some((value) => value.includes("blur("))).toBe(true);

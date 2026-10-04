@@ -1,6 +1,6 @@
-import { type RefObject, useEffect, useLayoutEffect, useRef } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { quietScroll } from "@/lib/status/dock";
-import type { Pulse } from "@/lib/status/pulse";
+import { createMotionTracker, type MotionTracker } from "@/lib/status/page-motion";
 
 /** Whether the browser keeps what the reader looks at in place when the page above it changes size (scroll anchoring). */
 function anchorsScroll(): boolean {
@@ -9,9 +9,51 @@ function anchorsScroll(): boolean {
   );
 }
 
-/** How long after the last scroll the page counts as still moving, and the wait before the anchor is picked again. */
-const SETTLE_MS = 150;
-const STALE_MS = 200;
+/** How long after a finger lifts the place it last touched still says what the reader is on. */
+const TOUCH_MEMORY_MS = 4_000;
+
+/** How soon the wait looks again after it has asked for the update, in case the page moved before it rendered. */
+const RECHECK_MS = 100;
+
+/** How long a press of Refresh keeps the board's update from waiting for the page to be still. */
+const HURRY_MS = 1_000;
+
+let tracker: MotionTracker | null = null;
+let watchers = 0;
+
+/** The one tracker of the page's motion, made when the first board starts watching. */
+function motion(): MotionTracker {
+  tracker ??= createMotionTracker(() => performance.now());
+  return tracker;
+}
+
+/**
+ * Feeds the page's touch and scroll events to the tracker for as long as something watches (counted, so a second
+ * board in a test or a remount does not double the listeners). Touch events, not pointer events: the browser
+ * cancels the pointer events of a touch as soon as it takes the gesture for a scroll, which is when the finger is
+ * most on the page.
+ */
+function watchMotion(): () => void {
+  const track = motion();
+  if (watchers++ === 0) {
+    window.addEventListener("scroll", onScroll, { passive: true });
+    for (const type of TOUCH_EVENTS) window.addEventListener(type, onTouch, { passive: true, capture: true });
+    document.addEventListener("visibilitychange", onHide);
+  }
+  return () => {
+    if (--watchers > 0) return;
+    window.removeEventListener("scroll", onScroll);
+    for (const type of TOUCH_EVENTS) window.removeEventListener(type, onTouch, { capture: true });
+    document.removeEventListener("visibilitychange", onHide);
+    track.reset();
+  };
+}
+const TOUCH_EVENTS = ["touchstart", "touchmove", "touchend", "touchcancel"] as const;
+const onScroll = () => motion().scrolled();
+const onTouch = (event: TouchEvent) => motion().touched(event.touches.length);
+const onHide = () => {
+  if (document.visibilityState === "hidden") motion().reset();
+};
 
 /** The first thing in view under the root, as scroll anchoring picks it: the first child wholly in view, else the deepest one cut by the top edge. */
 export function firstInView(root: Element): Element | null {
@@ -48,89 +90,117 @@ function pickAnchor(root: HTMLElement, pointer: { x: number; y: number } | null)
 }
 
 /**
- * Keeps the reader's place when a check changes the board above it. The check at the turn of a slot adds a
- * row to Recent changes and clears the "Changed" tags of the one before, in one commit, so everything under
- * them, a button the reader is about to press included, drops or rises. Chrome and Firefox hold the place
- * themselves; Safari has no scroll anchoring, so there the page scrolls by the distance its anchor moved.
- * The anchor and its top are kept current as the reader scrolls and the board resizes, so a resize, a
- * rotation or a late font never leaves a stale number behind.
+ * What the board shows, kept from changing under a reader who is scrolling, and the reader's place kept when it
+ * does change.
+ *
+ * `latest` is the board's newest state (the snapshot and the saved checks). It is shown at once while the page is
+ * still; while a finger is on it, or it scrolled a moment ago, the old state stays on screen, and the new one
+ * lands about 150 ms after the page goes still. The check at the turn of a slot adds a row to Recent changes and
+ * clears the "Changed" tags of the one before, in one commit, so everything under them, the card a reader is
+ * looking at included, drops or rises: 63 px in one frame, with a finger on the glass. Chrome and Firefox hold the
+ * place themselves; Safari has no scroll anchoring, so there the page is scrolled by the distance its anchor moved,
+ * in the same commit, before the next paint, and the card does not move on screen.
+ *
+ * The anchor is picked again right before the new state is accepted, while the page still has its old layout,
+ * so it is what the reader is looking at now, not what they looked at when they started to scroll. It is also kept
+ * current as the reader waits and the board resizes, so a resize, a rotation or a late font never leaves a stale
+ * number behind.
+ *
+ * `hurry` lets the next update through at once, for a press of Refresh: the person asked for it.
  */
-export function useHoldPlace(root: RefObject<HTMLElement | null>, pulses: Pulse[] | undefined) {
+export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T): { shown: T; hurry: () => void } {
   // The anchor's place is kept as an offset in the document, so the reader's own scrolling cancels out of it.
   const anchor = useRef<{ element: Element; offset: number } | null>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
-  const motion = useRef({ lastScroll: Number.NEGATIVE_INFINITY, touching: false });
+  const lastTouch = useRef<{ x: number; y: number; at: number } | null>(null);
+  const hurriedUntil = useRef(Number.NEGATIVE_INFINITY);
+  const [shown, setShown] = useState(latest);
+  const [, again] = useReducer((count: number) => count + 1, 0);
 
-  useEffect(() => {
+  // Derived while rendering, which is the one place the old layout is still on the page to be read.
+  const waiting = latest !== shown;
+  if (waiting && (performance.now() < hurriedUntil.current || !motion().moving())) {
     const element = root.current;
-    if (!element) return;
-    let frame = 0;
-    let idle = 0;
-    const remember = () => {
-      frame = 0;
-      const picked = pickAnchor(element, pointer.current);
-      anchor.current = picked ? { element: picked, offset: picked.getBoundingClientRect().top + window.scrollY } : null;
+    const finger = lastTouch.current;
+    const at = pointer.current ?? (finger && performance.now() - finger.at < TOUCH_MEMORY_MS ? finger : null);
+    const picked = element ? pickAnchor(element, at) : null;
+    anchor.current = picked ? { element: picked, offset: picked.getBoundingClientRect().top + window.scrollY } : null;
+    setShown(latest);
+  }
+
+  useEffect(() => watchMotion(), []);
+
+  // The update is waiting for the page to be still: look again when it should be, until it is.
+  useEffect(() => {
+    if (!waiting) return;
+    let timer = 0;
+    const look = () => {
+      const wait = motion().restsIn();
+      if (wait > 0) timer = window.setTimeout(look, wait);
+      else {
+        again();
+        // A touch or a scroll can arrive between this and the render, which then holds the update again with no
+        // timer left; looking again keeps it from waiting for some other render. Cleared once it has landed.
+        timer = window.setTimeout(look, RECHECK_MS);
+      }
     };
-    const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(remember);
+    look();
+    return () => clearTimeout(timer);
+  }, [waiting]);
+
+  // Where the reader's attention is, kept for the moment the update lands: the pointer while it is in the page, the
+  // last place a finger touched for a few seconds after it lifted (a touch's pointer events end as soon as the
+  // browser takes the gesture for a scroll), and else the focused element or the first thing in view.
+  useEffect(() => {
+    const touch = (event: TouchEvent) => {
+      const first = event.touches[0];
+      if (first) lastTouch.current = { x: first.clientX, y: first.clientY, at: performance.now() };
     };
-    // Scrolling only stamps the time; the anchor is picked again once the page has been still for a moment.
-    const scrolled = () => {
-      motion.current.lastScroll = performance.now();
-      clearTimeout(idle);
-      idle = window.setTimeout(schedule, SETTLE_MS);
-    };
-    // A finger counts while it is down, a mouse while it is in the page.
     const track = (event: PointerEvent) => {
-      if (event.type === "pointerdown" && event.pointerType === "touch") motion.current.touching = true;
       pointer.current = { x: event.clientX, y: event.clientY };
-      schedule();
     };
     const release = (event: Event) => {
-      if (event instanceof PointerEvent && event.pointerType === "touch") motion.current.touching = false;
       if (event instanceof PointerEvent && event.pointerType === "mouse" && event.type === "pointerup") return;
       pointer.current = null;
-      schedule();
+      if (event.type === "keydown") lastTouch.current = null;
     };
     document.addEventListener("keydown", release, { passive: true });
-    remember();
-    const observer = new ResizeObserver(schedule);
-    observer.observe(document.documentElement);
-    observer.observe(element);
-    window.addEventListener("scroll", scrolled, { passive: true });
-    window.addEventListener("resize", schedule);
-    document.addEventListener("focusin", schedule);
     document.addEventListener("pointerdown", track, { passive: true });
     document.addEventListener("pointermove", track, { passive: true });
     document.addEventListener("pointerup", release, { passive: true });
     document.addEventListener("pointercancel", release, { passive: true });
     document.documentElement.addEventListener("pointerleave", release, { passive: true });
+    document.addEventListener("touchstart", touch, { passive: true });
+    document.addEventListener("touchmove", touch, { passive: true });
     return () => {
-      if (frame) cancelAnimationFrame(frame);
-      clearTimeout(idle);
-      observer.disconnect();
-      window.removeEventListener("scroll", scrolled);
-      window.removeEventListener("resize", schedule);
-      document.removeEventListener("focusin", schedule);
       document.removeEventListener("keydown", release);
       document.removeEventListener("pointerdown", track);
       document.removeEventListener("pointermove", track);
       document.removeEventListener("pointerup", release);
       document.removeEventListener("pointercancel", release);
       document.documentElement.removeEventListener("pointerleave", release);
+      document.removeEventListener("touchstart", touch);
+      document.removeEventListener("touchmove", touch);
     };
-  }, [root]);
+  }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs for a change of the pulses, which is what moves the board.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs for a change of what is shown, which is what moves the board.
   useLayoutEffect(() => {
     const last = anchor.current;
     if (!last?.element.isConnected || window.scrollY <= 0 || anchorsScroll()) return;
-    // A programmatic scroll would stop a flick on iOS, and a shift of the feed's size mid-flick goes unseen.
-    const { lastScroll, touching } = motion.current;
-    if (touching || performance.now() - lastScroll < STALE_MS) return;
+    // A programmatic scroll would stop a flick on iOS, and a shift of the feed's size mid-flick goes unseen. The
+    // update waits for the page to be still, so this only meets a page in motion when it was hurried.
+    if (motion().moving()) return;
     const moved = last.element.getBoundingClientRect().top + window.scrollY - last.offset;
     // Not a row or two of the feed: a reorder of the board, which the reader is not owed a ride along with.
     if (Math.abs(moved) < 0.5 || Math.abs(moved) > window.innerHeight) return;
     quietScroll(() => window.scrollBy({ top: moved, behavior: "instant" }));
-  }, [pulses]);
+  }, [shown]);
+
+  return {
+    shown,
+    hurry: () => {
+      hurriedUntil.current = performance.now() + HURRY_MS;
+    },
+  };
 }
