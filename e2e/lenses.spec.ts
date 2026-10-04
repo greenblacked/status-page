@@ -893,153 +893,157 @@ test.describe("contrast", () => {
    * backdrop is left) and checks the worst one against 4.5:1. A run that
    * crosses a lens's rim hairline is left out, as in the lens test above.
    *
-   * Every panel and list wears the card light on Full, which Reduce Motion
-   * hides, so this runs twice: as the page renders under Reduce Motion, and
-   * with the light forced on at full strength and held still at the centre of
-   * every card, where its white is strongest.
+   * Every panel and list wears the card light on Glass and on Full, which
+   * Reduce Motion hides, so this runs twice on each: as the page renders under
+   * Reduce Motion, and with the light forced on at full strength and held still
+   * at the centre of every card, where its white is strongest.
    */
-  for (const colorScheme of ["light", "dark"] as const) {
-    for (const cardLight of [false, true]) {
-      test(`keeps subtle and muted text at 4.5:1 on the glass panels (${colorScheme}${cardLight ? ", card light at its strongest" : ""})`, async ({
-        page,
-        context,
-      }, testInfo) => {
-        test.skip(testInfo.project.name !== "desktop", "measured once, in Chromium on a desktop");
-        const board = fixtureBoard(Date.now());
-        await serveBoard(page, () => board);
-        // Tall enough for the hero and the first lists, so plenty of subtle and muted runs are whole on screen.
-        await page.setViewportSize({ width: 1280, height: 1200 });
-        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-        await page.goto("/");
-        await hydrated(page);
-        await page.getByRole("button", { name: "Refresh status now" }).first().click();
-        // The most urgent card's "since" line sits at the brightest corner of a panel.
-        await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
-        await page.waitForTimeout(500);
-        if (cardLight) {
-          await page.addStyleTag({ content: STRONGEST_CARD_LIGHT });
-          const drawn = await page
-            .locator(".spotlight")
-            .first()
-            .evaluate((node) => {
-              const light = getComputedStyle(node, "::after");
-              return [light.display, light.opacity, light.transform];
-            });
-          expect(drawn, "the forced card light is drawn, at full strength, unmoved").toEqual(["block", "1", "none"]);
-        }
-        const setup = await page.evaluate(() => {
-          const channels = (token: string) => {
-            const probe = document.createElement("i");
-            probe.style.color = `var(${token})`;
-            document.body.appendChild(probe);
-            const found = getComputedStyle(probe).color.match(/[\d.]+/g) ?? [];
-            probe.remove();
-            return found.slice(0, 3).map(Number);
-          };
-          const colours = { subtle: channels("--color-subtle"), muted: channels("--color-muted") };
-          const discs = [...document.querySelectorAll(".lens")].map((lens) => {
-            const box = lens.getBoundingClientRect();
-            return [box.x + box.width / 2, box.y + box.height / 2, box.width / 2];
-          });
-          const runs: { kind: "subtle" | "muted"; text: string; x: number; y: number; w: number; h: number }[] = [];
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-            const element = node.parentElement;
-            const text = node.textContent?.trim();
-            if (!element || !text || !element.closest(".surface") || element.closest(".sr-only")) continue;
-            // The body of a closed <details> is not drawn, though it still has a box.
-            const details = element.closest("details:not([open])");
-            if (details && !element.closest("summary")) continue;
-            const color =
-              getComputedStyle(element)
-                .color.match(/[\d.]+/g)
-                ?.slice(0, 3)
-                .map(Number) ?? [];
-            const kind = (["subtle", "muted"] as const).find((name) => colours[name].every((v, i) => v === color[i]));
-            if (!kind) continue;
-            const range = document.createRange();
-            range.selectNodeContents(node);
-            const box = range.getBoundingClientRect();
-            // Whole in the viewport, so the screenshot has all of it.
-            if (box.width < 2 || box.left < 0 || box.top < 0 || box.right > innerWidth || box.bottom > innerHeight) {
-              continue;
-            }
-            runs.push({ kind, text: text.slice(0, 30), x: box.x, y: box.y, w: box.width, h: box.height });
+  for (const background of ["full", "glass"] as const) {
+    for (const colorScheme of ["light", "dark"] as const) {
+      for (const cardLight of [false, true]) {
+        test(`keeps subtle and muted text at 4.5:1 on the glass panels (${colorScheme}${cardLight ? ", card light at its strongest" : ""}${background === "glass" ? ", Glass" : ""})`, async ({
+          page,
+          context,
+        }, testInfo) => {
+          test.skip(testInfo.project.name !== "desktop", "measured once, in Chromium on a desktop");
+          // The describe's beforeEach chose Full; a later init script overrides it.
+          if (background === "glass") await chooseBackground(page, "glass");
+          const board = fixtureBoard(Date.now());
+          await serveBoard(page, () => board);
+          // Tall enough for the hero and the first lists, so plenty of subtle and muted runs are whole on screen.
+          await page.setViewportSize({ width: 1280, height: 1200 });
+          await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+          await page.goto("/");
+          await hydrated(page);
+          await page.getByRole("button", { name: "Refresh status now" }).first().click();
+          // The most urgent card's "since" line sits at the brightest corner of a panel.
+          await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
+          await page.waitForTimeout(500);
+          if (cardLight) {
+            await page.addStyleTag({ content: STRONGEST_CARD_LIGHT });
+            const drawn = await page
+              .locator(".spotlight")
+              .first()
+              .evaluate((node) => {
+                const light = getComputedStyle(node, "::after");
+                return [light.display, light.opacity, light.transform];
+              });
+            expect(drawn, "the forced card light is drawn, at full strength, unmoved").toEqual(["block", "1", "none"]);
           }
-          return { colours, discs, runs };
-        });
-        // Not vacuous: both colours are used on panels, among them the urgent card's "since" line.
-        expect(setup.runs.some((run) => run.text === "since")).toBe(true);
-        expect(setup.runs.filter((run) => run.kind === "subtle").length).toBeGreaterThan(8);
-        expect(setup.runs.filter((run) => run.kind === "muted").length).toBeGreaterThan(2);
-        await page.addStyleTag({ content: "*{color:transparent !important;text-shadow:none !important}" });
-        const shot = await page.screenshot({ animations: "disabled" });
-
-        const helper = await context.newPage();
-        try {
-          const result = await helper.evaluate(
-            async ({ b64, setup }) => {
-              const image = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
-              const canvas = document.createElement("canvas");
-              canvas.width = image.width;
-              canvas.height = image.height;
-              const canvasContext = canvas.getContext("2d");
-              if (!canvasContext) throw new Error("no 2d canvas");
-              canvasContext.drawImage(image, 0, 0);
-              const linear = (value: number) => {
-                const v = value / 255;
-                return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-              };
-              const luminance = (r: number, g: number, b: number) =>
-                0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
-              const text = {
-                subtle: luminance(setup.colours.subtle[0], setup.colours.subtle[1], setup.colours.subtle[2]),
-                muted: luminance(setup.colours.muted[0], setup.colours.muted[1], setup.colours.muted[2]),
-              };
-              const worst = { subtle: 99, muted: 99 };
-              const failing: string[] = [];
-              let measured = 0;
-              for (const run of setup.runs) {
-                // A run across a lens's rim (its outer 4px either side) is exempt.
-                const crossesRim = setup.discs.some(([cx, cy, radius]) => {
-                  const nearest = Math.hypot(
-                    Math.max(run.x - cx, 0, cx - (run.x + run.w)),
-                    Math.max(run.y - cy, 0, cy - (run.y + run.h)),
-                  );
-                  const farthest = Math.max(
-                    ...[run.x, run.x + run.w].flatMap((px) =>
-                      [run.y, run.y + run.h].map((py) => Math.hypot(px - cx, py - cy)),
-                    ),
-                  );
-                  return nearest < radius + 4 && farthest > radius - 4;
-                });
-                if (crossesRim) continue;
-                const { data } = canvasContext.getImageData(
-                  Math.floor(run.x),
-                  Math.floor(run.y),
-                  Math.ceil(run.w) + 1,
-                  Math.ceil(run.h) + 1,
-                );
-                let runWorst = 99;
-                for (let at = 0; at < data.length; at += 4) {
-                  const back = luminance(data[at], data[at + 1], data[at + 2]);
-                  const t = text[run.kind];
-                  runWorst = Math.min(runWorst, (Math.max(back, t) + 0.05) / (Math.min(back, t) + 0.05));
-                }
-                measured++;
-                worst[run.kind] = Math.min(worst[run.kind], runWorst);
-                if (runWorst < 4.5) failing.push(`${run.kind} "${run.text}" ${runWorst.toFixed(2)}`);
+          const setup = await page.evaluate(() => {
+            const channels = (token: string) => {
+              const probe = document.createElement("i");
+              probe.style.color = `var(${token})`;
+              document.body.appendChild(probe);
+              const found = getComputedStyle(probe).color.match(/[\d.]+/g) ?? [];
+              probe.remove();
+              return found.slice(0, 3).map(Number);
+            };
+            const colours = { subtle: channels("--color-subtle"), muted: channels("--color-muted") };
+            const discs = [...document.querySelectorAll(".lens")].map((lens) => {
+              const box = lens.getBoundingClientRect();
+              return [box.x + box.width / 2, box.y + box.height / 2, box.width / 2];
+            });
+            const runs: { kind: "subtle" | "muted"; text: string; x: number; y: number; w: number; h: number }[] = [];
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              const element = node.parentElement;
+              const text = node.textContent?.trim();
+              if (!element || !text || !element.closest(".surface") || element.closest(".sr-only")) continue;
+              // The body of a closed <details> is not drawn, though it still has a box.
+              const details = element.closest("details:not([open])");
+              if (details && !element.closest("summary")) continue;
+              const color =
+                getComputedStyle(element)
+                  .color.match(/[\d.]+/g)
+                  ?.slice(0, 3)
+                  .map(Number) ?? [];
+              const kind = (["subtle", "muted"] as const).find((name) => colours[name].every((v, i) => v === color[i]));
+              if (!kind) continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              const box = range.getBoundingClientRect();
+              // Whole in the viewport, so the screenshot has all of it.
+              if (box.width < 2 || box.left < 0 || box.top < 0 || box.right > innerWidth || box.bottom > innerHeight) {
+                continue;
               }
-              return { measured, worst, failing };
-            },
-            { b64: Buffer.from(shot).toString("base64"), setup },
-          );
-          expect(result.measured).toBeGreaterThan(10);
-          expect(result.failing, `worst ratios ${JSON.stringify(result.worst)}`).toEqual([]);
-        } finally {
-          await helper.close();
-        }
-      });
+              runs.push({ kind, text: text.slice(0, 30), x: box.x, y: box.y, w: box.width, h: box.height });
+            }
+            return { colours, discs, runs };
+          });
+          // Not vacuous: both colours are used on panels, among them the urgent card's "since" line.
+          expect(setup.runs.some((run) => run.text === "since")).toBe(true);
+          expect(setup.runs.filter((run) => run.kind === "subtle").length).toBeGreaterThan(8);
+          expect(setup.runs.filter((run) => run.kind === "muted").length).toBeGreaterThan(2);
+          await page.addStyleTag({ content: "*{color:transparent !important;text-shadow:none !important}" });
+          const shot = await page.screenshot({ animations: "disabled" });
+
+          const helper = await context.newPage();
+          try {
+            const result = await helper.evaluate(
+              async ({ b64, setup }) => {
+                const image = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+                const canvas = document.createElement("canvas");
+                canvas.width = image.width;
+                canvas.height = image.height;
+                const canvasContext = canvas.getContext("2d");
+                if (!canvasContext) throw new Error("no 2d canvas");
+                canvasContext.drawImage(image, 0, 0);
+                const linear = (value: number) => {
+                  const v = value / 255;
+                  return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+                };
+                const luminance = (r: number, g: number, b: number) =>
+                  0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+                const text = {
+                  subtle: luminance(setup.colours.subtle[0], setup.colours.subtle[1], setup.colours.subtle[2]),
+                  muted: luminance(setup.colours.muted[0], setup.colours.muted[1], setup.colours.muted[2]),
+                };
+                const worst = { subtle: 99, muted: 99 };
+                const failing: string[] = [];
+                let measured = 0;
+                for (const run of setup.runs) {
+                  // A run across a lens's rim (its outer 4px either side) is exempt.
+                  const crossesRim = setup.discs.some(([cx, cy, radius]) => {
+                    const nearest = Math.hypot(
+                      Math.max(run.x - cx, 0, cx - (run.x + run.w)),
+                      Math.max(run.y - cy, 0, cy - (run.y + run.h)),
+                    );
+                    const farthest = Math.max(
+                      ...[run.x, run.x + run.w].flatMap((px) =>
+                        [run.y, run.y + run.h].map((py) => Math.hypot(px - cx, py - cy)),
+                      ),
+                    );
+                    return nearest < radius + 4 && farthest > radius - 4;
+                  });
+                  if (crossesRim) continue;
+                  const { data } = canvasContext.getImageData(
+                    Math.floor(run.x),
+                    Math.floor(run.y),
+                    Math.ceil(run.w) + 1,
+                    Math.ceil(run.h) + 1,
+                  );
+                  let runWorst = 99;
+                  for (let at = 0; at < data.length; at += 4) {
+                    const back = luminance(data[at], data[at + 1], data[at + 2]);
+                    const t = text[run.kind];
+                    runWorst = Math.min(runWorst, (Math.max(back, t) + 0.05) / (Math.min(back, t) + 0.05));
+                  }
+                  measured++;
+                  worst[run.kind] = Math.min(worst[run.kind], runWorst);
+                  if (runWorst < 4.5) failing.push(`${run.kind} "${run.text}" ${runWorst.toFixed(2)}`);
+                }
+                return { measured, worst, failing };
+              },
+              { b64: Buffer.from(shot).toString("base64"), setup },
+            );
+            expect(result.measured).toBeGreaterThan(10);
+            expect(result.failing, `worst ratios ${JSON.stringify(result.worst)}`).toEqual([]);
+          } finally {
+            await helper.close();
+          }
+        });
+      }
     }
   }
 });
