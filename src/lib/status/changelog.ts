@@ -115,9 +115,10 @@ const NOTE_MAX_AREAS = 30;
 /** The longest text before " - " that still reads as an area ("dhcpv4-server", "ipv6 nd"), not a sentence. */
 const NOTE_AREA_CHARS = 24;
 
-// An area is a short run of the characters MikroTik's own area names use. The text it is tested on is at most
+// An area is a short run of the characters MikroTik's own area names use (no comma, which would make "bgp, ospf"
+// one area that the note then lists as two). The text it is tested on is at most
 // NOTE_AREA_CHARS long and the class is a single repeat, so the test is linear.
-const NOTE_AREA = /^[A-Za-z0-9][A-Za-z0-9 ._,/()+-]*$/;
+const NOTE_AREA = /^[A-Za-z0-9][A-Za-z0-9 ._/()+-]*$/;
 
 /** The area of a change line ("bgp" in "bgp - fixed a leak"), or undefined when the line does not start with one. */
 function changeArea(body: string): string | undefined {

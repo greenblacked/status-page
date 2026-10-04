@@ -182,6 +182,12 @@ describe("mikrotikChangelogNote", () => {
     assert.equal(note?.detail, "2 changes.");
   });
 
+  it("names no area for a line whose text before the dash has a comma", () => {
+    const note = noteOf(section("*) bgp, ospf - fixed x;", "*) wifi - fixed y;"), "7.2");
+    assert.equal(note?.text, "2 changes: wifi");
+    assert.equal(note?.detail, "2 changes in 1 area: wifi.");
+  });
+
   it("treats areas as the same ignoring case, and keeps the first spelling", () => {
     assert.equal(noteOf(section("*) BGP - a;", "*) bgp - b;", "*) Wifi - c;"), "7.2")?.text, "3 changes: BGP, Wifi");
   });
