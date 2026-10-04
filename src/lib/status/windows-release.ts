@@ -1,4 +1,6 @@
 import { clip } from "./bounds.ts";
+import type { ReleaseNote } from "./types.ts";
+import { vendorUrl } from "./vendor-url.ts";
 
 /**
  * The Windows 11 versions Microsoft lists on its release health page
@@ -51,25 +53,103 @@ function tidy(text: string): string {
 
 const SPACING_TAGS = new Set(["br", "p", "div", "li", "ul", "ol"]);
 
+/** A table cell: its text, and the `href` of the first link in it when it has one (not checked here). */
+export type TableCell = { text: string; href?: string };
+
+/** The longest start tag read attribute by attribute: attributes are short, and a longer tag ends at its first `>`. */
+const MAX_LINK_TAG_CHARS = 2000;
+const MAX_HREF_CHARS = 500;
+
+function isSpace(char: string | undefined): boolean {
+  return char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f";
+}
+
 /**
- * Every top-level `<table>` of an HTML page as rows of cell text, cut at
- * MAX_TABLES, MAX_ROWS, MAX_CELLS and MAX_CELL_CHARS. Not an HTML parser: it
- * knows `table`, `tr`, `td` and `th`, skips comments, `script` and `style`,
+ * A start tag read attribute by attribute: `name`, `name=value` with the value in double quotes, single quotes
+ * or bare. `from` is just past the tag name, `lt` the `<`. Returns where the tag really ends (its first `>`
+ * outside a quoted value, so a `>` inside a title does not end it) and, when `wantHref` (the tag is an `<a>`),
+ * the value of its `href` attribute, entity-decoded as a browser would. Only an attribute named `href` gives
+ * one, never text inside another attribute's value or a name such as `data-href`. The first `href` wins, as in
+ * a browser. Undefined when the tag is malformed (a stray quote, `<` or `=`, a quote that never closes, no `>`
+ * within MAX_LINK_TAG_CHARS of `lt`): the caller then ends the tag at its first `>` and takes no link from it.
+ * One forward pass over at most MAX_LINK_TAG_CHARS characters; every step moves forward and a quoted value is
+ * found with one indexOf, so nothing backtracks.
+ */
+function readStartTag(
+  html: string,
+  from: number,
+  lt: number,
+  wantHref: boolean,
+): { href?: string; end: number } | undefined {
+  const limit = Math.min(html.length, lt + MAX_LINK_TAG_CHARS);
+  let href: string | undefined;
+  let seenHref = false;
+  let at = from;
+  while (at < limit) {
+    const char = html[at];
+    if (isSpace(char) || char === "/") {
+      at += 1;
+      continue;
+    }
+    if (char === ">") return { ...(href === undefined ? {} : { href }), end: at };
+    if (char === "<" || char === '"' || char === "'" || char === "=") return undefined;
+    const nameStart = at;
+    while (at < limit && !isSpace(html[at]) && !"=/><\"'".includes(html[at])) at += 1;
+    const isHref = wantHref && at - nameStart === 4 && html.slice(nameStart, at).toLowerCase() === "href";
+    while (at < limit && isSpace(html[at])) at += 1;
+    let value: string | undefined;
+    if (html[at] === "=") {
+      at += 1;
+      while (at < limit && isSpace(html[at])) at += 1;
+      const quote = html[at];
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, at + 1);
+        if (close === -1 || close >= limit) return undefined;
+        value = html.slice(at + 1, close);
+        at = close + 1;
+      } else {
+        const valueStart = at;
+        while (at < limit && !isSpace(html[at]) && html[at] !== ">") {
+          if ("<\"'=`".includes(html[at])) return undefined;
+          at += 1;
+        }
+        if (at === valueStart || at >= limit) return undefined;
+        value = html.slice(valueStart, at);
+      }
+    }
+    if (isHref && !seenHref) {
+      seenHref = true;
+      const trimmed = decodeEntities(value ?? "").trim();
+      href = trimmed !== "" && trimmed.length <= MAX_HREF_CHARS ? trimmed : undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Every top-level `<table>` of an HTML page as rows of cells (text, and the link in the cell when it has one),
+ * cut at MAX_TABLES, MAX_ROWS, MAX_CELLS and MAX_CELL_CHARS. Not an HTML parser: it
+ * knows `table`, `tr`, `td`, `th` and `a`, skips comments, `script` and `style`,
  * and ignores a table nested inside another. Each tag is found with one
- * `indexOf("<")` and one `indexOf(">")` from where the last ended, so the
+ * `indexOf("<")` and one `indexOf(">")` from where the last ended (a start tag
+ * is then read attribute by attribute for where it really ends, see readStartTag), so the
  * whole page is read once; markup that never closes simply ends the scan.
  */
-export function readHtmlTables(html: string): string[][][] {
-  const tables: string[][][] = [];
-  let table: string[][] | null = null;
-  let row: string[] | null = null;
+export function readHtmlCells(html: string): TableCell[][][] {
+  const tables: TableCell[][][] = [];
+  let table: TableCell[][] | null = null;
+  let row: TableCell[] | null = null;
   let cell: string | null = null;
+  let href: string | undefined;
   let depth = 0;
   let pos = 0;
 
   const endCell = () => {
-    if (cell !== null && row !== null && row.length < MAX_CELLS) row.push(tidy(cell));
+    if (cell !== null && row !== null && row.length < MAX_CELLS) {
+      row.push(href === undefined ? { text: tidy(cell) } : { text: tidy(cell), href });
+    }
     cell = null;
+    href = undefined;
   };
   const endRow = () => {
     endCell();
@@ -96,9 +176,20 @@ export function readHtmlTables(html: string): string[][][] {
     pos = gt + 1;
 
     const closing = html[lt + 1] === "/";
-    let nameEnd = lt + (closing ? 2 : 1);
-    while (nameEnd < gt && nameEnd - lt < 12 && /[A-Za-z0-9]/.test(html[nameEnd])) nameEnd += 1;
-    const name = html.slice(lt + (closing ? 2 : 1), nameEnd).toLowerCase();
+    let anchorHref: string | undefined;
+    const nameStart = lt + (closing ? 2 : 1);
+    // The name runs to whitespace, "/" or ">", as in a browser, so "a-link" and "td:x" are not "a" and "td".
+    let nameEnd = nameStart;
+    while (nameEnd < gt && !isSpace(html[nameEnd]) && html[nameEnd] !== "/") nameEnd += 1;
+    const name = nameEnd - nameStart <= 12 ? html.slice(nameStart, nameEnd).toLowerCase() : "";
+    if (!closing && name !== "") {
+      // The tag may run past the first ">" (one inside a quoted value), so the scan says where it ends.
+      const tag = readStartTag(html, nameEnd, lt, name === "a");
+      if (tag !== undefined) {
+        pos = tag.end + 1;
+        anchorHref = tag.href;
+      }
+    }
 
     if (!closing && (name === "script" || name === "style")) {
       // Case-insensitive, and one forward scan from pos.
@@ -134,6 +225,8 @@ export function readHtmlTables(html: string): string[][][] {
           row ??= [];
           cell = "";
         }
+      } else if (name === "a" && !closing) {
+        if (cell !== null && href === undefined) href = anchorHref;
       } else if (cell !== null && SPACING_TAGS.has(name) && cell.length < MAX_CELL_CHARS * 4) {
         cell += " ";
       }
@@ -142,6 +235,16 @@ export function readHtmlTables(html: string): string[][][] {
   endRow();
   if (table !== null && table.length > 0 && tables.length < MAX_TABLES) tables.push(table);
   return tables;
+}
+
+/** The same tables as rows of cell text only. */
+export function readHtmlTables(html: string): string[][][] {
+  return textOfTables(readHtmlCells(html));
+}
+
+/** Rows of cell text out of rows of cells. */
+export function textOfTables(tables: TableCell[][][]): string[][][] {
+  return tables.map((table) => table.map((row) => row.map((cell) => cell.text)));
 }
 
 type Columns = { version: number; available: number; updated: number; build: number };
@@ -189,9 +292,9 @@ export function parseWindowsDate(text: string): string | undefined {
   return undefined;
 }
 
-/** A build such as "26300.1234" found in a cell, else undefined. */
+/** A build such as "26300.1234" found in a cell, else undefined. Digits, letters or dots glued on either side refuse it. */
 export function parseWindowsBuild(text: string): string | undefined {
-  const match = text.match(/(?:^|[^\d.])(\d{5}\.\d{1,6})(?![\d.])/);
+  const match = text.match(/(?:^|[^\dA-Za-z.])(\d{5}\.\d{1,6})(?![\dA-Za-z.])/);
   return match?.[1];
 }
 
@@ -238,4 +341,116 @@ export function windowsReleases(tables: string[][][]): WindowsRelease[] {
 /** When a version last shipped something: its latest update, or else its first availability. */
 export function windowsShippedAt(release: WindowsRelease): string {
   return release.updatedAt && release.updatedAt > release.availableAt ? release.updatedAt : release.availableAt;
+}
+
+/**
+ * The update types Microsoft's per-version history tables name, and what each is: "2026-09 B" is the month's
+ * security update (the second-Tuesday "B" release), "2026-09 D" its optional non-security preview, "2026-09 OOB"
+ * an out-of-band fix released outside that schedule. Any other value is not read: no note.
+ */
+const UPDATE_KINDS: Record<string, { label: string; meaning: string }> = {
+  B: { label: "Security update", meaning: "the monthly security update" },
+  D: { label: "Optional preview", meaning: "an optional, non-security preview of the next monthly update" },
+  OOB: { label: "Out-of-band fix", meaning: "an out-of-band fix, released outside the monthly schedule" },
+};
+
+/**
+ * "2026-09 B" out of a cell, with the kind it names; undefined for anything else. The month must be a real
+ * calendar month (01 to 12) of a year from 1985 on, so a vendor typo such as "2026-00 B" or "2026-99 D" gives
+ * no note rather than an impossible date. There is no upper bound on the year: the parser has no clock.
+ */
+export function parseWindowsUpdateType(text: string): { type: string; kind: keyof typeof UPDATE_KINDS } | undefined {
+  const value = text.trim();
+  const space = value.lastIndexOf(" ");
+  if (space < 0) return undefined;
+  const month = value.slice(0, space).trim();
+  const kind = value.slice(space + 1).toUpperCase();
+  if (!Object.hasOwn(UPDATE_KINDS, kind)) return undefined;
+  const digit = (at: number) => isDigit(month[at]);
+  if (month.length !== 7 || month[4] !== "-" || ![0, 1, 2, 3, 5, 6].every(digit)) return undefined;
+  const year = Number(month.slice(0, 4));
+  const monthNumber = Number(month.slice(5));
+  if (year < 1985 || monthNumber < 1 || monthNumber > 12) return undefined;
+  return { type: `${month} ${kind}`, kind };
+}
+
+/** An ASCII letter (the text is upper-cased first) or digit; false for undefined, i.e. outside the text. */
+function isAsciiAlnum(char: string | undefined): boolean {
+  return char !== undefined && (isDigit(char) || (char >= "A" && char <= "Z"));
+}
+
+/**
+ * "KB5043080" out of a cell: "KB" and six or seven digits, the first not 0 (real articles look like that), found
+ * with a forward scan. "KB" must not follow an ASCII letter or digit and the digits must not be followed by one
+ * either (more digits or letters run on), so "MKB1234", "KB0000", "KB12345678" and "KB5043080X" give none rather
+ * than a made-up reference. Only ASCII letters and digits count as run-on: punctuation, whitespace, an underscore
+ * and the end of the text may follow ("KB5043080.", "(KB5043080)", "KB5043080_"). A rejected token does not stop
+ * the scan, so a later valid "KB" in the same text is still found.
+ */
+export function parseWindowsKb(text: string): string | undefined {
+  const upper = text.toUpperCase();
+  for (let at = upper.indexOf("KB"); at !== -1; at = upper.indexOf("KB", at + 1)) {
+    if (isAsciiAlnum(upper[at - 1])) continue;
+    let end = at + 2;
+    while (end < upper.length && isDigit(upper[end])) end += 1;
+    const digits = end - at - 2;
+    if (isAsciiAlnum(upper[end])) continue;
+    if ((digits === 6 || digits === 7) && upper[at + 2] !== "0") return `KB${upper.slice(at + 2, end)}`;
+  }
+  return undefined;
+}
+
+const NO_LINK = "https://invalid.invalid/";
+
+/**
+ * A link from the history table's own cell, kept only when it is an https page on support.microsoft.com whose
+ * path has the KB's number as a whole segment, so the label never links to a different article.
+ */
+function supportLink(href: string | undefined, kb: string): string | undefined {
+  if (!href) return undefined;
+  // A relative link resolves against a host that is never allowed, so only an absolute https link on
+  // support.microsoft.com comes back; anything else gives the fallback, which reads as no link.
+  const url = vendorUrl(href, NO_LINK, ["support.microsoft.com"]);
+  if (url === NO_LINK) return undefined;
+  try {
+    return new URL(url).pathname.split("/").includes(kb.slice(2)) ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A note on one Windows build from the page's per-version history tables (the ones with an "Update type" and a
+ * "Build" column; the table of versions has neither): the row whose Build is `build` names its update type, and
+ * its KB article cell the article, linked only when the table itself links that very article. Undefined when no such table has
+ * the build, when its update type is not one of B, D or OOB, or when `build` is not given. The match is by build
+ * number alone, so no heading has to be associated with a table.
+ */
+export function windowsUpdateNote(tables: TableCell[][][], build: string | undefined): ReleaseNote | undefined {
+  if (!build) return undefined;
+  for (const table of tables) {
+    const headerAt = table.slice(0, 3).findIndex((row) => {
+      const lower = row.map((cell) => cell.text.toLowerCase());
+      return lower.some((cell) => cell.includes("update type")) && lower.some((cell) => cell.includes("build"));
+    });
+    if (headerAt === -1) continue;
+    const lower = table[headerAt].map((cell) => cell.text.toLowerCase());
+    const typeAt = lower.findIndex((cell) => cell.includes("update type"));
+    const buildAt = lower.findIndex((cell) => cell.includes("build"));
+    const kbAt = lower.findIndex((cell) => cell.includes("kb"));
+    for (const row of table.slice(headerAt + 1)) {
+      if (parseWindowsBuild(row[buildAt]?.text ?? "") !== build) continue;
+      const update = parseWindowsUpdateType(row[typeAt]?.text ?? "");
+      if (!update) return undefined;
+      const { label, meaning } = UPDATE_KINDS[update.kind];
+      const kb = kbAt >= 0 ? parseWindowsKb(row[kbAt]?.text ?? "") : undefined;
+      const url = kb && kbAt >= 0 ? supportLink(row[kbAt]?.href, kb) : undefined;
+      return {
+        text: label,
+        detail: `${update.type}: ${meaning}.`,
+        ...(kb ? { reference: { label: kb, ...(url ? { url } : {}) } } : {}),
+      };
+    }
+  }
+  return undefined;
 }

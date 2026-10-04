@@ -45,7 +45,14 @@ import type {
   UpcomingMaintenance,
 } from "./types.ts";
 import { hostOf, vendorUrl } from "./vendor-url.ts";
-import { readHtmlTables, WINDOWS_NAME, windowsReleases, windowsShippedAt } from "./windows-release.ts";
+import {
+  readHtmlCells,
+  textOfTables,
+  WINDOWS_NAME,
+  windowsReleases,
+  windowsShippedAt,
+  windowsUpdateNote,
+} from "./windows-release.ts";
 
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 // How far ahead of this server's clock a vendor's timestamp may be and still be read as now: their clock can
@@ -1991,7 +1998,8 @@ async function collectWindows(): Promise<ServiceSnapshot> {
     const { value, ms } = await timed(() =>
       fetchText(CATALOG_BY_ID.windows.sourceUrl, { headers: { Accept: "text/html, */*" } }),
     );
-    const releases = windowsReleases(readHtmlTables(value.body));
+    const tables = readHtmlCells(value.body);
+    const releases = windowsReleases(textOfTables(tables));
     if (!releases.length) throw new PayloadError("Windows release page had no readable version table.");
 
     // Only a new feature update counts as a new release: every serviced
@@ -2000,21 +2008,27 @@ async function collectWindows(): Promise<ServiceSnapshot> {
     // (meta.versions) names each feature version with a fixed word, as Android's does, so it changes only when
     // the page adds a version.
     // The table gives a day, not a moment, so the dates stay bare days (UTC) and the Details read them as such.
-    // It has no notes text: the Details link the page itself.
-    const components: ComponentHealth[] = releases.map((release) => ({
-      name: release.version,
-      health: isFreshRelease(release.availableAt) ? "maintenance" : "operational",
-      detail: [release.build, formatReleaseAge(windowsShippedAt(release))].filter(Boolean).join(" · "),
-      release: {
-        version: release.version,
-        ...(release.build ? { build: release.build } : {}),
-        releasedAt: release.availableAt.slice(0, 10),
-        ...(release.updatedAt && release.updatedAt > release.availableAt
-          ? { updatedAt: release.updatedAt.slice(0, 10) }
-          : {}),
-        url: CATALOG_BY_ID.windows.sourceUrl,
-      },
-    }));
+    // It has no notes text: the Details link the page itself. What it does give is the update type of a version's
+    // latest build, in the history tables below the versions table: that is the note, and a version whose build
+    // those tables do not list (or list with a type this does not know) has none.
+    const components: ComponentHealth[] = releases.map((release) => {
+      const note = windowsUpdateNote(tables, release.build);
+      return {
+        name: release.version,
+        health: isFreshRelease(release.availableAt) ? "maintenance" : "operational",
+        detail: [release.build, formatReleaseAge(windowsShippedAt(release))].filter(Boolean).join(" · "),
+        release: {
+          version: release.version,
+          ...(release.build ? { build: release.build } : {}),
+          releasedAt: release.availableAt.slice(0, 10),
+          ...(release.updatedAt && release.updatedAt > release.availableAt
+            ? { updatedAt: release.updatedAt.slice(0, 10) }
+            : {}),
+          url: CATALOG_BY_ID.windows.sourceUrl,
+          ...(note ? { note } : {}),
+        },
+      };
+    });
 
     const headline = releases[0];
     const title = `${WINDOWS_NAME} ${headline.version}${headline.build ? ` (build ${headline.build})` : ""}`;

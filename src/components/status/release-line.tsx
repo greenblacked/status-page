@@ -17,6 +17,20 @@ export function ReleaseItem({ children }: { children: ReactNode }) {
 }
 
 /**
+ * The line of a tracker's row that carries the short note on a release ("Stable · 23 changes: bgp, wifi, container
+ * +9 more · 2 important"), under the version line. It is clamped to one line on a desktop and two on a phone, ending
+ * in an ellipsis when the note is longer (the Details hold it in full), and breaks anywhere in a word too long for
+ * the line, so a note can never widen the row or grow it past that.
+ */
+export function ReleaseNote({ children }: { children: ReactNode }) {
+  return (
+    <div data-release-note className="line-clamp-2 text-caption text-subtle [overflow-wrap:anywhere] sm:line-clamp-1">
+      {children}
+    </div>
+  );
+}
+
+/**
  * The end of a release line: the last item with "Details ›" (and the Changed
  * tag, when there is one). It moves to the next line whole while it fits, and
  * wraps inside, between the item and the button, only when it is wider than the

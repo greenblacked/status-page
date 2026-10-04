@@ -261,7 +261,7 @@ async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
 export async function fetchText(
   url: string,
   init: RequestInit & { timeoutMs?: number; binary?: boolean; head?: boolean } = {},
-): Promise<{ body: string; bytes: ArrayBuffer; contentType: string; status: number }> {
+): Promise<{ body: string; bytes: ArrayBuffer; contentType: string; contentRange: string; status: number }> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, binary, head, ...rest } = init;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -290,6 +290,7 @@ export async function fetchText(
     // is aborted like one that never answers.
     const bytes = await readBodyCapped(response, url, MAX_BODY_BYTES, head ? HEAD_BYTES : undefined);
     const contentType = response.headers.get("content-type") ?? "";
+    const contentRange = response.headers.get("content-range") ?? "";
     let body: string;
     if (binary) {
       const bom = new Uint8Array(bytes.slice(0, 2));
@@ -303,7 +304,7 @@ export async function fetchText(
     } else {
       body = new TextDecoder("utf-8").decode(bytes);
     }
-    return { body, bytes, contentType, status: response.status };
+    return { body, bytes, contentType, contentRange, status: response.status };
   } catch (error) {
     if (error instanceof SourceError) throw error;
     if (error instanceof Error && error.name === "AbortError") {
