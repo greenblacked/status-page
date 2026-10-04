@@ -132,15 +132,17 @@ export function lowPass(prev: number, next: number, dtMs: number, tauMs = 120): 
 export const BASELINE_TAU_MS = 5000;
 /** The light must move this far (of its -1..1 range) before the page is touched again. */
 export const DEADBAND = 0.004;
-/** About 30 writes a second: each one restyles the board's panels and their children. */
+/** About 30 writes a second where a write restyles the board (the properties fallback). The animation path writes on every frame (see createWritePacer). */
 export const MIN_APPLY_INTERVAL_MS = 33;
-/** The slowest the light is written when frames are dropping: about 4 a second. */
+/** The slowest the light is written when frames are dropping (on the properties fallback): about 4 a second. */
 export const MAX_APPLY_INTERVAL_MS = 250;
 
 /** No display frames faster than this (120 Hz is 8.3 ms), so a glitch cannot set an impossible baseline. */
 const MIN_FRAME_MS = 8;
 /** A frame longer than this is counted as this long. */
 const MAX_FRAME_MS = 1000;
+/** A gap that has to widen starts from at least this, so a pacer that writes on every frame (a gap of 0) can back off. */
+const WIDEN_FROM_MS = 16;
 /** A frame this many times the device's own frame period is overrunning; this few, it is on time. */
 const OVERRUN_RATIO = 1.5;
 const ON_TIME_RATIO = 1.2;
@@ -153,10 +155,13 @@ export type WritePacer = {
 };
 
 /**
- * Sets the gap between writes from how the frames are going. Every write
- * re-styles the panels, which on a slow device takes longer than a frame; a
- * frame that overran means the writes are too frequent, so the gap widens, and
- * it narrows again once frames are on time.
+ * Sets the gap between writes from how the frames are going. A write costs
+ * the page work (a restyle, or the commit of the layers it slid), which on a slow
+ * device takes longer than a frame; a frame that overran means the writes are too
+ * frequent, so the gap widens, and it narrows again once frames are on time. It
+ * never goes under `minMs`: the default is the 33 ms of the fallback that restyles
+ * the board; a write that is cheap passes 0 and goes out on every frame until
+ * frames start to overrun.
  *
  * "Overran" is judged against the device's own frame period, not a fixed 60 Hz:
  * the baseline is the shortest frame seen, rising only very slowly so that a
@@ -167,8 +172,8 @@ export type WritePacer = {
  * of a run; start a new run (a new pacer, or `frame` after a rest) with no
  * long gap in it: the caller resets its frame clock when the loop rests.
  */
-export function createWritePacer(): WritePacer {
-  let interval = MIN_APPLY_INTERVAL_MS;
+export function createWritePacer(minMs = MIN_APPLY_INTERVAL_MS): WritePacer {
+  let interval = minMs;
   let period: number | null = null;
   return {
     interval: () => interval,
@@ -177,8 +182,13 @@ export function createWritePacer(): WritePacer {
       const ms = Math.min(MAX_FRAME_MS, Math.max(MIN_FRAME_MS, frameMs));
       // The shortest frame is the display's period. It creeps up so a lower refresh rate is followed in time.
       period = period === null || ms < period ? ms : period + (ms - period) * 0.005;
-      if (ms > period * OVERRUN_RATIO) interval = Math.min(MAX_APPLY_INTERVAL_MS, interval * 1.5);
-      else if (ms <= period * ON_TIME_RATIO) interval = Math.max(MIN_APPLY_INTERVAL_MS, interval * 0.9);
+      if (ms > period * OVERRUN_RATIO) {
+        interval = Math.min(MAX_APPLY_INTERVAL_MS, Math.max(interval, WIDEN_FROM_MS) * 1.5);
+      } else if (ms <= period * ON_TIME_RATIO) {
+        // Under a frame's length a gap means nothing: back to the minimum.
+        const narrowed = interval * 0.9;
+        interval = narrowed < MIN_FRAME_MS ? minMs : Math.max(minMs, narrowed);
+      }
     },
   };
 }

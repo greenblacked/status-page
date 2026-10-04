@@ -53,7 +53,11 @@ const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-t
  * caught up, so React never re-renders per reading. It is not free while the
  * device is held: iOS fires deviceorientation continuously (about 60 a second,
  * still or not), and sensor noise keeps moving the light a little. The
- * deadband and the frame cap keep the writes low then, but not at zero.
+ * deadband keeps the writes down then, but not at zero. On the animation path
+ * (see tilt-light-sink.ts) a write goes out on every frame the light has moved,
+ * so the glow follows the display's own rate, and only backs off while frames
+ * are dropping; on the fallback, where each write restyles the board, they are
+ * capped at about 30 a second, and back off too.
  */
 export function useTiltLighting({
   paused,
@@ -117,7 +121,11 @@ export function useTiltLighting({
     let cancelled = false;
     let gotReading = false;
     let driving = false;
-    const pacer = createWritePacer();
+    // Two gaps are kept, for the two ways the light is written (see tilt-light-sink.ts): on every frame
+    // while it only sets animations' times, and about 30 a second where each write restyles the board.
+    // Both widen when frames overrun and narrow again when they are on time.
+    const pacerAnimated = createWritePacer(0);
+    const pacerRestyle = createWritePacer();
     let lastFrame = 0;
 
     const controller = createTiltController({
@@ -130,14 +138,17 @@ export function useTiltLighting({
         light.set(Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000);
       },
       now: () => performance.now(),
-      minIntervalMs: () => pacer.interval(),
+      minIntervalMs: () => (light.animated() ? pacerAnimated.interval() : pacerRestyle.interval()),
     });
 
     const tick = (time: number) => {
       frame = 0;
       if (!latest) return;
       // Frames that overrun mean the writes cost more than the device can spare: write less often.
-      if (lastFrame) pacer.frame(time - lastFrame);
+      if (lastFrame) {
+        pacerAnimated.frame(time - lastFrame);
+        pacerRestyle.frame(time - lastFrame);
+      }
       lastFrame = time;
       const result = controller.sample(latest.beta, latest.gamma, latest.angle, time);
       if (result.settled) lastFrame = 0;

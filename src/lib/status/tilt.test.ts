@@ -429,6 +429,21 @@ describe("createWritePacer", () => {
     expect(pacer.interval()).toBe(MAX_APPLY_INTERVAL_MS);
   });
 
+  it("with a floor of 0 writes on every frame, backs off when frames overrun and comes back to 0", () => {
+    const pacer = createWritePacer(0);
+    expect(run(pacer, 16.7, 60)).toBe(0);
+    // A dropped frame widens a gap that was 0: it starts from a frame's length, not from nothing.
+    pacer.frame(50);
+    expect(pacer.interval()).toBeGreaterThanOrEqual(16);
+    expect(run(pacer, 100, 20)).toBe(MAX_APPLY_INTERVAL_MS);
+    expect(run(pacer, 16.7, 200)).toBe(0);
+  });
+
+  it("with a floor of 0 does not back off on a steady 30 Hz or 120 Hz screen", () => {
+    expect(run(createWritePacer(0), 33.3, 500)).toBe(0);
+    expect(run(createWritePacer(0), 8.33, 500)).toBe(0);
+  });
+
   it("ignores a time that is not a duration", () => {
     const pacer = createWritePacer();
     run(pacer, 16.7, 5);
