@@ -3,8 +3,9 @@ import { fixtureBoard, serveBoard } from "./fixture-board";
 import { expect, test } from "./test";
 
 // What a reader of an iPhone sees as "the bar jumps while scrolling": the bar itself is fixed and never moves, the
-// page around it does. These tests drive real touch gestures (DevTools touch events, which the browser turns into
-// a scroll like a finger does) and log the reader's card on every frame.
+// page around it does. These tests move a reader over the board and log the reader's card on every frame: a real
+// touch drag (DevTools touch events, which the browser turns into a scroll like a finger does) on Chromium, touch
+// events made in the page with the page scrolled a step at a time on every touch project, and scroll steps alone.
 
 const SERVICES = 20;
 const SLOT_MS = 120_000;
@@ -113,8 +114,8 @@ type Pad = Window & {
 /**
  * A finger that every engine can have: the touch events the page listens to (touchstart, touchmove, touchend), made
  * in the page and sent to the card under the finger, and the page scrolled with it a step at a time, as the browser
- * would. A real TouchEvent where the engine has the constructors (iOS, and Chromium with touch emulation); where it
- * has not, a plain event with the same `touches`, which is all the page reads of it.
+ * would. A real TouchEvent where the engine has the constructors (Chromium with touch emulation); where it has not
+ * (WebKit has no `Touch` constructor), a plain event with the same `touches`, which is all the page reads of it.
  */
 class SyntheticFinger implements Reader {
   private y = 0;
@@ -357,7 +358,7 @@ async function acrossTheTurn(
   const shape = reader instanceof SyntheticFinger ? `; events made as ${reader.shape}` : "";
   testInfo.annotations.push({
     type: "numbers",
-    description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows while touching ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after the lift${shape}`,
+    description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows ${touching ? "while touching" : "during the scroll"} ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after ${touching ? "the lift" : "the last scroll"}${shape}`,
   });
   console.log(testInfo.annotations.at(-1)?.description);
   if (process.env.SCROLL_JUMP_TRACE && landed) {
