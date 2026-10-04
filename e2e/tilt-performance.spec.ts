@@ -285,30 +285,79 @@ function medianRow(rows: Row[]): Row {
   };
 }
 
+/**
+ * Sweeps the page at each throttle rate and returns the median of the timed runs, with the trace counts.
+ * `label` names the tables; the console gets every run, the attachment gets the medians.
+ */
+async function collect(page: Page, label: string, runs: number): Promise<Row[]> {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Performance.enable");
+  const medians: Row[] = [];
+  try {
+    for (const rate of [4, 6]) {
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate });
+      await sweep(page, WARMUP_MS);
+      const each: Row[] = [];
+      for (let run = 0; run < runs; run++) each.push(await measure(page, cdp, rate));
+      const row = medianRow(each);
+      const traced = await traceCounts(page, cdp);
+      row.paints = traced.paints;
+      row.rasters = traced.rasters;
+      medians.push(row);
+      console.log(table(`${label}, runs at ${rate}x`, each));
+    }
+  } finally {
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+  }
+  return medians;
+}
+
+async function openBoard(page: Page): Promise<void> {
+  await page.goto("/");
+  await expect(page.locator('article[id^="service-"]')).toHaveCount(SERVICES);
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+}
+
 test.describe("tilt performance", () => {
   test.skip(({ hasTouch }) => !hasTouch, "tilt lighting is for touch devices");
   test.skip(({ browserName }) => browserName !== "chromium", "needs the DevTools protocol");
 
-  test.beforeEach(async ({ page }) => {
-    await installSpy(page);
-    await page.addInitScript(
-      ([tiltKey]) => {
+  const seed = (page: Page, tilt: "on" | "off") =>
+    page.addInitScript(
+      ([tiltKey, tilt]) => {
         try {
           localStorage.setItem("status-bar:background", "glass");
-          localStorage.setItem(tiltKey, "on");
+          localStorage.setItem(tiltKey, tilt);
         } catch {
           // Storage can refuse; the test then fails at the data-tilt check below.
         }
       },
-      [TILT_STORAGE_KEY],
+      [TILT_STORAGE_KEY, tilt],
     );
+
+  test.beforeEach(async ({ page }) => {
+    await installSpy(page);
+  });
+
+  // The same sweep with Tilt lighting off: the readings go to nobody. What it costs is the floor
+  // (the timer, the frame loop and the page's own work), which the lit run cannot get under.
+  test("floor: the same sweep with the light off", async ({ page }, testInfo) => {
+    test.setTimeout(300_000);
+    await seed(page, "off");
+    await openBoard(page);
+    await expect(page.locator("html")).not.toHaveAttribute("data-tilt");
+    const report = table(
+      `${testInfo.project.name}, light off, median of ${RUNS} runs`,
+      await collect(page, "light off", RUNS),
+    );
+    console.log(report);
+    await testInfo.attach("tilt-performance-floor", { body: report, contentType: "text/plain" });
   });
 
   test("lights the glass smoothly on a throttled CPU", async ({ page }, testInfo) => {
     test.setTimeout(300_000);
-    await page.goto("/");
-    await expect(page.locator('article[id^="service-"]')).toHaveCount(SERVICES);
-    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    await seed(page, "on");
+    await openBoard(page);
     // The first reading turns the light on; the page forgets a saved choice that gets none in 3 s.
     await expect
       .poll(
@@ -326,25 +375,7 @@ test.describe("tilt performance", () => {
       )
       .toBe("on");
 
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Performance.enable");
-    const medians: Row[] = [];
-    try {
-      for (const rate of [4, 6]) {
-        await cdp.send("Emulation.setCPUThrottlingRate", { rate });
-        await sweep(page, WARMUP_MS);
-        const runs: Row[] = [];
-        for (let run = 0; run < RUNS; run++) runs.push(await measure(page, cdp, rate));
-        const row = medianRow(runs);
-        const traced = await traceCounts(page, cdp);
-        row.paints = traced.paints;
-        row.rasters = traced.rasters;
-        medians.push(row);
-        console.log(table(`${testInfo.project.name}, runs at ${rate}x`, runs));
-      }
-    } finally {
-      await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
-    }
+    const medians = await collect(page, testInfo.project.name, RUNS);
     const report = table(`${testInfo.project.name}, median of ${RUNS} runs`, medians);
     console.log(report);
     await testInfo.attach("tilt-performance", { body: report, contentType: "text/plain" });
