@@ -1,4 +1,4 @@
-import { clip, MAX_NOTE_CHARS, MAX_NOTE_LINES } from "./bounds.ts";
+import { clip, MAX_NOTE_CHARS, MAX_NOTE_LINES, MAX_TEXT_CHARS } from "./bounds.ts";
 import type { ReleaseNote } from "./types.ts";
 
 export type ChannelRelease = {
@@ -201,13 +201,25 @@ export function mikrotikChangelogNote(
   let row = count;
   if (total > 0) row += `: ${areas.slice(0, NOTE_ROW_AREAS).join(", ")}${more > 0 ? ` +${more} more` : ""}`;
   if (flagged > 0) row += ` · ${flagged} important`;
-  let detail =
-    total > 0
-      ? `${count} in ${plural(total, "area", "areas")}: ${areas.join(", ")}${total > areas.length ? ` and ${total - areas.length} more` : ""}.`
-      : `${count}.`;
+  // The Details hold at most MAX_TEXT_CHARS, and a longer text is cut at its end, which would lose the "and N more"
+  // and the important-lines sentence. So the end is written first and the areas are named only as far as the
+  // whole fits, with "and N more" counting every area left unnamed. (The row is short by construction: three
+  // areas of at most NOTE_AREA_CHARS and three counts, far under MAX_NOTE_CHARS.)
   // The Details list at most MAX_NOTE_LINES important lines; say so when the release has more.
-  if (flagged > important.length)
-    detail += ` ${flagged} are marked important; the first ${important.length} are listed.`;
+  const importantSentence =
+    flagged > important.length ? ` ${flagged} are marked important; the first ${important.length} are listed.` : "";
+  const detailWith = (named: number) => {
+    if (total === 0) return `${count}.${importantSentence}`;
+    const head = `${count} in ${plural(total, "area", "areas")}`;
+    if (named === 0) return `${head}.${importantSentence}`;
+    const left = total - named;
+    return `${head}: ${areas.slice(0, named).join(", ")}${left > 0 ? ` and ${left} more` : ""}.${importantSentence}`;
+  };
+  // The most areas named that still fit; not "stop at the first that does not", because naming the last area
+  // drops the "and N more" and can fit where the one before it did not.
+  let named = areas.length;
+  while (named > 0 && detailWith(named).length > MAX_TEXT_CHARS) named -= 1;
+  const detail = detailWith(named);
   return { text: row, detail, ...(important.length > 0 ? { important } : {}) };
 }
 

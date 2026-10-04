@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "vitest";
+import { boundSnapshot, MAX_NOTE_CHARS, MAX_TEXT_CHARS } from "./bounds.ts";
 import {
   appleOsReleases,
   describeVersionChanges,
@@ -196,6 +197,58 @@ describe("mikrotikChangelogNote", () => {
     assert.equal(note?.detail?.includes("area29 and 10 more."), true);
     assert.equal(note?.detail?.includes("area30"), false);
     assert.equal(note?.detail?.endsWith("40 are marked important; the first 5 are listed."), true);
+  });
+
+  it("keeps the Details within the text limit, naming fewer areas and counting the rest, with the end intact", () => {
+    // 35 distinct areas of 24 characters: thirty of them named would be about 780 characters.
+    const area = (at: number) => `${"x".repeat(21)}${String(at).padStart(3, "0")}`;
+    const lines = Array.from({ length: 35 }, (_, at) => `${at < 7 ? "!" : "*"}) ${area(at)} - change ${at};`);
+    const note = noteOf(section(...lines), "7.2");
+    const detail = note?.detail ?? "";
+    assert.equal(detail.length <= MAX_TEXT_CHARS, true);
+    assert.equal(detail.endsWith(" 7 are marked important; the first 5 are listed."), true);
+    const match = /^35 changes in 35 areas: (.+) and (\d+) more\. 7 are marked/.exec(detail);
+    assert.ok(match);
+    const named = match[1].split(", ");
+    assert.deepEqual(
+      named,
+      Array.from({ length: named.length }, (_, at) => area(at)),
+    );
+    assert.equal(named.length > 0 && named.length < 30, true);
+    assert.equal(Number(match[2]), 35 - named.length);
+    // One more name would not have fit.
+    const next = `35 changes in 35 areas: ${[...named, area(named.length)].join(", ")} and ${35 - named.length - 1} more. 7 are marked important; the first 5 are listed.`;
+    assert.equal(next.length > MAX_TEXT_CHARS, true);
+    // The row is within its own limit, and bounding the snapshot changes nothing.
+    assert.equal((note?.text.length ?? 0) <= MAX_NOTE_CHARS, true);
+    const base = {
+      id: "mikrotik",
+      name: "MikroTik",
+      shortName: "MikroTik",
+      category: "network",
+      health: "operational",
+      summary: "ok",
+      sourceName: "x",
+      sourceUrl: "https://example.com/",
+      checkedAt: "2026-09-20T00:00:00.000Z",
+      latencyMs: 1,
+      incidents: [],
+    };
+    const snapshot = {
+      ...base,
+      components: [{ name: "n", health: "operational", release: { version: "7.2", note } }],
+    } as never;
+    assert.deepEqual(boundSnapshot(snapshot), snapshot);
+  });
+
+  it("counts every unnamed area in the Details when several are too long to name", () => {
+    const area = (at: number) => `${"y".repeat(21)}${String(at).padStart(3, "0")}`;
+    const lines = Array.from({ length: 30 }, (_, at) => `*) ${area(at)} - change ${at};`);
+    const detail = noteOf(section(...lines), "7.2")?.detail ?? "";
+    assert.equal(detail.length <= MAX_TEXT_CHARS, true);
+    const match = /^30 changes in 30 areas: (.+) and (\d+) more\.$/.exec(detail);
+    assert.ok(match);
+    assert.equal(Number(match[2]), 30 - match[1].split(", ").length);
   });
 
   it("counts the areas past thirty exactly, not as the thirty it names", () => {
