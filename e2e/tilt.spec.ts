@@ -533,7 +533,7 @@ test.describe("on a touch device", () => {
     expect(light.sheen).toContain("125deg");
     expect(light.sheenMoves).not.toBe("none");
     expect(light.glint).not.toBe("none");
-    expect(light.glintTracks).toBe(1);
+    expect(light.glintTracks, "the glint has an animation for each axis").toBe(2);
     expect(light.glintImage).toContain("radial-gradient");
     // The glint's layer is the same fixed size whatever the panel is, not a multiple of it.
     expect(light.glintWidth).toBe("432px");
