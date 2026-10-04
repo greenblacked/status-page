@@ -32,8 +32,17 @@ type Problem = "denied" | "no-sensor" | "needs-permission" | "no-readings" | "no
 /** iOS 13+ only: motion is behind a permission that a tap has to ask for. */
 type MotionPermissionApi = { requestPermission?: () => Promise<"granted" | "denied"> };
 
-/** Reduce Motion, or the system's Reduce Transparency where a browser passes it on. */
-const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-transparency: reduce)"];
+/**
+ * Reduce Motion, or the system's Reduce Transparency where a browser passes it on. Increase
+ * Contrast and forced colours too: the stylesheet makes the sheen and the glint transparent
+ * there, so there is nothing to move and the light would only cost layers and commits.
+ */
+const REDUCED_QUERIES = [
+  "(prefers-reduced-motion: reduce)",
+  "(prefers-reduced-transparency: reduce)",
+  "(prefers-contrast: more)",
+  "(forced-colors: active)",
+];
 
 /**
  * Tilt lighting: on a touch device with motion sensors, the light on the
@@ -45,8 +54,8 @@ const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-t
  * `supported` is worked out after hydration, so the server and the first
  * client render agree that there is nothing to show. `paused` is Reduce
  * glass, or the Quiet background (the light only draws on Glass and Full);
- * Reduce Motion is watched here. While paused nothing listens and
- * nothing is written.
+ * Reduce Motion, Increase Contrast and forced colours are watched here.
+ * While paused nothing listens and nothing is written.
  *
  * A motion event only records the latest reading. One animation frame loop
  * turns it into the two properties, and stops as soon as the light has

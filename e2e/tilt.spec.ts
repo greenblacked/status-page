@@ -918,6 +918,23 @@ test.describe("on a touch device", () => {
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
   });
 
+  test("stands down under Increase Contrast, where the light is transparent", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+
+    await page.emulateMedia({ contrast: "more" });
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightHolders(page)).toBe(0);
+
+    await page.emulateMedia({ contrast: "no-preference" });
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+  });
+
   test("falls back to custom properties on one element where pseudo-elements cannot be animated", async ({ page }) => {
     // An engine without KeyframeEffect: the sink writes --light-x and --light-y on <main> instead.
     await page.addInitScript(() => {
