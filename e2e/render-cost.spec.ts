@@ -88,7 +88,8 @@ async function openSteady(page: Page): Promise<void> {
   await serveBoard(page, () => board);
   await page.goto("/");
   await expect(page.locator('article[id^="service-"]')).toHaveCount(SERVICES);
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  // data-hydrated waits for the saved checks, a few renders after the first: 15 s on a loaded runner, as in board.spec.ts.
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
   const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
   await refresh.click();
   await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();

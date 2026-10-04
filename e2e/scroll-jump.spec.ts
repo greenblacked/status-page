@@ -11,8 +11,9 @@ const SLOT_MS = 120_000;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const feedRows = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] li');
 
+/** As in board.spec.ts: data-hydrated waits for the saved checks, a few renders after the first, so 15 s on a loaded runner. */
 async function hydrated(page: Page): Promise<void> {
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
 type Frame = { t: number; tops: Record<string, number>; y: number; rows: number; by: number };
