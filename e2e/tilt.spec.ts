@@ -1217,12 +1217,18 @@ test.describe("on a touch device", () => {
     await expect
       .poll(async () => Number(await lightVar(page, "--light-y")), { timeout: 5000 })
       .toBeGreaterThan(Number(frozen) + 0.5);
-    // That was the light as it is now and not a stale one: more flat readings hardly move it (a catch-up
-    // that wrote the light as it was last written, or half way, would jump to where the readings put it).
-    const caught = Number(await lightVar(page, "--light-y"));
+    // That was the light as it is now and not a stale one. Held flat, the target is exactly the middle and
+    // the resting pose only decays towards it, so the light is past the middle on the far side from where
+    // it froze and more flat readings can only bring it closer to the middle, never back out, whatever the
+    // time they take. A catch-up that wrote the light as it was last written is caught by the check above;
+    // one that stopped half way (short of the middle) is jumped past what it wrote by the readings.
+    const caught = Number(await lightVar(page, "--light-y")) * LIGHT_SIGN;
+    expect(caught).toBeGreaterThanOrEqual(0);
     await flat(10);
     await page.waitForTimeout(100);
-    expect(Math.abs(Number(await lightVar(page, "--light-y")) - caught)).toBeLessThan(0.08);
+    const after = Number(await lightVar(page, "--light-y")) * LIGHT_SIGN;
+    expect(after).toBeGreaterThanOrEqual(0);
+    expect(after).toBeLessThanOrEqual(caught + 0.001);
     // What is drawn catches up too: the glint stands where the light puts it.
     await expect
       .poll(async () => {
