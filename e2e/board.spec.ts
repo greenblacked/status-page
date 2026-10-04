@@ -480,9 +480,13 @@ test("Quiet, the default background, blurs no panel and no control, only the flo
   const controls = await backdropFilters(page, CONTROLS);
   expect(controls.length).toBeGreaterThan(0);
   expect(controls.filter((value) => value !== "none")).toEqual([]);
-  // The bar is the one translucent layer: hidden it holds no blur, up it blurs.
+  // The bar is the one translucent layer: up it blurs. Hidden it holds no blur from 64rem; below that it keeps its
+  // layer, and the test after this one holds it to that.
   const bar = page.locator('section[aria-label="Board controls"]');
-  expect((await backdropFilters(page, BARS)).filter((value) => value !== "none")).toEqual([]);
+  const wide = (page.viewportSize()?.width ?? 0) >= 1024;
+  const hidden = (await backdropFilters(page, BARS)).filter((value) => value !== "none");
+  if (wide) expect(hidden).toEqual([]);
+  else expect(hidden.some((value) => value.includes("blur("))).toBe(true);
   await page.locator("footer").scrollIntoViewIfNeeded();
   await expect(bar).toHaveAttribute("data-shown", "true");
   expect((await backdropFilters(page, BARS)).some((value) => value.includes("blur("))).toBe(true);

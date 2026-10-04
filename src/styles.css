@@ -751,6 +751,34 @@
 }
 
 /*
+  Below 64rem the bar is a fixed layer that is shown and hidden in the middle of a scroll. Dropping its blur and its
+  visibility on hide and building both again on show made the compositor create and destroy the layer during the very
+  scroll that moves it, which on iOS is a flash and a one-frame offset of a fixed layer. So the layer stays: hidden,
+  the bar keeps its blur and its visibility and fades out by opacity and transform alone, and what keeps it from being
+  used is not that it is gone but that it is inert (compact-header.tsx: no focus, no click, out of the accessibility
+  tree) and takes no pointer events. The layer is promoted for good, for the two properties it animates.
+*/
+@media (width < 64rem) {
+  .compact-header {
+    will-change: opacity, transform;
+  }
+
+  .compact-header[data-shown="false"] {
+    visibility: visible;
+    pointer-events: none;
+    -webkit-backdrop-filter: var(--bar-filter);
+    backdrop-filter: var(--bar-filter);
+    transition:
+      opacity var(--t-reveal) var(--ease-out),
+      transform var(--t-reveal) var(--ease-out);
+  }
+
+  .compact-header[data-shown="false"] * {
+    pointer-events: none;
+  }
+}
+
+/*
   The board body holds the bar, the search field, the filter chips and the
   cards. It is at least one screen tall, so a search with few or no results
   cannot shorten the page under the bar's field and scroll it out of use. Below 64rem the bar's field can

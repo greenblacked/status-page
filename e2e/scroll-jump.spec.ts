@@ -262,3 +262,84 @@ test("floating bar: Recent changes holds the height of its first row on a first 
   console.log(`first visit: reserved ${before} px, drawn ${after} px`);
   expect(Math.abs(before - after), `reserved ${before} px, drawn ${after} px`).toBeLessThanOrEqual(1);
 });
+
+test("floating bar: hidden below 64rem it keeps its blur layer, and can be neither focused nor clicked", async ({
+  page,
+}) => {
+  test.skip((page.viewportSize()?.width ?? 0) >= 1024, "from 64rem the bar is sticky and drops its blur when hidden");
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const bar = page.locator('section[aria-label="Board controls"]');
+  await expect(bar).toHaveAttribute("data-shown", "false");
+  const look = () =>
+    bar.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        blur: style.backdropFilter,
+        opacity: style.opacity,
+        visibility: style.visibility,
+        pointerEvents: style.pointerEvents,
+        willChange: style.willChange,
+        inert: element.hasAttribute("inert"),
+        ariaHidden: element.getAttribute("aria-hidden"),
+      };
+    });
+  const hidden = await look();
+  expect(hidden.blur, "the hidden bar keeps its blur").toContain("blur(");
+  expect(hidden.opacity).toBe("0");
+  expect(hidden.visibility, "it is hidden by opacity, not visibility").toBe("visible");
+  expect(hidden.pointerEvents).toBe("none");
+  expect(hidden.willChange).toContain("opacity");
+  expect(hidden.willChange).toContain("transform");
+  expect(hidden.inert).toBe(true);
+  expect(hidden.ariaHidden).toBe("true");
+
+  // Not focusable: focus() on its Refresh button does nothing, and Tab from the top never lands in it.
+  const focused = await bar.evaluate((element) => {
+    const button = element.querySelector<HTMLElement>('button[aria-label="Refresh status now"]');
+    button?.focus();
+    return element.contains(document.activeElement);
+  });
+  expect(focused, "focus does not enter a hidden bar").toBe(false);
+  for (let press = 0; press < 12; press++) {
+    await page.keyboard.press("Tab");
+    expect(await bar.evaluate((element) => element.contains(document.activeElement))).toBe(false);
+  }
+
+  // Not clickable: what is at the middle of its Refresh button is the page behind the bar.
+  const covered = await bar.evaluate((element) => {
+    const button = element.querySelector<HTMLElement>('button[aria-label="Refresh status now"]');
+    const box = button?.getBoundingClientRect();
+    if (!box) return null;
+    return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+  });
+  expect(covered, "a click at the hidden bar's button reaches the page").toBe(false);
+
+  // And the layer is the same layer through a show and a hide: no frame of either is without the blur.
+  await page.evaluate(() => {
+    const tracked = window as Window & { __blurless?: number; __watching?: boolean };
+    tracked.__blurless = 0;
+    tracked.__watching = true;
+    const bar = document.querySelector('section[aria-label="Board controls"]');
+    const frame = () => {
+      if (!tracked.__watching) return;
+      if (bar && !getComputedStyle(bar).backdropFilter.includes("blur("))
+        tracked.__blurless = (tracked.__blurless ?? 0) + 1;
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
+  await page.locator("footer").scrollIntoViewIfNeeded();
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  await expect.poll(async () => (await look()).opacity).toBe("1");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(bar).toHaveAttribute("data-shown", "false");
+  await expect.poll(async () => (await look()).opacity).toBe("0");
+  const blurless = await page.evaluate(() => {
+    const tracked = window as Window & { __blurless?: number; __watching?: boolean };
+    tracked.__watching = false;
+    return tracked.__blurless;
+  });
+  expect(blurless, "frames without the blur across a show and a hide").toBe(0);
+});
