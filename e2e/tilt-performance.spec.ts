@@ -33,6 +33,13 @@ const RUNS = Number(process.env.TILT_PERF_RUNS) || 3;
 const SWEEP_MS = 3000;
 const WARMUP_MS = 1000;
 const SERVICES = 20;
+// What the wandering card light may add to the floor's counts (see its test): a repaint on every frame would add 180 or more in
+// the traced 3 s, and the counts themselves wander by a dozen on a busy machine. And the rule that holds the period dial still.
+const STILL_DIAL = ".period-sweep, .period-hand { animation: none !important; }";
+const PAINT_SLACK = 40;
+const RASTER_SLACK = 40;
+// Elements the style system may revisit per frame for each wander animation that is running (about 4 measured).
+const RESTYLE_PER_ANIMATION = 8;
 
 type SweepResult = {
   /** Gaps between consecutive animation frames, in ms. */
@@ -407,17 +414,17 @@ const holders = (page: Page) => page.evaluate(() => document.querySelectorAll('[
  * page; Chromium 141 has no such call). The test grants motion to its context (see grantMotion), as a
  * visitor who allowed it would have it.
  */
-const seed = (page: Page, tilt: "on" | "off") =>
+const seed = (page: Page, tilt: "on" | "off", background: "glass" | "full" = "glass") =>
   page.addInitScript(
-    ([tiltKey, tilt]) => {
+    ([tiltKey, tilt, background]) => {
       try {
-        localStorage.setItem("status-bar:background", "glass");
+        localStorage.setItem("status-bar:background", background);
         localStorage.setItem(tiltKey, tilt);
       } catch {
         // Storage can refuse; the test then fails at the data-tilt check.
       }
     },
-    [TILT_STORAGE_KEY, tilt],
+    [TILT_STORAGE_KEY, tilt, background],
   );
 
 /** Motion allowed for the pages of a context, which is what the browser's own permission call then answers. */
@@ -518,5 +525,95 @@ test.describe("tilt performance", () => {
       return;
     }
     expect(medians[0].updatesPerFrame, "light updates per animation frame at 1x").toBeGreaterThanOrEqual(0.65);
+  });
+
+  // The card light that wanders by itself in Full (src/background.css, light-wander-*): on a phone or tablet
+  // it now runs with Tilt lighting off, so it must not bring the lag back. The floor is the same Full page
+  // with only the wander's animation switched off (a style rule added by the test), so the difference
+  // between the two runs is the wandering light and nothing else. Its keyframes are transforms, which the
+  // compositor moves: the page must not repaint or rasterise for it, so the traced paints and raster tasks
+  // stay at the floor's. Style work is not zero, and cannot be: while the page produces frames (this one
+  // does, through the sweep's own animation frame loop, as scrolling or any script would), Chromium samples
+  // every running CSS animation on the main thread once per frame, which revisits the animated
+  // pseudo-element (a single animated <div> does the same; measured here: about 4 elements per animated card per
+  // frame, against nothing without the animation). What is asserted is that this stays that: no more than
+  // one style recalculation a frame, and a few elements per running animation per frame, which is
+  // far from restyling the board's panels with their rows. Both runs stop the period dial's sweep
+  // (.period-dial): it animates a registered property, so by itself it costs a recalculation on nearly
+  // every frame, which would hide the wander's share. The counts do not move with how busy the machine is;
+  // timings are in the table, not asserted.
+  test("lets the card light wander on a throttled CPU without repainting or restyling", async ({
+    page,
+    context,
+  }, testInfo) => {
+    test.setTimeout(300_000);
+    const running = (target: Page) =>
+      target.evaluate(
+        () =>
+          document
+            .getAnimations()
+            .filter(
+              (animation) =>
+                animation instanceof CSSAnimation &&
+                animation.animationName.startsWith("light-wander") &&
+                animation.playState === "running",
+            ).length,
+      );
+    await grantMotion(context);
+    await installSpy(page);
+    await seed(page, "off", "full");
+    await openBoard(page);
+    await page.addStyleTag({ content: `${STILL_DIAL} .spotlight::after { animation: none !important; }` });
+    await expect(page.locator("html")).not.toHaveAttribute("data-tilt");
+    expect(await running(page), "wander animations with the wander switched off").toBe(0);
+    const floor = await collect(page, "card light off", RUNS);
+    console.log(table(`${testInfo.project.name}, card light off, median of ${RUNS} runs`, floor));
+    await page.close();
+
+    const lit = await context.newPage();
+    await installSpy(lit);
+    await seed(lit, "off", "full");
+    await openBoard(lit);
+    await lit.addStyleTag({ content: STILL_DIAL });
+    await expect(lit.locator("html")).toHaveAttribute("data-background", "full");
+    await expect(lit.locator("html")).not.toHaveAttribute("data-tilt");
+    await expect.poll(() => running(lit), { message: "wander animations running on every card" }).toBeGreaterThan(5);
+    const medians = await collect(lit, `${testInfo.project.name}, card light wandering`, RUNS);
+    const report = table(`${testInfo.project.name}, card light wandering, median of ${RUNS} runs`, medians);
+    console.log(report);
+    await testInfo.attach("wander-performance", { body: report, contentType: "text/plain" });
+    // Still wandering after the sweeps, and not driven by Tilt lighting.
+    expect(await running(lit), "wander animations after the sweeps").toBeGreaterThan(5);
+    await expect(lit.locator("html")).not.toHaveAttribute("data-tilt");
+    expect(await holders(lit)).toBe(0);
+    if (process.env.TILT_PERF_REPORT_ONLY) return;
+
+    const animations = await running(lit);
+    medians.forEach((row, index) => {
+      const base = floor[index];
+      const at = `at ${row.rate}x`;
+      expect(row.paints ?? 0, `paints ${at}, over the card-light-off run's ${base.paints}`).toBeLessThanOrEqual(
+        (base.paints ?? 0) + PAINT_SLACK,
+      );
+      expect(row.rasters ?? 0, `raster tasks ${at}, over the card-light-off run's ${base.rasters}`).toBeLessThanOrEqual(
+        (base.rasters ?? 0) + RASTER_SLACK,
+      );
+      // Style: at most one recalculation per frame, revisiting a few elements per running animation per frame.
+      expect(
+        row.recalcCount,
+        `style recalculations a second ${at} (${f(row.fps)} fps; the card-light-off run's ${f(base.recalcCount)})`,
+      ).toBeLessThanOrEqual(row.fps + 5);
+      const frames = (SWEEP_MS / 1000) * Math.max(row.fps, 60);
+      expect(
+        row.restyled ?? 0,
+        `elements restyled in the traced sweep ${at} for ${animations} animations (the card-light-off run's ${base.restyled})`,
+      ).toBeLessThanOrEqual((base.restyled ?? 0) + animations * RESTYLE_PER_ANIMATION * frames);
+      // No work of the light's own: nothing writes the tilt light, nothing searches for the panels.
+      expect(row.qsaLight, `document searches from frame callbacks ${at}`).toBe(0);
+      expect(row.lightWrites, `tilt light writes ${at}`).toBe(0);
+      console.log(
+        `[wander-perf] ${at}, over the card-light-off run: ${(row.paints ?? 0) - (base.paints ?? 0)} paints, ${(row.rasters ?? 0) - (base.rasters ?? 0)} raster tasks, ${(row.restyled ?? 0) - (base.restyled ?? 0)} elements restyled, ${f(row.recalcCount - base.recalcCount)} recalcs/s, p95 ${f(row.p95 - base.p95)} ms, ${f(base.fps - row.fps)} fps lower`,
+      );
+    });
   });
 });
