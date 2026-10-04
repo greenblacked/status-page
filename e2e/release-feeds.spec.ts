@@ -22,7 +22,7 @@ async function openBoard(page: Page, board: () => BoardSnapshot = () => feedBoar
   await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
   const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
   const answered = page.waitForResponse(
     (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
@@ -478,7 +478,7 @@ for (const [name, from, to] of [
     await serveBoard(page, () => current);
     await page.goto("/");
     await expect(cards(page)).toHaveCount(SERVICES);
-    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
     const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
     const press = async () => {
       const answered = page.waitForResponse(
@@ -542,7 +542,7 @@ for (const [name, from, to] of [
     await serveBoard(page, () => current);
     await page.goto("/");
     await expect(cards(page)).toHaveCount(SERVICES);
-    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
     const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
     const press = async () => {
       const answered = page.waitForResponse(

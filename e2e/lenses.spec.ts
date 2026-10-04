@@ -39,9 +39,9 @@ async function chooseBackground(page: Page, background: "quiet" | "glass" | "ful
 const shown = (page: Page, selector: string) =>
   page.locator(selector).evaluate((node) => getComputedStyle(node).display !== "none");
 
-/** Waits until React has hydrated the page (a copy of the helper in board.spec.ts). */
+/** Waits until React has hydrated the page and its saved checks are in (a copy of the helper in board.spec.ts). */
 async function hydrated(page: Page): Promise<void> {
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
 /**

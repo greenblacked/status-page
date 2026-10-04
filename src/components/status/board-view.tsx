@@ -129,12 +129,20 @@ export function BoardView({
 
   const slot = now > 0 ? lastPulseAt(now) : null;
 
-  // Says the board's handlers are attached. The server's markup paints, and
-  // takes clicks that go nowhere, before React hydrates it; the end-to-end
-  // tests wait for this attribute (e2e/board.spec.ts) instead of guessing.
+  // Says the board's handlers are attached and its saved checks are in. The
+  // server's markup paints, and takes clicks that go nowhere, before React
+  // hydrates it; the end-to-end tests wait for this attribute
+  // (e2e/board.spec.ts) instead of guessing. It waits for the saved checks
+  // too: they arrive in the render after hydration and add or replace rows of
+  // Recent changes (a first visit, or a slot that turned since the page was
+  // parsed), which moves everything below, the footer's Settings button
+  // included, and a tap that straddles the move is lost. Later changes (the
+  // next slot, a refetch) can still move the page; this only closes the one
+  // that every load goes through.
+  const checksLoaded = store !== null;
   useEffect(() => {
-    document.documentElement.dataset.hydrated = "";
-  }, []);
+    if (checksLoaded) document.documentElement.dataset.hydrated = "";
+  }, [checksLoaded]);
 
   useEffect(() => {
     if (slot === null) return;
