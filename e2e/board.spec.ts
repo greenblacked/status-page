@@ -4544,38 +4544,51 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   expect(small.small).toEqual([]);
 
   // The links in the verdict's sub line sit in running text, so their reach is padding round them (hit-extend)
-  // on lines 46pt apart (hit-lines, a hair over the 44pt box so a neighbour's edge never takes the tap), not the
-  // words' own box: a tap 21px above or below the middle of the words still lands on the link. (The next test
-  // has the sentence wrap, and checks that no two of them overlap.)
+  // on lines 48pt apart (hit-lines, over the tallest box so a neighbour's edge never takes the tap), not the
+  // words' own box: a tap 21.5px above or below the middle of the words still lands on the link. (The next test
+  // has the sentence wrap, and checks that no two of them overlap.) The box is the face's content area plus the
+  // padding, and the content area is the face's own (at 15px: 19px in Inter and its fallback, 18px in DejaVu Sans,
+  // 17px in Liberation Sans). Inter is font-display: optional and a page view keeps the face it was first drawn in,
+  // so which of them this view drew is up to the timing of the font, and it must not decide the result: the
+  // sentence is measured in the page's own face and then in each of the others the font stack can end in.
   const sentence = await page.evaluate(() => {
+    const paragraph = document.querySelector<HTMLElement>("header h1 + p");
     const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
-    const boxes = links.map((link) => {
-      link.scrollIntoView({ block: "center" });
-      const box = link.getBoundingClientRect();
-      const x = box.left + box.width / 2;
-      const y = box.top + box.height / 2;
-      return {
-        name: link.textContent?.trim() ?? "",
-        x: x + window.scrollX,
-        y: y + window.scrollY,
-        reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
-        // What answers above and below, for the failure message: the link that took the tap, or what else.
-        seen: [-21.5, 21.5].map((dy) => {
-          const hit = document.elementFromPoint(x, y + dy);
-          return hit === link
-            ? "itself"
-            : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
-        }),
-      };
+    const own = paragraph?.style.fontFamily ?? "";
+    const faces = ["", "system-ui", "sans-serif", '"Liberation Sans"', '"DejaVu Sans"'];
+    const boxes = faces.flatMap((face) => {
+      if (paragraph) paragraph.style.fontFamily = face || own;
+      return links.map((link) => {
+        link.scrollIntoView({ block: "center" });
+        const box = link.getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        return {
+          name: `${link.textContent?.trim() ?? ""}${face ? ` in ${face}` : ""}`,
+          x: x + window.scrollX,
+          y: y + window.scrollY,
+          face,
+          reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
+          // What answers above and below, for the failure message: the link that took the tap, or what else.
+          seen: [-21.5, 21.5].map((dy) => {
+            const hit = document.elementFromPoint(x, y + dy);
+            return hit === link
+              ? "itself"
+              : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
+          }),
+        };
+      });
     });
+    if (paragraph) paragraph.style.fontFamily = own;
     return boxes;
   });
-  expect(sentence.length, "the sub line names services").toBeGreaterThan(1);
+  const own = sentence.filter((link) => link.face === "");
+  expect(own.length, "the sub line names services").toBeGreaterThan(1);
   for (const link of sentence)
     expect(link.reaches, `${link.name} reaches 44px tall (above and below it saw ${link.seen})`).toEqual([true, true]);
   // Neighbours on one line are well apart (WCAG 2.5.8: 24px between centres).
-  for (const [index, link] of sentence.entries()) {
-    const next = sentence[index + 1];
+  for (const [index, link] of own.entries()) {
+    const next = own[index + 1];
     if (next && Math.abs(next.y - link.y) < 4)
       expect(next.x - link.x, `${link.name} to ${next.name}`).toBeGreaterThan(24);
   }
