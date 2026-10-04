@@ -21,7 +21,7 @@ const BACKGROUND_HINT: Record<Background, string> = {
  * without a library. `?` and the footer button open it.
  */
 export function SettingsDialog({
-  open,
+  opened,
   onClose,
   singleKey,
   onSingleKeyChange,
@@ -30,7 +30,8 @@ export function SettingsDialog({
   background,
   tilt,
 }: {
-  open: boolean;
+  /** Which press opened it (every press is a new number), or null while it is shut. */
+  opened: number | null;
   onClose: () => void;
   singleKey: boolean;
   onSingleKeyChange: (on: boolean) => void;
@@ -43,12 +44,15 @@ export function SettingsDialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
 
+  // Keyed on the press, not on whether it is open: a modal <dialog> that Escape shuts is closed at once, and its `close`
+  // event, which the page learns it from, comes later as a task of its own. A press between the two changes nothing
+  // if all the page keeps is "open", so each press is a new value and opens the dialog again.
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
-  }, [open]);
+    if (opened !== null && !dialog.open) dialog.showModal();
+    if (opened === null && dialog.open) dialog.close();
+  }, [opened]);
 
   // Tilt lighting only draws on Glass and Full, so on Quiet "paused" means "needs a background", unless Reduce glass says why.
   const tiltNote =
@@ -60,7 +64,10 @@ export function SettingsDialog({
     // biome-ignore lint/a11y/useKeyWithClickEvents: the click only catches the backdrop; Esc closes a modal <dialog> natively.
     <dialog
       ref={ref}
-      onClose={onClose}
+      // The event of a shut that came before a press has reached a dialog that is open again: it is not this one's.
+      onClose={(event) => {
+        if (!event.currentTarget.open) onClose();
+      }}
       // A click on the backdrop lands on the dialog itself, not its content.
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();

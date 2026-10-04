@@ -75,7 +75,9 @@ export function BoardView({
   // The dock's two discrete states live outside this component: the board must not render mid-move.
   const [dock] = useState(createDockStore);
   useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, chipsRef, store: dock, keepRevealed: query !== "" });
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Which press opened Settings, or null while it is shut (see SettingsDialog).
+  const [settingsPress, setSettingsPress] = useState<number | null>(null);
+  const openSettings = () => setSettingsPress((current) => (current ?? 0) + 1);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
   const background = useBackground();
@@ -324,7 +326,7 @@ export function BoardView({
           setFilters(DEFAULT_FILTERS);
           return;
         case "help":
-          setSettingsOpen(true);
+          openSettings();
           return;
       }
     },
@@ -469,12 +471,12 @@ export function BoardView({
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
           <SiteFooter
             className="mt-14 basis-full pb-[calc(5rem+env(safe-area-inset-bottom))]"
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={openSettings}
             singleKey={singleKey.enabled}
           />
           <SettingsDialog
-            open={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
+            opened={settingsPress}
+            onClose={() => setSettingsPress(null)}
             singleKey={singleKey.enabled}
             onSingleKeyChange={singleKey.setEnabled}
             reduceGlass={reduceGlass.enabled}

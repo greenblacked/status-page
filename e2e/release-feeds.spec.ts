@@ -125,6 +125,9 @@ test("on a row with components the button opens Details and leaves the component
   await expect(dialog(page)).toBeVisible();
   await expect(row).not.toHaveAttribute("open", "");
   await page.keyboard.press("Escape");
+  // Gone, and not only shut: the key shuts a modal <dialog> at once, but the button gives focus back to itself
+  // once the page has been told (the `close` event), so it is focused here only after that.
+  await expect(dialog(page)).toHaveCount(0);
   await trigger(page, "cs2-europe").focus();
   await page.keyboard.press("Space");
   await expect(dialog(page)).toBeVisible();
