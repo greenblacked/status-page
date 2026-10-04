@@ -256,6 +256,14 @@ describe("parseWindowsUpdateType", () => {
     expect(parseWindowsUpdateType("2026-10 OOB")).toEqual({ type: "2026-10 OOB", kind: "OOB" });
   });
 
+  it("reads a real calendar month only", () => {
+    expect(parseWindowsUpdateType("2026-01 B")).toEqual({ type: "2026-01 B", kind: "B" });
+    expect(parseWindowsUpdateType("2026-12 D")).toEqual({ type: "2026-12 D", kind: "D" });
+    for (const text of ["2026-00 B", "2026-13 D", "2026-99 OOB", "0000-05 B", "1984-05 B"]) {
+      expect(parseWindowsUpdateType(text), text).toBeUndefined();
+    }
+  });
+
   it("reads nothing else", () => {
     for (const text of [
       "",
@@ -327,6 +335,12 @@ describe("windowsUpdateNote", () => {
     expect(windowsUpdateNote(tables, "26100.9999")).toBeUndefined();
     expect(windowsUpdateNote(tables, "26100.6000")).toBeUndefined();
     expect(windowsUpdateNote([], "26100.6725")).toBeUndefined();
+  });
+
+  it("gives no note for a row whose update type has an impossible month", () => {
+    const tables = history([row("2026-00 B", "26100.6725"), row("2026-09 B", "26100.6726")]);
+    expect(windowsUpdateNote(tables, "26100.6725")).toBeUndefined();
+    expect(windowsUpdateNote(tables, "26100.6726")?.text).toBe("Security update");
   });
 
   it("needs both an Update type and a Build column, and ignores the table of versions", () => {

@@ -284,7 +284,11 @@ const UPDATE_KINDS: Record<string, { label: string; meaning: string }> = {
   OOB: { label: "Out-of-band fix", meaning: "an out-of-band fix, released outside the monthly schedule" },
 };
 
-/** "2026-09 B" out of a cell, with the kind it names; undefined for anything else. */
+/**
+ * "2026-09 B" out of a cell, with the kind it names; undefined for anything else. The month must be a real
+ * calendar month (01 to 12) of a year from 1985 on, so a vendor typo such as "2026-00 B" or "2026-99 D" gives
+ * no note rather than an impossible date. There is no upper bound on the year: the parser has no clock.
+ */
 export function parseWindowsUpdateType(text: string): { type: string; kind: keyof typeof UPDATE_KINDS } | undefined {
   const value = text.trim();
   const space = value.lastIndexOf(" ");
@@ -294,6 +298,9 @@ export function parseWindowsUpdateType(text: string): { type: string; kind: keyo
   if (!Object.hasOwn(UPDATE_KINDS, kind)) return undefined;
   const digit = (at: number) => isDigit(month[at]);
   if (month.length !== 7 || month[4] !== "-" || ![0, 1, 2, 3, 5, 6].every(digit)) return undefined;
+  const year = Number(month.slice(0, 4));
+  const monthNumber = Number(month.slice(5));
+  if (year < 1985 || monthNumber < 1 || monthNumber > 12) return undefined;
   return { type: `${month} ${kind}`, kind };
 }
 
