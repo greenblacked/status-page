@@ -60,7 +60,7 @@ export function PeriodDial({
  * ends to start the next sweep on time.
  */
 export function ClockedPeriodDial(props: Omit<Parameters<typeof PeriodDial>[0], "now">) {
-  return <PeriodDial {...props} now={useNow()} />;
+  return <PeriodDial {...props} now={useNow(1000, true)} />;
 }
 
 function PeriodMotion({ elapsedMs }: { elapsedMs: number | null }) {

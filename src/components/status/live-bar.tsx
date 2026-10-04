@@ -130,7 +130,7 @@ export function LiveBar({
  * on every screen, and only this component re-renders for it.
  */
 export function ClockedLiveBar(props: Omit<Parameters<typeof LiveBar>[0], "now">) {
-  return <LiveBar {...props} now={useNow()} />;
+  return <LiveBar {...props} now={useNow(1000, true)} />;
 }
 
 /** The width from which the floating bar shows its countdown; below it the text is for screen readers only. */
@@ -156,5 +156,5 @@ export function NextIn({ refetchJitterMs }: { refetchJitterMs: number }) {
     () => window.matchMedia(BAR_TEXT_QUERY).matches,
     () => true,
   );
-  return nextInText(useNow(shown ? 1000 : HIDDEN_TICK_MS), refetchJitterMs);
+  return nextInText(useNow(shown ? 1000 : HIDDEN_TICK_MS, true), refetchJitterMs);
 }
