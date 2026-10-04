@@ -87,7 +87,7 @@
   --inset-rim: light-dark(rgb(15 20 35 / 0.06), rgb(255 255 255 / 0.06));
 
   /*
-    The card light is on every Full card at once, so in dark it is held to a
+    The card light is on every Glass and Full card at once, so in dark it is held to a
     whisper: at 0.1 it cut --color-subtle to 3.59:1 at its centre. At 0.02 the
     lenses spec, which forces the lights at their peak over every panel, measures
     4.9:1 or better with the sheen at its brightest under it.
