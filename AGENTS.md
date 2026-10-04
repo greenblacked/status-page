@@ -69,9 +69,9 @@ For local browser tests install the browsers once (`pnpm exec playwright install
 
 **Browser tests** (`playwright.config.ts`):
 
-- Six projects: `desktop` and `mobile` (Chromium), `tablet` (Chromium at iPad size, runs only the search reveal and floating-bar tests), and the WebKit projects `Desktop Safari`, `iPhone 17 Pro` and `iPad Pro 11`.
+- Sixteen projects. Five run the whole suite: `desktop` and `mobile` (Chromium), and the WebKit projects `Desktop Safari`, `iPhone 17 Pro` and `iPad Pro 11`. `tablet` (Chromium at iPad size) runs only the search reveal, floating-bar and layout tests. Ten more screens run only the tests tagged `@layout` (`e2e/mobile-layout.spec.ts`, helpers in `e2e/support/layout.ts`): Chromium `Galaxy S9+` (320px), `Pixel 10`, `Galaxy Z Fold 7`, `Galaxy Z Fold 7 Cover`, `Galaxy Tab S9` and `Pixel 7 landscape`, and WebKit `iPhone SE (3rd gen)`, `iPhone 17 Pro Max`, `iPad Mini` and `iPhone 17 Pro landscape`. A check of how the page lays out on a screen (overflow, overlap, tap targets, the bar, sheets, search, clipped text) goes in that file under the tag, so all sixteen run it.
 - Pick some with `--project`, for example `pnpm run test:e2e --project=desktop`.
-- CI runs Chromium on the runner and the three WebKit projects as separate shards inside Playwright's container image (pinned by digest in `ci.yml`), because WebKit's system libraries are slow to fetch. WebKit on a bare Linux machine needs those libraries ([CONTRIBUTING.md#ci](CONTRIBUTING.md#ci)).
+- CI runs the Chromium projects together on the runner and the WebKit ones in three shards (`desktop-safari`, `iphone` with the iPhone layout screens, `ipad` with the iPad Mini) inside Playwright's container image (pinned by digest in `ci.yml`), because WebKit's system libraries are slow to fetch. WebKit on a bare Linux machine needs those libraries ([CONTRIBUTING.md#ci](CONTRIBUTING.md#ci)).
 - When `@playwright/test` moves, the image tag and digest in `ci.yml` move with it.
 
 **Checks in `scripts/ci/`** that you can run locally:
