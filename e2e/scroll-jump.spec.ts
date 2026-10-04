@@ -332,14 +332,13 @@ async function acrossTheTurn(
     await page.addStyleTag({
       content: "html { overflow-anchor: auto !important; } body { overflow-anchor: none !important; }",
     });
-    expect(
-      await page.evaluate(
-        () =>
-          CSS.supports("overflow-anchor", "auto") &&
-          getComputedStyle(document.documentElement).overflowAnchor === "auto",
-      ),
-      "the browser says it anchors",
-    ).toBe(true);
+    // Whether the browser reflects the property at all is noted, not required: a browser that does not (or whose
+    // computed value is "none" under the rule above) is the "off" case, and the card must be held there too.
+    const says = await page.evaluate(
+      () =>
+        CSS.supports("overflow-anchor", "auto") && getComputedStyle(document.documentElement).overflowAnchor === "auto",
+    );
+    testInfo.annotations.push({ type: "claims anchoring", description: String(says) });
   }
 
   // The reader is on a card below Recent changes.
@@ -504,12 +503,11 @@ test("floating bar: holds the card when the browser does not anchor scroll altho
 test("floating bar: holds the card, once and not twice, with the browser's own scroll anchoring left on", async ({
   page,
   hasTouch,
-  browserName,
 }, testInfo) => {
   test.skip(!hasTouch, "a finger is a touch project's");
-  test.skip(browserName !== "chromium", "what a WebKit build anchors differs by version; Chromium's is the one to pin");
   // Nothing is switched off. Whatever the browser holds, the page scrolls by what is left, so a card that is held
-  // twice (the browser's scroll and the page's on top of it) would show here as a jump the other way.
+  // twice (the browser's scroll and the page's on top of it) would show here as a jump the other way. It runs on
+  // WebKit too, whose anchoring differs by version: the card must not move on screen whichever it does.
   await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
     touching: true,
     anchoring: "native",
