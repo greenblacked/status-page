@@ -44,6 +44,33 @@ const lightsAtTheirStrongest = (colorScheme: "light" | "dark", strongestLight: s
       : ".surface::before{background:none!important}",
   ].join("");
 
+/** Every `step` px from the top of the page, then its very end. */
+const scrollOffsets = (top: number, step: number): number[] => {
+  const offsets: number[] = [];
+  for (let offset = 0; offset < top; offset += step) offsets.push(offset);
+  offsets.push(top);
+  return offsets;
+};
+
+/**
+ * A screenshot taken once the page has stopped changing: two frames apart, two shots of it are the same. A shot
+ * taken the instant after a scroll or a style change can catch the blurred glass a frame behind, which on a busy
+ * machine is not a state the page is ever in for long. After a few tries the last one is used, so a page that
+ * never rests (it should not exist) still gets measured.
+ */
+async function settledScreenshot(page: Page): Promise<Buffer> {
+  let previous = await page.screenshot({ animations: "disabled" });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await page.evaluate(
+      () => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
+    );
+    const next = await page.screenshot({ animations: "disabled" });
+    if (Buffer.compare(next, previous) === 0) return next;
+    previous = next;
+  }
+  return previous;
+}
+
 /** Chooses the page's background before it loads, the way Settings would have: Quiet is no choice at all. */
 async function chooseBackground(page: Page, background: "quiet" | "glass" | "full"): Promise<void> {
   await page.addInitScript((value) => {
@@ -912,182 +939,284 @@ test.describe("contrast", () => {
    * text colours are tightest. This reads the pixels behind every subtle or
    * muted text run inside a panel (the text made transparent, so only the
    * backdrop is left) and checks the worst one against 4.5:1. A run that
-   * crosses a lens's rim hairline is left out, as in the lens test above.
+   * crosses a lens's rim hairline, or sits under the floating bar, is left out.
+   *
+   * The aurora is fixed and the panels scroll over it, so the same text is on a
+   * lighter or darker part of it at every scroll offset, and the page below the
+   * first screen is not the first screen: each test measures at several offsets
+   * (250 or 500px apart, from the top to the end of the page). The runs are
+   * found again at each one, in the layout the page has there, and are measured
+   * only when the layout is the same before and after the screenshot.
    *
    * Every panel and list wears the card light on Full (and a touch screen the
-   * glint of Tilt lighting), which Reduce Motion hides, so this runs twice: as
-   * the page renders under Reduce Motion, and with the lights forced on at
-   * their peak over the whole of every panel (lightsAtTheirStrongest).
+   * glint of Tilt lighting), which Reduce Motion hides, so each background runs
+   * twice: as the page renders under Reduce Motion, and with the lights forced
+   * on at their peak over the whole of every panel (lightsAtTheirStrongest).
+   * Glass and Full both, since Glass is what a touch screen mostly shows.
    */
-  for (const colorScheme of ["light", "dark"] as const) {
-    for (const cardLight of [false, true]) {
-      test(`keeps subtle and muted text at 4.5:1 on the glass panels (${colorScheme}${cardLight ? ", lights at their strongest" : ""})`, async ({
-        page,
-        context,
-      }, testInfo) => {
-        test.skip(testInfo.project.name !== "desktop", "measured once, in Chromium on a desktop");
-        const board = fixtureBoard(Date.now());
-        await serveBoard(page, () => board);
-        // Tall enough for the hero and the first lists, so plenty of subtle and muted runs are whole on screen.
-        await page.setViewportSize({ width: 1280, height: 1200 });
-        await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-        await page.goto("/");
-        await hydrated(page);
-        await page.getByRole("button", { name: "Refresh status now" }).first().click();
-        // The most urgent card's "since" line sits at the brightest corner of a panel.
-        await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
-        await page.waitForTimeout(500);
-        if (cardLight) {
-          // The stronger of the two lights is the one whose token has the larger alpha (the glint's, by design: it
-          // is the card light's job to be a whisper, and the glint's to be seen on a touch screen). Read, not
-          // assumed, so a change to either token keeps the strongest one under test.
-          const strongestLight = await page.evaluate(() => {
-            const alpha = (token: string) => {
+  for (const background of ["glass", "full"] as const) {
+    for (const colorScheme of ["light", "dark"] as const) {
+      for (const cardLight of [false, true]) {
+        test(`keeps subtle and muted text at 4.5:1 on the glass panels (${background}, ${colorScheme}${cardLight ? ", lights at their strongest" : ""})`, async ({
+          page,
+          context,
+        }, testInfo) => {
+          test.skip(testInfo.project.name !== "desktop", "measured once, in Chromium on a desktop");
+          // After the describe's own choice of Full, so this one wins.
+          await chooseBackground(page, background);
+          const board = fixtureBoard(Date.now());
+          await serveBoard(page, () => board);
+          // Tall enough for the hero and the first lists, so plenty of subtle and muted runs are whole on screen.
+          await page.setViewportSize({ width: 1280, height: 1200 });
+          await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+          await page.goto("/");
+          await hydrated(page);
+          // Measured at a pixel ratio of 1: the runs' boxes are in CSS pixels, and so are the screenshot's.
+          expect(await page.evaluate(() => devicePixelRatio)).toBe(1);
+          await page.getByRole("button", { name: "Refresh status now" }).first().click();
+          // The most urgent card's "since" line sits at the brightest corner of a panel.
+          await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
+          await page.waitForTimeout(500);
+          // The click left the pointer on the Refresh button, and scrolling would bring other things under it:
+          // hover brightens the chips and rows, which is not what is measured here.
+          await page.mouse.move(0, 0);
+          if (cardLight) {
+            // The stronger of the two lights is the one whose token has the larger alpha. Read, not assumed, so a
+            // change to either token keeps the strongest one under test.
+            const strongestLight = await page.evaluate(() => {
+              const alpha = (token: string) => {
+                const probe = document.createElement("i");
+                probe.style.color = `var(${token})`;
+                document.body.appendChild(probe);
+                const channels = getComputedStyle(probe).color.match(/[\d.]+/g) ?? [];
+                probe.remove();
+                return channels.length > 3 ? Number(channels[3]) : 1;
+              };
+              return alpha("--tilt-glint") >= alpha("--spot-color") ? "--tilt-glint" : "--spot-color";
+            });
+            await page.addStyleTag({ content: lightsAtTheirStrongest(colorScheme, strongestLight) });
+            const drawn = await page.evaluate(() => {
+              const panel = document.querySelector(".spotlight");
+              if (!panel) return null;
+              const read = (pseudo: "::before" | "::after") => {
+                const style = getComputedStyle(panel, pseudo);
+                // inset: 0 makes it as wide as the panel's padding box.
+                const whole = Math.abs(Number.parseFloat(style.width) - panel.clientWidth) < 1.5;
+                return [style.display, style.position, style.opacity, style.transform, whole];
+              };
+              return { sheen: read("::before"), light: read("::after") };
+            });
+            expect(drawn?.light, "the forced light covers the whole panel, at full strength, unmoved").toEqual([
+              "block",
+              "absolute",
+              "1",
+              "none",
+              true,
+            ]);
+            if (colorScheme === "dark") {
+              expect(drawn?.sheen.slice(0, 2), "the forced sheen is drawn").toEqual(["block", "absolute"]);
+            }
+          }
+
+          const colours = await page.evaluate(() => {
+            const channels = (token: string) => {
               const probe = document.createElement("i");
               probe.style.color = `var(${token})`;
               document.body.appendChild(probe);
-              const channels = getComputedStyle(probe).color.match(/[\d.]+/g) ?? [];
+              const found = getComputedStyle(probe).color.match(/[\d.]+/g) ?? [];
               probe.remove();
-              return channels.length > 3 ? Number(channels[3]) : 1;
+              return found.slice(0, 3).map(Number);
             };
-            return alpha("--tilt-glint") >= alpha("--spot-color") ? "--tilt-glint" : "--spot-color";
+            return { subtle: channels("--color-subtle"), muted: channels("--color-muted") };
           });
-          await page.addStyleTag({ content: lightsAtTheirStrongest(colorScheme, strongestLight) });
-          const drawn = await page.evaluate(() => {
-            const panel = document.querySelector(".spotlight");
-            if (!panel) return null;
-            const read = (pseudo: "::before" | "::after") => {
-              const style = getComputedStyle(panel, pseudo);
-              // inset: 0 makes it as wide as the panel's padding box.
-              const whole = Math.abs(Number.parseFloat(style.width) - panel.clientWidth) < 1.5;
-              return [style.display, style.position, style.opacity, style.transform, whole];
-            };
-            return { sheen: read("::before"), light: read("::after") };
-          });
-          expect(drawn?.light, "the forced light covers the whole panel, at full strength, unmoved").toEqual([
-            "block",
-            "absolute",
-            "1",
-            "none",
-            true,
-          ]);
-          if (colorScheme === "dark") {
-            expect(drawn?.sheen.slice(0, 2), "the forced sheen is drawn").toEqual(["block", "absolute"]);
-          }
-        }
-        const setup = await page.evaluate(() => {
-          const channels = (token: string) => {
-            const probe = document.createElement("i");
-            probe.style.color = `var(${token})`;
-            document.body.appendChild(probe);
-            const found = getComputedStyle(probe).color.match(/[\d.]+/g) ?? [];
-            probe.remove();
-            return found.slice(0, 3).map(Number);
-          };
-          const colours = { subtle: channels("--color-subtle"), muted: channels("--color-muted") };
-          const discs = [...document.querySelectorAll(".lens")].map((lens) => {
-            const box = lens.getBoundingClientRect();
-            return [box.x + box.width / 2, box.y + box.height / 2, box.width / 2];
-          });
-          const runs: { kind: "subtle" | "muted"; text: string; x: number; y: number; w: number; h: number }[] = [];
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-            const element = node.parentElement;
-            const text = node.textContent?.trim();
-            if (!element || !text || !element.closest(".surface") || element.closest(".sr-only")) continue;
-            // The body of a closed <details> is not drawn, though it still has a box.
-            const details = element.closest("details:not([open])");
-            if (details && !element.closest("summary")) continue;
-            const color =
-              getComputedStyle(element)
-                .color.match(/[\d.]+/g)
-                ?.slice(0, 3)
-                .map(Number) ?? [];
-            const kind = (["subtle", "muted"] as const).find((name) => colours[name].every((v, i) => v === color[i]));
-            if (!kind) continue;
-            const range = document.createRange();
-            range.selectNodeContents(node);
-            const box = range.getBoundingClientRect();
-            // Whole in the viewport, so the screenshot has all of it.
-            if (box.width < 2 || box.left < 0 || box.top < 0 || box.right > innerWidth || box.bottom > innerHeight) {
-              continue;
-            }
-            runs.push({ kind, text: text.slice(0, 30), x: box.x, y: box.y, w: box.width, h: box.height });
-          }
-          return { colours, discs, runs };
-        });
-        // Not vacuous: both colours are used on panels, among them the urgent card's "since" line.
-        expect(setup.runs.some((run) => run.text === "since")).toBe(true);
-        expect(setup.runs.filter((run) => run.kind === "subtle").length).toBeGreaterThan(8);
-        expect(setup.runs.filter((run) => run.kind === "muted").length).toBeGreaterThan(2);
-        await page.addStyleTag({ content: "*{color:transparent !important;text-shadow:none !important}" });
-        const shot = await page.screenshot({ animations: "disabled" });
-
-        const helper = await context.newPage();
-        try {
-          const result = await helper.evaluate(
-            async ({ b64, setup }) => {
-              const image = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
-              const canvas = document.createElement("canvas");
-              canvas.width = image.width;
-              canvas.height = image.height;
-              const canvasContext = canvas.getContext("2d");
-              if (!canvasContext) throw new Error("no 2d canvas");
-              canvasContext.drawImage(image, 0, 0);
-              const linear = (value: number) => {
-                const v = value / 255;
-                return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
-              };
-              const luminance = (r: number, g: number, b: number) =>
-                0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
-              const text = {
-                subtle: luminance(setup.colours.subtle[0], setup.colours.subtle[1], setup.colours.subtle[2]),
-                muted: luminance(setup.colours.muted[0], setup.colours.muted[1], setup.colours.muted[2]),
-              };
-              const worst = { subtle: 99, muted: 99 };
-              const failing: string[] = [];
-              let measured = 0;
-              for (const run of setup.runs) {
-                // A run across a lens's rim (its outer 4px either side) is exempt.
-                const crossesRim = setup.discs.some(([cx, cy, radius]) => {
-                  const nearest = Math.hypot(
-                    Math.max(run.x - cx, 0, cx - (run.x + run.w)),
-                    Math.max(run.y - cy, 0, cy - (run.y + run.h)),
-                  );
-                  const farthest = Math.max(
-                    ...[run.x, run.x + run.w].flatMap((px) =>
-                      [run.y, run.y + run.h].map((py) => Math.hypot(px - cx, py - cy)),
-                    ),
-                  );
-                  return nearest < radius + 4 && farthest > radius - 4;
-                });
-                if (crossesRim) continue;
-                const { data } = canvasContext.getImageData(
-                  Math.floor(run.x),
-                  Math.floor(run.y),
-                  Math.ceil(run.w) + 1,
-                  Math.ceil(run.h) + 1,
-                );
-                let runWorst = 99;
-                for (let at = 0; at < data.length; at += 4) {
-                  const back = luminance(data[at], data[at + 1], data[at + 2]);
-                  const t = text[run.kind];
-                  runWorst = Math.min(runWorst, (Math.max(back, t) + 0.05) / (Math.min(back, t) + 0.05));
-                }
-                measured++;
-                worst[run.kind] = Math.min(worst[run.kind], runWorst);
-                if (runWorst < 4.5) failing.push(`${run.kind} "${run.text}" ${runWorst.toFixed(2)}`);
-              }
-              return { measured, worst, failing };
-            },
-            { b64: Buffer.from(shot).toString("base64"), setup },
+          // The bubbles are fixed to the viewport, like the aurora, so their discs are the same at every offset.
+          const discs = await page.evaluate(() =>
+            [...document.querySelectorAll(".lens")].map((lens) => {
+              const box = lens.getBoundingClientRect();
+              return [box.x + box.width / 2, box.y + box.height / 2, box.width / 2];
+            }),
           );
-          expect(result.measured).toBeGreaterThan(10);
-          expect(result.failing, `worst ratios ${JSON.stringify(result.worst)}`).toEqual([]);
-        } finally {
-          await helper.close();
-        }
-      });
+
+          /**
+           * Every text run inside a panel, where it is in the viewport now: its box, and (with the text still drawn,
+           * so its colour says which kind it is) whether it is a subtle or a muted one. `boxes` lists every run
+           * of text of any colour, to tell whether the layout moved.
+           */
+          const readRuns = (kinds: boolean) =>
+            page.evaluate(
+              ({ kinds, colours }) => {
+                const runs: { kind: "subtle" | "muted"; text: string; x: number; y: number; w: number; h: number }[] =
+                  [];
+                const boxes: number[][] = [];
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+                for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                  const element = node.parentElement;
+                  const text = node.textContent?.trim();
+                  if (!element || !text || !element.closest(".surface") || element.closest(".sr-only")) continue;
+                  // The body of a closed <details> is not drawn, though it still has a box.
+                  const details = element.closest("details:not([open])");
+                  if (details && !element.closest("summary")) continue;
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  const box = range.getBoundingClientRect();
+                  boxes.push([box.x, box.y, box.width, box.height]);
+                  if (!kinds) continue;
+                  const color =
+                    getComputedStyle(element)
+                      .color.match(/[\d.]+/g)
+                      ?.slice(0, 3)
+                      .map(Number) ?? [];
+                  const kind = (["subtle", "muted"] as const).find((name) =>
+                    colours[name].every((v, i) => v === color[i]),
+                  );
+                  // Whole in the viewport, so the screenshot has all of it.
+                  if (!kind || box.width < 2) continue;
+                  if (box.left < 0 || box.top < 0 || box.right > innerWidth || box.bottom > innerHeight) continue;
+                  runs.push({ kind, text: text.slice(0, 30), x: box.x, y: box.y, w: box.width, h: box.height });
+                }
+                return {
+                  runs,
+                  boxes,
+                  // The floating bar (and any sheet) is drawn over the panels, so what is behind a run under it is not
+                  // the panel's.
+                  covers: [...document.querySelectorAll(".float, .sheet")].map((node) => {
+                    const box = node.getBoundingClientRect();
+                    return [box.left, box.top, box.right, box.bottom];
+                  }),
+                  top: Math.max(0, document.documentElement.scrollHeight - innerHeight),
+                };
+              },
+              { kinds, colours },
+            );
+          const sameBoxes = (a: number[][], b: number[][]) =>
+            a.length === b.length && a.every((box, i) => box.every((value, j) => Math.abs(value - b[i][j]) < 0.5));
+
+          /** At `offset`: the runs, and a screenshot of the page with its text made transparent, taken in the same layout. */
+          const shootAt = async (offset: number) => {
+            for (let attempt = 0; attempt < 5; attempt++) {
+              await page.evaluate((y) => window.scrollTo(0, y), offset);
+              const reach = Math.min(offset, (await readRuns(false)).top);
+              await expect
+                .poll(() => page.evaluate(() => Math.round(window.scrollY)), `scrolled to ${reach}`)
+                .toBe(reach);
+              const before = await readRuns(true);
+              const hide = await page.addStyleTag({
+                content: "*{color:transparent !important;text-shadow:none !important}",
+              });
+              const shot = await settledScreenshot(page);
+              const after = await readRuns(false);
+              await hide.evaluate((node) => node.parentNode?.removeChild(node));
+              if (sameBoxes(before.boxes, after.boxes)) return { shot, before, reach };
+            }
+            throw new Error(`the text kept moving at scrollY ${offset}`);
+          };
+
+          const first = await shootAt(0);
+          // Not vacuous: both colours are used on panels, among them the urgent card's "since" line.
+          expect(first.before.runs.some((run) => run.text === "since")).toBe(true);
+          expect(first.before.runs.filter((run) => run.kind === "subtle").length).toBeGreaterThan(8);
+          expect(first.before.runs.filter((run) => run.kind === "muted").length).toBeGreaterThan(2);
+          // The fixed backdrop is brighter in some places than in others, and it is the dark side that is tight: there,
+          // with the lights at their peak, the offsets are 250px apart; elsewhere 500px.
+          const offsets = scrollOffsets(first.before.top, colorScheme === "dark" && cardLight ? 250 : 500);
+          expect(offsets.length, "the page is long enough to scroll").toBeGreaterThan(2);
+
+          const helper = await context.newPage();
+          const rows: string[] = [];
+          const failing: string[] = [];
+          let measured = 0;
+          let worstOverall = { subtle: 99, muted: 99 };
+          try {
+            for (const offset of offsets) {
+              const { shot, before, reach } = offset === 0 ? first : await shootAt(offset);
+              const runs = before.runs.filter(
+                (run) =>
+                  !before.covers.some(
+                    ([left, top, right, bottom]) =>
+                      run.x < right && run.x + run.w > left && run.y < bottom && run.y + run.h > top,
+                  ),
+              );
+              const result = await helper.evaluate(
+                async ({ b64, colours, discs, runs }) => {
+                  const image = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+                  const canvas = document.createElement("canvas");
+                  canvas.width = image.width;
+                  canvas.height = image.height;
+                  const canvasContext = canvas.getContext("2d");
+                  if (!canvasContext) throw new Error("no 2d canvas");
+                  canvasContext.drawImage(image, 0, 0);
+                  const linear = (value: number) => {
+                    const v = value / 255;
+                    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+                  };
+                  const luminance = (r: number, g: number, b: number) =>
+                    0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+                  const text = {
+                    subtle: luminance(colours.subtle[0], colours.subtle[1], colours.subtle[2]),
+                    muted: luminance(colours.muted[0], colours.muted[1], colours.muted[2]),
+                  };
+                  const worst = { subtle: 99, muted: 99 };
+                  const failing: string[] = [];
+                  let measured = 0;
+                  for (const run of runs) {
+                    // A run across a lens's rim (its outer 4px either side) is exempt.
+                    const crossesRim = discs.some(([cx, cy, radius]) => {
+                      const nearest = Math.hypot(
+                        Math.max(run.x - cx, 0, cx - (run.x + run.w)),
+                        Math.max(run.y - cy, 0, cy - (run.y + run.h)),
+                      );
+                      const farthest = Math.max(
+                        ...[run.x, run.x + run.w].flatMap((px) =>
+                          [run.y, run.y + run.h].map((py) => Math.hypot(px - cx, py - cy)),
+                        ),
+                      );
+                      return nearest < radius + 4 && farthest > radius - 4;
+                    });
+                    if (crossesRim) continue;
+                    const { data } = canvasContext.getImageData(
+                      Math.floor(run.x),
+                      Math.floor(run.y),
+                      Math.ceil(run.w) + 1,
+                      Math.ceil(run.h) + 1,
+                    );
+                    let runWorst = 99;
+                    for (let at = 0; at < data.length; at += 4) {
+                      const back = luminance(data[at], data[at + 1], data[at + 2]);
+                      const t = text[run.kind];
+                      runWorst = Math.min(runWorst, (Math.max(back, t) + 0.05) / (Math.min(back, t) + 0.05));
+                    }
+                    measured++;
+                    worst[run.kind] = Math.min(worst[run.kind], runWorst);
+                    if (runWorst < 4.5) {
+                      failing.push(
+                        `${run.kind} "${run.text}" ${runWorst.toFixed(2)} at ${Math.round(run.x)},${Math.round(run.y)}`,
+                      );
+                    }
+                  }
+                  return { measured, worst, failing };
+                },
+                { b64: Buffer.from(shot).toString("base64"), colours, discs, runs },
+              );
+              measured += result.measured;
+              worstOverall = {
+                subtle: Math.min(worstOverall.subtle, result.worst.subtle),
+                muted: Math.min(worstOverall.muted, result.worst.muted),
+              };
+              rows.push(`scrollY ${reach}: ${result.measured} runs, worst ${JSON.stringify(result.worst)}`);
+              for (const line of result.failing) failing.push(`scrollY ${reach}: ${line}`);
+              if (result.failing.length > 0) {
+                await testInfo.attach(`scrollY-${reach}.png`, { body: shot, contentType: "image/png" });
+              }
+            }
+          } finally {
+            await helper.close();
+          }
+          testInfo.annotations.push({ type: "worst ratios", description: JSON.stringify(worstOverall) });
+          // Not vacuous: a good few runs at every offset.
+          expect(measured).toBeGreaterThan(offsets.length * 10);
+          expect(failing, `worst ratios ${JSON.stringify(worstOverall)}\n${rows.join("\n")}`).toEqual([]);
+        });
+      }
     }
   }
 });
