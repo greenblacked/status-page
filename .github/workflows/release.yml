@@ -4,8 +4,8 @@ name: Release
 # version's CHANGELOG.md section; the sign job attaches the signed source
 # archive and only then publishes the release. If a check fails nothing is
 # committed, tagged or published; if signing fails the tag exists and the
-# release stays a draft. Only main is released: pull requests
-# merge into dev, which never releases, the owner promotes dev to stage (a
+# release stays a draft. Only main is released: work is committed to
+# dev, which never releases, the owner promotes dev to stage (a
 # preview) and stage to main, each in a merge commit
 # (CONTRIBUTING.md#releases). Ways in:
 #   - Merging a pull request into main. The Conventional Commits merged since
