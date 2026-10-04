@@ -11,7 +11,7 @@ Stack: TanStack Start (React 19), Tailwind CSS v4, strict TypeScript, Vitest, Pl
 How data flows:
 
 1. **Collectors** in `src/lib/status/sources.server.ts` fetch one vendor source each (`collectAllServices`). Fetching goes through `src/lib/status/http.ts` (timeouts, body cap, manual redirects). A collector that fails yields a snapshot with `health: "unknown"` and a `failure`, and never takes the others down.
-2. `src/lib/status/collect-board.ts` assembles the snapshots into a board (`BoardSnapshot`, with a count per health). `src/lib/status/board.ts` holds it in a per-process (per-isolate) TTL cache (`ttl-cache.ts`; timings in `schedule.ts`) and exposes the server functions the page uses.
+2. `src/lib/status/collect-board.ts` assembles the snapshots into a board (`BoardSnapshot`, with a count per health). `src/lib/status/board-cache.server.ts` holds it in the one per-process (per-isolate) TTL cache (`ttl-cache.ts`; timings in `schedule.ts`), read by the server functions in `board.ts` (the page) and by the server routes (the API, feed, metrics, badges). Keep the cache in that module, away from any `createServerFn`: Start copies the module-level state of a module that calls it into a separate server-function chunk, which would build a second cache. `scripts/ci/single-board-cache.ts` fails the build job if the built server constructs more than one.
 3. **Pure derivations** turn a snapshot into what people see: `health.ts` (the one severity order), `verdict.ts` (the headline sentence), `diff.ts` and `recent.ts` (what changed), `alerts.ts` (browser notifications), `integrations.ts` (JSON API, Atom feed and badges) and `metrics.ts` (Prometheus), so they agree with the page, `layout.ts` and `filters.ts`.
 4. **Components** in `src/components/status/` render the board; routes in `src/routes/` serve the page, `/api/status.json`, `/api/history.json`, `/api/badge/$service`, `/feed.xml`, `/metrics`, `/healthz`, `/readyz` and `/robots.txt`.
 
@@ -77,6 +77,7 @@ For local browser tests install the browsers once (`pnpm exec playwright install
 **Checks in `scripts/ci/`** that you can run locally:
 
 ```bash
+node --experimental-strip-types scripts/ci/single-board-cache.ts  # after `pnpm run build`: the built server holds exactly one board cache
 ./scripts/ci/hygiene.sh                                          # LF endings, trailing whitespace, final newline, no `any`, no raw hex in JSX, no .env
 ./scripts/ci/tokens.sh                                           # design-token guard (retired utilities, arbitrary type sizes, raw colours)
 ./scripts/ci/links.sh                                            # every relative link in tracked Markdown resolves to a file

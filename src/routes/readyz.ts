@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getStatusBoard } from "@/lib/status/board";
+import { getStatusBoard } from "@/lib/status/board-cache.server";
 import { readiness } from "@/lib/status/readiness";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
