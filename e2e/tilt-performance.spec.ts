@@ -398,9 +398,20 @@ async function openBoard(page: Page): Promise<void> {
 /** Elements that carry the light as an inline property: it is meant to be written on one at most. */
 const holders = (page: Page) => page.evaluate(() => document.querySelectorAll('[style*="--light-"]').length);
 
+/**
+ * Seeds a saved choice. A saved "on" is checked once with the browser, which is asked outside a tap whether
+ * motion is still allowed (src/components/status/use-tilt-lighting.ts), and a browser that has
+ * DeviceOrientationEvent.requestPermission and does not say "granted" gets the choice dropped: iOS does,
+ * and so does Chromium 154, the headless shell CI runs (it answers "prompt"; Chromium 141 has no such call).
+ * Motion is granted here, as a visitor who allowed it would have it.
+ */
 const seed = (page: Page, tilt: "on" | "off") =>
   page.addInitScript(
     ([tiltKey, tilt]) => {
+      const api = window.DeviceOrientationEvent as unknown as { requestPermission?: unknown } | undefined;
+      if (api && typeof api.requestPermission === "function") {
+        Object.defineProperty(api, "requestPermission", { value: async () => "granted", configurable: true });
+      }
       try {
         localStorage.setItem("status-bar:background", "glass");
         localStorage.setItem(tiltKey, tilt);
