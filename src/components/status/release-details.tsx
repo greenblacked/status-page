@@ -67,6 +67,35 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
           ) : null}
         </p>
       ) : null}
+      {entry.note ? (
+        <div data-release-note-details className="mt-2 flex flex-col gap-1.5 text-footnote">
+          {entry.note.important.length > 0 ? (
+            <ul aria-label="Marked important" className="flex list-disc flex-col gap-1 pl-4 text-fg marker:text-subtle">
+              {entry.note.important.map((line, at) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: a changelog can repeat a line; the index only breaks that tie.
+                <li key={at} className="[overflow-wrap:anywhere]">
+                  <span className="font-semibold">Important</span> · {line}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="text-muted [overflow-wrap:anywhere]">{entry.note.detail ?? entry.note.text}</p>
+          {entry.note.reference?.url ? (
+            <a
+              href={entry.note.reference.url}
+              target="_blank"
+              rel="noreferrer"
+              className="focus-ring pressable inline-flex min-h-8 items-center gap-1 self-start rounded-md text-footnote text-accent pointer-coarse:min-h-11"
+            >
+              {entry.note.reference.label}
+              <span className="sr-only"> for {entry.name}</span>
+              <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
+            </a>
+          ) : entry.note.reference ? (
+            <p className="text-muted">{entry.note.reference.label}</p>
+          ) : null}
+        </div>
+      ) : null}
       {entry.notes.length > 0 ? (
         <ul
           aria-label="Changes"
@@ -79,7 +108,7 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
             </li>
           ))}
         </ul>
-      ) : (
+      ) : entry.note ? null : (
         <p className="mt-2 text-footnote text-subtle">No notes text from {source.name}.</p>
       )}
       <a

@@ -4201,7 +4201,7 @@ test("footer links the source on GitHub and states the MIT License", async ({ pa
     "href",
     "https://github.com/greenblacked/status-page/blob/main/LICENSE",
   );
-  await expect(footer).toContainText("Not affiliated with any of these vendors");
+  await expect(footer).toContainText("not affiliated with or endorsed by any of the vendors listed");
   await expect(footer).toContainText("Made by greenblacked.");
   const signature = footer.getByRole("link", { name: "greenblacked", exact: true });
   await expect(signature).toHaveAttribute("href", "https://github.com/greenblacked");
@@ -4222,7 +4222,7 @@ test("puts the footer in a contentinfo landmark outside main, and names the rece
   const footer = page.getByRole("contentinfo");
   await expect(footer).toHaveCount(1);
   await expect(footer).toBeVisible();
-  await expect(footer).toContainText("Not affiliated with any of these vendors");
+  await expect(footer).toContainText("not affiliated with or endorsed by any of the vendors listed");
   await expect(page.locator("main footer, main dialog")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Recent changes" })).toHaveCount(1);
   await hydrated(page);

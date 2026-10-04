@@ -171,11 +171,26 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             "bridge - improved MAC learning performance on CRS3xx series devices",
             "wifi - fixed station roaming between access points on the same channel",
           ],
+          // A hand-written note in the shape the collector builds from a changelog (no fixture changelog exists for
+          // 7.21): 23 changes, two of them flagged important. The collector's own output is tested against fixtures.
+          note: {
+            text: "23 changes: bgp, bridge, wifi +9 more · 2 important",
+            detail:
+              "23 changes in 12 areas: bgp, bridge, wifi, lte, ipsec, ospf, container, dhcpv4-server, console, system, ppp, routing.",
+            important: [
+              "lte - fixed a crash when a modem is removed during a firmware update",
+              "system - changed the default firewall policy",
+            ],
+          },
         }),
         release("Long-term", "operational", at(-70 * day), "7.18.2", {
           url: "https://download.mikrotik.com/routeros/7.18.2/CHANGELOG",
           linkLabel: "Release notes",
           notes: ["dhcpv4-server - fixed lease expiry reported in the wrong unit"],
+          note: {
+            text: "1 change: dhcpv4-server",
+            detail: "1 change in 1 area: dhcpv4-server.",
+          },
         }),
         release("Testing", "operational", at(-20 * day), "7.22beta3", {
           url: "https://download.mikrotik.com/routeros/7.22beta3/CHANGELOG",
@@ -210,6 +225,12 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             build: "26300.1000",
             releasedAt: at(-2 * day).slice(0, 10),
             url: WINDOWS_PAGE,
+            // The update type of its latest build from the page's history table, with the article the table links.
+            note: {
+              text: "Security update",
+              detail: "2026-09 B: the monthly security update.",
+              reference: { label: "KB5000000", url: "https://support.microsoft.com/help/5000000" },
+            },
           },
         },
         {
@@ -222,6 +243,30 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             releasedAt: "2026-02-10",
             updatedAt: at(-9 * day).slice(0, 10),
             url: WINDOWS_PAGE,
+            // Its table links the article, as the page fixture does: the link is the table's own.
+            note: {
+              text: "Optional preview",
+              detail: "2026-09 D: an optional, non-security preview of the next monthly update.",
+              reference: { label: "KB5000050", url: "https://support.microsoft.com/help/5000050" },
+            },
+          },
+        },
+        {
+          name: "25H2",
+          health: "operational",
+          detail: `26200.8100 · ${formatReleaseAge(at(-26 * day).slice(0, 10))}`,
+          release: {
+            version: "25H2",
+            build: "26200.8100",
+            releasedAt: at(-26 * day).slice(0, 10),
+            url: WINDOWS_PAGE,
+            // Its table names the article in text only (as the page fixture's 25H2 table does): the number is
+            // shown, with no link and none invented.
+            note: {
+              text: "Out-of-band fix",
+              detail: "2026-09 OOB: an out-of-band fix, released outside the monthly schedule.",
+              reference: { label: "KB5000060" },
+            },
           },
         },
       ],

@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const SCRIPT = fileURLToPath(new URL("./smoke.sh", import.meta.url));
-const FOOTER = "Not affiliated with any of these vendors. I only read their public status pages.";
+const FOOTER =
+  "Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.";
 
 let server: Server | undefined;
 afterEach(() => {
@@ -47,7 +48,7 @@ describe("smoke.sh footer check", () => {
   it("finds the footer, with React's <!-- --> separators, at the top of a large page", async () => {
     const output = await smoke(
       await serve(
-        `<p>Not<!-- --> affiliated with any of these vendors. I only read their public<!-- --> status pages.</p>${FILLER}`,
+        `<p>Independent project, not<!-- --> affiliated with or endorsed by any of the vendors listed. Status data comes from their<!-- --> official public status pages and feeds.</p>${FILLER}`,
       ),
     );
     expect(output).not.toContain("no footer line");

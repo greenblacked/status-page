@@ -9,9 +9,11 @@ const render = (singleKey: boolean) =>
 describe("SiteFooter", () => {
   const html = render(true);
 
-  it("is a footer landmark that says what the page is and is not, in the owner's voice", () => {
+  it("is a footer landmark that says what the page is and is not", () => {
     expect(html).toMatch(/^<footer /);
-    expect(html).toContain("Not affiliated with any of these vendors. I only read their public status pages.");
+    expect(html).toContain(
+      "Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.",
+    );
     expect(html).not.toContain("TanStack");
     expect(html).not.toContain("Cloudflare Workers");
   });
