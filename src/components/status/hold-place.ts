@@ -1,13 +1,7 @@
 import { type RefObject, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { quietScroll } from "@/lib/status/dock";
 import { createMotionTracker, type MotionTracker } from "@/lib/status/page-motion";
-
-/** Whether the browser keeps what the reader looks at in place when the page above it changes size (scroll anchoring). */
-function anchorsScroll(): boolean {
-  return (
-    CSS.supports("overflow-anchor", "auto") && getComputedStyle(document.documentElement).overflowAnchor !== "none"
-  );
-}
+import { type Held, heldResidual } from "@/lib/status/scroll-residual";
 
 /** How long after a finger lifts the place it last touched still says what the reader is on. */
 const TOUCH_MEMORY_MS = 4_000;
@@ -77,6 +71,28 @@ function holds(root: HTMLElement, element: Element | null): element is Element {
   return bottom > 0 && top < window.innerHeight;
 }
 
+/**
+ * The anchor and its ancestors up to the board, each with its top in the window. The anchor itself is what the
+ * reader looks at; if the update takes it out of the page (a tag that is cleared, a row that is replaced), the
+ * nearest ancestor that stays is the next best thing to hold.
+ */
+function holdsOf(root: Element, anchor: Element): Held[] {
+  const places: Held[] = [];
+  for (let element: Element | null = anchor; element && element !== root; element = element.parentElement) {
+    const target = element;
+    places.push({
+      was: target.getBoundingClientRect().top,
+      // Gone from the page, or shown with no box (display: none), it holds nothing.
+      now: () => {
+        if (!target.isConnected) return null;
+        const { top, width, height } = target.getBoundingClientRect();
+        return width === 0 && height === 0 ? null : top;
+      },
+    });
+  }
+  return places;
+}
+
 /** What the reader is on: what the pointer is over (a finger down, a mouse in the page) until a key is pressed, then the focused element; else the first thing in view. */
 function pickAnchor(root: HTMLElement, pointer: { x: number; y: number } | null): Element | null {
   const under = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
@@ -97,20 +113,21 @@ function pickAnchor(root: HTMLElement, pointer: { x: number; y: number } | null)
  * still; while a finger is on it, or it scrolled a moment ago, the old state stays on screen, and the new one
  * lands about 150 ms after the page goes still. The check at the turn of a slot adds a row to Recent changes and
  * clears the "Changed" tags of the one before, in one commit, so everything under them, the card a reader is
- * looking at included, drops or rises: 63 px in one frame, with a finger on the glass. Chrome and Firefox hold the
- * place themselves; Safari has no scroll anchoring, so there the page is scrolled by the distance its anchor moved,
- * in the same commit, before the next paint, and the card does not move on screen.
+ * looking at included, drops or rises: 63 px in one frame, with a finger on the glass. Some browsers hold the place
+ * themselves (scroll anchoring), some do not, some say they do and do not in this case, and the page cannot tell
+ * which before it happens. So it does not ask: right after the commit, before the next paint, it measures where the
+ * anchor is in the window now against where it was, and scrolls by what is left. A browser that held the place
+ * leaves nothing, so nothing is scrolled twice; one that did not, or held part of it, gets the rest.
  *
  * The anchor is picked again right before the new state is accepted, while the page still has its old layout,
- * so it is what the reader is looking at now, not what they looked at when they started to scroll. It is also kept
- * current as the reader waits and the board resizes, so a resize, a rotation or a late font never leaves a stale
- * number behind.
+ * so it is what the reader is looking at now, not what they looked at when they started to scroll. Its ancestors
+ * are kept with it, in case the update takes the anchor itself out of the page.
  *
  * `hurry` lets the next update through at once, for a press of Refresh: the person asked for it.
  */
 export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T): { shown: T; hurry: () => void } {
-  // The anchor's place is kept as an offset in the document, so the reader's own scrolling cancels out of it.
-  const anchor = useRef<{ element: Element; offset: number } | null>(null);
+  // What the reader was on when the update was accepted, and where it was in the window.
+  const anchor = useRef<Held[] | null>(null);
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const lastTouch = useRef<{ x: number; y: number; at: number } | null>(null);
   const hurriedUntil = useRef(Number.NEGATIVE_INFINITY);
@@ -124,7 +141,7 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
     const finger = lastTouch.current;
     const at = pointer.current ?? (finger && performance.now() - finger.at < TOUCH_MEMORY_MS ? finger : null);
     const picked = element ? pickAnchor(element, at) : null;
-    anchor.current = picked ? { element: picked, offset: picked.getBoundingClientRect().top + window.scrollY } : null;
+    anchor.current = element && picked ? holdsOf(element, picked) : null;
     setShown(latest);
   }
 
@@ -186,15 +203,17 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs for a change of what is shown, which is what moves the board.
   useLayoutEffect(() => {
-    const last = anchor.current;
-    if (!last?.element.isConnected || window.scrollY <= 0 || anchorsScroll()) return;
+    const held = anchor.current;
+    anchor.current = null;
+    if (!held || window.scrollY <= 0) return;
     // A programmatic scroll would stop a flick on iOS, and a shift of the feed's size mid-flick goes unseen. The
     // update waits for the page to be still, so this only meets a page in motion when it was hurried.
     if (motion().moving()) return;
-    const moved = last.element.getBoundingClientRect().top + window.scrollY - last.offset;
-    // Not a row or two of the feed: a reorder of the board, which the reader is not owed a ride along with.
-    if (Math.abs(moved) < 0.5 || Math.abs(moved) > window.innerHeight) return;
-    quietScroll(() => window.scrollBy({ top: moved, behavior: "instant" }));
+    // Measured now, after the commit has been laid out, so it includes anything the browser has already scrolled
+    // by; not a row or two of the feed when it is a reorder of the board, which the reader is not owed a ride with.
+    const left = heldResidual(held, { scrollY: window.scrollY, viewport: window.innerHeight });
+    if (!left) return;
+    quietScroll(() => window.scrollBy({ top: left, behavior: "instant" }));
   }, [shown]);
 
   return {
