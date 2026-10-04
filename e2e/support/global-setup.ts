@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FullConfig } from "@playwright/test";
 import type { BoardSnapshot, Health } from "../../src/lib/status/types.ts";
-import { missingFromFirstRender } from "./first-render.ts";
+import { FIRST_RENDER_AT_ENV, missingFromFirstRender } from "./first-render.ts";
 import { VENDOR_LOG_PREFIX, vendorLogPath } from "./vendor-log.ts";
 
 type Entry = { kind: "active" | "served" | "refused"; host?: string; path?: string };
@@ -91,7 +91,8 @@ async function waitForQuietLog(log: string, quietMs = 500, limitMs = 10_000): Pr
  * window. The setup waits until the vendor log is quiet (those reads are done, in milliseconds on the canned
  * payloads), only then asks for the page the tests will render, and pins what it carries
  * (EXPECTED_RELEASE_LINES and MIKROTIK_NOTE in first-render.ts): that page is the board the first tests are
- * served. If the reads were late the page is asked again until it has them (at most FIRST_RENDER_DEADLINE_MS),
+ * served (for the first RELEASE_LINES_GUARANTEED_MS of the run: the feeds are cached for 30 minutes, after which
+ * a build leaves them out until they are read again, so the first-render test stops asking for them). If the reads were late the page is asked again until it has them (at most FIRST_RENDER_DEADLINE_MS),
  * then this fails, by name, and not as a test that cannot find a line. The returned function reports the counts
  * of the whole run after the last test.
  */
@@ -109,6 +110,9 @@ export default async function globalSetup(config: FullConfig): Promise<() => Pro
     }
   }
 
+  // The feeds are read right after this board's sweep and cached for 30 minutes (RELEASE_FEED_TTL_MS); the workers
+  // inherit this, and the first-render test asks for the release lines only while they are younger than that.
+  process.env[FIRST_RENDER_AT_ENV] = String(Date.now());
   const response = await fetch(new URL("/api/status.json", baseURL));
   const board = (await response.json()) as BoardSnapshot;
   const unknown = board.services.filter((service) => service.health === "unknown").length;
