@@ -134,6 +134,11 @@ jobs:
       - name: Build (pnpm run build)
         run: pnpm run build
 
+      - name: One board cache in the built server
+        # A cache declared beside a server function is built twice (once per
+        # chunk), so the page and the API stop sharing it.
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/single-board-cache.ts dist/server
+
       - name: Smoke-test built preview
         # scripts/ci/smoke.sh holds the checks, shared with deploy.yml.
         # /readyz may be 503 here: a runner that cannot reach a vendor
