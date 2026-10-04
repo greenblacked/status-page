@@ -562,8 +562,11 @@ export function useSearchDock({
  * A turn across 64rem with a field in use moves the focus to the field that is
  * there (see useSearchDock), since the copy is not drawn from 64rem up.
  *
- * Hidden, it is `inert`, so Tab never lands on a control nobody can see
- * and the skip link stays the first stop. It stays put while keyboard
+ * Hidden, it is `inert` and `aria-hidden`, so Tab never lands on a control
+ * nobody can see, a tap goes through to the page and the skip link stays the
+ * first stop. Below 64rem that is all that hides it from use: it keeps its
+ * blurred layer and fades out by opacity alone (styles.css), so the layer is
+ * not built and torn down in the middle of the scroll that shows it. It stays put while keyboard
  * focus is inside it, so scrolling back up never pulls focus out from
  * under a keyboard user. Focus from a click does not hold it: Chromium
  * and Firefox focus a clicked button, and the bar would then sit over the
@@ -589,8 +592,11 @@ export function CompactHeader({
   live: LiveState;
   /** When the snapshot was collected (epoch ms), if it says. */
   checkedAt: number | null;
-  /** The countdown to the next check, "1:52". */
-  nextIn: string;
+  /**
+   * The countdown to the next check, "1:52". A node, so that the part that ticks (NextIn) is a component of its own
+   * and the bar does not render for every second of it.
+   */
+  nextIn: ReactNode;
   /** The bar's copy of the search field, for the slot (below 64rem only). */
   search: ReactNode;
   /** The controls, rendered by the board so they share its state and handlers. */
@@ -608,6 +614,7 @@ export function CompactHeader({
       data-shown={visible}
       data-revealed={revealed ? "" : undefined}
       inert={!visible}
+      aria-hidden={visible ? undefined : true}
       onFocus={(event) => setKeyboardFocus(keyboardFocus(event.target))}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false);
