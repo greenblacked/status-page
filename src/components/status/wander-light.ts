@@ -17,8 +17,10 @@ import { GLINT_QUERY } from "@/lib/status/tilt";
  * light moves in small steps instead, all of the cards in the same
  * tick, about twice a second. The light is soft and slow (it crosses a card in
  * about twenty seconds), so a step is a few pixels of a gradient that fades over
- * two hundred, a change of less than one level of colour, which no eye can tell
- * from a smooth glide; and the page is damaged on 2 of 60 frames, not on all of them.
+ * two hundred: up to 5% of the card's height and 3.7% of its width at the shortest
+ * loop (about 23px on a 460px card, more on a very tall list), measured at no more
+ * than three levels of colour in a screenshot, which reads as a drift rather than
+ * a jump. The page is damaged on 2 of 60 frames, not on all of them.
  *
  * No animation also means nothing for the style system to sample on every
  * frame, and nothing a browser could decide to run on the main thread: the only
@@ -26,7 +28,7 @@ import { GLINT_QUERY } from "@/lib/status/tilt";
  * properties (--wander-x, --wander-y, in px) on each card whose light moved by
  * at least a pixel. The CSS reads them in the layer's transform, so nothing is laid out or
  * painted; the compositor moves the layer. The properties are plain (not
- * registered) and `.surface > *` resets them, so a write restyles the card and its
+ * registered) and `.spotlight > *` resets them, so a write restyles the card and its
  * direct children, not the rows inside.
  *
  * Where it stops: nothing is written while the page is hidden, while Tilt
@@ -34,7 +36,11 @@ import { GLINT_QUERY } from "@/lib/status/tilt";
  * device with no hover-capable pointer), and while the style sheet hides the
  * layer (Quiet, Reduce Motion, Reduce glass, Increase Contrast, forced colours).
  * The path is a pure function of the clock, so after any pause the light is
- * simply where it would have been.
+ * simply where it would have been. A pause also takes the cards' data-wander
+ * mark off, which fades the light out, so that when the pause ends the light
+ * is not shown at the place it stopped at: the next step writes where it should
+ * be and puts the mark back, and the light fades in there. That step runs at once
+ * when the page becomes visible again, and otherwise within half a second.
  */
 
 /** Milliseconds between steps. */
@@ -139,19 +145,30 @@ export function startWanderLight(
   /** Tilt lighting is driving the light and the glint has the card's ::after (the style sheet's own condition). */
   const tiltDrives = () => document.documentElement.dataset.tilt === "on" && glint.matches;
 
+  /** Takes the light off the cards, so it fades out and comes back at the right place, not the one it stopped at. */
+  const pause = (cards: Iterable<[HTMLElement, Walker]>) => {
+    for (const [el, walker] of cards) {
+      if (walker.x === undefined) continue;
+      delete el.dataset.wander;
+      walker.x = undefined;
+      walker.y = undefined;
+    }
+  };
+
   const step = () => {
-    if (document.hidden || tiltDrives()) return;
-    // The cards that are still on the page, all of them read before any is written.
+    // The cards that are still on the page (the rest are forgotten, whether or not the light is moving).
     const cards: [HTMLElement, Walker][] = [];
     for (const entry of walkers) {
       if (entry[0].isConnected) cards.push(entry);
       else walkers.delete(entry[0]);
     }
+    if (document.hidden || tiltDrives()) return pause(cards);
     const sample = cards[0]?.[0];
     if (!sample) return;
     // The style sheet hides the layer in Quiet, under Reduce Motion, Reduce glass, Increase Contrast and forced colours.
     const layer = getComputedStyle(sample, "::after");
-    if (layer.content === "none" || layer.display === "none") return;
+    if (layer.content === "none" || layer.display === "none") return pause(cards);
+    // All of the cards' sizes are read before any is written.
     const t = now();
     const moves: [HTMLElement, Walker, number, number][] = [];
     for (const [el, walker] of cards) {
@@ -173,6 +190,8 @@ export function startWanderLight(
   seedWithin(root);
   step();
   const timer = window.setInterval(step, WANDER_TICK_MS);
+  // Coming back to the page: the light is put in its place before the first frame, not up to a step later.
+  document.addEventListener("visibilitychange", step);
   // A card that appears later (a refresh, a filter) is given its place by the next step, not at once: reading sizes
   // from here would force a layout after every change the page makes to the board.
   const observer = new MutationObserver((records) => {
@@ -183,6 +202,7 @@ export function startWanderLight(
   return () => {
     window.clearInterval(timer);
     observer.disconnect();
+    document.removeEventListener("visibilitychange", step);
     for (const el of walkers.keys()) {
       el.style.removeProperty(WANDER_VAR_X);
       el.style.removeProperty(WANDER_VAR_Y);
