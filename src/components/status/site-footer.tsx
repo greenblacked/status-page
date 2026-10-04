@@ -4,10 +4,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * The page's colophon: a real <footer> (the contentinfo landmark), a sibling
- * after <main>, never inside it. Two lines of words and one of credit, in the
- * owner's voice. Nothing here explains how the machinery works.
+ * after <main>, never inside it. Two lines of words and one of credit.
+ * Nothing here explains how the machinery works.
  *
- *   Not affiliated with any of these vendors. I only read their public status pages.
+ *   Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.
  *   Source on GitHub · MIT License · JSON · Atom feed · Settings (press ?)
  *                                                                  Made by greenblacked.
  */
@@ -52,7 +52,10 @@ export function SiteFooter({
   return (
     <footer className={cn("flex flex-col gap-y-1 text-caption text-subtle", className)}>
       <div className="flex flex-col gap-x-8 gap-y-1 md:flex-row md:flex-wrap md:items-baseline md:justify-between">
-        <p>Not affiliated with any of these vendors. I only read their public status pages.</p>
+        <p>
+          Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from
+          their official public status pages and feeds.
+        </p>
         <p>
           <Link href="https://github.com/greenblacked/status-page" external>
             Source on GitHub

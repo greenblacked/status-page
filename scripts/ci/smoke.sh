@@ -39,7 +39,7 @@ set -euo pipefail
 
 SERVICES=20
 TITLE='<title>Status</title>'
-FOOTER='Not affiliated with any of these vendors. I only read their public status pages.'
+FOOTER='Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.'
 usage() {
   echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>] [--require-asset-cache]"
 }
