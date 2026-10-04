@@ -162,6 +162,13 @@ describe("windowsReleases", () => {
     ]);
   });
 
+  it("reads the date of a cell whose tag holds a > in a quoted value", () => {
+    const table = `<table><tr><th>Version</th><th>Availability date</th></tr><tr><td>26H2</td><td data-note="was>2099-01-01 ">2025-09-30</td></tr></table>`;
+    expect(windowsReleases(readHtmlTables(table))).toEqual([
+      { version: "26H2", availableAt: "2025-09-30T00:00:00.000Z" },
+    ]);
+  });
+
   it("picks up a version the page did not list before, wherever its row is", () => {
     const before = versionsTable(["26H2|2026-09-29|26300.1000", "25H2|2025-09-30|26200.8100"]);
     const after = versionsTable([
@@ -254,6 +261,24 @@ describe("readHtmlCells", () => {
   });
 });
 
+describe("readHtmlCells tags", () => {
+  it("ends a tag at the first > outside a quoted value, whatever the tag", () => {
+    expect(readHtmlTables(`<table><tr><td title="a>b">GA</td></tr></table>`)).toEqual([[["GA"]]]);
+    expect(
+      readHtmlTables(`<table><tr><td data-note='was>2099' class=x>GA</td><th t="</td>">B</th></tr></table>`),
+    ).toEqual([[["GA", "B"]]]);
+    expect(readHtmlTables(`<table title="<td>x</td>"><tr><td>GA</td></tr></table>`)).toEqual([[["GA"]]]);
+  });
+
+  it("ends a malformed tag at its first >", () => {
+    expect(readHtmlTables(`<table><tr><td title="a>GA</td></tr></table>`)).toEqual([[["GA"]]]);
+  });
+
+  it("does not take td-x or td:x for a td", () => {
+    expect(readHtmlTables(`<table><tr><td-x>no</td-x><td:x>no</td:x><td>GA</td></tr></table>`)).toEqual([[["GA"]]]);
+  });
+});
+
 describe("readHtmlCells links", () => {
   const hrefs = (anchor: string) =>
     readHtmlCells(`<table><tr><td>${anchor}</td></tr></table>`)[0][0].map((cell) => cell.href);
@@ -291,6 +316,18 @@ describe("readHtmlCells links", () => {
     expect(hrefs(`<a href="">k</a>`)).toEqual([undefined]);
     expect(hrefs(`<a href="" href="${KB}">k</a>`)).toEqual([undefined]);
     expect(hrefs(`<a name="top">a</a><a href="${KB}">b</a>`)).toEqual([KB]);
+  });
+
+  it("decodes entities in the href as a browser does", () => {
+    expect(hrefs(`<a href="${KB}?x=1&amp;y=2">k</a>`)).toEqual([`${KB}?x=1&y=2`]);
+    expect(hrefs(`<a href="https:&#x2F;&#x2F;support.microsoft.com/help/5000001">k</a>`)).toEqual([KB]);
+  });
+
+  it("takes a link only from a tag named a, and reads one whose attributes follow a slash", () => {
+    expect(hrefs(`<a-link href="${KB}">k</a-link>`)).toEqual([undefined]);
+    expect(hrefs(`<a:x href="${KB}">k</a:x>`)).toEqual([undefined]);
+    expect(hrefs(`<a/href="${KB}">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a\nhref="${KB}">k</a>`)).toEqual([KB]);
   });
 
   it("gives no link for a malformed tag", () => {
@@ -475,6 +512,21 @@ describe("windowsUpdateNote", () => {
       const tables = history([row("2026-09 B", "26100.6725", `<a href="${href}">KB5000003</a>`)]);
       expect(windowsUpdateNote(tables, "26100.6725")?.reference, href).toEqual({ label: "KB5000003" });
     }
+  });
+
+  it("reads the KB label from the visible text, not from a > inside an attribute", () => {
+    const tables = history([row("2026-09 B", "26100.6725", '<span title="replaces>KB5000001 ">KB5000060</span>')]);
+    expect(windowsUpdateNote(tables, "26100.6725")?.reference).toEqual({ label: "KB5000060" });
+  });
+
+  it("keeps the link when the href has entities", () => {
+    const tables = history([
+      row("2026-09 B", "26100.6725", '<a href="https:&#x2F;&#x2F;support.microsoft.com/help/5000060">KB5000060</a>'),
+    ]);
+    expect(windowsUpdateNote(tables, "26100.6725")?.reference).toEqual({
+      label: "KB5000060",
+      url: "https://support.microsoft.com/help/5000060",
+    });
   });
 
   it("drops the link when it points at a different article than the KB label", () => {
