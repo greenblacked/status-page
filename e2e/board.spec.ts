@@ -185,6 +185,23 @@ async function openFixture(
   await refreshIntoServedBoard(page, ready);
 }
 
+/**
+ * openFixture, with the page's Date 30 s into a slot (pinToSlot) first, for a test that presses something on the
+ * board. At the turn of a slot (every two minutes of the wall clock) the page refetches, adds a row to Recent
+ * changes and clears the "Changed" tags, which moves every card under a tag by 36px to 108px, and where the browser
+ * has no scroll anchoring (WebKit) useHoldPlace scrolls the page by the same distance a moment later. A press made
+ * in the second or two after a turn can find the board moving under it. With the page 30 s in, the next turn is 90 s
+ * away, past the end of any of these tests. Tests that install page.clock and fast-forward it pin the page already.
+ */
+async function openFixtureInSlot(
+  page: Page,
+  board: () => BoardSnapshot,
+  ready?: { id: string; label: string },
+): Promise<void> {
+  await pinToSlot(page);
+  await openFixture(page, board, ready);
+}
+
 /** On a loaded page that has a board served (serveBoard), presses Refresh so the board replaces the server's first render. */
 async function refreshIntoServedBoard(
   page: Page,
@@ -3098,7 +3115,7 @@ test("sets the search field at 16px on a touch screen, so iPhone does not zoom i
 
 test("renders healthy services as rows, alike whether or not the vendor lists components", async ({ page }) => {
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
 
   // Each category's heading counts the rows under it.
   const up = group(page, "up");
@@ -3126,6 +3143,8 @@ test("renders healthy services as rows, alike whether or not the vendor lists co
       await expect(list).toHaveCount(0);
     } else {
       await card.locator("summary").click();
+      // The dropdown itself says whether the press opened it; a list that never shows could be anything.
+      await expect(card.locator("details")).toHaveAttribute("open", "");
       await expect(list).toHaveCount(1);
       await expect(list.getByRole("listitem")).toHaveCount(Math.min(service.components.length, 6));
       for (const component of service.components.slice(0, 6)) {
@@ -3144,9 +3163,10 @@ const inViewport = (locator: Locator) =>
 
 test("opens a long component list with Show all and closes it with Show fewer", async ({ page }) => {
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-spotify");
   await card.locator("summary").click();
+  await expect(card.locator("details")).toHaveAttribute("open", "");
   const list = card.getByRole("list", { name: "Components" });
   const toggle = card.getByRole("button", { name: /^Show all 32/ });
   await expect(list.getByRole("listitem")).toHaveCount(6);
@@ -3206,6 +3226,7 @@ for (const anchoring of ["none", "default"] as const) {
     );
     const card = page.locator("article#service-spotify");
     await card.locator("summary").click();
+    await expect(card.locator("details")).toHaveAttribute("open", "");
     const toggle = card.getByRole("button", { name: /^Show all 32/ });
     await toggle.scrollIntoViewIfNeeded();
     // The feed is above the top of the window.
@@ -3316,6 +3337,7 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   });
   const card = page.locator("article#service-spotify");
   await card.locator("summary").click();
+  await expect(card.locator("details")).toHaveAttribute("open", "");
   const toggle = card.getByRole("button", { name: /^Show all 32/ });
   await toggle.scrollIntoViewIfNeeded();
   await page.evaluate(() => window.scrollBy(0, 200));
@@ -3378,7 +3400,7 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
 test("operates Show all from the keyboard", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "a keyboard is the desktop project's");
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-spotify");
   await card.locator("summary").focus();
   await page.keyboard.press("Enter");
@@ -3393,7 +3415,7 @@ test("operates Show all from the keyboard", async ({ page }, testInfo) => {
 
 test("gives an attention card the same dropdown, with the working components in it", async ({ page }) => {
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-gcp");
   // The broken components stay in view; the working ones wait in the dropdown.
   await expect(card.locator("[data-component-row]")).toHaveCount(2);
@@ -3401,6 +3423,8 @@ test("gives an attention card the same dropdown, with the working components in 
   await expect(dropdown).toHaveCount(1);
   await expect(dropdown.locator("summary")).toContainText("Working components");
   await dropdown.locator("summary").click();
+  // The dropdown itself says whether the press opened it; a list that never shows could be anything.
+  await expect(dropdown).toHaveAttribute("open", "");
   const list = dropdown.getByRole("list", { name: "Components" });
   await expect(list.getByRole("listitem")).toHaveCount(6);
   await dropdown.getByRole("button", { name: /^Show all 38/ }).click();
@@ -3434,7 +3458,7 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
       startedAt: new Date(Date.now() - 600_000).toISOString(),
     },
   ];
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
 
   // The attention card: the broken component in view, the working ones in the dropdown.
   const card = page.locator("article#service-claude");
@@ -3442,6 +3466,8 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
   const dropdown = card.locator("details[data-healthy-components]");
   await expect(dropdown.locator("summary")).toContainText("Working components");
   await dropdown.locator("summary").click();
+  // The dropdown itself says whether the press opened it; a list that never shows could be anything.
+  await expect(dropdown).toHaveAttribute("open", "");
   const list = dropdown.getByRole("list", { name: "Components" });
   await expect(list.getByRole("listitem")).toHaveCount(6);
   await dropdown.getByRole("button", { name: /^Show all 299/ }).click();
@@ -3459,6 +3485,7 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
   const row = page.locator("article#service-chatgpt");
   await expect(group(page, "up").and(row)).toHaveCount(1);
   await row.locator("summary").click();
+  await expect(row.locator("details")).toHaveAttribute("open", "");
   await expect(row.getByRole("list", { name: "Components" }).getByRole("listitem")).toHaveCount(5);
   await expect(row.getByRole("button", { name: /^Show all/ })).toHaveCount(0);
 });
@@ -3471,7 +3498,7 @@ test("closing a long list of broken rows on an attention card keeps its button i
     name: `Broken ${index + 1}`,
     health: "degraded" as const,
   }));
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-gcp");
   await card.getByRole("button", { name: /^Show all 120/ }).click();
   const fewer = card.getByRole("button", { name: /^Show fewer/ });
