@@ -138,9 +138,22 @@ class SyntheticFinger implements Reader {
     await this.page.evaluate(
       ([x, y]) => {
         const target = document.elementFromPoint(x, y) ?? document.body;
+        let cancelled = false;
         (window as Pad).__pad = {
           fire(type, at, live) {
             const node = target.isConnected ? target : document.body;
+            // As on a phone: a pointer goes down with the finger, and is cancelled when the browser takes the
+            // gesture for a scroll, while the touch events go on.
+            const pointer = (name: string) => {
+              if (typeof PointerEvent !== "function") return;
+              const init = { pointerId: 1, pointerType: "touch", isPrimary: true, clientX: x, clientY: at };
+              node.dispatchEvent(new PointerEvent(name, { ...init, bubbles: true, cancelable: true, composed: true }));
+            };
+            if (type === "touchstart") pointer("pointerdown");
+            if (type === "touchmove" && !cancelled) {
+              cancelled = true;
+              pointer("pointercancel");
+            }
             const point = { identifier: 1, target: node, clientX: x, clientY: at, pageX: x, pageY: at + scrollY };
             try {
               const touch = new Touch(point);
@@ -188,15 +201,32 @@ class SyntheticFinger implements Reader {
   }
 }
 
-/** No finger at all: the page scrolled a step at a time (a wheel, the keys, the glide of a flick), which is scroll events alone. */
+/**
+ * No finger: the page scrolled a step at a time (a wheel, the glide of a flick), which is scroll events alone, with
+ * a mouse resting on the card the reader is on.
+ */
 class Scroller implements Reader {
+  private y = 0;
   /** When, in the page's clock, the page was last scrolled. */
   movedAt = 0;
+  get at() {
+    return this.y;
+  }
   constructor(
     private readonly page: Page,
-    readonly at: number,
+    private readonly x: number,
   ) {}
-  async down() {}
+  async down(y: number) {
+    this.y = y;
+    await this.page.evaluate(
+      ([x, y]) => {
+        const target = document.elementFromPoint(x, y) ?? document.body;
+        const init = { pointerId: 1, pointerType: "mouse", isPrimary: true, clientX: x, clientY: y };
+        target.dispatchEvent(new PointerEvent("pointermove", { ...init, bubbles: true, composed: true }));
+      },
+      [this.x, y],
+    );
+  }
   async dragBy(dy: number, step: number) {
     const steps = Math.max(1, Math.round(Math.abs(dy) / step));
     for (let i = 0; i < steps; i++) {
@@ -396,7 +426,7 @@ test("floating bar: the board does not shift under a page that scrolls across th
   hasTouch,
 }, testInfo) => {
   test.skip(!hasTouch, "the scrolling of a phone or a tablet, which a finger is not the only way to do");
-  await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.height * 0.5), { touching: false });
+  await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.width / 2), { touching: false });
 });
 
 test("floating bar: Recent changes holds the height of its first row on a first visit", async ({ page }) => {
