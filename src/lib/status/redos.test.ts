@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
-import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
+import { mikrotikChangelogNote, mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
 import { PayloadError, unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
@@ -206,6 +206,25 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["a heading marker that never ends", `What's new in ${" ".repeat(SIZE)}`],
   ])("mikrotikChangelogNotes: %s", (_label, text) => {
     expect(elapsed(() => mikrotikChangelogNotes(text))).toBeLessThan(BUDGET_MS);
+  });
+
+  it.each([
+    ["one line with no newline", `What's new in 7.2:\n*) ${"a".repeat(SIZE)}`],
+    ["a very long area before any dash", `What's new in 7.2:\n*) ${"a ".repeat(SIZE / 2)}- x`],
+    ["an area made of spaces", `What's new in 7.2:\n*) ${" ".repeat(SIZE)} - x`],
+    ["dashes and spaces", `What's new in 7.2:\n*) ${" - ".repeat(SIZE / 3)}`],
+    ["a very long run of change lines", `What's new in 7.2:\n${"*) a - b;\n".repeat(SIZE / 10)}`],
+    ["a very long run of important lines", `What's new in 7.2:\n${"!) a - b;\n".repeat(SIZE / 10)}`],
+    [
+      "many distinct areas",
+      `What's new in 7.2:\n${Array.from({ length: SIZE / 12 }, (_, at) => `*) a${at} - b;`).join("\n")}`,
+    ],
+    ["bullets with nothing in them", `What's new in 7.2:\n${"*)\n!)\n".repeat(SIZE / 6)}`],
+    ["headings and no bullets", "What's new in 7.2:\n".repeat(SIZE / 20)],
+    ["a long run of blank lines", `What's new in 7.2:\n${"\n".repeat(SIZE)}*) a - b;`],
+    ["carriage returns only", `What's new in 7.2:${"\r".repeat(SIZE)}*) a - b;`],
+  ])("mikrotikChangelogNote: %s", (_label, text) => {
+    expect(elapsed(() => mikrotikChangelogNote(text, "7.2"))).toBeLessThan(BUDGET_MS);
   });
 
   it("splitAppleBuild: a version made of parentheses and of spaces", () => {

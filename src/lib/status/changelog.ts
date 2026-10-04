@@ -1,4 +1,5 @@
-import { clip, MAX_NOTE_CHARS } from "./bounds.ts";
+import { clip, MAX_NOTE_CHARS, MAX_NOTE_LINES } from "./bounds.ts";
+import type { ReleaseNote } from "./types.ts";
 
 export type ChannelRelease = {
   name: string;
@@ -98,6 +99,92 @@ export function mikrotikChangelogNotes(text: string, max: number = MAX_MIKROTIK_
     if (note) notes.push(clip(note, MAX_NOTE_CHARS));
   }
   return notes;
+}
+
+/** Areas the row names before "+N more". */
+const NOTE_ROW_AREAS = 3;
+/** Distinct areas the Details list; a release touches a few dozen at most, and the rest is counted, not listed. */
+const NOTE_MAX_AREAS = 30;
+/** The longest text before " - " that still reads as an area ("dhcpv4-server", "ipv6 nd"), not a sentence. */
+const NOTE_AREA_CHARS = 24;
+
+// An area is a short run of the characters MikroTik's own area names use. The text it is tested on is at most
+// NOTE_AREA_CHARS long and the class is a single repeat, so the test is linear.
+const NOTE_AREA = /^[A-Za-z0-9][A-Za-z0-9 ._,/()+-]*$/;
+
+/** The area of a change line ("bgp" in "bgp - fixed a leak"), or undefined when the line does not start with one. */
+function changeArea(body: string): string | undefined {
+  // Look only as far as an area could reach, so a long line is not scanned for a " - " it cannot use.
+  const dash = body.slice(0, NOTE_AREA_CHARS + 3).indexOf(" - ");
+  if (dash < 1) return undefined;
+  const area = body.slice(0, dash).trim();
+  return area.length > 0 && area.length <= NOTE_AREA_CHARS && NOTE_AREA.test(area) ? area : undefined;
+}
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * A short note on one RouterOS release, from that version's own changelog section ("What's new in <version>")
+ * and nothing else: how many change lines it has, the areas they name in order of first appearance (the text
+ * before " - " in "*) bridge - fixed ..."), and the lines MikroTik flags important ("!) ..."). The row gets
+ * "23 changes: bgp, wifi, container +9 more · 2 important"; the Details get every area and the important lines'
+ * text. Undefined when:
+ * - the section is not for `version` (the first heading must name it exactly), or has no change lines;
+ * - the section may have been cut: the file was read only as far as MAX_NOTES_SCAN_CHARS and no later heading
+ *   shows that this section ended, so a count would be a guess.
+ *
+ * One forward pass over at most MAX_NOTES_SCAN_CHARS, line by line with indexOf; the area test sees at most
+ * NOTE_AREA_CHARS characters of a line.
+ */
+export function mikrotikChangelogNote(text: string, version: string): ReleaseNote | undefined {
+  if (!mikrotikChangelogIsFor(text, version)) return undefined;
+  const end = Math.min(text.length, MAX_NOTES_SCAN_CHARS);
+  const areas = new Map<string, string>();
+  const important: string[] = [];
+  let changes = 0;
+  let flagged = 0;
+  let inSection = false;
+  let ended = false;
+  let pos = 0;
+  while (pos < end) {
+    const newline = text.indexOf("\n", pos);
+    const lineEnd = newline === -1 || newline > end ? end : newline;
+    const line = text.slice(pos, lineEnd).trim();
+    pos = lineEnd + 1;
+    if (line.length === 0) continue;
+    if (line.slice(0, 13).toLowerCase() === "what's new in") {
+      if (inSection) {
+        ended = true;
+        break;
+      }
+      inSection = true;
+      continue;
+    }
+    if (!inSection || line.length < 2 || line[1] !== ")" || (line[0] !== "*" && line[0] !== "!")) continue;
+    // The text of the change, as the first notes read it: a bullet with nothing after it is not a change.
+    const body = line.slice(2).trim().replace(/;$/, "").trim();
+    if (!body) continue;
+    changes += 1;
+    const area = changeArea(body);
+    if (area && areas.size < NOTE_MAX_AREAS && !areas.has(area.toLowerCase())) areas.set(area.toLowerCase(), area);
+    if (line[0] === "!") {
+      flagged += 1;
+      if (important.length < MAX_NOTE_LINES) important.push(clip(body, MAX_NOTE_CHARS));
+    }
+  }
+  // The whole file fits the window, or a later heading closed the section: either way the count is the section's.
+  if (changes === 0 || (!ended && text.length > MAX_NOTES_SCAN_CHARS)) return undefined;
+
+  const named = [...areas.values()];
+  const more = named.length - NOTE_ROW_AREAS;
+  let row = plural(changes, "change", "changes");
+  if (named.length > 0) row += `: ${named.slice(0, NOTE_ROW_AREAS).join(", ")}${more > 0 ? ` +${more} more` : ""}`;
+  if (flagged > 0) row += ` · ${flagged} important`;
+  const detail =
+    named.length > 0
+      ? `${plural(changes, "change", "changes")} in ${plural(named.length, "area", "areas")}: ${named.join(", ")}.`
+      : `${plural(changes, "change", "changes")}.`;
+  return { text: row, detail, ...(important.length > 0 ? { important } : {}) };
 }
 
 /**

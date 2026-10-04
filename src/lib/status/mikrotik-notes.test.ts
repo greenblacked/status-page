@@ -132,10 +132,21 @@ describe("MikroTik changelog notes", () => {
           "dhcpv4-server - fixed lease expiry reported in the wrong unit",
           "ipsec - improved rekeying with peers that change address",
         ],
+        // The row's note and the Details' note come from the same section: six changes, one flagged important.
+        note: {
+          text: "6 changes: lte, bridge, dhcpv4-server +3 more · 1 important",
+          detail: "6 changes in 6 areas: lte, bridge, dhcpv4-server, ipsec, ospf, wifi.",
+          important: ["lte - fixed a crash when a modem is removed during a firmware update"],
+        },
       });
       expect(release("7.21beta4")?.notes?.[0]).toBe("bgp - fixed route refresh handling when the peer restarts");
+      expect(release("7.21beta4")?.note).toEqual({
+        text: "4 changes: bgp, bridge, console +1 more",
+        detail: "4 changes in 4 areas: bgp, bridge, console, wifi.",
+      });
       // A version whose changelog could not be read has its link and date, and no notes: nothing is made up.
       expect(release("6.49.19")).toEqual(before[0].components[4].release);
+      expect(release("6.49.19")?.note).toBeUndefined();
       // Health, versions, incidents and the rest are exactly the collector's.
       expect({ ...after, summary: "", components: [] }).toEqual({ ...before[0], summary: "", components: [] });
       expect(after.components.map(({ name, health, detail }) => ({ name, health, detail }))).toEqual(
@@ -228,6 +239,16 @@ describe("MikroTik changelog notes", () => {
         expect(after.summary).toBe("Latest RouterOS 7.20.2 · Sep 15");
         expect(after.components[0].release?.notes).toBeTruthy();
       });
+    });
+
+    it("keeps the first notes but gives no note when the read stopped inside the section", async () => {
+      // The 64 KB range ends before the section does, so a count of its lines would be short: no note.
+      const long = `What's new in 7.20.2 (2026-Sep-15 09:30):\n${"*) bgp - a change;\n".repeat(4000)}`;
+      route({ ...changelogs(), [changelog("7.20.2")]: text(long) });
+      await startMikrotikNotes([card()]);
+      const release = withMikrotikNotes([card()])[0].components[0].release;
+      expect(release?.notes).toHaveLength(4);
+      expect(release?.note).toBeUndefined();
     });
 
     it("never throws or rejects, whatever the changelog host does", async () => {

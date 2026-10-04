@@ -8,6 +8,7 @@ import {
   isFreshRelease,
   latestAppleOsByFamily,
   mikrotikChangelogIsFor,
+  mikrotikChangelogNote,
   mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   parseAppleOsTitle,
@@ -133,6 +134,122 @@ describe("mikrotikChangelogNotes", () => {
     assert.deepEqual(mikrotikChangelogNotes("What's new in 7.2:\n*) <img src=x onerror=alert(1)>;\n"), [
       "<img src=x onerror=alert(1)>",
     ]);
+  });
+});
+
+describe("mikrotikChangelogNote", () => {
+  const section = (...lines: string[]) => `What's new in 7.2 (2026-Sep-19 12:00):\n\n${lines.join("\n")}\n`;
+
+  it("counts the change lines, names the areas in order of first appearance and flags the important ones", () => {
+    const note = mikrotikChangelogNote(
+      section(
+        "!) lte - fixed a crash when a modem is removed;",
+        "*) bgp - fixed a leak;",
+        "*) wifi - fixed roaming;",
+        "*) bgp - fixed route refresh;",
+        "*) container - added a limit;",
+        "*) ipsec - improved rekeying;",
+        "!) system - changed the default policy;",
+      ),
+      "7.2",
+    );
+    assert.deepEqual(note, {
+      text: "7 changes: lte, bgp, wifi +3 more · 2 important",
+      detail: "7 changes in 6 areas: lte, bgp, wifi, container, ipsec, system.",
+      important: ["lte - fixed a crash when a modem is removed", "system - changed the default policy"],
+    });
+  });
+
+  it("is short for a few areas, singular for one change and has no important part when none is flagged", () => {
+    assert.equal(mikrotikChangelogNote(section("*) bgp - a;", "*) wifi - b;"), "7.2")?.text, "2 changes: bgp, wifi");
+    assert.equal(mikrotikChangelogNote(section("*) bgp - a;"), "7.2")?.text, "1 change: bgp");
+    assert.equal(
+      mikrotikChangelogNote(section("*) a - 1;", "*) b - 2;", "*) c - 3;", "*) d - 4;"), "7.2")?.text,
+      "4 changes: a, b, c +1 more",
+    );
+    assert.equal(mikrotikChangelogNote(section("*) bgp - a;"), "7.2")?.important, undefined);
+  });
+
+  it("counts a line with no area and names no area for it", () => {
+    const note = mikrotikChangelogNote(
+      section("*) fixed something with no area at all;", "*) this sentence is far too long to be an area - at all;"),
+      "7.2",
+    );
+    assert.equal(note?.text, "2 changes");
+    assert.equal(note?.detail, "2 changes.");
+  });
+
+  it("treats areas as the same ignoring case, and keeps the first spelling", () => {
+    assert.equal(
+      mikrotikChangelogNote(section("*) BGP - a;", "*) bgp - b;", "*) Wifi - c;"), "7.2")?.text,
+      "3 changes: BGP, Wifi",
+    );
+  });
+
+  it("lists at most thirty areas in the Details and five important lines", () => {
+    const lines = Array.from({ length: 40 }, (_, at) => `!) area${at} - important change ${at};`);
+    const note = mikrotikChangelogNote(section(...lines), "7.2");
+    assert.equal(note?.text, "40 changes: area0, area1, area2 +27 more · 40 important");
+    assert.equal(note?.important?.length, 5);
+    assert.equal(note?.detail?.startsWith("40 changes in 30 areas: area0, area1"), true);
+    assert.equal(note?.detail?.includes("area30"), false);
+  });
+
+  it("reads only the version's own section, never an older one below it", () => {
+    const text = [
+      "What's new in 7.2 (2026-Sep-19 12:00):",
+      "*) bgp - a;",
+      "",
+      "What's new in 7.1 (2026-Sep-01 12:00):",
+      "!) wifi - older;",
+      "*) lte - older;",
+    ].join("\n");
+    assert.equal(mikrotikChangelogNote(text, "7.2")?.text, "1 change: bgp");
+    // The older section is not this file's first one.
+    assert.equal(mikrotikChangelogNote(text, "7.1"), undefined);
+  });
+
+  it("reads a CRLF file and a section that ends the file", () => {
+    assert.equal(
+      mikrotikChangelogNote("What's new in 7.2:\r\n*) bgp - a;\r\n!) wifi - b;\r\n", "7.2")?.text,
+      "2 changes: bgp, wifi · 1 important",
+    );
+  });
+
+  it("gives nothing for empty, garbage, another version's file or a section with no change lines", () => {
+    for (const text of [
+      "",
+      "\n\n",
+      "<html>Not found</html>",
+      "\u0000\u0001 garbage \ufffd",
+      "*) bgp - a bullet before any heading;",
+      "What's new in 7.2:\n\n",
+      "What's new in 7.2:\n*)\n!)\ncontinuation text\n",
+      "What's new in 7.21:\n*) bgp - a;",
+    ]) {
+      assert.equal(mikrotikChangelogNote(text, "7.2"), undefined, JSON.stringify(text));
+    }
+  });
+
+  it("gives nothing when the read stopped inside the section, rather than a count that may be short", () => {
+    // 70 KB of one version with no next heading: the scan window ends before the section does.
+    const long = `What's new in 7.2:\n${"*) bgp - a change;\n".repeat(4000)}`;
+    assert.ok(long.length > 64_000);
+    assert.equal(mikrotikChangelogNote(long, "7.2"), undefined);
+    // The same section followed by the next heading inside the window is complete.
+    assert.equal(
+      mikrotikChangelogNote(
+        `What's new in 7.2:\n${"*) bgp - a change;\n".repeat(100)}\nWhat's new in 7.1:\n*) x - y;`,
+        "7.2",
+      )?.text,
+      "100 changes: bgp",
+    );
+  });
+
+  it("keeps markup as text and cuts a long important line", () => {
+    const note = mikrotikChangelogNote(section("!) <img src=x onerror=alert(1)>;", `!) ${"x".repeat(1000)};`), "7.2");
+    assert.equal(note?.important?.[0], "<img src=x onerror=alert(1)>");
+    assert.equal(note?.important?.[1].length, 200);
   });
 });
 

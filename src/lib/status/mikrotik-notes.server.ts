@@ -1,28 +1,33 @@
 import { boundSnapshot } from "./bounds.ts";
 import {
   mikrotikChangelogIsFor,
+  mikrotikChangelogNote,
   mikrotikChangelogNotes,
   mikrotikChangelogUrl,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
 import { fetchText } from "./http.ts";
 import { RELEASE_FEED_RETRY_MS } from "./release-feeds.server.ts";
-import type { ServiceSnapshot } from "./types.ts";
+import type { ReleaseNote, ServiceSnapshot } from "./types.ts";
 
-// The notes of a MikroTik card: the newest release's first changelog note as the card's summary, and each
-// version's first few notes in its Details. They are advisory, like the release feeds (release-feeds.server.ts),
-// and follow the same rules: the MikroTik collector reads the version channels only, which is all its health and
-// versions need; the changelogs are read after the health sweep has settled (collect-board.ts), in the background
-// and never waited for, and cached for the next board. A changelog host that is slow, failing or gone therefore
-// cannot delay the sweep or change any result: the card keeps the "Latest RouterOS ..." line and the versions
-// without notes until a read succeeds.
+// The notes of a MikroTik card: the newest release's first changelog note as the card's summary, each version's
+// first few notes in its Details, and a short note per version (how many changes, which areas, how many the vendor
+// flags important) for its row and its Details. They are advisory, like the release feeds
+// (release-feeds.server.ts), and follow the same rules: the MikroTik collector reads the version channels only,
+// which is all its health and versions need; the changelogs are read after the health sweep has settled
+// (collect-board.ts), in the background and never waited for, and cached for the next board. A changelog host that
+// is slow, failing or gone therefore cannot delay the sweep or change any result: the card keeps the "Latest
+// RouterOS ..." line and the versions without notes until a read succeeds.
 //
 // A released version's changelog does not change, so a read that parsed is kept for the isolate (at most
 // NOTES_REMEMBERED versions, oldest out first); one that failed or did not parse is left alone for
 // RELEASE_FEED_RETRY_MS, as a failed feed is, and then asked for again.
 
-/** What the Details and the summary take from one version's changelog. */
-export type MikrotikNotes = { summary: string; notes: string[] };
+/**
+ * What the row, the Details and the summary take from one version's changelog. `note` is absent when the section
+ * cannot be counted for certain (it may have been cut off by the read), while the first notes are still there.
+ */
+export type MikrotikNotes = { summary: string; notes: string[]; note?: ReleaseNote };
 
 const NOTES_REMEMBERED = 16;
 /** Like every side request: short, because the board never waits on it. */
@@ -81,7 +86,8 @@ async function readNotes(version: string): Promise<MikrotikNotes | undefined> {
     if (!mikrotikChangelogIsFor(body, version)) return undefined;
     const notes = mikrotikChangelogNotes(body);
     if (notes.length === 0) return undefined;
-    return { summary: summarizeMikrotikChangelog(body), notes };
+    const note = mikrotikChangelogNote(body, version);
+    return { summary: summarizeMikrotikChangelog(body), notes, ...(note ? { note } : {}) };
   } catch {
     return undefined;
   }
@@ -119,10 +125,13 @@ export function withMikrotikNotes(services: ServiceSnapshot[]): ServiceSnapshot[
     const known = (version: string | undefined) => (version ? readings.get(version)?.read : undefined);
     let changed = false;
     const components = service.components.map((component) => {
-      const notes = known(component.release?.version)?.notes;
-      if (!notes || !component.release) return component;
+      const read = known(component.release?.version);
+      if (!read || !component.release) return component;
       changed = true;
-      return { ...component, release: { ...component.release, notes } };
+      return {
+        ...component,
+        release: { ...component.release, notes: read.notes, ...(read.note ? { note: read.note } : {}) },
+      };
     });
     // The notes summary is the newest release by date (the first channel when none is dated). The collector's
     // own no-notes line names the stable channel when there is one, so the two can describe different releases.

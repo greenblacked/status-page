@@ -25,6 +25,22 @@ export type CategoryId = "cloud" | "gaming" | "platforms" | "ai" | "updates";
 export type Health = "operational" | "degraded" | "outage" | "maintenance" | "unknown";
 
 /**
+ * A short note on what a release is, derived only from the vendor's own text for that release: how many changes a
+ * RouterOS changelog lists and where, or what kind of update a Windows build is. Absent whenever the source does not
+ * say; it is never a placeholder and never a guess.
+ */
+export type ReleaseNote = {
+  /** One short plain-text line for the tracker's row: "23 changes: bgp, wifi, container +9 more · 2 important", "Security update". */
+  text: string;
+  /** The same in full for the Details, when it says more: every area, the update type. */
+  detail?: string;
+  /** Lines the vendor itself marks important, shown first in the Details; at most MAX_NOTE_LINES. */
+  important?: string[];
+  /** The vendor's article behind the note ("KB5043080"). `url` is set only when the source links it. */
+  reference?: { label: string; url?: string };
+};
+
+/**
  * What a release tracker knows about one version it lists, for the Details
  * pop-up on its card. Every field comes from the source the collector already
  * reads; a field the source does not give is left out, never filled in.
@@ -44,6 +60,8 @@ export type ReleaseInfo = {
   linkLabel?: string;
   /** A few short plain-text lines taken from the vendor's notes, never more than MAX_NOTE_LINES. Absent when the source has none. */
   notes?: string[];
+  /** A short note on the release, for the tracker's row and its Details. Absent when the source gives none. */
+  note?: ReleaseNote;
 };
 
 /**
