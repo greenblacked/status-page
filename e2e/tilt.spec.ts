@@ -935,6 +935,41 @@ test.describe("on a touch device", () => {
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
   });
 
+  test("falls back to the properties when an engine takes pseudoElement and draws nothing", async ({ page }) => {
+    // animate() accepts the call but ignores the pseudo-element: the animations land on the panel
+    // itself, the panel's ::before does not move, and the sink's own check has to notice.
+    await page.addInitScript(() => {
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function (this: Element, keyframes, options) {
+        if (options && typeof options === "object" && "pseudoElement" in options) {
+          const rest = { ...(options as KeyframeAnimationOptions) };
+          delete rest.pseudoElement;
+          return animate.call(this, keyframes, rest);
+        }
+        return animate.call(this, keyframes, options);
+      };
+    });
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
+
+    const seen = await page.evaluate(() => ({
+      holders: Array.from(document.querySelectorAll<HTMLElement>("[style]"))
+        .filter((element) => element.style.getPropertyValue("--light-y") !== "")
+        .map((element) => element.id || element.tagName),
+      animations: document.getAnimations().filter((animation) => animation.id.startsWith("tilt-light-")).length,
+      sheen: getComputedStyle(document.querySelector(".surface") as Element, "::before").transform,
+    }));
+    expect(seen.holders).toEqual(["services"]);
+    expect(seen.animations).toBe(0);
+    expect(seen.sheen).not.toBe("none");
+    expect((await paintedLight(page)).sheen).not.toBe("matrix(1, 0, 0, 1, 0, 0)");
+  });
+
   test("falls back to custom properties on one element where pseudo-elements cannot be animated", async ({ page }) => {
     // An engine without KeyframeEffect: the sink writes --light-x and --light-y on <main> instead.
     await page.addInitScript(() => {
