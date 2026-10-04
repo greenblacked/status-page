@@ -30,7 +30,10 @@ export type TiltStatus =
 type Problem = "denied" | "no-sensor" | "needs-permission" | "no-readings" | "no-readings-dropped" | null;
 
 /** iOS 13+ only: motion is behind a permission that a tap has to ask for. */
-type MotionPermissionApi = { requestPermission?: () => Promise<"granted" | "denied"> };
+type MotionPermissionApi = { requestPermission?: () => Promise<MotionAnswer> };
+
+/** What requestPermission resolves with. Chromium 154 also answers "prompt" outside a tap: not decided, only a tap can ask. */
+type MotionAnswer = "granted" | "denied" | "prompt";
 
 /**
  * Reduce Motion, or the system's Reduce Transparency where a browser passes it on. Increase
@@ -189,7 +192,7 @@ export function useTiltLighting({
      * tap can ask. So a slow first reading is no longer taken for a missing permission.
      */
     const probe = () => {
-      let request: Promise<"granted" | "denied"> | undefined;
+      let request: Promise<MotionAnswer> | undefined;
       try {
         request = (DeviceOrientationEvent as unknown as MotionPermissionApi).requestPermission?.();
       } catch {
@@ -197,7 +200,9 @@ export function useTiltLighting({
       }
       request?.then(
         (answer) => {
-          if (!cancelled && answer !== "granted") forget("denied");
+          if (cancelled || answer === "granted") return;
+          // Undecided is not declined: the same note as iOS's rejection, and a tap asks.
+          forget(answer === "denied" ? "denied" : "needs-permission");
         },
         () => {
           if (!cancelled) forget("needs-permission");
@@ -270,7 +275,7 @@ export function useTiltLighting({
       return;
     }
     // iOS only shows its prompt for a call made inside the tap, so nothing may come before this line.
-    let request: Promise<"granted" | "denied"> | undefined;
+    let request: Promise<MotionAnswer> | undefined;
     try {
       request = (DeviceOrientationEvent as unknown as MotionPermissionApi).requestPermission?.();
     } catch {

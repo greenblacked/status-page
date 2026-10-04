@@ -51,8 +51,9 @@ function watchConsole(page: Page): string[] {
  * "granted", is remembered for the session, as Safari does until it is closed).
  * A call made outside a tap never prompts: it resolves "granted" if the session
  * remembers a grant, and rejects with NotAllowedError otherwise. Only calls
- * made in a tap are counted. "absent" leaves requestPermission out altogether,
- * as Android and older iOS have it.
+ * made in a tap are counted. "prompt" answers "prompt" to a call made outside a tap, as
+ * Chromium 154 does (undecided: only a tap can ask), and "granted" to a tap. "absent" leaves
+ * requestPermission out altogether, as Android and older iOS have it.
  *
  * It also pins screen.orientation.angle, 0 unless a test says otherwise. An
  * iPhone or iPad held upright reports 0, but Playwright's WebKit on Linux
@@ -62,7 +63,7 @@ function watchConsole(page: Page): string[] {
  */
 async function stubMotionPermission(
   page: Page,
-  answer: "granted" | "denied" | "throws" | "absent" = "granted",
+  answer: "granted" | "denied" | "throws" | "absent" | "prompt" = "granted",
   angle = 0,
 ): Promise<void> {
   await page.addInitScript(
@@ -118,12 +119,13 @@ async function stubMotionPermission(
         value: async () => {
           if (!w.__gesture) {
             if (sessionStorage.getItem("__tiltGranted") === "1") return "granted";
+            if (answer === "prompt") return "prompt";
             throw new DOMException("A tap is needed to ask for motion access.", "NotAllowedError");
           }
           w.__permCalls++;
           if (answer === "throws") throw new Error("refused");
-          if (answer === "granted") sessionStorage.setItem("__tiltGranted", "1");
-          return answer;
+          if (answer === "granted" || answer === "prompt") sessionStorage.setItem("__tiltGranted", "1");
+          return answer === "prompt" ? "granted" : answer;
         },
         configurable: true,
       });
@@ -660,6 +662,26 @@ test.describe("on a touch device", () => {
     await tiltUntil(page, 0, 0, "--light-y", () => true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
     await expect(page.getByText("Motion access lapsed")).toHaveCount(0);
+  });
+
+  test("takes an undecided answer for a lapsed permission, not a declined one, and a tap allows it", async ({
+    page,
+  }) => {
+    // Chromium 154 answers "prompt" to a call made outside a tap: nobody declined, a tap has to ask.
+    await stubMotionPermission(page, "prompt");
+    await page.evaluate((key) => localStorage.setItem(key, "on"), TILT_STORAGE_KEY);
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await expect(page.getByText("Motion access lapsed. Turn the switch off and on to allow it again.")).toBeVisible();
+    await expect(page.getByText("Motion access was declined")).toHaveCount(0);
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+    expect(await storedChoice(page)).toBe("off");
+
+    await tiltSwitch(page).click();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
   });
 
   test("does not ask again on the next load, and stays off when the retry is declined", async ({ page }) => {
