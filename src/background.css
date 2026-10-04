@@ -668,10 +668,93 @@
   }
 
   /*
+    A soft light that wanders across each card and list by itself (see
+    useWanderLight). Neutral, never a status colour. The ::after is the size
+    of its surface and only its transform moves, so the compositor does the
+    work and nothing repaints; the surface clips it. Each surface gets its
+    own path, duration and phase from the page after hydration, and stays
+    dark until then, so the server markup never carries a random value.
+
+    It runs on every device, a phone or tablet included, with or without Tilt
+    lighting. Where Tilt lighting is driving the light on a touch device
+    (data-tilt) the glint below takes this same ::after over, and the wander
+    steps aside (animation: none): those rules come after these ones, with the
+    same specificity, so they win, and must stay below them. Reduce Motion, Reduce
+    glass, Increase Contrast and forced colours hide the ::after outright
+    (display: none, further down), so no animation is left running there.
+  */
+  :root[data-background="full"] .spotlight {
+    overflow: clip;
+  }
+
+  :root[data-background="full"] .spotlight::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: radial-gradient(300px circle at 50% 50%, var(--spot-color), transparent 65%);
+    opacity: 0;
+    transition: opacity var(--t-reveal) var(--ease-out);
+  }
+
+  :root[data-background="full"] .spotlight[data-wander]::after {
+    opacity: 1;
+    animation: light-wander-a var(--wander-dur, 56s) ease-in-out var(--wander-delay, -20s) infinite alternate;
+  }
+
+  :root[data-background="full"] .spotlight[data-wander="1"]::after {
+    animation-name: light-wander-b;
+  }
+
+  :root[data-background="full"] .spotlight[data-wander="2"]::after {
+    animation-name: light-wander-c;
+  }
+
+  :root[data-background="full"] .spotlight[data-wander="3"]::after {
+    animation-name: light-wander-d;
+  }
+
+  @keyframes light-wander-a {
+    0% { transform: translate3d(-34%, -26%, 0); }
+    27% { transform: translate3d(22%, -34%, 0); }
+    58% { transform: translate3d(38%, 18%, 0); }
+    81% { transform: translate3d(-12%, 30%, 0); }
+    100% { transform: translate3d(-30%, 6%, 0); }
+  }
+
+  @keyframes light-wander-b {
+    0% { transform: translate3d(30%, 28%, 0); }
+    22% { transform: translate3d(-8%, 34%, 0); }
+    49% { transform: translate3d(-36%, -12%, 0); }
+    76% { transform: translate3d(6%, -30%, 0); }
+    100% { transform: translate3d(34%, -8%, 0); }
+  }
+
+  @keyframes light-wander-c {
+    0% { transform: translate3d(-4%, -36%, 0); }
+    31% { transform: translate3d(36%, -6%, 0); }
+    55% { transform: translate3d(14%, 32%, 0); }
+    84% { transform: translate3d(-38%, 20%, 0); }
+    100% { transform: translate3d(-24%, -20%, 0); }
+  }
+
+  @keyframes light-wander-d {
+    0% { transform: translate3d(38%, -22%, 0); }
+    24% { transform: translate3d(4%, 8%, 0); }
+    52% { transform: translate3d(-32%, 30%, 0); }
+    73% { transform: translate3d(-20%, -32%, 0); }
+    100% { transform: translate3d(26%, 24%, 0); }
+  }
+
+  /*
     On a touch device there is no pointer to follow, so with Tilt lighting on
     (data-tilt, set only while the light is being driven) a soft light sits on
     the card and slides with --light-x/--light-y. Devices with a hover-capable
-    pointer get the wandering light (Full) instead.
+    pointer have no glint: the wandering light (Full, above) stays on its own.
+    Where there is a glint, it takes the wandering light's ::after over for as
+    long as data-tilt is on, and the wander runs again when it goes off.
 
     The glint is a radial gradient that never changes (a circle of 208px radius),
     drawn at the middle of a layer of its own that is just big enough for it, a
@@ -726,7 +809,8 @@
   }
 
   /*
-    FULL: the drift, the bubbles and the wandering card light.
+    FULL: the drift and the bubbles. The wandering card light is above: it
+    runs on every device, these only where a pointer hovers.
   */
   :root[data-background="full"] .lenses {
     display: block;
@@ -758,79 +842,6 @@
         bubble-sway calc(var(--t) * 1s) ease-in-out calc(var(--ph) * -1s) infinite alternate,
         bubble-bob calc(var(--t) * 0.73s) ease-in-out calc(var(--ph) * -0.61s) infinite alternate,
         bubble-breathe calc(9s + var(--t) * 0.3s) ease-in-out calc(var(--ph) * -0.27s) infinite alternate;
-    }
-
-    /*
-      A soft light that wanders across each card and list by itself (see
-      useWanderLight). Neutral, never a status colour. The ::after is the size
-      of its surface and only its transform moves, so the compositor does the
-      work and nothing repaints; the surface clips it. Each surface gets its
-      own path, duration and phase from the page after hydration, and stays
-      dark until then, so the server markup never carries a random value.
-    */
-    :root[data-background="full"] .spotlight {
-      overflow: clip;
-    }
-
-    :root[data-background="full"] .spotlight::after {
-      content: "";
-      pointer-events: none;
-      position: absolute;
-      inset: 0;
-      z-index: 0;
-      border-radius: inherit;
-      background: radial-gradient(300px circle at 50% 50%, var(--spot-color), transparent 65%);
-      opacity: 0;
-      transition: opacity var(--t-reveal) var(--ease-out);
-    }
-
-    :root[data-background="full"] .spotlight[data-wander]::after {
-      opacity: 1;
-      animation: light-wander-a var(--wander-dur, 56s) ease-in-out var(--wander-delay, -20s) infinite alternate;
-    }
-
-    :root[data-background="full"] .spotlight[data-wander="1"]::after {
-      animation-name: light-wander-b;
-    }
-
-    :root[data-background="full"] .spotlight[data-wander="2"]::after {
-      animation-name: light-wander-c;
-    }
-
-    :root[data-background="full"] .spotlight[data-wander="3"]::after {
-      animation-name: light-wander-d;
-    }
-
-    @keyframes light-wander-a {
-      0% { transform: translate3d(-34%, -26%, 0); }
-      27% { transform: translate3d(22%, -34%, 0); }
-      58% { transform: translate3d(38%, 18%, 0); }
-      81% { transform: translate3d(-12%, 30%, 0); }
-      100% { transform: translate3d(-30%, 6%, 0); }
-    }
-
-    @keyframes light-wander-b {
-      0% { transform: translate3d(30%, 28%, 0); }
-      22% { transform: translate3d(-8%, 34%, 0); }
-      49% { transform: translate3d(-36%, -12%, 0); }
-      76% { transform: translate3d(6%, -30%, 0); }
-      100% { transform: translate3d(34%, -8%, 0); }
-    }
-
-    @keyframes light-wander-c {
-      0% { transform: translate3d(-4%, -36%, 0); }
-      31% { transform: translate3d(36%, -6%, 0); }
-      55% { transform: translate3d(14%, 32%, 0); }
-      84% { transform: translate3d(-38%, 20%, 0); }
-      100% { transform: translate3d(-24%, -20%, 0); }
-    }
-
-    @keyframes light-wander-d {
-      0% { transform: translate3d(38%, -22%, 0); }
-      24% { transform: translate3d(4%, 8%, 0); }
-      52% { transform: translate3d(-32%, 30%, 0); }
-      73% { transform: translate3d(-20%, -32%, 0); }
-      100% { transform: translate3d(26%, 24%, 0); }
     }
   }
 

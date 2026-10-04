@@ -479,3 +479,41 @@ describe("GLINT_QUERY", () => {
     expect(wrapped.some((rules) => rules.includes(".spotlight::after"))).toBe(true);
   });
 });
+
+describe("the wandering card light", () => {
+  const css = readFileSync(new URL("../../background.css", import.meta.url), "utf8");
+
+  /** The text of the block that opens at `css[open]` (the index of its `{`), braces matched. */
+  const blockAt = (open: number) => {
+    let depth = 0;
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}" && --depth === 0) return css.slice(open, i + 1);
+    }
+    return css.slice(open);
+  };
+
+  it("runs on every device: none of its rules or keyframes sit inside a hover or pointer media query", () => {
+    const gated = [...css.matchAll(/@media[^{]*\((?:hover|pointer|any-hover|any-pointer):[^{]*\{/g)].map((match) =>
+      blockAt((match.index ?? 0) + match[0].length - 1),
+    );
+    expect(gated.length).toBeGreaterThan(0);
+    for (const block of gated) {
+      expect(block).not.toContain("light-wander");
+      expect(block).not.toContain("[data-wander");
+    }
+    expect(css).toContain("@keyframes light-wander-a");
+    expect(css).toContain(".spotlight[data-wander]::after");
+  });
+
+  it("is stepped aside by the glint: the glint's rules come after the wander's, at the same specificity", () => {
+    const wander = css.indexOf('[data-background="full"] .spotlight[data-wander="3"]::after');
+    const glint = css.indexOf(
+      '[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {',
+    );
+    expect(wander).toBeGreaterThan(-1);
+    expect(glint).toBeGreaterThan(wander);
+    const rule = css.slice(glint, glint + css.slice(glint).indexOf("}"));
+    expect(rule).toContain("animation: none");
+  });
+});
