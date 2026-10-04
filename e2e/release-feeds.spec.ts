@@ -404,21 +404,20 @@ test("on a touch screen the Details button has a 44px target and the line keeps 
     "a fine pointer keeps the small button",
   );
   for (const id of WITH_FEED) {
-    const button = trigger(page, id);
-    await button.scrollIntoViewIfNeeded();
-    const box = await button.boundingBox();
-    if (!box) throw new Error(`${id} has no button`);
-    const x = box.x + box.width / 2;
-    const y = box.y + box.height / 2;
-    const reached = await page.evaluate(
-      ([px, py]) => {
-        const hit = (dy: number) =>
-          Boolean(document.elementFromPoint(px, py + dy)?.closest("[data-release-details-trigger]"));
-        // The button is 24px tall: 12px of target above it and 8px below (the row's padding), 44px in all.
-        return { up: hit(-22), down: hit(18), beyond: hit(-28) };
-      },
-      [x, y] as const,
-    );
+    // Taken to the middle of the window, clear of the floating bar: scrollIntoViewIfNeeded leaves a button that is
+    // already in the window where it is, which can be under the bar (its 12px of target above the button are then
+    // the bar's), and where that is depends on how tall the cards before it are. The box and the probes are read
+    // in one page task, so nothing can move between them.
+    const reached = await trigger(page, id).evaluate((button) => {
+      button.scrollIntoView({ block: "center", behavior: "instant" });
+      const box = button.getBoundingClientRect();
+      const x = box.left + box.width / 2;
+      const y = box.top + box.height / 2;
+      const hit = (dy: number) =>
+        Boolean(document.elementFromPoint(x, y + dy)?.closest("[data-release-details-trigger]"));
+      // The button is 24px tall: 12px of target above it and 8px below (the row's padding), 44px in all.
+      return { up: hit(-22), down: hit(18), beyond: hit(-28) };
+    });
     expect(reached.up, `${id} above`).toBe(true);
     expect(reached.down, `${id} below`).toBe(true);
     expect(reached.beyond, `${id} beyond 44px`).toBe(false);
