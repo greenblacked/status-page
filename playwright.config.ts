@@ -13,7 +13,12 @@ import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 // fixture board (e2e/fixture-board.ts). The setup proves the cut-off before
 // the first test and reports it after the last.
 // PLAYWRIGHT_PORT moves the preview off 4173 when something else holds it.
+//
+// E2E_SERVER=node serves the same build with the production Node server (src/node/serve.ts, the one the Docker
+// image runs) instead of `vite preview`, so the @node-server tests can check what only it does: the caching of
+// /assets/*, compression and the security headers on static files.
 const port = Number(process.env.PLAYWRIGHT_PORT) || 4173;
+const nodeServer = process.env.E2E_SERVER === "node";
 const baseURL = `http://127.0.0.1:${port}`;
 
 // One nonce per run for the preview's vendor log (e2e/support/vendor-log.ts). The config is loaded again in
@@ -72,12 +77,13 @@ export default defineConfig({
     { name: "iPad Pro 11", use: { ...devices["iPad Pro 11"] } },
   ],
   webServer: {
-    command: `pnpm run preview --port ${port} --strictPort`,
+    command: nodeServer ? "node src/node/serve.ts" : `pnpm run preview --port ${port} --strictPort`,
     // /healthz never reads the board, so the server is up before any vendor answers.
     url: `${baseURL}/healthz`,
     // Always its own: a server that was started by hand does not have the vendors cut off.
     reuseExistingServer: false,
     env: {
+      ...(nodeServer ? { PORT: String(port), HOST: "127.0.0.1" } : {}),
       // Added to any NODE_OPTIONS already set (a memory limit, a CA bundle), and found from this file, not the cwd.
       NODE_OPTIONS:
         `${process.env.NODE_OPTIONS ?? ""} --import=${new URL("./e2e/support/no-vendors.mjs", import.meta.url).href}`.trim(),
