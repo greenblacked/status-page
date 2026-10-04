@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { createLightSink } from "@/components/status/tilt-light-sink";
 import {
   createTiltController,
   createWritePacer,
@@ -6,9 +7,6 @@ import {
   readTiltLighting,
   screenAngle,
   TILT_ATTRIBUTE,
-  TILT_LIGHT_SELECTOR,
-  TILT_VAR_X,
-  TILT_VAR_Y,
   tiltFromStorageEvent,
   tiltSupported,
   writeTiltLighting,
@@ -18,75 +16,6 @@ const storage = () => window.localStorage;
 
 /** How long any page waits for a first reading before saying none is coming. */
 const NO_READING_MS = 3000;
-
-/**
- * Writes --light-x and --light-y inline on every glass panel (the elements
- * TILT_LIGHT_SELECTOR names); their ::before and ::after take them from the
- * panel (src/styles.css).
- *
- * Not on <html>, and not through a rule of a style sheet: a change to a rule
- * makes WebKit rebuild its rule sets and re-style the document. The
- * properties are plain, inherited custom properties, so an inline write
- * re-styles the panel and what is inside it (about 18 ms for 18 panels on a
- * loaded Chromium, and several times that on a throttled CPU). Registering
- * them as non-inherited is about 5 times cheaper per write, but WebKit then
- * draws the pseudo-elements as if they were unset; see src/styles.css. The
- * deadband and the frame cap in the controller keep the plain form affordable,
- * and the cap widens by itself while frames overrun (createWritePacer), so a
- * slow device writes less often instead of dropping frames.
- *
- * Panels come and go when a refresh re-renders the board, so a new one gets
- * the current value from a MutationObserver, before it paints. It watches
- * only while the light is on, and remove() puts everything back.
- */
-function createLightSink(): { set: (x: string, y: string) => void; remove: () => void } {
-  const written = new Set<HTMLElement>();
-  let last: { x: string; y: string } | null = null;
-  let observer: MutationObserver | null = null;
-
-  const write = (host: HTMLElement) => {
-    if (!last) return;
-    host.style.setProperty(TILT_VAR_X, last.x);
-    host.style.setProperty(TILT_VAR_Y, last.y);
-    written.add(host);
-  };
-
-  const onMutations = (records: MutationRecord[]) => {
-    const fresh = records.some((record) =>
-      Array.from(record.addedNodes).some(
-        (node) =>
-          node instanceof Element && (node.matches(TILT_LIGHT_SELECTOR) || node.querySelector(TILT_LIGHT_SELECTOR)),
-      ),
-    );
-    if (!fresh) return;
-    for (const host of Array.from(written)) if (!host.isConnected) written.delete(host);
-    for (const host of document.querySelectorAll<HTMLElement>(TILT_LIGHT_SELECTOR)) {
-      if (!written.has(host)) write(host);
-    }
-  };
-
-  return {
-    set: (x, y) => {
-      last = { x, y };
-      for (const host of Array.from(written)) if (!host.isConnected) written.delete(host);
-      for (const host of document.querySelectorAll<HTMLElement>(TILT_LIGHT_SELECTOR)) write(host);
-      if (!observer) {
-        observer = new MutationObserver(onMutations);
-        observer.observe(document.body, { childList: true, subtree: true });
-      }
-    },
-    remove: () => {
-      observer?.disconnect();
-      observer = null;
-      for (const host of written) {
-        host.style.removeProperty(TILT_VAR_X);
-        host.style.removeProperty(TILT_VAR_Y);
-      }
-      written.clear();
-      last = null;
-    },
-  };
-}
 
 export type TiltStatus =
   | "off"
@@ -110,8 +39,8 @@ const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-t
  * Tilt lighting: on a touch device with motion sensors, the light on the
  * glass follows how the device is held (src/lib/status/tilt.ts has the
  * maths). It is off until switched on, because iOS asks for motion access
- * first, and it writes only --light-x and --light-y (see createLightSink),
- * plus data-tilt="on" on <html> while it really is driving them.
+ * first, and it only moves the light (see tilt-light-sink.ts), plus sets
+ * data-tilt="on" on <html> while it really is driving it.
  *
  * `supported` is worked out after hydration, so the server and the first
  * client render agree that there is nothing to show. `paused` is Reduce
@@ -126,7 +55,14 @@ const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-t
  * still or not), and sensor noise keeps moving the light a little. The
  * deadband and the frame cap keep the writes low then, but not at zero.
  */
-export function useTiltLighting({ paused }: { paused: boolean }): {
+export function useTiltLighting({
+  paused,
+  scope,
+}: {
+  paused: boolean;
+  /** The element the light is written on; the lit panels are inside it (see createLightSink). */
+  scope: RefObject<HTMLElement | null>;
+}): {
   supported: boolean;
   enabled: boolean;
   status: TiltStatus;
@@ -168,7 +104,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
   useEffect(() => {
     if (!active) return;
     const root = document.documentElement;
-    const light = createLightSink();
+    const light = createLightSink(() => scope.current);
     const viaTap = askedByTap.current;
     askedByTap.current = false;
 
@@ -186,11 +122,12 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
 
     const controller = createTiltController({
       apply: (x, y) => {
-        light.set(x.toFixed(3), y.toFixed(3));
+        // The attribute first: the glint's pseudo-element exists only once it is on, and the light needs it there.
         if (!driving) {
           driving = true;
           root.setAttribute(TILT_ATTRIBUTE, "on");
         }
+        light.set(Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000);
       },
       now: () => performance.now(),
       minIntervalMs: () => pacer.interval(),
@@ -303,7 +240,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       light.remove();
       root.removeAttribute(TILT_ATTRIBUTE);
     };
-  }, [active]);
+  }, [active, scope]);
 
   const setEnabled = useCallback((on: boolean) => {
     if (!on) {

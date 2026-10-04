@@ -187,29 +187,44 @@ async function tilt(page: Page, beta: number | null, gamma: number | null): Prom
 }
 
 /**
- * What the hook wrote: the first panel's own (a card, or a list of rows: the first .surface) inline --light-x or --light-y, empty
- * while the light is not being driven. This is the hook's doing and reads the
- * same in every engine; whether the pseudo-elements then draw it is paintedLight.
+ * The light position the page was given, -1..1 as text, empty while the light is not being driven. It is
+ * handed over in one of two ways (src/components/status/tilt-light-sink.ts), and this reads either:
+ * paused animations on the panels' pseudo-elements whose time is the position (the preferred one;
+ * the value of a panel that is on screen), or --light-x and --light-y inline on the board's <main>.
+ * It is the hook's doing and reads the same in every engine; whether the pseudo-elements then draw it
+ * is paintedLight.
  */
 const lightVar = (page: Page, name: "--light-x" | "--light-y") =>
   page.evaluate((name) => {
-    const card = document.querySelector<HTMLElement>(".surface");
-    return card ? card.style.getPropertyValue(name).trim() : "no card";
+    const scope = document.getElementById("services");
+    if (!scope) return "no board";
+    const inline = scope.style.getPropertyValue(name).trim();
+    if (inline !== "") return inline;
+    const id = name === "--light-x" ? "tilt-light-x" : "tilt-light-y";
+    const mine = scope.getAnimations({ subtree: true }).filter((animation) => animation.id === id);
+    const near = (animation: Animation) => {
+      const target = animation.effect && (animation.effect as KeyframeEffect).target;
+      const rect = target?.getBoundingClientRect();
+      return rect ? rect.bottom > -120 && rect.top < window.innerHeight + 120 : false;
+    };
+    const chosen = mine.find(near) ?? mine[0];
+    if (!chosen || chosen.currentTime === null) return "";
+    return (Number(chosen.currentTime) / 1000 - 1).toFixed(3);
   }, name);
 
 /**
- * What the first card's pseudo-elements draw: the sheen's and the glint's
- * background as the browser computes them. Their gradients hold var(--light-x)
- * and var(--light-y), so the strings change when the value reaches them and
- * not otherwise. WebKit once reported the value on the pseudo-element yet drew as if it were unset.
+ * What the first card's pseudo-elements draw: the sheen's and the glint's transform as the browser
+ * computes them. The gradients themselves never change; the layers slide by var(--light-x) and
+ * var(--light-y), so the strings change when the value reaches them and not otherwise. WebKit once
+ * reported the value on the pseudo-element yet drew as if it were unset.
  */
 const paintedLight = (page: Page) =>
   page.evaluate(() => {
     const card = document.querySelector(".surface");
     if (!card) return { sheen: "no card", glint: "no card" };
     return {
-      sheen: getComputedStyle(card, "::before").backgroundImage,
-      glint: getComputedStyle(card, "::after").backgroundImage,
+      sheen: getComputedStyle(card, "::before").transform,
+      glint: getComputedStyle(card, "::after").transform,
     };
   });
 
@@ -223,26 +238,28 @@ const lightReadings = (page: Page) =>
     const legacy = (window as unknown as { orientation?: number }).orientation;
     return JSON.stringify({
       tilt: document.documentElement.getAttribute("data-tilt"),
-      hostX: card.style.getPropertyValue("--light-x"),
-      hostY: card.style.getPropertyValue("--light-y"),
+      scopeX: document.getElementById("services")?.style.getPropertyValue("--light-x"),
+      scopeY: document.getElementById("services")?.style.getPropertyValue("--light-y"),
+      animations: document.getAnimations().filter((animation) => animation.id.startsWith("tilt-light-")).length,
       beforeX: before.getPropertyValue("--light-x"),
       afterY: after.getPropertyValue("--light-y"),
-      sheen: before.backgroundImage.slice(0, 400),
-      glint: after.backgroundImage.slice(0, 400),
+      sheen: before.transform,
+      glint: after.transform,
       angle: window.screen.orientation ? window.screen.orientation.angle : "no screen.orientation",
       legacy,
     });
   });
 
-/** How many elements still carry a light value inline: none when the light is off. */
+/** How many things still carry the light: inline values and live animations. None when the light is off. */
 const lightHolders = (page: Page) =>
-  page.evaluate(
-    () =>
-      Array.from(document.querySelectorAll<HTMLElement>("[style]")).filter(
-        (element) =>
-          element.style.getPropertyValue("--light-x") !== "" || element.style.getPropertyValue("--light-y") !== "",
-      ).length,
-  );
+  page.evaluate(() => {
+    const inline = Array.from(document.querySelectorAll<HTMLElement>("[style]")).filter(
+      (element) =>
+        element.style.getPropertyValue("--light-x") !== "" || element.style.getPropertyValue("--light-y") !== "",
+    ).length;
+    const animated = document.getAnimations().filter((animation) => animation.id.startsWith("tilt-light-")).length;
+    return inline + animated;
+  });
 
 /**
  * Feeds the same reading until the light shows it (the listener attaches a
@@ -299,6 +316,7 @@ const cardLight = (page: Page) =>
     .first()
     .evaluate((card) => ({
       sheen: getComputedStyle(card, "::before").backgroundImage,
+      sheenMoves: getComputedStyle(card, "::before").transform,
       glint: getComputedStyle(card, "::after").content,
       glintImage: getComputedStyle(card, "::after").backgroundImage,
     }));
@@ -358,6 +376,8 @@ test.describe("on a touch device", () => {
     await hydrated(page);
     await openSettings(page);
     await tiltSwitch(page).click();
+    // Only panels on screen are moved, and the test reads the first one.
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
     // The first reading is neutral.
     await tiltUntil(page, 0, 0, "--light-x", () => true);
     const neutralPainted = await paintedLight(page);
@@ -388,9 +408,10 @@ test.describe("on a touch device", () => {
     }
     expect(await lightVar(page, "--light-x")).toMatch(/^-?\d(\.\d{1,3})?$/);
 
-    // The sheen turns and the glint sits on the card.
+    // The sheen's layer is slid and the glint sits on the card (the gradients themselves never change).
     const light = await cardLight(page);
-    expect(light.sheen).not.toContain("125deg");
+    expect(light.sheen).toContain("125deg");
+    expect(light.sheenMoves).not.toBe("none");
     expect(light.glint).not.toBe("none");
     expect(light.glintImage).toContain("radial-gradient");
     expect(problems).toEqual([]);
@@ -634,7 +655,7 @@ test.describe("on a touch device", () => {
     ).toHaveCount(0);
   });
 
-  test("lights a panel that appears after the light is on, and clears it when off", async ({ page }) => {
+  test("lights a panel that appears after the light is on, and clears the light when off", async ({ page }) => {
     await page.reload();
     await hydrated(page);
     await openSettings(page);
@@ -645,17 +666,27 @@ test.describe("on a touch device", () => {
       const panel = document.createElement("div");
       panel.className = "surface";
       panel.id = "late-panel";
-      document.body.appendChild(panel);
-      // The observer's callback runs as a microtask, before the next paint.
-      await Promise.resolve();
-      return getComputedStyle(panel).getPropertyValue("--light-y").trim();
+      // The light is on the board, so a panel anywhere inside it is lit: by animations of its own, or by
+      // the properties it inherits.
+      document.getElementById("services")?.appendChild(panel);
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      return {
+        animations: panel.getAnimations({ subtree: true }).length,
+        inherited: getComputedStyle(panel).getPropertyValue("--light-y").trim(),
+        transform: getComputedStyle(panel, "::before").transform,
+      };
     });
-    expect(added).not.toBe("");
+    expect(added.animations > 0 || added.inherited !== "").toBe(true);
+    expect(added.transform).not.toBe("none");
     await tiltSwitch(page).click();
-    const cleared = await page.evaluate(() =>
-      document.getElementById("late-panel")?.style.getPropertyValue("--light-y"),
-    );
-    expect(cleared).toBe("");
+    const cleared = await page.evaluate(() => {
+      const panel = document.getElementById("late-panel") as Element;
+      return {
+        animations: panel.getAnimations({ subtree: true }).length,
+        inherited: getComputedStyle(panel).getPropertyValue("--light-y").trim(),
+      };
+    });
+    expect(cleared).toEqual({ animations: 0, inherited: "" });
   });
 
   test("switches off cleanly", async ({ page }) => {
@@ -743,6 +774,77 @@ test.describe("on a touch device", () => {
 
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+  });
+
+  test("falls back to custom properties on one element where pseudo-elements cannot be animated", async ({ page }) => {
+    // An engine without KeyframeEffect: the sink writes --light-x and --light-y on <main> instead.
+    await page.addInitScript(() => {
+      Object.defineProperty(window, "KeyframeEffect", { value: undefined, configurable: true });
+    });
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
+
+    const seen = await page.evaluate(() => {
+      const holders = Array.from(document.querySelectorAll<HTMLElement>("[style]")).filter(
+        (element) => element.style.getPropertyValue("--light-y") !== "",
+      );
+      const row = document.querySelector(".surface > *") as Element;
+      return {
+        holders: holders.map((element) => element.id || element.tagName),
+        animations: document.getAnimations().filter((animation) => animation.id.startsWith("tilt-light-")).length,
+        // Below a panel's own children the properties are cut off, so a write does not walk the rows.
+        insideRow: getComputedStyle(row.firstElementChild ?? row)
+          .getPropertyValue("--light-y")
+          .trim(),
+        // And the panel itself moves with them.
+        sheen: getComputedStyle(document.querySelector(".surface") as Element, "::before").transform,
+      };
+    });
+    expect(seen.holders).toEqual(["services"]);
+    expect(seen.animations).toBe(0);
+    expect(seen.insideRow).toBe("");
+    expect(seen.sheen).not.toBe("none");
+    expect((await paintedLight(page)).sheen).not.toBe("matrix(1, 0, 0, 1, 0, 0)");
+  });
+
+  test("writes nothing while no panel is on screen, and catches up when one comes back", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
+
+    // Every panel is inside <main>: take it off the screen.
+    const board = (shown: boolean) =>
+      page.evaluate(async (shown) => {
+        const main = document.getElementById("services");
+        if (main) main.style.display = shown ? "" : "none";
+        // Two frames: the observer reports on the frame after the change.
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))));
+      }, shown);
+    await board(false);
+    await page.waitForTimeout(100);
+    const frozen = await lightVar(page, "--light-y");
+    // Held flat again for long enough that the light, if it were written, would be back at the start.
+    for (let i = 0; i < 20; i++) {
+      await tilt(page, 0, 0);
+      await page.waitForTimeout(30);
+    }
+    await page.waitForTimeout(300);
+    expect(await lightVar(page, "--light-y")).toBe(frozen);
+
+    // Back on screen: one write puts the page where the light is now, without waiting for another reading.
+    await board(true);
+    await expect
+      .poll(async () => Math.abs(Number(await lightVar(page, "--light-y"))), { timeout: 5000 })
+      .toBeLessThan(0.3);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
   });
 

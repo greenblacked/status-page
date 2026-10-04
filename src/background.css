@@ -553,26 +553,36 @@
   }
 
   /*
-    Tilt lighting's light: --light-x and --light-y, each -1..1, set inline on
-    the panels by use-tilt-lighting.ts, and read by the panels' ::before (the
-    sheen) and ::after (the glint), which inherit them from their panel the
-    ordinary way. Plain custom properties, unset when the light is off; every
-    use falls back to 0 (var(--light-x, 0)), which is the board as it always was.
+    Tilt lighting's light: the .surface panels' ::before (the sheen) and ::after
+    (the glint) draw it. Moving the light must not repaint the glass, so the
+    gradients never change: each is drawn once on a layer larger than its panel,
+    and the light only slides that layer with a transform, which the compositor
+    does without painting (will-change gives it a layer of its own). The panel
+    clips the overhang (overflow: clip, with its rounded corners). Only the
+    .surface panels move: the floating bar and the dialog keep a still sheen.
+
+    Two things set the transform (use-tilt-lighting.ts and tilt-light-sink.ts):
+    Web Animations on the pseudo-elements, driven by script, which override the
+    `transform` below and add `translate` (the preferred way: no style work at
+    all), or, where an engine cannot do that, --light-x and --light-y (each
+    -1..1) written inline on <main> and read here. Unset, every use falls back
+    to 0 (var(--light-x, 0)), the board as it always was. The slide amounts
+    (8% and 21.1%) are the same in tilt-light-sink.ts.
+
+    The properties' cost is the restyle of everything that inherits them, so
+    `.surface > *` resets both to the guaranteed-invalid value: the restyle stops
+    at the panel's direct children instead of walking the many hundreds of
+    elements inside the rows. Nothing inside a panel reads them.
 
     They were once registered with @property as non-inherited and handed to the
-    pseudo-elements with `inherit`, to save the restyle of everything inside a
-    card on each write (about 5x cheaper per write in Chromium). WebKit
-    mishandles that: the pseudo-element reports the value, but its gradients are
-    computed as if the variable were unset, so on an iPhone the light did not
-    move. Nothing interpolates these (no transition or animation), so the
-    registration bought only that saving; the cost of the plain form is one
-    card's subtree per write, and writes are frame-capped and skipped inside a
-    small deadband.
+    pseudo-elements with `inherit`. WebKit mishandles that: the pseudo-element
+    reports the value, but its gradients are computed as if the variable were
+    unset, so on an iPhone the light did not move. These are plain properties,
+    nothing interpolates them, and they are written at most about 30 times a
+    second (and less often while frames overrun, see createWritePacer).
   */
 
-  /* The specular sweep: light entering from the upper left. With Tilt lighting
-     on, --light-x turns the angle by up to 28deg; unset, it is the fixed 125deg
-     it always was. The variable is stepped by script and never transitioned. */
+  /* The specular sweep: light entering from the upper left, a fixed 125deg. */
   :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet)::before {
     content: "";
     pointer-events: none;
@@ -581,7 +591,7 @@
     z-index: 0;
     border-radius: inherit;
     background: linear-gradient(
-      calc(125deg + var(--light-x, 0) * 28deg),
+      125deg,
       var(--glass-sheen) 0%,
       transparent 34%,
       transparent 70%,
@@ -593,6 +603,36 @@
   :root:is([data-background="glass"], [data-background="full"]) :is(.surface, .float, .sheet) > * {
     position: relative;
     z-index: 1;
+  }
+
+  /*
+    With Tilt lighting on (data-tilt, set only while the light is being driven) the
+    sheen is the same gradient on a layer 1.4 times the panel, centred on it (inset -20%),
+    so the stops are the old ones pulled in toward the middle (p' = 0.5 + (p - 0.5) / 1.4),
+    and at rest it looks as it did. The variables slide the layer by up to 8% of its own
+    size (11% of the panel, inside the 20% overhang, so no edge shows). The panel clips it.
+  */
+  :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .surface {
+    overflow: clip;
+  }
+
+  :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .surface > * {
+    --light-x: initial;
+    --light-y: initial;
+  }
+
+  :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .surface::before {
+    inset: -20%;
+    border-radius: 0;
+    background: linear-gradient(
+      125deg,
+      var(--glass-sheen) 14.3%,
+      transparent 38.6%,
+      transparent 64.3%,
+      color-mix(in oklab, var(--glass-sheen) 30%, transparent) 85.7%
+    );
+    transform: translate3d(calc(var(--light-x, 0) * 8%), calc(var(--light-y, 0) * 8%), 0);
+    will-change: transform;
   }
 
   /*
@@ -626,31 +666,46 @@
     (data-tilt, set only while the light is being driven) a soft light sits on
     the card and slides with --light-x/--light-y. Devices with a hover-capable
     pointer get the wandering light (Full) instead.
+
+    The glint is a radial gradient that never changes, drawn at the middle of a
+    layer 1.8 times the panel (inset -40%), and the variables slide that layer by
+    up to 38% of the panel (21.1% of the layer, 0.38 / 1.8); the 40% overhang is
+    more than that, so the panel is always covered. The panel clips it.
+
+    In light mode a faint shade goes with it (white light on a white panel shows
+    nothing alone). It used to sit opposite the glint; one layer cannot move two
+    ways, so it now sits in the sheen's layer (.spotlight::before, at full opacity
+    with the sheen's colours scaled to the same 0.55 it had), where it slides only
+    a fraction as far, and so still ends up on the other side of the glint.
   */
   @media not ((hover: hover) and (pointer: fine)) {
+    :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::before {
+      background:
+        linear-gradient(
+          125deg,
+          color-mix(in oklab, var(--glass-sheen) 55%, transparent) 14.3%,
+          transparent 38.6%,
+          transparent 64.3%,
+          color-mix(in oklab, var(--glass-sheen) 16.5%, transparent) 85.7%
+        ),
+        radial-gradient(320px circle at 50% 50%, var(--tilt-shade), transparent 65%);
+      opacity: 1;
+    }
+
     :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {
       content: "";
       pointer-events: none;
       position: absolute;
-      inset: 0;
+      inset: -40%;
       z-index: 0;
-      border-radius: inherit;
-      /* The glint, and in light mode a faint shade on the opposite side: white light on a white panel shows nothing alone. */
+      border-radius: 0;
       background:
-        radial-gradient(
-          320px circle at calc(50% + var(--light-x, 0) * 38%) calc(50% + var(--light-y, 0) * 38%),
-          var(--tilt-glint),
-          transparent 65%
-        ),
-        radial-gradient(
-          320px circle at calc(50% - var(--light-x, 0) * 38%) calc(50% - var(--light-y, 0) * 38%),
-          var(--tilt-shade),
-          transparent 65%
-        );
+        radial-gradient(320px circle at 50% 50%, var(--tilt-glint), transparent 65%);
       opacity: 1;
       /* Tilt drives the light here; the wander steps aside. */
       animation: none;
-      transform: none;
+      transform: translate3d(calc(var(--light-x, 0) * 21.1%), calc(var(--light-y, 0) * 21.1%), 0);
+      will-change: transform;
     }
   }
 

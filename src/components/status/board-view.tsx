@@ -80,7 +80,7 @@ export function BoardView({
   const reduceGlass = useReduceGlass();
   const background = useBackground();
   // The light only draws on Glass and Full, and Reduce glass takes it away everywhere.
-  const tilt = useTiltLighting({ paused: reduceGlass.enabled || background.value === "quiet" });
+  const tilt = useTiltLighting({ paused: reduceGlass.enabled || background.value === "quiet", scope: mainRef });
   useWanderLight(mainRef);
   // Chosen once per page load: the tab keeps its own spot in every slot.
   const [refetchJitter] = useState(() => pickRefetchJitter());

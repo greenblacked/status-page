@@ -7,11 +7,12 @@ import type { PreferenceStorage } from "@/lib/status/glass";
  * src/components/status/use-tilt-lighting.ts wires it to the browser.
  *
  * The light reaches the CSS only through two custom properties,
- * --light-x and --light-y, each from -1 to 1, set inline on the glass
- * elements whose ::before and ::after draw it (TILT_LIGHT_SELECTOR). They are
- * plain custom properties that those pseudo-elements inherit from their panel. Nothing may depend on them: unset, the board looks
- * exactly as it did before this existed. They only draw on the Glass and Full backgrounds (src/background.css), so
- * the hook stands down on Quiet.
+ * --light-x and --light-y, each from -1 to 1, written inline on one element,
+ * the board's <main>. The glass panels inside it (TILT_LIGHT_SELECTOR) read
+ * them in their ::before and ::after, which place a fixed gradient with a
+ * transform. Nothing may depend on them: unset, the board looks exactly as it
+ * did before this existed. They only draw on the Glass and Full backgrounds
+ * (src/background.css), so the hook stands down on Quiet.
  */
 export const TILT_STORAGE_KEY = "status-bar:tilt-lighting";
 /** Set on <html> while the light is really being driven, and only then. */
@@ -19,12 +20,11 @@ export const TILT_ATTRIBUTE = "data-tilt";
 export const TILT_VAR_X = "--light-x";
 export const TILT_VAR_Y = "--light-y";
 /**
- * The elements the variables are written on, inline: the panels whose sheen
- * (::before) and glint (::after) draw the light. The light is written at most
- * about 30 times a second, and only when it moved: each write re-styles these
- * panels and what is inside them.
+ * The panels whose sheen (::before) and glint (::after) draw the light. The
+ * hook finds them once, then follows them with a MutationObserver, to know
+ * which are on screen; the light itself is written once, on their ancestor.
  */
-export const TILT_LIGHT_SELECTOR = ".surface, .float, .sheet, .spotlight";
+export const TILT_LIGHT_SELECTOR = ".surface";
 
 /**
  * Which way the light moves for a given tilt. The one place to flip it: 1
@@ -132,7 +132,7 @@ export function lowPass(prev: number, next: number, dtMs: number, tauMs = 120): 
 export const BASELINE_TAU_MS = 5000;
 /** The light must move this far (of its -1..1 range) before the page is touched again. */
 export const DEADBAND = 0.004;
-/** About 30 writes a second: the sheen repaints every glass panel. */
+/** About 30 writes a second: each one restyles the board's panels and their children. */
 export const MIN_APPLY_INTERVAL_MS = 33;
 /** The slowest the light is written when frames are dropping: about 4 a second. */
 export const MAX_APPLY_INTERVAL_MS = 250;
