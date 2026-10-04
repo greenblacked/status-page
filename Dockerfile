@@ -15,28 +15,33 @@
 
 # Node 22.22.2 (.nvmrc) on Debian 12, by the digest of the multi-platform
 # index, so amd64 and arm64 both resolve from it. Dependabot moves the tag and
-# the digest together (.github/dependabot.yml); this is the only FROM that
-# names an image, which is the line it reads.
+# the digest together (.github/dependabot.yml): keep the digest the same in
+# both FROM lines.
 FROM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS base
 
-# pnpm at the version and hash package.json pins: Corepack downloads exactly
-# that and refuses it if the sha512 differs (scripts/ci/pnpm-pin.sh).
-FROM base AS pnpm
+# The build runs on the machine that runs `docker build`, whatever platform the
+# image is for: dist/ is JavaScript, CSS and assets, the same for every
+# platform, so an arm64 image built on amd64 does not run the bundler under
+# emulation.
+FROM --platform=$BUILDPLATFORM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS build-base
+
+# Production dependencies only, for the image's own platform: what
+# dist/server/server.js and src/node import when they run. pnpm is the version
+# and hash package.json pins: Corepack downloads exactly that and refuses it if
+# the sha512 differs (scripts/ci/pnpm-pin.sh). The lockfile is installed as it
+# is, or the build fails.
+FROM base AS prod-deps
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WORKDIR /app
-COPY package.json ./
-RUN corepack enable && pnpm --version
-
-# Production dependencies only: what dist/server/server.js and src/node import
-# when it runs. The lockfile is installed as it is, or the build fails.
-FROM pnpm AS prod-deps
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile --prod --ignore-scripts
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile --prod --ignore-scripts
 
 # Every dependency, then the production build into dist/.
-FROM pnpm AS build
-COPY pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile --ignore-scripts
+FROM build-base AS build
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN corepack enable && pnpm install --frozen-lockfile --ignore-scripts
 COPY tsconfig.json vite.config.ts ./
 COPY public ./public
 COPY src ./src
