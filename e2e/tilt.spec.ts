@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { LIGHT_SIGN, TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
+import { expect, test } from "./test";
 
 // Tilt lighting reads the device's motion sensors, which a test browser does
 // not have. These tests stand in for them: they dispatch synthetic

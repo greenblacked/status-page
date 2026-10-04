@@ -5,8 +5,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type BrowserContext, chromium, expect, type Page, test } from "@playwright/test";
+import { type BrowserContext, chromium, type Page } from "@playwright/test";
 import { upstreamUrl } from "../scripts/ci/upstream-url.ts";
+import { chromiumArgs } from "./support/chromium-args.ts";
+import { expect, test, watchStrays } from "./test";
 
 // A return visit draws the page in the self-hosted Inter only if the browser can use its copy of the font without
 // asking the network: Inter is font-display: optional (src/styles.css), and Chromium uses an optional font that was
@@ -126,13 +128,19 @@ async function drawnFonts(context: BrowserContext, page: Page, selector: string)
 async function returnVisits(origin: string, shipped: boolean, visits: number, stop: (fonts: string[]) => boolean) {
   const { server, fontRequests, url } = await serveLikeProduction(origin, shipped);
   const profile = await mkdtemp(join(tmpdir(), "font-cache-"));
-  const launch = () =>
-    chromium.launchPersistentContext(profile, {
+  // These browsers are started here, not by the runner, so the guard of e2e/test.ts and the launch flags are applied by hand.
+  const strays: Array<() => string[]> = [];
+  const launch = async () => {
+    const context = await chromium.launchPersistentContext(profile, {
       baseURL: url,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,
+      args: chromiumArgs,
       locale: "en-GB",
       timezoneId: "UTC",
     });
+    strays.push(watchStrays(context));
+    return context;
+  };
   try {
     const first = await launch();
     try {
@@ -171,6 +179,10 @@ async function returnVisits(origin: string, shipped: boolean, visits: number, st
         await session.close();
       }
     }
+    expect(
+      strays.flatMap((asked) => asked()),
+      "the page asked a host that is not this machine",
+    ).toEqual([]);
     return { returns, fontRequests };
   } finally {
     server.close();

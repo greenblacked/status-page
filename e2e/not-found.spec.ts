@@ -1,5 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 
 // A URL that is not on the board keeps the board's voice and type instead of the router's unbranded
 // default. (The error page is a component test: a production build has no way to break on purpose.)

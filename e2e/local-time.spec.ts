@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./test";
 
 // Times on the board are the viewer's own once the page has hydrated, and UTC before that: the
 // server cannot know the viewer's zone, and a hydrating render must print what the server printed.
@@ -6,7 +7,7 @@ import { expect, test } from "@playwright/test";
 // the whole moment in UTC, in any zone.
 
 /** The time in the live line: when the board was last checked. */
-const asOf = (page: import("@playwright/test").Page) => page.getByTestId("live-bar").locator("time");
+const asOf = (page: Page) => page.getByTestId("live-bar").locator("time");
 
 test.describe("in Berlin", () => {
   test.use({ timezoneId: "Europe/Berlin", locale: "en-GB" });

@@ -1,7 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Page, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
+import { expect, test } from "./test";
 
 // The Details pop-up of the Releases cards: every channel, OS or version a tracker holds, with its changelog
 // where the source has one. Opened from the card's main area or by keyboard, a modal dialog on every size,

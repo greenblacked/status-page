@@ -1,6 +1,6 @@
 # Collector fixtures
 
-Vendor payloads for the collector tests in `../collectors.test.ts`. Each file stands in for one official endpoint that `../sources.server.ts` (and the parsers in `../changelog.ts`) read, so a test can run the real collector against a whole payload with no network.
+Vendor payloads for the collector tests in `../collectors.test.ts`, and for the preview server of the browser tests (`e2e/support/no-vendors.mjs` answers a vendor's URL from the file listed here, with its dates moved to the present; a fixture with no URL in its table has no route there, so add one when you add a collector). Each file stands in for one official endpoint that `../sources.server.ts` (and the parsers in `../changelog.ts`) read, so a test can run the real collector against a whole payload with no network.
 
 | File | Stands in for | Collector | Origin |
 | --- | --- | --- | --- |
@@ -42,7 +42,7 @@ Each file holds a few items chosen to exercise one rule per item: an active even
 ## Conventions
 
 - **Trim, don't invent.** Keep the vendor's own items, field names, nesting and formatting. Drop items to cover the cases you need; don't edit the ones you keep.
-- **Pin the clock to the data.** The tests fake `Date` so the collectors' 14-day windows see the fixture's dates as recent or stale on purpose. The hand-built files sit around `2026-09-20T12:00:00Z`; a recorded file gets its own `vi.setSystemTime` in its test, chosen for what that test needs.
+- **Pin the clock to the data.** The tests fake `Date` so the collectors' 14-day windows see the fixture's dates as recent or stale on purpose. The hand-built files sit around `2026-09-20T12:00:00Z`; a recorded file gets its own `vi.setSystemTime` in its test, chosen for what that test needs. The browser tests' preview moves each routed fixture's dates from that same clock to the present (`e2e/support/canned-vendors.mjs` names it per group: the status payloads and MikroTik at `2026-09-20T12:00Z`, Apple at `2026-09-29T12:00Z`, Windows and Android at `2026-10-01T12:00Z`, the release feeds at `2026-10-02T12:00Z`), in every format the files spell a date: ISO 8601, RFC 822 in any zone, Unix seconds, bare days and RouterOS's `2026-Sep-19 12:00`. A fixture with a date in a new format, or a test clock of its own, needs its rule or its group there, and `scripts/ci/canned-vendors.test.ts` to say so.
 - **Dates on cards are UTC.** `vitest.config.ts` sets `TZ=UTC`, so an expected `Sep 21` holds on every machine.
 - **Text, UTF-8, LF.** `scripts/ci/hygiene.sh` checks every tracked text file, including trailing whitespace. The AWS feed is UTF-16 on the wire; keep the fixture UTF-8, and the test encodes it before serving it.
 
