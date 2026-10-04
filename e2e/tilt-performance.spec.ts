@@ -16,9 +16,12 @@ import { TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
 //     the document for the panels (querySelectorAll with the light selector)
 //     from an animation frame callback, where the light's own code runs, through
 //     a spy installed before the page's own scripts run;
-//   - from a second, traced sweep, how many times the main thread painted and
-//     how many raster tasks ran (tracing slows the page, so no timing is taken
-//     from that pass).
+//   - from a second, traced sweep, how many times the main thread painted, how
+//     many raster tasks ran and how many elements the style system revisited
+//     (the elementCount of the UpdateLayoutTree events) while the light moved
+//     (tracing slows the page, so no timing is taken from that pass).
+// Durations and frame timing depend on how busy the machine is, so they are only
+// reported; what is asserted are counts that load does not change.
 // It needs the DevTools protocol, so it runs on Chromium (the mobile and tablet
 // projects) and is skipped in WebKit and on a desktop.
 //
@@ -71,6 +74,9 @@ type Row = {
   longFrames: number;
   paints?: number;
   rasters?: number;
+  /** Elements the style system revisited during the traced sweep, and the light updates in that sweep. */
+  restyled?: number;
+  tracedUpdates?: number;
 };
 
 const median = (values: number[]) => {
@@ -247,10 +253,15 @@ async function measure(page: Page, cdp: import("@playwright/test").CDPSession, r
 async function traceCounts(
   page: Page,
   cdp: import("@playwright/test").CDPSession,
-): Promise<{ paints: number; rasters: number }> {
+): Promise<{ paints: number; rasters: number; restyled: number; updates: number }> {
   const names: string[] = [];
-  const onData = (payload: { value: { name?: string; ph?: string }[] }) => {
-    for (const event of payload.value) if (event.name && event.ph !== "M") names.push(event.name);
+  let restyled = 0;
+  const onData = (payload: { value: { name?: string; ph?: string; args?: { elementCount?: number } }[] }) => {
+    for (const event of payload.value) {
+      if (!event.name || event.ph === "M") continue;
+      names.push(event.name);
+      if (event.name === "UpdateLayoutTree") restyled += event.args?.elementCount ?? 0;
+    }
   };
   cdp.on("Tracing.dataCollected", onData);
   const complete = new Promise<void>((resolve) => cdp.once("Tracing.tracingComplete", () => resolve()));
@@ -258,15 +269,20 @@ async function traceCounts(
     transferMode: "ReportEvents",
     traceConfig: { includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline"] },
   });
-  await sweep(page, SWEEP_MS);
+  const traced = await sweep(page, SWEEP_MS);
   await cdp.send("Tracing.end");
   await complete;
   cdp.off("Tracing.dataCollected", onData);
   return {
     paints: names.filter((name) => name === "Paint").length,
     rasters: names.filter((name) => name === "RasterTask").length,
+    restyled,
+    updates: traced.updates,
   };
 }
+
+/** Elements the style system revisited per move of the light, in the traced sweep. */
+const restyledPerUpdate = (row: Row) => (row.restyled ?? 0) / Math.max(1, row.tracedUpdates ?? 0);
 
 const f = (value: number, digits = 1) => (Number.isFinite(value) ? value.toFixed(digits) : "n/a");
 
@@ -291,6 +307,7 @@ function table(label: string, rows: Row[]): string {
     "LoAF",
     "paints",
     "rasters",
+    "restyled/update",
   ];
   const lines = rows.map((row) =>
     [
@@ -313,6 +330,7 @@ function table(label: string, rows: Row[]): string {
       String(row.longFrames),
       row.paints === undefined ? "-" : String(row.paints),
       row.rasters === undefined ? "-" : String(row.rasters),
+      row.restyled === undefined ? "-" : f(restyledPerUpdate(row), 1),
     ].join(" | "),
   );
   return [`[tilt-perf] ${label}`, head.join(" | "), ...lines].join("\n");
@@ -360,6 +378,8 @@ async function collect(page: Page, label: string, runs: number): Promise<Row[]> 
       const traced = await traceCounts(page, cdp);
       row.paints = traced.paints;
       row.rasters = traced.rasters;
+      row.restyled = traced.restyled;
+      row.tracedUpdates = traced.updates;
       medians.push(row);
       console.log(table(`${label}, runs at ${rate}x`, each));
     }
@@ -415,9 +435,9 @@ test.describe("tilt performance", () => {
 
   // The same sweep first with Tilt lighting off (the readings go to nobody): what that costs is
   // the floor (the timer, the frame loop and the page's own work), which the lit run cannot get
-  // under. Then with it on. Frame timing is compared only when the floor itself is clean, so a
-  // machine too busy to draw 60 frames a second does not fail the run; the counts of work done
-  // (style recalculation, paints, raster tasks, document searches) do not depend on that.
+  // under. Then with it on. What is asserted are counts that machine load does not change (document
+  // searches, paints, raster tasks, elements restyled per move of the light). Durations and frame
+  // timing move with whatever else the machine is doing, so they are logged and attached, not asserted.
   test("lights the glass smoothly on a throttled CPU", async ({ page, context }, testInfo) => {
     test.setTimeout(300_000);
     await installSpy(page);
@@ -445,22 +465,19 @@ test.describe("tilt performance", () => {
 
     // Measured on unchanged code (every panel written on, a document search per write), at 4x:
     //   recalc 250-490 ms/s, 120-160 traced paints and 100-130 raster tasks per 3 s, task time 450-690 ms/s,
-    //   7-10 light updates a second (about one frame in five), 38-46 fps (light off: 49-55);
-    //   at 6x similar or worse.
-    // And on this code, at 4x: recalc 12-35 ms/s, 6-8 traced paints and 3-4 raster tasks, task time
-    //   160-360 ms/s over the light-off run's (the commit of the sliding layers, see the CHANGELOG),
-    //   46-50 fps.
-    // What is compared with the light-off run of the same session is compared that way, so a busy
-    // machine, or tests running beside this one, moves both and not the difference. Frame timing on a
-    // shared machine is too noisy to tell this code from the old, so only a collapse is asserted; the
-    // counts of work done are what tell them apart.
+    //   far more elements restyled per move of the light (every panel's subtree), 7-10 light updates a second (about one
+    //   frame in five), 38-46 fps (light off: 49-55); at 6x similar or worse.
+    // And on this code, at 4x: 4-8 traced paints and 2-4 raster tasks, about 4 elements restyled per move of
+    //   the light (the pseudo-elements), recalc 30-55 ms/s alone and more beside other tests, task time
+    //   160-360 ms/s over the light-off run's (the commit of the sliding layers, see the CHANGELOG).
+    // Style recalculation time, task time and frame timing depend on the machine's load (and a software
+    // compositor in headless Chromium pays for each commit), so they are in the table and not asserted.
+    // Counts of work done do not depend on it, and they are what tell this code from the old.
     medians.forEach((row, index) => {
       const base = floor[index];
       const at = `at ${row.rate}x`;
       // No search of the document for the panels while the light moves.
       expect(row.qsaLight, `document searches for the panels from frame callbacks ${at}`).toBe(0);
-      // The style system is barely touched.
-      expect(row.recalcMs, `style recalculation ms/s ${at}`).toBeLessThanOrEqual(100);
       // Nothing is repainted: the traced paints and raster tasks stay near the still page's own.
       expect(row.paints ?? 0, `paints ${at}, over the light-off run's ${base.paints}`).toBeLessThanOrEqual(
         (base.paints ?? 0) + 40,
@@ -468,10 +485,12 @@ test.describe("tilt performance", () => {
       expect(row.rasters ?? 0, `raster tasks ${at}, over the light-off run's ${base.rasters}`).toBeLessThanOrEqual(
         (base.rasters ?? 0) + 30,
       );
-      // Frame timing, against the light-off run of the same session: a collapse, not a nuance.
-      expect(row.p95 - base.p95, `p95 frame gap over the light-off run ${at}`).toBeLessThanOrEqual(67);
-      expect(row.over33 - base.over33, `frames over 33 ms over the light-off run ${at}`).toBeLessThanOrEqual(30);
-      expect(base.fps - row.fps, `frames per second under the light-off run ${at}`).toBeLessThanOrEqual(25);
+      // The style system revisits the pseudo-elements and not the board's panels with their rows, as the old path did on every write.
+      expect(row.tracedUpdates ?? 0, `light updates in the traced sweep ${at}`).toBeGreaterThan(0);
+      expect(restyledPerUpdate(row), `elements restyled per move of the light ${at}`).toBeLessThanOrEqual(40);
+      console.log(
+        `[tilt-perf] ${at}, over the light-off run: p95 ${f(row.p95 - base.p95)} ms, ${row.over33 - base.over33} more frames over 33 ms, ${f(base.fps - row.fps)} fps lower, recalc ${f(row.recalcMs - base.recalcMs)} ms/s`,
+      );
     });
     // The light moves on nearly every frame of a screen that keeps up (it was every second frame at
     // best, and every fifth under load, when it was capped at about 30 a second), so the glow follows
