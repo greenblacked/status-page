@@ -609,7 +609,7 @@
     With Tilt lighting on (data-tilt, set only while the light is being driven) the
     sheen is the same gradient on a layer 1.4 times the panel, centred on it (inset -20%),
     so the stops are the old ones pulled in toward the middle (p' = 0.5 + (p - 0.5) / 1.4),
-    and at rest it looks as it did. The variables slide the layer by up to 8% of its own
+    and at rest it looks as it did. The light slides the layer by up to 8% of its own
     size (11% of the panel, inside the 20% overhang, so no edge shows). The panel clips it.
   */
   :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .surface {
