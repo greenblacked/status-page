@@ -4,9 +4,9 @@ name: Release
 # version's CHANGELOG.md section; the sign job attaches the signed source
 # archive and only then publishes the release. If a check fails nothing is
 # committed, tagged or published; if signing fails the tag exists and the
-# release stays a draft. Two more jobs publish the Docker image for the tag
-# (ghcr.io/<owner>/status-page, amd64 and arm64, with provenance and an SBOM)
-# and sign it with cosign. Only main is released: pull requests
+# release stays a draft. Two more jobs publish the Docker image for the tag,
+# once the release is signed and public (ghcr.io/<owner>/status-page, amd64
+# and arm64, with provenance and an SBOM), and sign it with cosign. Only main is released: pull requests
 # merge into dev, which never releases, the owner promotes dev to stage (a
 # preview) and stage to main, each in a merge commit
 # (CONTRIBUTING.md#releases). Ways in:
@@ -254,8 +254,10 @@ jobs:
     needs: [plan, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # The only job with write access. It installs no dependencies and runs
-    # no project code: only the release scripts and gh.
+    # The only job that pushes to the repository (the bump commit and the tag).
+    # It installs no dependencies and runs no project code: only the release
+    # scripts and gh. The sign, image and sign-image jobs have write scopes of
+    # their own, listed on each.
     permissions:
       contents: write # push the bump commit and the tag, create the draft GitHub Release
     outputs:
@@ -389,9 +391,9 @@ jobs:
     if: needs.publish.outputs.published == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # The only job in this workflow with id-token: write, and it runs no
-    # project code: git, cosign and gh. contents: write is for uploading the
-    # two release assets and publishing the draft.
+    # With sign-image, one of the two jobs in this workflow with id-token:
+    # write, and it runs no project code: git, cosign and gh. contents: write
+    # is for uploading the two release assets and publishing the draft.
     permissions:
       contents: write # upload the source archive and its signature, publish the release
       id-token: write # keyless Sigstore signing with this run's GitHub OIDC identity
@@ -531,8 +533,10 @@ jobs:
 
   image:
     name: build and push image
-    needs: [plan, publish]
-    if: needs.publish.outputs.published == 'true'
+    # After sign: the image is not public under a version tag or :latest
+    # while the GitHub Release is still a draft because signing failed.
+    needs: [plan, publish, sign]
+    if: needs.sign.result == 'success' && needs.publish.outputs.published == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Builds the Dockerfile at the release tag for linux/amd64 and
@@ -588,13 +592,20 @@ jobs:
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
 
+      # The helper images the two actions pull are pinned by tag and digest
+      # too (the actions default to mutable tags): tonistiigi/binfmt installs
+      # the arm64 emulation as a privileged container, moby/buildkit builds
+      # the image. Move each tag and digest together, by hand.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: steps.meta.outputs.build == 'true'
         with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           platforms: arm64
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         if: steps.meta.outputs.build == 'true'
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
 
       # The image that would be published must start and answer before it is
       # pushed under a version tag and :latest: built for this runner's
