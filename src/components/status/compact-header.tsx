@@ -17,6 +17,7 @@ import {
   type RevealMemo,
   readerMoved,
   revealFrame,
+  TYPING_MS,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
@@ -87,6 +88,9 @@ export const WIDE = "(min-width: 64rem)";
  *     filter shortens the board and the page ends up above `revealFrom` without the reader scrolling (`readerMoved`),
  *     the focus, the text and the caret of the bar's field move to the hero's, which is then in view. The reader's
  *     own scroll up past `revealFrom` lets the bar's field go (a blur) as it always did.
+ *     A key typed into a search field is such a layout change: the results shorten the page and the browser moves it by
+ *     part of that (`typing`, for `TYPING_MS` after the key), which is no scroll by the reader either, even when
+ *     the card its scroll anchoring held was one the search removed.
  *   - The same hand-over when the screen crosses 64rem (an iPad turned) with a field in use. The field that was in use
  *     is hidden (the bar's copy from 64rem up) or out of reach (the hero's, scrolled away, below it), so the reveal
  *     is read again from the scroll position as it is now, not from the reset the crossing leaves, and the focus,
@@ -165,6 +169,8 @@ export function useSearchDock({
     let lastLimit = 0;
     let travelFrom: number | null = null;
     let anchorShift = 0;
+    // When a key was last typed into a search field: the board it changes moves the page (see `readerMoved`).
+    let typedAt = Number.NEGATIVE_INFINITY;
     let memo: RevealMemo = REVEAL_REST;
     // The search field that had focus when the screen crossed 64rem, until its focus has been handed to the field
     // that is there (below 64rem that waits for the bar's copy to be reachable: a render or two) or given up on.
@@ -411,6 +417,7 @@ export function useSearchDock({
           lastLimit,
           anchorMoved: shift,
           quiet: quietScrolling(),
+          typing: performance.now() - typedAt < TYPING_MS,
         });
       lastLimit = maxScroll;
       travelFrom = null;
@@ -496,6 +503,10 @@ export function useSearchDock({
       rebase(window.scrollY);
       schedule();
     };
+    const onInput = (event: Event) => {
+      const { target } = event;
+      if (target instanceof HTMLInputElement && target.hasAttribute("data-search-input")) typedAt = performance.now();
+    };
     measure();
     lastLimit = maxScroll;
     frame();
@@ -504,6 +515,8 @@ export function useSearchDock({
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", onResize);
     document.addEventListener("focusout", onFocusOut);
+    // Capturing, before the field's own handler renders the board that the key changes.
+    document.addEventListener("input", onInput, true);
     wide.addEventListener("change", remeasure);
     reduce.addEventListener("change", remeasure);
     void document.fonts?.ready.then(remeasure);
@@ -527,6 +540,7 @@ export function useSearchDock({
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", onResize);
       document.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("input", onInput, true);
       wide.removeEventListener("change", remeasure);
       reduce.removeEventListener("change", remeasure);
       ro.disconnect();
