@@ -14,8 +14,9 @@ describe("stylesheet source scan", () => {
     expect(css).toMatch(/^@import "tailwindcss" source\("\.\/?"\);$/m);
   });
 
-  it("leaves test files out, so a build with and without them is the same", () => {
+  it("leaves test files and their fixtures out, so a build with and without them is the same", () => {
     expect(css).toMatch(/^@source not "\.\/\*\*\/\*\.test\.ts";$/m);
     expect(css).toMatch(/^@source not "\.\/test";$/m);
+    expect(css).toMatch(/^@source not "\.\/lib\/status\/__fixtures__";$/m);
   });
 });
