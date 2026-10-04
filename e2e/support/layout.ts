@@ -238,16 +238,24 @@ export async function installAudit(page: Page): Promise<void> {
       const scrollWidth = document.documentElement.scrollWidth;
       if (scrollWidth > vw) overflow.push(`the page is ${scrollWidth}px wide on a ${vw}px screen`);
       // Something past the edge. The page clips it (html, body and the .liquid-stage that holds the whole board are
-      // overflow-x: clip), so scrollWidth does not tell, and neither can those clips count as "meant to scroll": look
-      // at each drawn element and its text, and let through only what sits inside a real scroller (overflow-x auto
-      // or scroll) or is hidden from view (sr-only, the lens layer).
-      const scrolled = (element: Element): boolean => {
+      // overflow-x: clip), so scrollWidth does not tell, and those clips cannot count as "meant to scroll" either:
+      // look at each drawn element and its text. One that leaves its own box is let through where that box is a
+      // scroller or a clip (a truncated line, a strip that scrolls) that sits inside the screen, so that what sticks
+      // out of it is cut or scrolled there and never reaches the edge; and what is hidden from view (sr-only, the lens layer).
+      const clippedWithin = (element: Element): boolean => {
         for (let node = element.parentElement; node && node !== document.body; node = node.parentElement) {
-          if (/auto|scroll/.test(getComputedStyle(node).overflowX)) return true;
+          if (
+            node.classList.contains("liquid-stage") ||
+            !/hidden|clip|auto|scroll/.test(getComputedStyle(node).overflowX)
+          )
+            continue;
+          const box = node.getBoundingClientRect();
+          if (box.left >= -0.5 && box.right <= vw + 0.5) return true;
         }
         return false;
       };
-      const exempt = (element: Element): boolean => element.closest(".lenses, .sr-only") !== null || scrolled(element);
+      const exempt = (element: Element): boolean =>
+        element.closest(".lenses, .sr-only") !== null || clippedWithin(element);
       for (const element of document.body.querySelectorAll("*")) {
         if (exempt(element)) continue;
         const box = boxOf(element);
@@ -257,8 +265,8 @@ export async function installAudit(page: Page): Promise<void> {
         );
       }
       // Text that leaves its box: a word too long for the room spills out of an element that itself fits, and the
-      // box check above cannot see it. A block that holds more than it shows (overflow-x visible, scrollWidth past
-      // clientWidth), and any line of text drawn past the screen's edge.
+      // box check above cannot see it. A block of text that holds more than it shows (overflow-x visible, scrollWidth
+      // past clientWidth), and any line of text drawn past the screen's edge.
       const reach = document.createRange();
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -277,6 +285,9 @@ export async function installAudit(page: Page): Promise<void> {
       for (const element of document.body.querySelectorAll("*")) {
         if (!(element instanceof HTMLElement) || exempt(element) || opacityOf(element) < 0.05) continue;
         if (element.clientWidth === 0 || !/visible/.test(getComputedStyle(element).overflowX)) continue;
+        // Its own words: what its children draw (a shadow, a glass layer, a tooltip) is not text that spilled.
+        if (![...element.childNodes].some((child) => child.nodeType === Node.TEXT_NODE && child.textContent?.trim()))
+          continue;
         if (element.scrollWidth > element.clientWidth + 1) {
           overflow.push(`${label(element)} holds ${element.scrollWidth}px of content in ${element.clientWidth}px`);
         }
