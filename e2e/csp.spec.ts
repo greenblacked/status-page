@@ -60,9 +60,10 @@ test("gives every response a nonce of its own, and every script of the page that
     if (!nonce) throw new Error("the response names no nonce");
     nonces.add(nonce);
     const html = await response.text();
-    // Every script tag, inline or not, is stamped with the nonce the header names, and the router's <meta> repeats
-    // it for the browser's own router to read.
-    const tags = html.match(/<script\b[^>]*>/g) ?? [];
+    // Every script tag, inline or not, in any letter case (HTML tag names are case-insensitive, so a <SCRIPT> counts
+    // too), is stamped with the nonce the header names, and the router's <meta> repeats it for the browser's own
+    // router to read.
+    const tags = html.match(/<script\b[^>]*>/gi) ?? [];
     expect(tags.length).toBeGreaterThan(3);
     for (const tag of tags) expect(tag, "a script without this response's nonce").toContain(`nonce="${nonce}"`);
     expect(html).toContain(`<meta property="csp-nonce" content="${nonce}"`);
