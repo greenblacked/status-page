@@ -20,9 +20,29 @@ import { expect, test } from "./test";
 
 const lenses = (page: Page) => page.locator(".lenses");
 
-/** The card light at its worst for contrast: drawn despite Reduce Motion, fully shown, and still at the centre of its card. */
-const STRONGEST_CARD_LIGHT =
-  '.spotlight::after{content:"";display:block!important;opacity:1!important;animation:none!important;transform:none!important;background:var(--spot-color)!important}';
+/**
+ * The panels' lights at their worst for contrast, held still and drawn whole over every panel, so the result does
+ * not depend on where a light happens to be when the page is measured. There are two lights, and a device has one of
+ * them: the wandering card light (a pointer that hovers, Full only) and Tilt lighting's glint (a touch screen); the
+ * sheen (.surface::before) is under both. Where a light can sit is anywhere in a card (the wander crosses all of
+ * it, the glint's centre reaches 12% from an edge), so the worst case is each one at its peak alpha over the whole
+ * panel, and the sheen at its brightest, which it is in the upper left corner where the "since" line sits.
+ *
+ *   dark   white is what hurts: the sheen flat at its brightest, and the stronger of the card light and the glint
+ *          (see `strongestLight`) flat on top of it.
+ *   light  the dark text loses to a darker backdrop, never to white: no sheen, and the glint's shade flat.
+ *
+ * Positioned and sized here too, whatever media the real rules sit in (the glint's layer is a 432px square that a
+ * transform moves, the card light's a card-sized one that animates), and with Reduce Motion's `display: none` and
+ * the animations out of the way, so each is drawn whole, unmoved and fully shown.
+ */
+const lightsAtTheirStrongest = (colorScheme: "light" | "dark", strongestLight: string) =>
+  [
+    `.spotlight::after{content:"";display:block!important;position:absolute!important;inset:0!important;width:auto!important;height:auto!important;border-radius:inherit!important;opacity:1!important;animation:none!important;transform:none!important;translate:none!important;background:var(${colorScheme === "dark" ? strongestLight : "--tilt-shade"})!important}`,
+    colorScheme === "dark"
+      ? '.surface::before{content:"";display:block!important;position:absolute!important;inset:0!important;border-radius:inherit!important;animation:none!important;transform:none!important;translate:none!important;background:var(--glass-sheen)!important}'
+      : ".surface::before{background:none!important}",
+  ].join("");
 
 /** Chooses the page's background before it loads, the way Settings would have: Quiet is no choice at all. */
 async function chooseBackground(page: Page, background: "quiet" | "glass" | "full"): Promise<void> {
@@ -894,14 +914,14 @@ test.describe("contrast", () => {
    * backdrop is left) and checks the worst one against 4.5:1. A run that
    * crosses a lens's rim hairline is left out, as in the lens test above.
    *
-   * Every panel and list wears the card light on Full, which Reduce Motion
-   * hides, so this runs twice: as the page renders under Reduce Motion, and
-   * with the light forced on at full strength and held still at the centre of
-   * every card, where its white is strongest.
+   * Every panel and list wears the card light on Full (and a touch screen the
+   * glint of Tilt lighting), which Reduce Motion hides, so this runs twice: as
+   * the page renders under Reduce Motion, and with the lights forced on at
+   * their peak over the whole of every panel (lightsAtTheirStrongest).
    */
   for (const colorScheme of ["light", "dark"] as const) {
     for (const cardLight of [false, true]) {
-      test(`keeps subtle and muted text at 4.5:1 on the glass panels (${colorScheme}${cardLight ? ", card light at its strongest" : ""})`, async ({
+      test(`keeps subtle and muted text at 4.5:1 on the glass panels (${colorScheme}${cardLight ? ", lights at their strongest" : ""})`, async ({
         page,
         context,
       }, testInfo) => {
@@ -918,15 +938,42 @@ test.describe("contrast", () => {
         await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
         await page.waitForTimeout(500);
         if (cardLight) {
-          await page.addStyleTag({ content: STRONGEST_CARD_LIGHT });
-          const drawn = await page
-            .locator(".spotlight")
-            .first()
-            .evaluate((node) => {
-              const light = getComputedStyle(node, "::after");
-              return [light.display, light.opacity, light.transform];
-            });
-          expect(drawn, "the forced card light is drawn, at full strength, unmoved").toEqual(["block", "1", "none"]);
+          // The stronger of the two lights is the one whose token has the larger alpha (the glint's, by design: it
+          // is the card light's job to be a whisper, and the glint's to be seen on a touch screen). Read, not
+          // assumed, so a change to either token keeps the strongest one under test.
+          const strongestLight = await page.evaluate(() => {
+            const alpha = (token: string) => {
+              const probe = document.createElement("i");
+              probe.style.color = `var(${token})`;
+              document.body.appendChild(probe);
+              const channels = getComputedStyle(probe).color.match(/[\d.]+/g) ?? [];
+              probe.remove();
+              return channels.length > 3 ? Number(channels[3]) : 1;
+            };
+            return alpha("--tilt-glint") >= alpha("--spot-color") ? "--tilt-glint" : "--spot-color";
+          });
+          await page.addStyleTag({ content: lightsAtTheirStrongest(colorScheme, strongestLight) });
+          const drawn = await page.evaluate(() => {
+            const panel = document.querySelector(".spotlight");
+            if (!panel) return null;
+            const read = (pseudo: "::before" | "::after") => {
+              const style = getComputedStyle(panel, pseudo);
+              // inset: 0 makes it as wide as the panel's padding box.
+              const whole = Math.abs(Number.parseFloat(style.width) - panel.clientWidth) < 1.5;
+              return [style.display, style.position, style.opacity, style.transform, whole];
+            };
+            return { sheen: read("::before"), light: read("::after") };
+          });
+          expect(drawn?.light, "the forced light covers the whole panel, at full strength, unmoved").toEqual([
+            "block",
+            "absolute",
+            "1",
+            "none",
+            true,
+          ]);
+          if (colorScheme === "dark") {
+            expect(drawn?.sheen.slice(0, 2), "the forced sheen is drawn").toEqual(["block", "absolute"]);
+          }
         }
         const setup = await page.evaluate(() => {
           const channels = (token: string) => {

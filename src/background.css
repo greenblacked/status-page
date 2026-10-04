@@ -92,9 +92,16 @@
     4.5:1 (the lenses spec measures it with the light forced on).
   */
   --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.02));
-  /* Tilt lighting's glint: stronger than the card light's, since white on the light panels is otherwise unseen. */
-  --tilt-glint: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.08));
-  --tilt-shade: light-dark(rgb(16 24 40 / 0.05), transparent);
+  /*
+    Tilt lighting's glint: stronger than the card light's on the light panels, since white on them is
+    otherwise unseen. In dark it is held to the same whisper as the card light, and for the same reason:
+    it is on every card at once and its centre can sit anywhere in one, so --color-subtle has to hold 4.5:1
+    under its peak, on top of the sheen at its brightest (the lenses spec forces both, flat over every
+    panel). At 0.08 that was 3.9:1; 0.015 keeps 4.7. The shade is the other way round (it darkens the
+    light panels, which hurts their dark text): 0.05 was 4.49:1 under the peak, 0.03 keeps 4.7.
+  */
+  --tilt-glint: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.015));
+  --tilt-shade: light-dark(rgb(16 24 40 / 0.03), transparent);
 
   /*
     The backdrop: four slow currents of light, cool teal, indigo and a
