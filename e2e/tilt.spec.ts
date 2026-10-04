@@ -341,20 +341,15 @@ async function openSettings(page: Page): Promise<void> {
 }
 
 /**
- * The first card's wandering light, as the browser has it: the name of the CSS animation on its ::after, the
- * wander animations that are running on the page (any card's), and what the pseudo-element draws.
+ * The first card's wandering light, as the browser has it: what the page last wrote for it (--wander-x and
+ * --wander-y, in px, on the card), what the pseudo-element draws, and how many CSS animations on the page are
+ * the old light-wander-* ones (none: the wander is stepped by script, see src/components/status/wander-light.ts).
  */
 const wanderOf = (page: Page) =>
   page.evaluate(() => {
-    const card = document.querySelector(".spotlight");
+    const card = document.querySelector<HTMLElement>(".spotlight");
     if (!card) return null;
     const style = getComputedStyle(card, "::after");
-    const wanders = document
-      .getAnimations()
-      .filter(
-        (animation): animation is CSSAnimation =>
-          animation instanceof CSSAnimation && animation.animationName.startsWith("light-wander"),
-      );
     return {
       attribute: card.hasAttribute("data-wander"),
       animationName: style.animationName,
@@ -362,8 +357,14 @@ const wanderOf = (page: Page) =>
       display: style.display,
       transform: style.transform,
       translate: style.translate,
-      running: wanders.filter((animation) => animation.playState === "running").length,
-      all: wanders.length,
+      width: style.width,
+      height: style.height,
+      x: card.style.getPropertyValue("--wander-x"),
+      y: card.style.getPropertyValue("--wander-y"),
+      animating: document
+        .getAnimations()
+        .filter((animation) => animation instanceof CSSAnimation && animation.animationName.startsWith("light-wander"))
+        .length,
     };
   });
 
@@ -377,18 +378,38 @@ const startOnFull = (page: Page) =>
     }
   });
 
-/** Waits until the first card's light wanders: seeded after hydration, then drawn. */
+/** Waits until the first card's light wanders: seeded after hydration, then given a place and drawn. */
 async function wandering(page: Page): Promise<void> {
   await expect
     .poll(async () => {
       const light = await wanderOf(page);
-      return light?.attribute === true && /^light-wander-[a-d]$/.test(light.animationName) && light.running > 0;
+      return light?.attribute === true && /^-?\d+px$/.test(light.x) && light.display === "block";
     })
     .toBe(true);
 }
 
+/** That the page writes no new place for the first card's light over `ms` (a step is every half second). */
+async function wanderHoldsStill(page: Page, ms = 1600): Promise<void> {
+  const before = await wanderOf(page);
+  await page.waitForTimeout(ms);
+  const after = await wanderOf(page);
+  expect({ x: after?.x, y: after?.y }).toEqual({ x: before?.x, y: before?.y });
+}
+
 const tiltSwitch = (page: Page) => page.getByRole("switch", { name: "Tilt lighting" });
 const storedChoice = (page: Page) => page.evaluate((key) => localStorage.getItem(key), TILT_STORAGE_KEY);
+
+/**
+ * How many of Tilt lighting's animations a panel has on one of its pseudo-elements (the glint is the ::after's, which the
+ * wandering light draws when nothing is tilting, in Glass and Full: so its content says nothing about the glint).
+ */
+const tiltTracksOn = (card: Element, pseudo: "::before" | "::after") =>
+  card
+    .getAnimations({ subtree: true })
+    .filter(
+      (animation) =>
+        animation.id.startsWith("tilt-light") && (animation.effect as KeyframeEffect | null)?.pseudoElement === pseudo,
+    ).length;
 
 /** The first panel's light-carrying pseudo-elements, as the browser computes them. */
 const cardLight = (page: Page) =>
@@ -399,6 +420,7 @@ const cardLight = (page: Page) =>
       sheen: getComputedStyle(card, "::before").backgroundImage,
       sheenMoves: getComputedStyle(card, "::before").transform,
       glint: getComputedStyle(card, "::after").content,
+      glintTracks: tiltTracksOn(card, "::after"),
       glintImage: getComputedStyle(card, "::after").backgroundImage,
       glintWidth: getComputedStyle(card, "::after").width,
       glintHeight: getComputedStyle(card, "::after").height,
@@ -427,10 +449,12 @@ test.describe("without touch", () => {
           return {
             willChange: sheen.willChange,
             top: sheen.top,
-            glint: getComputedStyle(card, "::after").content,
+            glintTracks: card
+              .getAnimations({ subtree: true })
+              .filter((animation) => animation.id.startsWith("tilt-light")).length,
           };
         }),
-    ).toMatchObject({ willChange: "auto", top: "0px", glint: "none" });
+    ).toMatchObject({ willChange: "auto", top: "0px", glintTracks: 0 });
   });
 });
 
@@ -455,7 +479,7 @@ test.describe("on a touch device", () => {
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
     await expect(html(page)).not.toHaveAttribute("data-tilt");
     expect(await permissionCalls(page)).toBe(0);
-    expect(await cardLight(page)).toMatchObject({ glint: "none" });
+    expect(await cardLight(page)).toMatchObject({ glintTracks: 0 });
     expect((await cardLight(page)).sheen).toContain("125deg");
 
     await tiltSwitch(page).click();
@@ -513,6 +537,7 @@ test.describe("on a touch device", () => {
     expect(light.sheen).toContain("125deg");
     expect(light.sheenMoves).not.toBe("none");
     expect(light.glint).not.toBe("none");
+    expect(light.glintTracks).toBe(1);
     expect(light.glintImage).toContain("radial-gradient");
     // The glint's layer is the same fixed size whatever the panel is, not a multiple of it.
     expect(light.glintWidth).toBe("432px");
@@ -951,7 +976,7 @@ test.describe("on a touch device", () => {
     expect(await lightHolders(page)).toBe(0);
     await expect(page.getByRole("status").filter({ hasText: "Paused while Reduce glass" })).toBeVisible();
     await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
-    expect((await cardLight(page)).glint).toBe("none");
+    expect((await cardLight(page)).glintTracks).toBe(0);
 
     await page.getByRole("switch", { name: "Reduce glass" }).click();
     await tiltFromRest(page);
@@ -998,7 +1023,7 @@ test.describe("on a touch device", () => {
     await tilt(page, 0, 0);
     await page.waitForTimeout(200);
     expect(await lightVar(page, "--light-x")).toBe("");
-    expect((await cardLight(page)).glint).toBe("none");
+    expect((await cardLight(page)).glintTracks).toBe(0);
 
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await tiltFromRest(page);
@@ -1030,8 +1055,8 @@ test.describe("on a touch device", () => {
     await expect(html(page)).not.toHaveAttribute("data-tilt");
     await wandering(page);
     const light = await wanderOf(page);
-    expect(light).toMatchObject({ content: '""', display: "block" });
-    // Where it is drawn changes over time, with nothing driving it but the style sheet.
+    expect(light).toMatchObject({ content: '""', display: "block", animating: 0, animationName: "none" });
+    // Where it is drawn changes over time, with nothing driving it but the page's own steps.
     await expect.poll(async () => (await wanderOf(page))?.transform, { timeout: 10_000 }).not.toBe(light?.transform);
     expect(await lightHolders(page)).toBe(0);
     // Not every card is in step.
@@ -1041,18 +1066,28 @@ test.describe("on a touch device", () => {
     expect(seen).toBeGreaterThan(1);
   });
 
-  test("does not wander in Glass or Quiet", async ({ page }) => {
+  test("wanders in Glass too, and moves", async ({ page }) => {
     // The file starts on Glass.
     await page.reload();
     await hydrated(page);
     await expect(html(page)).toHaveAttribute("data-background", "glass");
-    expect(await wanderOf(page)).toMatchObject({ all: 0, running: 0, content: "none" });
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    await wandering(page);
+    const light = await wanderOf(page);
+    expect(light).toMatchObject({ content: '""', display: "block", animating: 0 });
+    await expect.poll(async () => (await wanderOf(page))?.transform, { timeout: 10_000 }).not.toBe(light?.transform);
+    expect(await lightHolders(page)).toBe(0);
+  });
 
+  test("does not wander in Quiet", async ({ page }) => {
     await page.addInitScript(() => localStorage.removeItem("status-bar:background"));
     await page.reload();
     await hydrated(page);
     await expect(html(page)).not.toHaveAttribute("data-background");
-    expect(await wanderOf(page)).toMatchObject({ all: 0, running: 0, content: "none" });
+    expect(await wanderOf(page)).toMatchObject({ attribute: false, content: "none", animating: 0, x: "", y: "" });
+    // And it stays that way: the page writes no place for a light that is not drawn.
+    await wanderHoldsStill(page);
+    expect(await wanderOf(page)).toMatchObject({ attribute: false, x: "", y: "" });
   });
 
   for (const [name, media] of [
@@ -1066,8 +1101,9 @@ test.describe("on a touch device", () => {
       await hydrated(page);
       await wandering(page);
       await page.emulateMedia(media);
-      // The light is hidden outright, so no animation is left running.
-      await expect.poll(async () => wanderOf(page)).toMatchObject({ display: "none", running: 0, all: 0 });
+      // The light is hidden outright, and the page stops writing places for it.
+      await expect.poll(async () => wanderOf(page)).toMatchObject({ display: "none", animating: 0 });
+      await wanderHoldsStill(page);
       await page.emulateMedia({ reducedMotion: "no-preference", contrast: "no-preference", forcedColors: "none" });
       await wandering(page);
     });
@@ -1080,7 +1116,8 @@ test.describe("on a touch device", () => {
     await wandering(page);
     await openSettings(page);
     await page.getByRole("switch", { name: "Reduce glass" }).click();
-    await expect.poll(async () => wanderOf(page)).toMatchObject({ display: "none", running: 0, all: 0 });
+    await expect.poll(async () => wanderOf(page)).toMatchObject({ display: "none", animating: 0 });
+    await wanderHoldsStill(page);
     await page.getByRole("switch", { name: "Reduce glass" }).click();
     await wandering(page);
   });
@@ -1122,16 +1159,17 @@ test.describe("on a touch device", () => {
     await tiltSwitch(page).click();
     await tiltFromRest(page);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
-    // The glint is tilt's: the wander is gone from every card (no two animations on one ::after), and
-    // the glint is drawn on the card at the size the tilt gives it, following the tilt.
-    await expect.poll(async () => wanderOf(page)).toMatchObject({ animationName: "none", running: 0, all: 0 });
+    // The glint is tilt's: the wander's layer is the glint's now (a fixed 432px square in the tilt's hands), the page
+    // writes no new place for the wander, and the glint is drawn on the card following the tilt.
+    await expect.poll(async () => wanderOf(page)).toMatchObject({ animationName: "none", animating: 0 });
+    await wanderHoldsStill(page);
     expect((await cardLight(page)).glint).not.toBe("none");
     await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
     const leftDown = await glintShift(page, ".spotlight");
     await tiltUntil(page, 30, 45, "--light-x", (x) => x * LIGHT_SIGN <= -0.5);
     const rightDown = await glintShift(page, ".spotlight");
     expect(leftDown.x).not.toBeCloseTo(rightDown.x, 0);
-    expect(await wanderOf(page)).toMatchObject({ animationName: "none", running: 0, all: 0 });
+    expect(await wanderOf(page)).toMatchObject({ animationName: "none", animating: 0 });
     expect(await lightHolders(page)).toBeGreaterThan(0);
 
     // Off: the wander comes back, the tilt's animations and values are gone, and nothing is left shifted.
@@ -1147,7 +1185,8 @@ test.describe("on a touch device", () => {
     await tiltSwitch(page).click();
     await tiltFromRest(page);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
-    await expect.poll(async () => wanderOf(page)).toMatchObject({ animationName: "none", running: 0, all: 0 });
+    await expect.poll(async () => wanderOf(page)).toMatchObject({ animationName: "none", animating: 0 });
+    await wanderHoldsStill(page);
     expect(problems).toEqual([]);
   });
 

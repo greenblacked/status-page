@@ -1,5 +1,6 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { startWanderLight } from "@/components/status/wander-light";
 import { type Box, cardMoves } from "@/lib/status/flip";
 
 export function prefersReducedMotion(): boolean {
@@ -189,36 +190,15 @@ export function withCardMotion(update: () => void): void {
   }
 }
 
-const WANDER_PATHS = 4;
-
 /**
- * Gives every `.spotlight` element inside `container` its own wander: one of
- * a few paths, a duration and a phase (a negative delay), set once after
- * hydration so the server markup carries no random value. Elements that
- * appear later are picked up too. The CSS does the moving.
+ * Gives every `.spotlight` element inside `container` its own wander: one of a few routes, a loop length and a
+ * starting point, picked once after hydration so the server markup carries no random value, and moves the light a
+ * step at a time (see wander-light.ts). Elements that appear later are picked up too.
  */
 export function useWanderLight(container: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const root = container.current;
-    if (!root) return;
-    const seed = (el: HTMLElement) => {
-      if (el.dataset.wander !== undefined) return;
-      const dur = 44 + Math.random() * 36;
-      el.style.setProperty("--wander-dur", `${dur.toFixed(1)}s`);
-      el.style.setProperty("--wander-delay", `${(-Math.random() * dur * 2).toFixed(1)}s`);
-      el.dataset.wander = String(Math.floor(Math.random() * WANDER_PATHS));
-    };
-    const seedWithin = (node: Node) => {
-      if (!(node instanceof HTMLElement)) return;
-      if (node.matches(".spotlight")) seed(node);
-      for (const el of node.querySelectorAll<HTMLElement>(".spotlight")) seed(el);
-    };
-    seedWithin(root);
-    const observer = new MutationObserver((records) => {
-      for (const record of records) for (const node of record.addedNodes) seedWithin(node);
-    });
-    observer.observe(root, { childList: true, subtree: true });
-    return () => observer.disconnect();
+    return root ? startWanderLight(root) : undefined;
   }, [container]);
 }
 

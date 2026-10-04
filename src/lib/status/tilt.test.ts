@@ -493,17 +493,49 @@ describe("the wandering card light", () => {
     return css.slice(open);
   };
 
-  it("runs on every device: none of its rules or keyframes sit inside a hover or pointer media query", () => {
+  /** The declarations of the first rule in the style sheet that starts with this selector. */
+  const ruleOf = (selector: string) => {
+    const at = css.indexOf(`${selector} {`);
+    expect(at, `a rule for ${selector}`).toBeGreaterThan(-1);
+    return blockAt(at + selector.length + 1);
+  };
+
+  const GATE = ':root:is([data-background="glass"], [data-background="full"])';
+
+  it("runs on every device, in Glass and in Full: none of its rules sit inside a hover or pointer media query", () => {
     const gated = [...css.matchAll(/@media[^{]*\((?:hover|pointer|any-hover|any-pointer):[^{]*\{/g)].map((match) =>
       blockAt((match.index ?? 0) + match[0].length - 1),
     );
     expect(gated.length).toBeGreaterThan(0);
     for (const block of gated) {
-      expect(block).not.toContain("light-wander");
+      expect(block).not.toContain("--wander-");
       expect(block).not.toContain("[data-wander");
     }
-    expect(css).toContain("@keyframes light-wander-a");
-    expect(css).toContain(".spotlight[data-wander]::after");
+    expect(css).toContain(`${GATE} .spotlight[data-wander]::after {`);
+    expect(css).toContain(`${GATE} .spotlight::after {`);
+    // Not behind Full alone: Glass has the light too.
+    expect(css).not.toContain(':root[data-background="full"] .spotlight');
+  });
+
+  it("is moved by a transform of a layer of the light's own size, not by an animation of a panel-sized one", () => {
+    // A moving layer in a blurred panel makes the compositor draw the blur again on every frame it moves, and
+    // an animation moves it on every frame: the page steps the light (wander-light.ts) instead.
+    expect(css).not.toContain("light-wander");
+    const layer = ruleOf(`${GATE} .spotlight::after`);
+    expect(layer).toContain("width: 432px");
+    expect(layer).toContain("height: 432px");
+    expect(layer).not.toMatch(/\binset: 0;/);
+    expect(layer).not.toContain("animation");
+    const moving = ruleOf(`${GATE} .spotlight[data-wander]::after`);
+    expect(moving).toContain("translate3d(var(--wander-x, 0px), var(--wander-y, 0px), 0)");
+    expect(moving).toContain("will-change: transform");
+    expect(moving).not.toContain("animation");
+  });
+
+  it("does not let the places it is written to reach the rows inside a panel", () => {
+    const reset = ruleOf(`${GATE} .spotlight > *`);
+    expect(reset).toContain("--wander-x: initial;");
+    expect(reset).toContain("--wander-y: initial;");
   });
 
   it("is stepped aside by the glint: the glint's rule comes after every wander rule, at the same specificity", () => {
@@ -511,12 +543,21 @@ describe("the wandering card light", () => {
       '[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {',
     );
     expect(glint).toBeGreaterThan(-1);
-    // Every place in the file that sets or names the wander (the base rule with the `animation` shorthand,
-    // the per-path rules, the keyframes): moving any of them below the glint would override its `animation: none`.
-    const last = Math.max(css.lastIndexOf("light-wander"), css.lastIndexOf("[data-wander"));
+    // Every place in the file that sets or names the wander's rules: moving any of them below the glint would
+    // let its transform override the glint's.
+    const last = Math.max(css.lastIndexOf("--wander-x"), css.lastIndexOf("[data-wander"));
     expect(last).toBeGreaterThan(-1);
     expect(last).toBeLessThan(glint);
     const block = css.slice(glint, glint + css.slice(glint).indexOf("}"));
-    expect(block).toContain("animation: none");
+    expect(block).toContain("transform: translate3d(");
+  });
+
+  it("is hidden outright by every off-switch, in Glass as in Full", () => {
+    // The page writes no place for a layer the style sheet hides (wander-light.ts), so each switch must hide it.
+    expect(css).toContain(
+      ':root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) .spotlight::after',
+    );
+    expect(css).toContain(':root:root:is([data-background="glass"], [data-background="full"]) .spotlight::after');
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.spotlight::after \{[^}]*display: none/);
   });
 });

@@ -20,9 +20,12 @@ import { expect, test } from "./test";
 
 const lenses = (page: Page) => page.locator(".lenses");
 
-/** The card light at its worst for contrast: drawn despite Reduce Motion, fully shown, and still at the centre of its card. */
+/**
+ * The card light at its worst for contrast: drawn despite Reduce Motion, fully shown, its colour at full strength across the
+ * whole card (the real layer is a 432px square that fades out, so this is more than any place it can be), and unmoved.
+ */
 const STRONGEST_CARD_LIGHT =
-  '.spotlight::after{content:"";display:block!important;opacity:1!important;animation:none!important;transform:none!important;background:var(--spot-color)!important}';
+  '.spotlight::after{content:"";display:block!important;opacity:1!important;animation:none!important;transform:none!important;inset:0!important;width:auto!important;height:auto!important;background:var(--spot-color)!important}';
 
 /** Chooses the page's background before it loads, the way Settings would have: Quiet is no choice at all. */
 async function chooseBackground(page: Page, background: "quiet" | "glass" | "full"): Promise<void> {
@@ -229,7 +232,9 @@ test.describe("Settings, Background", () => {
 
     await page.locator("label", { hasText: "Glass" }).click();
     await expect(html(page)).toHaveAttribute("data-background", "glass");
-    await expect(group.getByRole("status")).toHaveText("Frosted panels over a still glow.");
+    await expect(group.getByRole("status")).toHaveText(
+      "Frosted panels over a still glow, with a soft light that wanders across the cards.",
+    );
     expect(await stored(page)).toBe("glass");
 
     await page.reload();
@@ -643,38 +648,35 @@ test.describe("card light", () => {
       .locator(".spotlight")
       .first()
       .evaluate((node) => getComputedStyle(node, "::after").opacity);
-  // The wander runs on every device, a touch screen's included, unless Tilt lighting has taken the light over.
+  // The wander runs on every device, a touch screen's included, unless Tilt lighting has taken the light over: the page
+  // has given the card a place for it (--wander-x and --wander-y) and the style sheet draws it there.
   const wandering = (page: Page) =>
     page
       .locator(".spotlight")
       .first()
-      .evaluate((node) => node.hasAttribute("data-wander"));
+      .evaluate((node) => node.hasAttribute("data-wander") && node.style.getPropertyValue("--wander-x") !== "");
 
-  test("is drawn on Full and absent on Quiet and Glass", async ({ page }) => {
-    for (const background of ["quiet", "glass"] as const) {
-      await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), background);
-      await page.goto("/");
-      await hydrated(page);
-      expect(
-        await page
-          .locator(".spotlight")
-          .first()
-          .evaluate((node) => getComputedStyle(node, "::after").content),
-      ).toMatch(/none|normal/);
-      await page.evaluate(() => localStorage.clear());
-    }
-    await chooseBackground(page, "full");
-    await page.goto("/");
-    await hydrated(page);
-    await expect.poll(() => wandering(page)).toBe(true);
-    expect(
-      await page
+  test("is drawn on Glass and Full and absent on Quiet", async ({ page }) => {
+    const content = () =>
+      page
         .locator(".spotlight")
         .first()
-        .evaluate((node) => getComputedStyle(node, "::after").content),
-    ).not.toMatch(/none|normal/);
-    // The reveal is a 250ms transition: wait for it to leave 0.
-    await expect.poll(async () => Number(await lightOpacity(page))).toBeGreaterThan(0);
+        .evaluate((node) => getComputedStyle(node, "::after").content);
+    await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), "quiet");
+    await page.goto("/");
+    await hydrated(page);
+    expect(await content()).toMatch(/none|normal/);
+    expect(await wandering(page)).toBe(false);
+    await page.evaluate(() => localStorage.clear());
+    for (const background of ["glass", "full"] as const) {
+      await chooseBackground(page, background);
+      await page.goto("/");
+      await hydrated(page);
+      await expect.poll(() => wandering(page)).toBe(true);
+      expect(await content()).not.toMatch(/none|normal/);
+      // The reveal is a 250ms transition: wait for it to leave 0.
+      await expect.poll(async () => Number(await lightOpacity(page))).toBeGreaterThan(0);
+    }
   });
 
   test("moves on its own and never follows the pointer", async ({ page }) => {
@@ -754,10 +756,12 @@ test.describe("card light", () => {
       .first()
       .evaluate((node) => {
         const style = getComputedStyle(node, "::after");
-        return { animationName: style.animationName, content: style.content };
+        return { animationName: style.animationName, content: style.content, width: style.width, height: style.height };
       });
-    expect(light.animationName).toMatch(/^light-wander-[a-d]$/);
+    // Not a CSS animation (see wander-light.ts), and a layer of the light's own size, not the card's.
+    expect(light.animationName).toBe("none");
     expect(light.content).not.toMatch(/none|normal/);
+    expect([light.width, light.height]).toEqual(["432px", "432px"]);
   });
 
   test("stands still under reduced motion", async ({ page }) => {

@@ -28,7 +28,7 @@ export const TILT_LIGHT_SELECTOR = ".surface";
 
 /**
  * Where the glint is drawn: no hover-capable pointer. There it takes the card's ::after over from the wandering
- * light (which runs on every device in Full) for as long as the light is driven; with a hover-capable pointer
+ * light (which runs on every device in Glass and Full) for as long as the light is driven; with a hover-capable pointer
  * the wander keeps it. The same string as the media query that wraps the glint's rules in src/background.css (a
  * test holds the two together), so the sink can ask the page what the style sheet is asking, and listen for it
  * to change (a mouse plugged into or taken off a tablet).
