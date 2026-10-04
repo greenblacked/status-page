@@ -140,6 +140,42 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await problems("Settings open");
       });
 
+      test("fits the screen with Tilt lighting's clip on, and a Details target stays inside its card", async ({
+        page,
+      }, testInfo) => {
+        test.skip(background === "quiet", "Tilt lighting draws on Glass and Full only; Quiet has no clip to test");
+        test.slow();
+        const bring = await openWithFixture(page, background, fixtureBoard);
+        await bring();
+        // The attribute the light sets while it drives the glass: the panels then clip (overflow: clip) the layer
+        // that slides inside them, which nothing in them may rely on reaching past the panel's edge.
+        await page.evaluate(() => document.documentElement.setAttribute("data-tilt", "on"));
+        expect(
+          await page.evaluate(() => getComputedStyle(document.querySelector(".surface") as Element).overflow),
+          "the panel clips with Tilt lighting on",
+        ).toBe("clip");
+        const found = await auditNow(page);
+        await expectNone(page, testInfo, "tilt on: sideways", found.overflow);
+        await expectNone(page, testInfo, "tilt on: overlap", found.overlap);
+        const sweep = await sweepTo(page, await downThePage(page));
+        await expectNone(page, testInfo, "tilt on, down the page: sideways", fromSweep(sweep, "overflow"));
+        await expectNone(page, testInfo, "tilt on, down the page: overlap", fromSweep(sweep, "overlap"));
+        // The invisible extension of a Details button on a touch screen (12px above, 8px below, release-details.tsx)
+        // must lie inside its card, or the clip cuts it.
+        await scrollAndSettle(page, 0);
+        const reaching = await page.evaluate(() =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-release-details-trigger]"), (trigger) => {
+            const card = trigger.closest(".surface")?.getBoundingClientRect();
+            const box = trigger.getBoundingClientRect();
+            if (!card) return `${trigger.textContent}: not inside a panel`;
+            return box.top - 12 < card.top - 0.5 || box.bottom + 8 > card.bottom + 0.5
+              ? `${trigger.textContent}: button ${box.top.toFixed(1)}-${box.bottom.toFixed(1)}, panel ${card.top.toFixed(1)}-${card.bottom.toFixed(1)}`
+              : "";
+          }).filter(Boolean),
+        );
+        await expectNone(page, testInfo, "tilt on: Details targets", reaching);
+      });
+
       test("gives every control a 44pt target on a touch screen", async ({ page }, testInfo) => {
         test.slow();
         await openWithFixture(page, background, fixtureBoard, { steady: true });
