@@ -57,7 +57,8 @@ const REDUCED_QUERIES = [
  * `supported` is worked out after hydration, so the server and the first
  * client render agree that there is nothing to show. `paused` is Reduce
  * glass, or the Quiet background (the light only draws on Glass and Full);
- * Reduce Motion, Increase Contrast and forced colours are watched here.
+ * Reduce Motion, Reduce Transparency, Increase Contrast and forced colours
+ * are watched here.
  * While paused nothing listens and nothing is written.
  *
  * A motion event only records the latest reading. One animation frame loop
