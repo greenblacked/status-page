@@ -178,7 +178,22 @@ run_checks() {
     # No -q: grep -q exits at the footer and sed, still writing the rest of the
     # page, dies of SIGPIPE; under pipefail that fails the check on a good page.
     sed 's/<!-- -->//g' "$work/body" | grep -aF "$FOOTER" >/dev/null || fail "/: no footer line \"$FOOTER\""
-    [ -n "$(header Content-Security-Policy)" ] || fail "/: no Content-Security-Policy header"
+    csp="$(header Content-Security-Policy)"
+    [ -n "$csp" ] || fail "/: no Content-Security-Policy header"
+    # Scripts run by this response's nonce, never 'unsafe-inline': the policy names a nonce and the page's scripts carry it.
+    nonce="$(printf '%s' "$csp" | sed -n "s/.*script-src [^;]*'nonce-\([^']*\)'.*/\1/p")"
+    if [ -z "$nonce" ]; then
+      fail "/: script-src names no nonce"
+    else
+      grep -aqF "nonce=\"$nonce\"" "$work/body" || fail "/: the page carries no element with the policy's nonce"
+      # Every <script> tag, not just any element: one without the nonce is blocked by the browser.
+      if grep -ao '<script[^>]*>' "$work/body" | grep -vqF "nonce=\"$nonce\""; then
+        fail "/: a script without the policy's nonce"
+      fi
+    fi
+    case "$(printf '%s' "$csp" | tr ';' '\n' | grep -a 'script-src')" in
+      *unsafe-inline*) fail "/: script-src allows 'unsafe-inline'" ;;
+    esac
     [ -n "$(header X-Frame-Options)" ] || fail "/: no X-Frame-Options header"
   fi
 

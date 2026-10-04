@@ -44,8 +44,8 @@ export const FEED_ROW_CLASSES = {
  *
  * The wording of the rows is a copy of `recentRows` (feed-reserve.test.ts
  * holds it to the real thing). It never throws: when it fails it leaves the
- * property unset, which reads as 0. Inline, which the page's
- * Content-Security-Policy allows ('unsafe-inline' in script-src).
+ * property unset, which reads as 0. Inline, and run under the
+ * page's Content-Security-Policy by the response's nonce (src/lib/security-headers.ts).
  */
 export const FEED_RESERVE_SCRIPT = `
 (function(){

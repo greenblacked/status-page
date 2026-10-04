@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
+import { createRootRoute, HeadContent, Outlet, Scripts, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { ALERTS_BOOT_SCRIPT } from "@/lib/status/alerts-support";
 import { APPEARANCE_BOOT_SCRIPT } from "@/lib/status/background";
@@ -18,6 +18,9 @@ function RootDocument() {
       }),
   );
 
+  // The page's Content-Security-Policy runs an inline script only with this response's nonce.
+  const nonce = useRouter({ warn: false })?.options.ssr?.nonce;
+
   return (
     // suppressHydrationWarning, <html> only: the boot scripts (below) may add
     // data-reduce-transparency, data-background and data-alerts to this element
@@ -25,6 +28,20 @@ function RootDocument() {
     <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
         <HeadContent />
+        {/*
+          Applies the stored Reduce glass and Background choices, and marks a
+          browser that cannot show page alerts, before the first paint.
+          Written here and not in head().scripts: the router's Script effect
+          looks for an already-present copy by its nonce attribute, which a
+          browser hides once the policy comes in a header (getAttribute
+          returns ""), so it would find none and run both scripts a second
+          time. These two are ours, so they are stamped by hand, like the
+          feed's script in update-feed.tsx.
+        */}
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant of ours, built from no input. */}
+        <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant of ours, built from no input. */}
+        <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: ALERTS_BOOT_SCRIPT }} />
         {/*
           One theme-color per appearance, matching --color-bg. Written here
           because head() keeps a single meta per name. Safari 26 tints its
@@ -95,9 +112,6 @@ export const Route = createRootRoute({
       // After appCss, so its rules win ties on equal specificity.
       { rel: "stylesheet", href: appleCss },
     ],
-    // Applies the stored Reduce glass and Background choices, and marks a
-    // browser that cannot show page alerts, before the first paint.
-    scripts: [{ children: APPEARANCE_BOOT_SCRIPT }, { children: ALERTS_BOOT_SCRIPT }],
   }),
   component: RootDocument,
 });

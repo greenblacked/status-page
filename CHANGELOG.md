@@ -12,6 +12,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
+- The Content-Security-Policy no longer allows inline scripts in general. `script-src` was `'self' 'unsafe-inline'`; it is now `'nonce-<random>' 'strict-dynamic' 'self'`, with a fresh random nonce made for every response, on Cloudflare and on Node alike. The scripts the framework writes to hydrate the page, and the board's own small boot scripts (the stored appearance, the alerts check and the recent-changes reserve), carry that nonce; a script an attacker might inject has none and is blocked. This removes the main thing that held back the site's Mozilla Observatory grade. `style-src` keeps `'unsafe-inline'` (React's `style` attributes cannot carry a nonce, and a style cannot run code). Static files and API responses keep their headers.
 - The footer's disclaimer reads more formally: the board is an independent project, not affiliated with or endorsed by the vendors, and reads their official public status pages and feeds.
 
 ### Fixed
