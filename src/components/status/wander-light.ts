@@ -173,15 +173,10 @@ export function startWanderLight(
   seedWithin(root);
   step();
   const timer = window.setInterval(step, WANDER_TICK_MS);
+  // A card that appears later (a refresh, a filter) is given its place by the next step, not at once: reading sizes
+  // from here would force a layout after every change the page makes to the board.
   const observer = new MutationObserver((records) => {
-    let added = false;
-    for (const record of records) {
-      for (const node of record.addedNodes) {
-        seedWithin(node);
-        added = true;
-      }
-    }
-    if (added) step();
+    for (const record of records) for (const node of record.addedNodes) seedWithin(node);
   });
   observer.observe(root, { childList: true, subtree: true });
 
