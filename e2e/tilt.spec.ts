@@ -1163,6 +1163,9 @@ test.describe("on a touch device", () => {
     await openSettings(page);
     await tiltSwitch(page).click();
     await tiltUntil(page, 0, 0, "--light-y", () => true);
+    // The first panel is the one watched, so it is on screen while the light moves (a panel that is not
+    // on screen is not written, which is the point; the page may be scrolled past the first one here).
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
     await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
 
     // Every panel is inside <main>: slide it off the screen (not display: none, which destroys the
@@ -1174,28 +1177,41 @@ test.describe("on a touch device", () => {
         // Two frames: the observer reports on the frame after the change.
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))));
       }, shown);
-    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    const flat = async (readings: number) => {
+      for (let i = 0; i < readings; i++) {
+        await tilt(page, 0, 0);
+        await page.waitForTimeout(30);
+      }
+    };
     await board(false);
     await page.waitForTimeout(100);
     const frozen = await lightVar(page, "--light-y");
-    // Held flat again for long enough that the light, if it were written, would be back at the start.
-    for (let i = 0; i < 20; i++) {
-      await tilt(page, 0, 0);
-      await page.waitForTimeout(30);
-    }
+    expect(Number(frozen) * LIGHT_SIGN).toBeLessThanOrEqual(-0.99);
+    // Held flat again while the board is away. The light is not back at the middle for that: the resting
+    // pose it is measured against was learned slowly during the time spent upright (BASELINE_TAU_MS), so
+    // where it ends depends on how long that was, and on how fast the browser is. It is far from the
+    // frozen -1 all the same, and that distance is what a stale page would get wrong.
+    await flat(20);
     await page.waitForTimeout(300);
     expect(await lightVar(page, "--light-y")).toBe(frozen);
 
     // Back on screen: one write puts the page where the light is now, without waiting for another reading.
     await board(true);
     await expect
-      .poll(async () => Math.abs(Number(await lightVar(page, "--light-y"))), { timeout: 5000 })
-      .toBeLessThan(0.3);
-    // What is drawn catches up too (the light is near the middle, so the glint is near its resting place).
+      .poll(async () => Number(await lightVar(page, "--light-y")), { timeout: 5000 })
+      .toBeGreaterThan(Number(frozen) + 0.5);
+    // That was the light as it is now and not a stale one: more flat readings hardly move it (a catch-up
+    // that wrote the light as it was last written, or half way, would jump to where the readings put it).
+    const caught = Number(await lightVar(page, "--light-y"));
+    await flat(10);
+    await page.waitForTimeout(100);
+    expect(Math.abs(Number(await lightVar(page, "--light-y")) - caught)).toBeLessThan(0.08);
+    // What is drawn catches up too: the glint stands where the light puts it.
     await expect
       .poll(async () => {
+        const y = Number(await lightVar(page, "--light-y"));
         const shift = await glintShift(page);
-        return Math.abs(shift.y) < 0.3 * 0.38 * shift.h;
+        return Math.abs(shift.y - y * 0.38 * shift.h) < 3;
       })
       .toBe(true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
