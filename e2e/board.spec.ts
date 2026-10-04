@@ -1721,11 +1721,12 @@ test("search reveal: opens a page that is already scrolled past the field with t
 }) => {
   test.slow();
   // Every transition that starts on the bar's field, from before the page's own script runs. And where the page was
-  // when the browser left it. Chromium switches the emulated touch screen off as a navigation starts, before the
-  // page's own pagehide, so a page whose layout has touch-only sizes (the lede's links are 44px targets on a touch
-  // screen and 19px lines without one) shrinks while it is being left: the browser's scroll anchoring moves the
-  // position with it, and the router snapshots that position (TanStack's, in pagehide) and restores it. So what
-  // the reload restores is where the page was left, which is not always the place the test scrolled to.
+  // when the browser left it. Chromium's headless shell (the build CI runs) switches the emulated touch screen off as
+  // a navigation starts, before the page's own pagehide, so a page whose layout has touch-only sizes (the lede's
+  // links are 44px targets on a touch screen and 19px lines without one) shrinks while it is being left: the
+  // browser's scroll anchoring moves the position with it, and the router snapshots that position (TanStack's, in
+  // pagehide) and restores it. So what the reload restores is where the page was left, which is not always the
+  // place the test scrolled to.
   await page.addInitScript(() => {
     const runs: string[] = [];
     (window as Window & { __runs?: string[] }).__runs = runs;
@@ -3354,14 +3355,18 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   // The check adds a row to the feed (the cards drop) and clears the "Changed" tags of the cards above them (the
   // cards rise). Which of the two is more depends on the layout: the fixture differs from the server's board on
-  // most of its cards, so most of them wear a tag, and what clearing the tags frees is less than the row where
-  // the text wraps one way (63px against 36px in a headed Chromium) and more where it wraps the other (108px in
-  // the headless shell CI runs), so the cards may net drop or net rise. Holding them means scrolling by exactly the distance they
-  // moved, whichever way; and the button the page was scrolled to is where it was in the window.
+  // most of its cards, so most of them wear a tag. The new row adds 63px; clearing the tags frees 36px where their
+  // text wraps one way (a headed Chromium) and 108px where it wraps the other (the headless shell CI runs), so the
+  // cards may net drop or net rise. Holding them means scrolling by exactly the distance they moved, whichever way,
+  // and never a step the other way; and the button the page was scrolled to is where it was in the window.
   const moved = (await placeOf()) - placeBefore;
   expect(Math.abs(moved), "the check moved the cards").toBeGreaterThan(1);
   const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy ?? []);
   expect(scrolled.length).toBeGreaterThan(0);
+  expect(
+    scrolled.every((by) => Math.sign(by) === Math.sign(moved)),
+    `every step of ${scrolled.join(", ")} goes the way the cards moved (${moved})`,
+  ).toBe(true);
   const followed = scrolled.reduce((sum, by) => sum + by, 0);
   expect(
     Math.abs(followed - moved),
