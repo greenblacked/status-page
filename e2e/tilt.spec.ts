@@ -228,6 +228,37 @@ const paintedLight = (page: Page) =>
     };
   });
 
+/**
+ * Where a panel's glint is drawn, in px from its resting place, as the browser computes it: the transform
+ * and the individual `translate` property added together (the light reaches it through either, by path),
+ * with the panel's size. At light (x, y) the glint is at (x, y) times 0.38 of the width and the height.
+ */
+const glintShift = (page: Page, selector = ".surface") =>
+  page.evaluate((selector) => {
+    const card = document.querySelector<HTMLElement>(selector);
+    if (!card) return { x: 0, y: 0, w: 0, h: 0 };
+    const style = getComputedStyle(card, "::after");
+    const matrix = style.transform === "none" ? new DOMMatrix() : new DOMMatrix(style.transform);
+    const shift = style.translate === "none" ? [] : style.translate.split(" ");
+    return {
+      x: matrix.e + Number.parseFloat(shift[0] ?? "0"),
+      y: matrix.f + Number.parseFloat(shift[1] ?? "0"),
+      w: card.offsetWidth,
+      h: card.offsetHeight,
+    };
+  }, selector);
+
+/** The sheen's and the glint's transform and translate of the panel that matches, whatever its place. */
+const paintedOf = (page: Page, selector: string) =>
+  page.evaluate((selector) => {
+    const card = document.querySelector(selector);
+    if (!card) return "no panel";
+    const parts = [getComputedStyle(card, "::before"), getComputedStyle(card, "::after")];
+    return parts.map((style) => `${style.transform} ${style.translate}`).join(" | ");
+  }, selector);
+
+const AT_REST = "matrix(1, 0, 0, 1, 0, 0) none | matrix(1, 0, 0, 1, 0, 0) none";
+
 /** Everything about the light in one line, for a log that has to explain a failure in an engine we cannot run. */
 const lightReadings = (page: Page) =>
   page.evaluate(() => {
@@ -319,6 +350,8 @@ const cardLight = (page: Page) =>
       sheenMoves: getComputedStyle(card, "::before").transform,
       glint: getComputedStyle(card, "::after").content,
       glintImage: getComputedStyle(card, "::after").backgroundImage,
+      glintWidth: getComputedStyle(card, "::after").width,
+      glintHeight: getComputedStyle(card, "::after").height,
     }));
 
 test.describe("without touch", () => {
@@ -414,7 +447,115 @@ test.describe("on a touch device", () => {
     expect(light.sheenMoves).not.toBe("none");
     expect(light.glint).not.toBe("none");
     expect(light.glintImage).toContain("radial-gradient");
+    // The glint's layer is the same fixed size whatever the panel is, not a multiple of it.
+    expect(light.glintWidth).toBe("432px");
+    expect(light.glintHeight).toBe("432px");
     expect(problems).toEqual([]);
+  });
+
+  test("slides the glint by a share of the panel's own size, and follows it when it grows", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    await tiltUntil(page, 0, 0, "--light-y", () => true);
+    await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
+    const reaches = async () => {
+      const y = Number(await lightVar(page, "--light-y"));
+      const shift = await glintShift(page);
+      return { y, shift, expected: y * 0.38 * shift.h };
+    };
+    await expect
+      .poll(async () => {
+        const seen = await reaches();
+        return Math.abs(seen.shift.y - seen.expected) < 2 && Math.abs(seen.shift.y) > 5;
+      })
+      .toBe(true);
+
+    // A taller panel (a refresh adds rows) moves the glint further, with no new reading.
+    await page
+      .locator(".surface")
+      .first()
+      .evaluate((card) => {
+        card.style.height = "400px";
+      });
+    await expect
+      .poll(async () => {
+        const seen = await reaches();
+        return seen.shift.h >= 400 && Math.abs(seen.shift.y - seen.expected) < 2 && Math.abs(seen.shift.y) > 100;
+      })
+      .toBe(true);
+  });
+
+  test("keeps lighting a panel that is moved in the document", async ({ page }) => {
+    // React moves a keyed card this way when a refresh changes the order or a card is starred. The browser
+    // rebuilds the pseudo-elements of a panel that is taken out and put back, and animations on the old ones draw nothing.
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    await tiltUntil(page, 0, 0, "--light-x", () => true);
+    await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+    await page
+      .locator(".surface")
+      .first()
+      .evaluate((card) => {
+        card.setAttribute("data-moved", "");
+      });
+    const before = await paintedOf(page, "[data-moved]");
+    expect(before).not.toBe(AT_REST);
+
+    await page.evaluate(() => {
+      const card = document.querySelector("[data-moved]");
+      card?.parentNode?.insertBefore(card, card.nextSibling);
+    });
+    await page.locator("[data-moved]").scrollIntoViewIfNeeded();
+    await tiltUntil(page, 30, 45, "--light-x", (x) => x * LIGHT_SIGN <= -0.5);
+    await expect
+      .poll(async () => {
+        const after = await paintedOf(page, "[data-moved]");
+        return after !== AT_REST && after !== before;
+      })
+      .toBe(true);
+    // And the glint is where the light is.
+    await expect
+      .poll(async () => {
+        const x = Number(await lightVar(page, "--light-x"));
+        const shift = await glintShift(page, "[data-moved]");
+        return Math.abs(shift.x - x * 0.38 * shift.w) < 2 && Math.abs(shift.x) > 20;
+      })
+      .toBe(true);
+  });
+
+  test("lights the panels again after the board was hidden and shown", async ({ page }) => {
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    await tiltUntil(page, 0, 0, "--light-x", () => true);
+    await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+
+    // display: none destroys the pseudo-elements; showing the board builds new ones.
+    await page.evaluate(async () => {
+      const main = document.getElementById("services");
+      const frames = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (main) main.style.display = "none";
+      await frames();
+      if (main) main.style.display = "";
+      await frames();
+    });
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    await tiltUntil(page, 30, 45, "--light-x", (x) => x * LIGHT_SIGN <= -0.5);
+    await expect
+      .poll(async () => {
+        const x = Number(await lightVar(page, "--light-x"));
+        const shift = await glintShift(page);
+        return Math.abs(shift.x - x * 0.38 * shift.w) < 2 && Math.abs(shift.x) > 20;
+      })
+      .toBe(true);
   });
 
   test("turns the light with the screen: upright in landscape moves it sideways", async ({ page }) => {
@@ -811,6 +952,23 @@ test.describe("on a touch device", () => {
     expect(seen.insideRow).toBe("");
     expect(seen.sheen).not.toBe("none");
     expect((await paintedLight(page)).sheen).not.toBe("matrix(1, 0, 0, 1, 0, 0)");
+    // The glint slides by a length the sink wrote on the panel itself (its size), not on the board.
+    const reach = await page
+      .locator(".surface")
+      .first()
+      .evaluate((card) => ({
+        dx: card.style.getPropertyValue("--glint-dx"),
+        dy: card.style.getPropertyValue("--glint-dy"),
+      }));
+    expect(reach.dx).toMatch(/^\d+(\.\d)?px$/);
+    expect(reach.dy).toMatch(/^\d+(\.\d)?px$/);
+    await expect
+      .poll(async () => {
+        const y = Number(await lightVar(page, "--light-y"));
+        const shift = await glintShift(page);
+        return Math.abs(shift.y - y * 0.38 * shift.h) < 3 && Math.abs(shift.y) > 5;
+      })
+      .toBe(true);
   });
 
   test("writes nothing while no panel is on screen, and catches up when one comes back", async ({ page }) => {
@@ -821,14 +979,16 @@ test.describe("on a touch device", () => {
     await tiltUntil(page, 0, 0, "--light-y", () => true);
     await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
 
-    // Every panel is inside <main>: take it off the screen.
+    // Every panel is inside <main>: slide it off the screen (not display: none, which destroys the
+    // panels' pseudo-elements, and has a test of its own above).
     const board = (shown: boolean) =>
       page.evaluate(async (shown) => {
         const main = document.getElementById("services");
-        if (main) main.style.display = shown ? "" : "none";
+        if (main) main.style.transform = shown ? "" : "translateX(-100000px)";
         // Two frames: the observer reports on the frame after the change.
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))));
       }, shown);
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
     await board(false);
     await page.waitForTimeout(100);
     const frozen = await lightVar(page, "--light-y");
@@ -845,7 +1005,24 @@ test.describe("on a touch device", () => {
     await expect
       .poll(async () => Math.abs(Number(await lightVar(page, "--light-y"))), { timeout: 5000 })
       .toBeLessThan(0.3);
+    // What is drawn catches up too (the light is near the middle, so the glint is near its resting place).
+    await expect
+      .poll(async () => {
+        const shift = await glintShift(page);
+        return Math.abs(shift.y) < 0.3 * 0.38 * shift.h;
+      })
+      .toBe(true);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
+
+    // And it goes on following the light.
+    await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+    await expect
+      .poll(async () => {
+        const x = Number(await lightVar(page, "--light-x"));
+        const shift = await glintShift(page);
+        return Math.abs(shift.x - x * 0.38 * shift.w) < 2 && Math.abs(shift.x) > 20;
+      })
+      .toBe(true);
   });
 
   test("stops listening while the tab is hidden", async ({ page }) => {

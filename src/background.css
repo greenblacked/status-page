@@ -580,6 +580,11 @@
     unset, so on an iPhone the light did not move. These are plain properties,
     nothing interpolates them, and they are written at most about 30 times a
     second (and less often while frames overrun, see createWritePacer).
+
+    The glint's layer is a fixed-size square, so how far it slides cannot be a
+    percentage of itself. On this path --glint-dx and --glint-dy (0.38 of the
+    panel's width and height in px) are written on each spotlight panel when its
+    size changes, never when the light moves; unset they are 0px.
   */
 
   /* The specular sweep: light entering from the upper left, a fixed 125deg. */
@@ -667,10 +672,13 @@
     the card and slides with --light-x/--light-y. Devices with a hover-capable
     pointer get the wandering light (Full) instead.
 
-    The glint is a radial gradient that never changes, drawn at the middle of a
-    layer 1.8 times the panel (inset -40%), and the variables slide that layer by
-    up to 38% of the panel (21.1% of the layer, 0.38 / 1.8); the 40% overhang is
-    more than that, so the panel is always covered. The panel clips it.
+    The glint is a radial gradient that never changes (a circle of 208px radius),
+    drawn at the middle of a layer of its own that is just big enough for it, a
+    432px square, not a multiple of the panel: on a tall card list that would be a
+    layer the size of two lists. The layer starts at the middle of the panel and
+    slides by up to 38% of the panel's width and height. A length in px, from the
+    panel's own size, is what does that (tilt-light-sink.ts: in the animations'
+    keyframes, or --glint-dx and --glint-dy). The panel clips the layer.
 
     In light mode a faint shade goes with it (white light on a white panel shows
     nothing alone). It used to sit opposite the glint; one layer cannot move two
@@ -696,7 +704,9 @@
       content: "";
       pointer-events: none;
       position: absolute;
-      inset: -40%;
+      inset: calc(50% - 216px) auto auto calc(50% - 216px);
+      width: 432px;
+      height: 432px;
       z-index: 0;
       border-radius: 0;
       background:
@@ -704,7 +714,11 @@
       opacity: 1;
       /* Tilt drives the light here; the wander steps aside. */
       animation: none;
-      transform: translate3d(calc(var(--light-x, 0) * 21.1%), calc(var(--light-y, 0) * 21.1%), 0);
+      transform: translate3d(
+        calc(var(--light-x, 0) * var(--glint-dx, 0px)),
+        calc(var(--light-y, 0) * var(--glint-dy, 0px)),
+        0
+      );
       will-change: transform;
     }
   }

@@ -35,11 +35,29 @@ import { TILT_LIGHT_SELECTOR, TILT_VAR_X, TILT_VAR_Y } from "@/lib/status/tilt";
  * nothing is written (the loop keeps the light's position, which is only
  * arithmetic); a panel that comes back is caught up with one write, so there is
  * no jump to a stale light. remove() puts everything back.
+ *
+ * A pseudo-element's animations die with the pseudo-element. Chromium destroys and
+ * rebuilds a pseudo-element when its panel (or an ancestor) is taken out of the
+ * document and put back, which is what React does to a keyed card that changes
+ * place, and when it is shown again after display: none. The old Animation objects
+ * go on reporting "paused" and taking a currentTime, but they no longer touch what
+ * is drawn. So a panel that is put back, or that comes back on screen, is checked
+ * (getAnimations on it still lists its tracks, or it does not) and given new
+ * animations when they are gone.
+ *
+ * The glint's layer is a fixed-size square (src/background.css), so how far it
+ * slides is a length taken from the panel's own size, kept up to date by a
+ * ResizeObserver: in the animations' keyframes, or, on the properties path, as
+ * --glint-dx and --glint-dy on the panel (written when the panel's size changes,
+ * not when the light moves).
  */
 
-/** How far each layer slides at x or y = 1, in percent of the layer itself. The same numbers as in src/background.css. */
+/** How far the sheen's layer slides at x or y = 1, in percent of the layer itself. The same number as in src/background.css. */
 export const SHEEN_SLIDE = 8;
-export const GLINT_SLIDE = 21.1;
+/** How far the glint's layer slides at x or y = 1, as a fraction of the panel's width (x) or height (y). The same as in src/background.css. */
+export const GLINT_REACH = 0.38;
+const GLINT_DX = "--glint-dx";
+const GLINT_DY = "--glint-dy";
 
 /** The animations' length in ms: the time 0..SPAN is the light -1..1. A whole number of ms per 0.001. */
 const SPAN = 2000;
@@ -52,11 +70,14 @@ const GLINT_QUERY = "not ((hover: hover) and (pointer: fine))";
 export type LightSink = {
   /** Moves the light. Both numbers are -1..1. */
   set: (x: number, y: number) => void;
+  /** Whether a write is only a currentTime on the animations (cheap enough for every frame), not an inline property. */
+  animated: () => boolean;
   /** Takes the light off the page. */
   remove: () => void;
 };
 
-type Track = { x: Animation; y: Animation };
+/** The two animations of one pseudo-element; `reach` is the glint's slide in px, last given to its keyframes. */
+type Track = { x: Animation; y: Animation; glint: boolean; reach?: { x: number; y: number } };
 
 /** Whether this engine animates the pseudo-elements and the individual `translate` property at all. */
 export function pseudoAnimationsSupported(): boolean {
@@ -74,17 +95,31 @@ export function pseudoAnimationsSupported(): boolean {
 /** The time on the animations' clock for a light position. */
 const timeOf = (value: number) => (Math.max(-1, Math.min(1, value)) + 1) * (SPAN / 2);
 
-function animate(host: Element, pseudo: "::before" | "::after", slide: number): Track {
+type Slide = { x: number; y: number; unit: "%" | "px" };
+
+const keyframesOf = (slide: Slide) => ({
+  x: { transform: [`translate3d(${-slide.x}${slide.unit}, 0, 0)`, `translate3d(${slide.x}${slide.unit}, 0, 0)`] },
+  y: { translate: [`0 ${-slide.y}${slide.unit}`, `0 ${slide.y}${slide.unit}`] },
+});
+
+function animate(host: Element, pseudo: "::before" | "::after", slide: Slide): Track {
   const options = { duration: SPAN, fill: "both", easing: "linear", pseudoElement: pseudo } as const;
-  const x = host.animate(
-    { transform: [`translate3d(${-slide}%, 0, 0)`, `translate3d(${slide}%, 0, 0)`] },
-    { ...options, id: ID_X },
-  );
-  const y = host.animate({ translate: [`0 ${-slide}%`, `0 ${slide}%`] }, { ...options, id: ID_Y });
+  const frames = keyframesOf(slide);
+  const x = host.animate(frames.x, { ...options, id: ID_X });
+  const y = host.animate(frames.y, { ...options, id: ID_Y });
   x.pause();
   y.pause();
-  return { x, y };
+  return { x, y, glint: pseudo === "::after", reach: pseudo === "::after" ? { x: slide.x, y: slide.y } : undefined };
 }
+
+/** The glint's slide on this panel, in px. */
+function glintReach(host: Element): { x: number; y: number } {
+  const box = host as HTMLElement;
+  return { x: GLINT_REACH * box.offsetWidth, y: GLINT_REACH * box.offsetHeight };
+}
+
+/** Whether a panel gets a glint: only the cards that spotlight, and only where the wandering light does not own it. */
+const hasGlint = (host: Element) => host.classList.contains("spotlight") && window.matchMedia(GLINT_QUERY).matches;
 
 export function createLightSink(
   scope: () => HTMLElement | null,
@@ -98,23 +133,33 @@ export function createLightSink(
   let target: HTMLElement | null = null;
   let mutations: MutationObserver | null = null;
   let intersections: IntersectionObserver | null = null;
+  let sizes: ResizeObserver | null = null;
   let useAnimations = animations;
   let checked = false;
 
-  const setTime = (list: Track[], position: { x: number; y: number }) => {
+  /** Sets the animations' time to a position; `since` is the position they were last given, and an axis that has not moved is left alone. */
+  const setTime = (
+    list: Track[],
+    position: { x: number; y: number },
+    since: { x: number; y: number } | null = null,
+  ) => {
+    const moveX = !since || since.x !== position.x;
+    const moveY = !since || since.y !== position.y;
     for (const track of list) {
-      track.x.currentTime = timeOf(position.x);
-      track.y.currentTime = timeOf(position.y);
+      if (moveX) track.x.currentTime = timeOf(position.x);
+      if (moveY) track.y.currentTime = timeOf(position.y);
+    }
+  };
+
+  const cancelTracks = (list: Track[]) => {
+    for (const track of list) {
+      track.x.cancel();
+      track.y.cancel();
     }
   };
 
   const dropAnimations = () => {
-    for (const list of tracks.values()) {
-      for (const track of list) {
-        track.x.cancel();
-        track.y.cancel();
-      }
-    }
+    for (const list of tracks.values()) cancelTracks(list);
     tracks.clear();
   };
 
@@ -123,6 +168,32 @@ export function createLightSink(
     if (!target) return;
     target.style.setProperty(TILT_VAR_X, position.x.toFixed(3));
     target.style.setProperty(TILT_VAR_Y, position.y.toFixed(3));
+  };
+
+  /** Gives the glint of one panel the length it slides, from the panel's size now. */
+  const sizeGlint = (host: Element) => {
+    const reach = glintReach(host);
+    if (!useAnimations) {
+      const box = host as HTMLElement;
+      box.style.setProperty(GLINT_DX, `${reach.x.toFixed(1)}px`);
+      box.style.setProperty(GLINT_DY, `${reach.y.toFixed(1)}px`);
+      return;
+    }
+    const glint = tracks.get(host)?.find((track) => track.glint);
+    if (!glint || (glint.reach && glint.reach.x === reach.x && glint.reach.y === reach.y)) return;
+    const frames = keyframesOf({ ...reach, unit: "px" });
+    (glint.x.effect as KeyframeEffect).setKeyframes(frames.x);
+    (glint.y.effect as KeyframeEffect).setKeyframes(frames.y);
+    glint.reach = reach;
+  };
+
+  /** From here on the properties carry the light: the animations go, and the panels with a glint get their lengths. */
+  const fallBack = () => {
+    useAnimations = false;
+    dropAnimations();
+    for (const host of hosts) if (hasGlint(host)) sizeGlint(host);
+    if (last) writeProperties(last);
+    written = last;
   };
 
   /**
@@ -144,25 +215,17 @@ export function createLightSink(
     } catch {
       works = false;
     }
-    if (works) return;
-    useAnimations = false;
-    dropAnimations();
-    if (last) writeProperties(last);
-    written = last;
+    if (!works) fallBack();
   };
 
   const create = (host: Element) => {
     if (!useAnimations || tracks.has(host)) return;
     try {
-      const list: Track[] = [animate(host, "::before", SHEEN_SLIDE)];
+      const list: Track[] = [animate(host, "::before", { x: SHEEN_SLIDE, y: SHEEN_SLIDE, unit: "%" })];
       // An animation made before its pseudo-element exists never applies to it, so look first
       // (this also flushes the style the data-tilt attribute changed).
-      if (
-        host.classList.contains("spotlight") &&
-        window.matchMedia(GLINT_QUERY).matches &&
-        getComputedStyle(host, "::after").content !== "none"
-      ) {
-        list.push(animate(host, "::after", GLINT_SLIDE));
+      if (hasGlint(host) && getComputedStyle(host, "::after").content !== "none") {
+        list.push(animate(host, "::after", { ...glintReach(host), unit: "px" }));
       }
       tracks.set(host, list);
       // A panel that is not laid out (width 0) would show nothing to check: wait for one that is.
@@ -170,10 +233,30 @@ export function createLightSink(
       // A panel that appears while the light is on starts where the light is.
       if (useAnimations && last) setTime(list, last);
     } catch {
-      useAnimations = false;
-      dropAnimations();
-      if (last) writeProperties(last);
+      fallBack();
     }
+  };
+
+  /**
+   * Makes sure a tracked panel's animations still draw: a panel put back into the
+   * document, or shown again, has a new pseudo-element, and the old animations are
+   * dead (see the top of this file). Dead ones are cancelled and made again.
+   */
+  const refresh = (host: Element) => {
+    if (!useAnimations) return;
+    const list = tracks.get(host);
+    if (list) {
+      let live: Animation[];
+      try {
+        live = host.getAnimations({ subtree: true });
+      } catch {
+        return;
+      }
+      if (list.every((track) => live.includes(track.x) && live.includes(track.y))) return;
+      cancelTracks(list);
+      tracks.delete(host);
+    }
+    create(host);
   };
 
   const write = () => {
@@ -184,7 +267,8 @@ export function createLightSink(
     if (useAnimations) {
       for (const host of intersections ? onScreen : hosts) {
         const list = tracks.get(host);
-        if (list) setTime(list, last);
+        // An on-screen panel has been given what was written before, so only what changed is set.
+        if (list) setTime(list, last, written);
       }
     } else {
       writeProperties(last);
@@ -193,9 +277,14 @@ export function createLightSink(
   };
 
   const track = (host: Element) => {
-    if (hosts.has(host)) return;
+    if (hosts.has(host)) {
+      // Added again: moved, or put back.
+      refresh(host);
+      return;
+    }
     hosts.add(host);
     create(host);
+    if (hasGlint(host)) sizes?.observe(host);
     intersections?.observe(host);
   };
   const untrack = (host: Element) => {
@@ -203,12 +292,12 @@ export function createLightSink(
     onScreen.delete(host);
     const list = tracks.get(host);
     if (list) {
-      for (const item of list) {
-        item.x.cancel();
-        item.y.cancel();
-      }
+      cancelTracks(list);
       tracks.delete(host);
     }
+    sizes?.unobserve(host);
+    (host as HTMLElement).style.removeProperty(GLINT_DX);
+    (host as HTMLElement).style.removeProperty(GLINT_DY);
     intersections?.unobserve(host);
   };
 
@@ -231,19 +320,33 @@ export function createLightSink(
     for (const host of Array.from(hosts)) if (!host.isConnected) untrack(host);
   };
 
-  const onIntersections = (entries: IntersectionObserverEntry[]) => {
+  const onSizes = (entries: ResizeObserverEntry[]) => {
     for (const entry of entries) {
       if (!hosts.has(entry.target)) continue;
+      try {
+        sizeGlint(entry.target);
+      } catch {
+        fallBack();
+      }
+    }
+  };
+
+  const onIntersections = (entries: IntersectionObserverEntry[]) => {
+    for (const entry of entries) {
+      const host = entry.target;
+      if (!hosts.has(host)) continue;
       if (!entry.isIntersecting) {
-        onScreen.delete(entry.target);
+        onScreen.delete(host);
         continue;
       }
-      const wasOn = onScreen.has(entry.target);
-      onScreen.add(entry.target);
-      // Back in view: catch this panel up to the light.
-      if (wasOn || !last) continue;
+      const wasOn = onScreen.has(host);
+      onScreen.add(host);
+      if (wasOn) continue;
+      // Back in view: its animations may have died while it was out of sight, and it is caught up to the light.
+      refresh(host);
+      if (!last) continue;
       if (useAnimations) {
-        const list = tracks.get(entry.target);
+        const list = tracks.get(host);
         if (list) setTime(list, last);
       } else if (!written || written.x !== last.x || written.y !== last.y) {
         writeProperties(last);
@@ -258,6 +361,7 @@ export function createLightSink(
       // A little margin, so a panel is lit just before it scrolls in.
       intersections = new IntersectionObserver(onIntersections, { rootMargin: "120px 0px" });
     }
+    if (typeof ResizeObserver !== "undefined") sizes = new ResizeObserver(onSizes);
     scan(element);
     mutations = new MutationObserver(onMutations);
     mutations.observe(element, { childList: true, subtree: true });
@@ -273,12 +377,19 @@ export function createLightSink(
       }
       write();
     },
+    animated: () => useAnimations,
     remove: () => {
       mutations?.disconnect();
       intersections?.disconnect();
+      sizes?.disconnect();
       mutations = null;
       intersections = null;
+      sizes = null;
       dropAnimations();
+      for (const host of hosts) {
+        (host as HTMLElement).style.removeProperty(GLINT_DX);
+        (host as HTMLElement).style.removeProperty(GLINT_DY);
+      }
       target?.style.removeProperty(TILT_VAR_X);
       target?.style.removeProperty(TILT_VAR_Y);
       target = null;
