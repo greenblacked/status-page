@@ -168,6 +168,8 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               .filter((span) => span.width > 1 && span.opacity > 0.99),
           );
         // Glass and Full draw it 0px wide on a phone (the bar's verdict collapses): held on Quiet until that is fixed.
+        // TODO(known bug, bar status text 0px wide in Glass and Full below 640px): the commit that fixes it deletes
+        // both `background === "quiet"` guards in this test, so the check runs on all three backgrounds.
         if (background === "quiet") {
           const hidden = await verdict();
           await expectNone(
@@ -219,6 +221,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await page
           .locator(".bar-search")
           .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+        // TODO(same known bug): delete this guard with the first one.
         if (background === "quiet") {
           const again = await verdict();
           await expectNone(
@@ -399,8 +402,9 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await resultsFit("bar field, results for git");
       });
 
-      // The bar's compact verdict on the longest hero is cut at 134px of 141px on a 320px screen today (a finding of
-      // this audit), so the bar is read with the plain fixture only.
+      // The bar's compact verdict on the longest hero is cut at 134px of 143px on a 320px screen today (a finding of
+      // this audit), so the bar is read with the plain fixture only. TODO(that finding): the commit that fixes the
+      // bar's verdict makes `withBar` true for the longest hero too, and drops the flag.
       for (const [name, board, withBar] of [
         ["the plain fixture", fixtureBoard, true],
         ["the longest hero", longHeroBoard, false],
