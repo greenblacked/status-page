@@ -1,6 +1,7 @@
 // tokens-allow: rounded-full (the centre point is a dot)
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, memo, useState } from "react";
 import { STATUS_TEXT } from "@/components/status/status-glyph";
+import { useNow } from "@/components/status/use-now";
 import { dialTicks } from "@/lib/status/dial";
 import { PULSE_INTERVAL_MS, periodPhase } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
@@ -9,7 +10,7 @@ import { cn } from "@/lib/utils";
 const TICKS = dialTicks();
 
 // Without motion the dial stands still and moves on in steps this long, on
-// the board's own one-second render tick.
+// the dial's own one-second clock.
 const STILL_STEP_MS = 5_000;
 
 /**
@@ -54,6 +55,14 @@ export function PeriodDial({
   );
 }
 
+/**
+ * The dial with its own one-second clock, so that the board does not need one: it has to know when the period
+ * ends to start the next sweep on time.
+ */
+export function ClockedPeriodDial(props: Omit<Parameters<typeof PeriodDial>[0], "now">) {
+  return <PeriodDial {...props} now={useNow()} />;
+}
+
 function PeriodMotion({ elapsedMs }: { elapsedMs: number | null }) {
   // Fixed for this mount: changing an animation's delay while it runs
   // would move it by the change, not to the new value.
@@ -74,7 +83,8 @@ function PeriodMotion({ elapsedMs }: { elapsedMs: number | null }) {
   );
 }
 
-function TickRing({ lit = false }: { lit?: boolean }) {
+// Pure of its one flag, so a tick of the dial's clock does not draw its three paths again.
+const TickRing = memo(function TickRing({ lit = false }: { lit?: boolean }) {
   return (
     <svg
       aria-hidden
@@ -90,4 +100,4 @@ function TickRing({ lit = false }: { lit?: boolean }) {
       <path d={TICKS.quarter} className="period-tick-quarter" vectorEffect="non-scaling-stroke" />
     </svg>
   );
-}
+});

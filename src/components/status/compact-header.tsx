@@ -575,8 +575,11 @@ export function CompactHeader({
   live: LiveState;
   /** When the snapshot was collected (epoch ms), if it says. */
   checkedAt: number | null;
-  /** The countdown to the next check, "1:52". */
-  nextIn: string;
+  /**
+   * The countdown to the next check, "1:52". A node, so that the part that ticks (NextIn) is a component of its own
+   * and the bar does not render for every second of it.
+   */
+  nextIn: ReactNode;
   /** The bar's copy of the search field, for the slot (below 64rem only). */
   search: ReactNode;
   /** The controls, rendered by the board so they share its state and handlers. */

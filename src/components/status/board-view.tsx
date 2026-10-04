@@ -7,8 +7,8 @@ import { prefersReducedMotion, useWanderLight, withCardMotion } from "@/componen
 import { Hero } from "@/components/status/hero";
 import { useHeldBoard } from "@/components/status/hold-place";
 import { LensField } from "@/components/status/lens-field";
-import { LiveBar, nextInText, useFreshness } from "@/components/status/live-bar";
-import { PeriodDial } from "@/components/status/period-dial";
+import { ClockedLiveBar, NextIn, useFreshness } from "@/components/status/live-bar";
+import { ClockedPeriodDial } from "@/components/status/period-dial";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { SiteFooter } from "@/components/status/site-footer";
 import { UpdateFeed } from "@/components/status/update-feed";
@@ -55,7 +55,11 @@ export function BoardView({
   onFiltersChange: (filters: BoardFilters) => void;
 }) {
   const queryClient = useQueryClient();
-  const now = useNow();
+  // A minute, on the minute: what the board's cards say (how long an incident has run, in minutes) and the turn of
+  // the two-minute slot, which is also a minute's. The seconds are shown by the parts that show them (the live
+  // line, the bar's countdown, the period dial), each with a clock of its own; a clock of seconds here made every
+  // card render again every second (13 ms, and 73 ms at a quarter of a phone's speed) for text that moves once a minute.
+  const now = useNow(60_000, true);
   // Local state drives the board; the URL follows it. Reading the filters
   // back from the URL would make every keystroke wait on a router update.
   const [filters, setFilters] = useState(initialFilters);
@@ -377,15 +381,14 @@ export function BoardView({
             </WhileBarUp>
           }
           live={
-            <LiveBar
+            <ClockedLiveBar
               freshness={freshness}
-              now={now}
               refetchJitterMs={refetchJitter}
               checkedAt={checkedAt}
               // The dial is a Full-background flourish; the words say the same.
               dial={
                 background.value === "full" ? (
-                  <PeriodDial now={now} jitterMs={refetchJitter} tone={verdict.tone} className="size-6 shrink-0" />
+                  <ClockedPeriodDial jitterMs={refetchJitter} tone={verdict.tone} className="size-6 shrink-0" />
                 ) : null
               }
             />
@@ -410,7 +413,7 @@ export function BoardView({
             verdict={verdict}
             live={freshness.state}
             checkedAt={checkedAt}
-            nextIn={nextInText(now, refetchJitter)}
+            nextIn={<NextIn refetchJitterMs={refetchJitter} />}
             search={
               <SearchField
                 placement="bar"
