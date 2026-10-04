@@ -494,11 +494,16 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               value: field?.value,
               shown: field ? field.checkVisibility() && !field.closest("[inert]") : false,
               onScreen: box ? box.bottom > 0 && box.top < window.innerHeight : false,
+              // Nothing floats over the middle of it: the floating bar must not sit on a field that has the focus.
+              uncovered: box
+                ? document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === field
+                : false,
             };
           });
           expect(now.which, `after "${typed}" the focus is in a search field, not on ${now.tag}`).toBeDefined();
           expect(now.value, `after "${typed}" the field holds what was typed`).toBe(typed);
           expect(now.shown && now.onScreen, `after "${typed}" the field in use can be seen`).toBe(true);
+          expect(now.uncovered, `after "${typed}" nothing is drawn over the field in use`).toBe(true);
           await expect(heroSearch(page)).toHaveValue(typed);
           const results = await cards(page).count();
           expect(results, `after "${typed}" the results are shown`).toBeGreaterThan(0);
