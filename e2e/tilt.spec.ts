@@ -366,6 +366,23 @@ test.describe("without touch", () => {
     await expect(page.getByText("Tilt lighting")).toHaveCount(0);
     await expect(html(page)).not.toHaveAttribute("data-tilt");
     expect(await lightVar(page, "--light-x")).toBe("");
+    // The light's styles (an oversized sheen on a layer of its own, the glint) belong to data-tilt="on" alone.
+    // A panel that promoted its sheen without the light would change how it is stacked and hit on every
+    // browser that has no tilt.
+    await page.locator(".surface").first().scrollIntoViewIfNeeded();
+    expect(
+      await page
+        .locator(".surface")
+        .first()
+        .evaluate((card) => {
+          const sheen = getComputedStyle(card, "::before");
+          return {
+            willChange: sheen.willChange,
+            top: sheen.top,
+            glint: getComputedStyle(card, "::after").content,
+          };
+        }),
+    ).toMatchObject({ willChange: "auto", top: "0px", glint: "none" });
   });
 });
 
