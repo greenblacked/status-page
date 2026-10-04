@@ -167,16 +167,19 @@ jobs:
           retention-days: 1
 
   e2e:
-    # One shard per engine family and device. Every project but one runs the
-    # whole suite (the Chromium tablet runs only the search reveal and floating
-    # bar tests), but WebKit is several times slower than Chromium in CI, so the
-    # three Chromium projects share a shard and each WebKit project gets its own.
-    # Together the shards run every project exactly once.
+    # One shard per engine and device group. Every project but one runs the
+    # whole suite (the Chromium tablet runs only the search reveal, floating
+    # bar, field's fill and self-hosted Inter tests), but WebKit is several
+    # times slower than Chromium in CI, so each WebKit project gets its own
+    # shard. The three Chromium projects together took about 8.5 minutes, and
+    # over 10 on a slower run, which hit the 10-minute step timeout, so they
+    # are split: desktop alone, mobile and tablet together. Together the
+    # shards run every project exactly once.
     name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Per shard: the Chromium shard runs three projects and a WebKit shard one,
-    # which take 3 to 5 minutes, plus getting the browser. Chromium is
+    # Per shard: a Chromium shard runs one or two projects and a WebKit shard
+    # one, which take 3 to 5 minutes, plus getting the browser. Chromium is
     # downloaded, with its 32 MB of system libraries from apt. WebKit's
     # libraries are about 125 MB from apt, and on a slow runner that fetch
     # took over 30 minutes and failed the job, so the WebKit shards run in
@@ -193,9 +196,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: chromium
+          - shard: chromium-desktop
             browser: chromium
-            projects: desktop,mobile,tablet
+            projects: desktop
+          - shard: chromium-mobile
+            browser: chromium
+            projects: mobile,tablet
           # The image carries WebKit's system libraries and the browser build
           # that matches @playwright/test, so these shards fetch nothing from
           # apt. Pinned by digest (Scorecard) and by tag for the reader; when
@@ -265,8 +271,9 @@ jobs:
           EOF
 
       - name: Browser tests (Playwright)
-        # Runs take 3 to 4.3 minutes; this stops a hung suite long before
-        # the job limit does.
+        # Shards take 3 to 5 minutes. Chromium's three projects in one shard
+        # took about 8.5 minutes, and over 10 on a slower run, which hit this
+        # limit, hence the two Chromium shards. It stops a hung suite long before the job limit does.
         timeout-minutes: 10
         env:
           # Comma-separated project names from playwright.config.ts.
