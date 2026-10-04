@@ -5,6 +5,7 @@ import { BAR_RISE, DOCK_HYSTERESIS, HIDE_DOWN_PX, REVEAL_UP_PX, WIDE_RANGE } fro
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
+import { EXPECTED_RELEASE_LINES, MIKROTIK_NOTE, releaseLineIds } from "./support/first-render";
 import { expect, test } from "./test";
 
 const SERVICES = 20;
@@ -303,6 +304,12 @@ test("renders every service with no console errors or hydration warnings", async
   expect(html).toContain('data-health="degraded"');
   // (A start from before 00:00 UTC shows its day too, "3 Oct 19:07 UTC", which is what the first hours of a UTC day see.)
   expect(html).toMatch(/[Ss]ince <time [^>]*>(?:\d{1,2} [A-Z][a-z]{2} )?\d\d:\d\d\sUTC<\/time>/);
+  // Nor a board without what is read after the sweep: the release feeds and the MikroTik changelogs join a board one
+  // build late, so the global setup waits for them and asks for the page once they are in hand (e2e/support/
+  // global-setup.ts). Without that, this markup would have no release line, and the hydration of those lines and of
+  // the MikroTik notes in its Details would be untested.
+  expect(releaseLineIds(html)).toEqual(EXPECTED_RELEASE_LINES);
+  expect(html).toContain(MIKROTIK_NOTE);
   // After hydration the title leads with how many services need attention: "(2) Status".
   await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   await expect(cards(page)).toHaveCount(SERVICES);

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FullConfig } from "@playwright/test";
 import type { BoardSnapshot, Health } from "../../src/lib/status/types.ts";
+import { missingFromFirstRender } from "./first-render.ts";
 import { VENDOR_LOG_PREFIX, vendorLogPath } from "./vendor-log.ts";
 
 type Entry = { kind: "active" | "served" | "refused"; host?: string; path?: string };
@@ -48,14 +49,51 @@ const EXPECTED_HEALTH: Record<string, Health> = {
 
 const count = (list: Entry[], kind: Entry["kind"]) => list.filter((entry) => entry.kind === kind).length;
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * How long the page may take to carry the release lines and the changelog notes. They are read after the sweep
+ * and join a board only when the board is built again, so a page built too early shows none for the board cache's
+ * 45 seconds (CACHE_TTL_MS) and then once more from the stale board while it is rebuilt; this covers that, which is
+ * the slow path. Normally the first request finds them.
+ */
+const FIRST_RENDER_DEADLINE_MS = 60_000;
+
+/** Waits until the vendor log has stopped growing for `quietMs` (the background reads are done), or `limitMs`. */
+async function waitForQuietLog(log: string, quietMs = 500, limitMs = 10_000): Promise<void> {
+  const until = Date.now() + limitMs;
+  let size = -1;
+  let since = Date.now();
+  while (Date.now() < until) {
+    const now = entries(log).length;
+    if (now !== size) {
+      size = now;
+      since = Date.now();
+    } else if (Date.now() - since >= quietMs) {
+      return;
+    }
+    await sleep(100);
+  }
+}
+
 /**
  * Proves, before the first test, that the preview server cannot reach a vendor (support/no-vendors.mjs is
  * loaded into it): asks it for a board and checks that its vendor requests were answered from the canned
  * payloads or refused, and that the board it built has states on it (not all Unknown), so the first render
  * and the hydration after it are tested with outages, incidents and release lines, and that every service reads
  * the health pinned for it (EXPECTED_HEALTH). If the server were reading live vendors, or the preload did not
- * load, this fails instead of the suite quietly depending on them. The
- * returned function reports the counts of the whole run after the last test.
+ * load, this fails instead of the suite quietly depending on them.
+ *
+ * It then makes the first page render carry what the background reads add. A board is built from the health
+ * sweep alone; the release feeds and the MikroTik changelogs are read right after it and join the next build
+ * (src/lib/status/collect-board.ts), and the page and the JSON API each keep their own board for 45 seconds, so
+ * a page built before the reads had settled would show no release line to every test that starts in that
+ * window. The setup waits until the vendor log is quiet (those reads are done, in milliseconds on the canned
+ * payloads), only then asks for the page the tests will render, and pins what it carries
+ * (EXPECTED_RELEASE_LINES and MIKROTIK_NOTE in first-render.ts): that page is the board the first tests are
+ * served. If the reads were late the page is asked again until it has them (at most FIRST_RENDER_DEADLINE_MS),
+ * then this fails, by name, and not as a test that cannot find a line. The returned function reports the counts
+ * of the whole run after the last test.
  */
 export default async function globalSetup(config: FullConfig): Promise<() => Promise<void>> {
   const baseURL = config.projects[0].use.baseURL ?? "";
@@ -95,6 +133,25 @@ export default async function globalSetup(config: FullConfig): Promise<() => Pro
   }
   console.log(
     `e2e: the server is cut off from the vendors (building a board: ${served} requests answered from fixtures, ${refused} refused, ${board.services.length - unknown} of ${board.services.length} services with a state)`,
+  );
+
+  // The release feeds and the changelog notes are read after that sweep; let them settle, then get the page.
+  const waited = Date.now();
+  await waitForQuietLog(log);
+  let missing: string[] = [];
+  let attempts = 0;
+  for (const deadline = Date.now() + FIRST_RENDER_DEADLINE_MS; ; await sleep(1000)) {
+    attempts += 1;
+    missing = missingFromFirstRender(await (await fetch(new URL("/", baseURL))).text());
+    if (missing.length === 0 || Date.now() >= deadline) break;
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `The first page render does not carry the release feeds and changelog notes within ${FIRST_RENDER_DEADLINE_MS / 1000} s (${attempts} requests): missing ${missing.join(", ")}.\nThe browser tests would hydrate a page without them. Check that the feed URLs are routed in e2e/support/canned-vendors.mjs and still parse, and update EXPECTED_RELEASE_LINES / MIKROTIK_NOTE in e2e/support/first-render.ts if the change is on purpose.`,
+    );
+  }
+  console.log(
+    `e2e: the first page render carries the release lines (${attempts} request${attempts === 1 ? "" : "s"}, ${((Date.now() - waited) / 1000).toFixed(1)} s after the board)`,
   );
 
   return async () => {
