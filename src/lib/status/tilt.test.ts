@@ -506,14 +506,17 @@ describe("the wandering card light", () => {
     expect(css).toContain(".spotlight[data-wander]::after");
   });
 
-  it("is stepped aside by the glint: the glint's rules come after the wander's, at the same specificity", () => {
-    const wander = css.indexOf('[data-background="full"] .spotlight[data-wander="3"]::after');
+  it("is stepped aside by the glint: the glint's rule comes after every wander rule, at the same specificity", () => {
     const glint = css.indexOf(
       '[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {',
     );
-    expect(wander).toBeGreaterThan(-1);
-    expect(glint).toBeGreaterThan(wander);
-    const rule = css.slice(glint, glint + css.slice(glint).indexOf("}"));
-    expect(rule).toContain("animation: none");
+    expect(glint).toBeGreaterThan(-1);
+    // Every place in the file that sets or names the wander (the base rule with the `animation` shorthand,
+    // the per-path rules, the keyframes): moving any of them below the glint would override its `animation: none`.
+    const last = Math.max(css.lastIndexOf("light-wander"), css.lastIndexOf("[data-wander"));
+    expect(last).toBeGreaterThan(-1);
+    expect(last).toBeLessThan(glint);
+    const block = css.slice(glint, glint + css.slice(glint).indexOf("}"));
+    expect(block).toContain("animation: none");
   });
 });

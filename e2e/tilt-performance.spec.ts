@@ -40,6 +40,10 @@ const PAINT_SLACK = 40;
 const RASTER_SLACK = 40;
 // Elements the style system may revisit per frame for each wander animation that is running (about 4 measured).
 const RESTYLE_PER_ANIMATION = 8;
+// The idle window (no sweep, no frame loop) and what the wander may add to the floor's recalculations in it:
+// measured about 3 on the compositor, over 150 when the animation runs on the main thread.
+const IDLE_MS = 3000;
+const IDLE_RECALC_SLACK = 15;
 
 type SweepResult = {
   /** Gaps between consecutive animation frames, in ms. */
@@ -286,6 +290,35 @@ async function traceCounts(
     rasters: names.filter((name) => name === "RasterTask").length,
     restyled,
     updates: traced.updates,
+  };
+}
+
+/**
+ * An idle window: nothing of the test's own runs (no sweep, no animation frame loop), so any style recalculation
+ * the trace shows comes from the page itself. A transform animation on the compositor leaves a handful; one
+ * animated on the main thread makes a frame, and a recalculation, every frame.
+ */
+async function idleCounts(
+  page: Page,
+  cdp: import("@playwright/test").CDPSession,
+): Promise<{ recalcs: number; paints: number }> {
+  const names: string[] = [];
+  const onData = (payload: { value: { name?: string; ph?: string }[] }) => {
+    for (const event of payload.value) if (event.name && event.ph !== "M") names.push(event.name);
+  };
+  cdp.on("Tracing.dataCollected", onData);
+  const complete = new Promise<void>((resolve) => cdp.once("Tracing.tracingComplete", () => resolve()));
+  await cdp.send("Tracing.start", {
+    transferMode: "ReportEvents",
+    traceConfig: { includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline"] },
+  });
+  await page.waitForTimeout(IDLE_MS);
+  await cdp.send("Tracing.end");
+  await complete;
+  cdp.off("Tracing.dataCollected", onData);
+  return {
+    recalcs: names.filter((name) => name === "UpdateLayoutTree").length,
+    paints: names.filter((name) => name === "Paint").length,
   };
 }
 
@@ -541,7 +574,10 @@ test.describe("tilt performance", () => {
   // far from restyling the board's panels with their rows. Both runs stop the period dial's sweep
   // (.period-dial): it animates a registered property, so by itself it costs a recalculation on nearly
   // every frame, which would hide the wander's share. The counts do not move with how busy the machine is;
-  // timings are in the table, not asserted.
+  // timings are in the table, not asserted. The sweep's own frame loop makes Chromium sample the running CSS
+  // animations every frame whichever thread they run on, so it cannot tell a compositor wander from a main-thread one;
+  // an idle window of each run (no sweep, no frame loop) can: there the wander adds a handful of recalculations, a
+  // main-thread animation one per frame.
   test("lets the card light wander on a throttled CPU without repainting or restyling", async ({
     page,
     context,
@@ -568,6 +604,8 @@ test.describe("tilt performance", () => {
     expect(await running(page), "wander animations with the wander switched off").toBe(0);
     const floor = await collect(page, "card light off", RUNS);
     console.log(table(`${testInfo.project.name}, card light off, median of ${RUNS} runs`, floor));
+    // Idle: dial still, no sweep, no frame loop of the test's own.
+    const floorIdle = await idleCounts(page, await context.newCDPSession(page));
     await page.close();
 
     const lit = await context.newPage();
@@ -587,6 +625,18 @@ test.describe("tilt performance", () => {
     await expect(lit.locator("html")).not.toHaveAttribute("data-tilt");
     expect(await holders(lit)).toBe(0);
     if (process.env.TILT_PERF_REPORT_ONLY) return;
+
+    // Idle again, with nothing of the test's own asking for frames: the wander alone must not keep the main
+    // thread producing frames (a transform animated on the main thread would restyle on every one).
+    const litIdle = await idleCounts(lit, await context.newCDPSession(lit));
+    console.log(
+      `[wander-perf] idle ${IDLE_MS / 1000} s: ${litIdle.recalcs} style recalcs (card light off: ${floorIdle.recalcs}), ${litIdle.paints} paints (card light off: ${floorIdle.paints})`,
+    );
+    expect(
+      litIdle.recalcs,
+      `style recalculations in an idle ${IDLE_MS / 1000} s with the wander running, over the card-light-off run's ${floorIdle.recalcs}`,
+    ).toBeLessThanOrEqual(floorIdle.recalcs + IDLE_RECALC_SLACK);
+    expect(litIdle.paints, "paints in the idle window").toBeLessThanOrEqual(floorIdle.paints + PAINT_SLACK);
 
     const animations = await running(lit);
     medians.forEach((row, index) => {
