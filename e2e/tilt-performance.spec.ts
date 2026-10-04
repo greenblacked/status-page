@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { type BrowserContext, expect, type Page, test } from "@playwright/test";
 import { TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
 
 // How smoothly Tilt lighting runs on a slow phone. A test browser has no motion
@@ -402,16 +402,13 @@ const holders = (page: Page) => page.evaluate(() => document.querySelectorAll('[
  * Seeds a saved choice. A saved "on" is checked once with the browser, which is asked outside a tap whether
  * motion is still allowed (src/components/status/use-tilt-lighting.ts), and a browser that has
  * DeviceOrientationEvent.requestPermission and does not say "granted" gets the choice dropped: iOS does,
- * and so does Chromium 154, the headless shell CI runs (it answers "prompt"; Chromium 141 has no such call).
- * Motion is granted here, as a visitor who allowed it would have it.
+ * and so does Chromium 154, the headless shell CI runs (it answers "prompt" until motion is granted to the
+ * page; Chromium 141 has no such call). The test grants motion to its context (see grantMotion), as a
+ * visitor who allowed it would have it.
  */
 const seed = (page: Page, tilt: "on" | "off") =>
   page.addInitScript(
     ([tiltKey, tilt]) => {
-      const api = window.DeviceOrientationEvent as unknown as { requestPermission?: unknown } | undefined;
-      if (api && typeof api.requestPermission === "function") {
-        Object.defineProperty(api, "requestPermission", { value: async () => "granted", configurable: true });
-      }
       try {
         localStorage.setItem("status-bar:background", "glass");
         localStorage.setItem(tiltKey, tilt);
@@ -421,6 +418,9 @@ const seed = (page: Page, tilt: "on" | "off") =>
     },
     [TILT_STORAGE_KEY, tilt],
   );
+
+/** Motion allowed for the pages of a context, which is what the browser's own permission call then answers. */
+const grantMotion = (context: BrowserContext) => context.grantPermissions(["accelerometer", "gyroscope"]);
 
 /** One reading, so a saved "on" is answered (the page forgets a saved choice that gets none in 3 s). */
 const firstReading = (page: Page) =>
@@ -451,6 +451,7 @@ test.describe("tilt performance", () => {
   // timing move with whatever else the machine is doing, so they are logged and attached, not asserted.
   test("lights the glass smoothly on a throttled CPU", async ({ page, context }, testInfo) => {
     test.setTimeout(300_000);
+    await grantMotion(context);
     await installSpy(page);
     await seed(page, "off");
     await openBoard(page);
