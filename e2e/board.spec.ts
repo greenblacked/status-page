@@ -4578,15 +4578,16 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   // on lines 48pt apart (hit-lines, over the tallest box so a neighbour's edge never takes the tap), not the
   // words' own box: a tap 21.5px above or below the middle of the words still lands on the link. (The next test
   // has the sentence wrap, and checks that no two of them overlap.) The box is the face's content area plus the
-  // padding, and the content area is the face's own (at 15px: 19px in Inter and its fallback, 18px in DejaVu Sans,
-  // 17px in Liberation Sans). Inter is font-display: optional and a page view keeps the face it was first drawn in,
+  // padding, and the content area is the face's own (at 15px: 19px in Inter, 18px in DejaVu Sans, 17px in
+  // Liberation Sans, and in Inter Fallback 19px where the overrides apply and its own face's 17 to 18px where they
+  // do not). Inter is font-display: optional and a page view keeps the face it was first drawn in,
   // so which of them this view drew is up to the timing of the font, and it must not decide the result: the
   // sentence is measured in the page's own face and then in each of the others the font stack can end in.
   const sentence = await page.evaluate(() => {
     const paragraph = document.querySelector<HTMLElement>("header h1 + p");
     const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
     const own = paragraph?.style.fontFamily ?? "";
-    const faces = ["", "system-ui", "sans-serif", '"Liberation Sans"', '"DejaVu Sans"'];
+    const faces = ["", "system-ui", "sans-serif", '"Inter Fallback"', '"Liberation Sans"', '"DejaVu Sans"'];
     const boxes = faces.flatMap((face) => {
       if (paragraph) paragraph.style.fontFamily = face || own;
       return links.map((link) => {

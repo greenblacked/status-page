@@ -535,8 +535,13 @@
   is 44pt tall or a little more, and under the pitch. A padded inline box is
   the face's own content area plus the padding, and the content area is the
   face's ascent plus descent, each rounded to a pixel by the engine: at 15px it
-  is 19px in Inter and in the fallbacks that match it (Inter Fallback), 18px
-  in DejaVu Sans, 17px in Liberation Sans, and it differs from face to face.
+  is 19px in Inter, 18px in DejaVu Sans, 17px in Liberation Sans, and it
+  differs from face to face. Inter Fallback is 19px where the engine applies
+  its ascent and descent overrides (Chromium); an engine that does not (WebKit
+  may not) draws it with Liberation's or Arial's own metrics, scaled by
+  size-adjust, which is 17 to 18px. So the face a view draws, Inter or its
+  fallback, can differ in the box, and Inter being font-display: optional, from
+  one view to the next.
   So the padding is worked out from the least that the faces of the font stack
   give, 17px (1.135em at 15px, 13.5px of padding each side), and the box comes
   out 44px for that, 45px for 18px and 46px for 19px. (The padding once
