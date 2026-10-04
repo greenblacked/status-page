@@ -231,7 +231,11 @@ class Scroller implements Reader {
     const steps = Math.max(1, Math.round(Math.abs(dy) / step));
     for (let i = 0; i < steps; i++) {
       this.movedAt = await this.page.evaluate((by) => {
-        window.scrollTo({ top: window.scrollY - by, behavior: "instant" });
+        // Turned back at either end of the page: a step that goes nowhere sends no scroll event, and a page that has
+        // stopped sending them is at rest.
+        const room = document.documentElement.scrollHeight - window.innerHeight;
+        const to = window.scrollY - by;
+        window.scrollTo({ top: to < 0 || to > room ? window.scrollY + by : to, behavior: "instant" });
         return performance.now();
       }, dy / steps);
       await pause(16);
