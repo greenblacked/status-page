@@ -1,4 +1,5 @@
-import { expect, type Locator, test } from "@playwright/test";
+import type { Locator } from "@playwright/test";
+import { expect, test } from "./test";
 
 // What Safari and iOS read from the page head and the manifest, and the touch
 // rules in src/apple.css. Like the rest of the suite these hold whatever the

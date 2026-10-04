@@ -1,10 +1,17 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
 import { BAR_RISE, DOCK_HYSTERESIS, HIDE_DOWN_PX, REVEAL_UP_PX, WIDE_RANGE } from "../src/lib/status/dock.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
+import {
+  EXPECTED_RELEASE_LINES,
+  firstRenderCarriesReleaseLines,
+  MIKROTIK_NOTE,
+  releaseLineIds,
+} from "./support/first-render";
+import { expect, test } from "./test";
 
 const SERVICES = 20;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
@@ -175,6 +182,31 @@ async function openFixture(
   await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
+  await refreshIntoServedBoard(page, ready);
+}
+
+/**
+ * openFixture, with the page's Date 30 s into a slot (pinToSlot) first, for a test that presses something on the
+ * board. At the turn of a slot (every two minutes of the wall clock) the page refetches, adds a row to Recent
+ * changes and clears the "Changed" tags, which moves every card under a tag by 36px to 108px, and where the browser
+ * has no scroll anchoring (WebKit) useHoldPlace scrolls the page by the same distance a moment later. A press made
+ * in the second or two after a turn can find the board moving under it. With the page 30 s in, the next turn is 90 s
+ * away, past the end of any of these tests. Tests that install page.clock and fast-forward it pin the page already.
+ */
+async function openFixtureInSlot(
+  page: Page,
+  board: () => BoardSnapshot,
+  ready?: { id: string; label: string },
+): Promise<void> {
+  await pinToSlot(page);
+  await openFixture(page, board, ready);
+}
+
+/** On a loaded page that has a board served (serveBoard), presses Refresh so the board replaces the server's first render. */
+async function refreshIntoServedBoard(
+  page: Page,
+  ready: { id: string; label: string } = { id: "aws", label: "Outage" },
+): Promise<void> {
   // The cards are in the server's markup already; Refresh answers only once hydrated.
   await hydrated(page);
   await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
@@ -240,6 +272,23 @@ async function leadSteady(page: Page): Promise<void> {
 }
 
 /**
+ * Waits until the self-hosted Inter's fetch is over (loaded, or failed). Inter is font-display: optional, so a page
+ * view keeps the face it was first drawn in (Inter if the file was ready at the first render, the system font if
+ * not) and nothing swaps in later; what this wait settles is that no fetch of the font is still in flight when a
+ * test reads geometry, and that the hero is drawn. The hero's lede wraps differently in the two faces, and how many
+ * lines it takes depends on the board's words (the canned first render has a long one), so tests that read geometry
+ * call this before they read any. Not for a test that holds the font back itself: it would wait for the test's own
+ * release (an aborted font settles at once).
+ */
+async function fontsSettled(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await document.fonts.load("400 16px Inter").catch(() => []);
+    await document.fonts.ready;
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  });
+}
+
+/**
  * Opens the board with its bar steady: the page's Date is 30 s into a slot (pinToSlot), so the next scheduled
  * refetch and the turn of the slot are 90 s or more away, and the refetch on mount of a snapshot past its
  * staleTime, if there is one, has landed (leadSteady). A test that reads where the field or its fill is against the
@@ -251,6 +300,7 @@ async function steadyBoard(page: Page): Promise<void> {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   await leadSteady(page);
 }
 
@@ -266,7 +316,28 @@ function watchConsole(page: Page): string[] {
 
 test("renders every service with no console errors or hydration warnings", async ({ page }) => {
   const problems = watchConsole(page);
-  await page.goto("/");
+  const response = await page.goto("/");
+  // What is hydrated is not a board of Unknown cards: the preview answers its collectors from the unit tests'
+  // payloads (e2e/support/no-vendors.mjs), so the server's markup has outage and degraded cards and an incident's
+  // "since" time on them, and a mismatch in any of those fails here as a hydration warning. If the markup were
+  // all Unknown, this would say so rather than pass on less.
+  const html = (await response?.text()) ?? "";
+  expect(html).toContain('data-health="outage"');
+  expect(html).toContain('data-health="degraded"');
+  // (A start from before 00:00 UTC shows its day too, "3 Oct 19:07 UTC", which is what the first hours of a UTC day see.)
+  expect(html).toMatch(/[Ss]ince <time [^>]*>(?:\d{1,2} [A-Z][a-z]{2} )?\d\d:\d\d\sUTC<\/time>/);
+  // Nor a board without what is read after the sweep: the release feeds and the MikroTik changelogs join a board one
+  // build late, so the global setup waits for them and asks for the page once they are in hand (e2e/support/
+  // global-setup.ts). Without that, this markup would have no release line, and the hydration of those lines and of
+  // the MikroTik notes in its Details would be untested. That holds while the canned feeds are younger than their
+  // 30-minute cache; a longer run (all six projects, WebKit last) may get a board built while they are read again,
+  // and then asks only that no line is unexpected.
+  if (firstRenderCarriesReleaseLines()) {
+    expect(releaseLineIds(html)).toEqual(EXPECTED_RELEASE_LINES);
+    expect(html).toContain(MIKROTIK_NOTE);
+  } else {
+    expect(releaseLineIds(html).filter((id) => !EXPECTED_RELEASE_LINES.includes(id))).toEqual([]);
+  }
   // After hydration the title leads with how many services need attention: "(2) Status".
   await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
   await expect(cards(page)).toHaveCount(SERVICES);
@@ -282,19 +353,26 @@ test("has no serious or critical accessibility violations", async ({ page }) => 
   expect(
     await page.evaluate(() => document.getAnimations().some((a) => (a as CSSAnimation).animationName === "rise-in")),
   ).toBe(false);
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
-    .analyze();
-  // Every failing node with axe's own summary (colours and ratio for
-  // contrast), so a failure in CI can be read from the log alone.
-  const blocking = results.violations
-    .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
-    .flatMap((violation) =>
-      violation.nodes.map(
-        (node) => `${violation.id} ${node.target.join(" ")}: ${node.failureSummary ?? violation.help}`,
-      ),
-    );
-  expect(blocking).toEqual([]);
+  const audit = async () => {
+    const results = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"])
+      .analyze();
+    // Every failing node with axe's own summary (colours and ratio for
+    // contrast), so a failure in CI can be read from the log alone.
+    return results.violations
+      .filter((violation) => violation.impact === "serious" || violation.impact === "critical")
+      .flatMap((violation) =>
+        violation.nodes.map(
+          (node) => `${violation.id} ${node.target.join(" ")}: ${node.failureSummary ?? violation.help}`,
+        ),
+      );
+  };
+  // The page as the server renders it (the preview's canned vendor payloads: outages, degraded, incidents) ...
+  expect(await audit()).toEqual([]);
+  // ... and with every state a card can be in: outage, degraded, maintenance, unknown, operational.
+  await serveBoard(page, () => fixtureBoard(Date.now()));
+  await refreshIntoServedBoard(page);
+  expect(await audit()).toEqual([]);
 });
 
 test("starts the tab order with a skip link that moves focus to the board", async ({ page, isMobile, browserName }) => {
@@ -346,8 +424,12 @@ test("opens with the search from the address and announces a new result count", 
 test("fits the viewport without horizontal scrolling", async ({ page }) => {
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-  expect(overflow).toBeLessThanOrEqual(0);
+  const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(await overflow()).toBeLessThanOrEqual(0);
+  // The longest cards come with a board that has every state, long summaries and component lists.
+  await serveBoard(page, () => fixtureBoard(Date.now()));
+  await refreshIntoServedBoard(page);
+  expect(await overflow()).toBeLessThanOrEqual(0);
 });
 
 test("carries the Apple device head tags, with the icon and manifest served", async ({ page, request }) => {
@@ -868,6 +950,7 @@ async function revealServedBoard(
 ): Promise<DockOffsets & { limit: number }> {
   await pinToSlot(page);
   await openFixture(page, () => board(Date.now()), ready);
+  await fontsSettled(page);
   await leadSteady(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
@@ -896,6 +979,7 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
   await expect(page.getByTestId("live-bar")).toContainText("Checked");
 
@@ -1079,6 +1163,7 @@ test("keeps the bar up while the page hovers just above where it appears", async
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   const { wide, barStart } = await dockOffsets(page);
   test.skip(wide, "the bar is part of the field's one move from 64rem");
   const bar = controlBar(page);
@@ -1281,6 +1366,7 @@ test("search reveal: a fast scroll down and back up reveals the bar's field once
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
   await hydrated(page);
+  await fontsSettled(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   await lightenPaint(page);
   const { wide, natural, barStart, moveStart, moveEnd } = await dockOffsets(page);
@@ -1648,9 +1734,16 @@ test("search reveal: the revealed field takes the tap and the page behind it doe
 
 test("search reveal: opens a page that is already scrolled past the field with the bar's field hidden, and plays no move", async ({
   page,
+  browserName,
 }) => {
   test.slow();
-  // Every transition that starts on the bar's field, from before the page's own script runs.
+  // Every transition that starts on the bar's field, from before the page's own script runs. And where the page was
+  // when the browser left it. Chromium's headless shell (the build CI runs) switches the emulated touch screen off as
+  // a navigation starts, before the page's own pagehide, so a page whose layout has touch-only sizes (the lede's
+  // links are 44px targets on a touch screen and 19px lines without one) shrinks while it is being left: the
+  // browser's scroll anchoring moves the position with it, and the router snapshots that position (TanStack's, in
+  // pagehide) and restores it. So what the reload restores is where the page was left, which is not always the
+  // place the test scrolled to.
   await page.addInitScript(() => {
     const runs: string[] = [];
     (window as Window & { __runs?: string[] }).__runs = runs;
@@ -1661,25 +1754,66 @@ test("search reveal: opens a page that is already scrolled past the field with t
       },
       true,
     );
+    window.addEventListener(
+      "pagehide",
+      () => {
+        try {
+          sessionStorage.setItem("e2e:left-at", String(window.scrollY));
+        } catch {}
+      },
+      true,
+    );
+  });
+  // The reload draws the server's own first render, the canned payloads' board, whatever board a test served to the
+  // page (a served board reaches the page only by a refetch, and its hero is not the first render's), so this test
+  // opens that same board, and the position it leaves is measured on it. Inter is font-display: optional, so a page
+  // view is drawn in Inter only if the file is ready at its first render, a race with the preview that would make
+  // the view that leaves a position and the one that restores it differ in the lede's wrap and so in the page's
+  // height. On Chromium both views are therefore drawn in the system font: the first has the Inter file refused,
+  // the reload has it held until the restored position has been read, then let in (it is cached and never swapped
+  // in, so nothing moves under the restored position). WebKit restores at the end of the load, which waits for the
+  // font, so there is no race to order there and the font is left alone.
+  type FontMode = "pass" | "refuse" | "hold";
+  let fontMode: FontMode = browserName === "chromium" ? "refuse" : "pass";
+  let releaseFont = () => {};
+  const fontHeld = new Promise<void>((resolve) => {
+    releaseFont = resolve;
+  });
+  await page.route("**/inter-var*.woff2", async (route) => {
+    if (fontMode === "refuse") return route.abort();
+    if (fontMode === "hold") await fontHeld;
+    await route.continue().catch(() => {});
   });
   const offsets = await revealBoard(page);
-  const y0 = await scrollDeep(page, offsets);
+  await scrollDeep(page, offsets);
   // Back to the same place the way a reload or a return to the tab does: the browser restores the scroll.
-  await page.reload();
+  fontMode = browserName === "chromium" ? "hold" : "pass";
+  try {
+    // The held font keeps the load event from firing; the position is restored without waiting for it.
+    await page.reload({ waitUntil: fontMode === "hold" ? "domcontentloaded" : "load" });
+    // Where the old page was left (see the init script): still well past the field, and what the reload must restore.
+    const leftAt = Number(await page.evaluate(() => sessionStorage.getItem("e2e:left-at")));
+    expect(leftAt, "the page was left past the field").toBeGreaterThan(offsets.revealFrom + DOCK_HYSTERESIS);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY), { message: "the browser restores the position" })
+      .toBeGreaterThan(leftAt - 40);
+  } finally {
+    releaseFont();
+  }
+  await page.waitForLoadState("load");
   await hydrated(page);
   await leadSteady(page);
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(offsets.revealFrom);
+  await fontsSettled(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
+  // The reader is where the restored page is now.
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
   // It opens hidden, and nothing about it moved.
   expect(await isRevealed(page)).toBe(false);
   const runs = () => page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
   expect(await runs(), "the field's move played on load").toEqual([]);
   // The first real scroll up after the load reveals it, and that one is a move.
-  const restored = await page.evaluate(() => window.scrollY);
-  expect(restored).toBeGreaterThan(y0 - 40);
-  await scrollAndSettle(page, restored - 2 * REVEAL_UP_PX);
+  await scrollAndSettle(page, (await page.evaluate(() => window.scrollY)) - 2 * REVEAL_UP_PX);
   await expectRevealed(page, true);
   await expect.poll(async () => (await runs()).length, { message: "the reveal plays" }).toBeGreaterThan(0);
 });
@@ -2981,7 +3115,7 @@ test("sets the search field at 16px on a touch screen, so iPhone does not zoom i
 
 test("renders healthy services as rows, alike whether or not the vendor lists components", async ({ page }) => {
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
 
   // Each category's heading counts the rows under it.
   const up = group(page, "up");
@@ -3009,6 +3143,8 @@ test("renders healthy services as rows, alike whether or not the vendor lists co
       await expect(list).toHaveCount(0);
     } else {
       await card.locator("summary").click();
+      // The dropdown itself says whether the press opened it; a list that never shows could be anything.
+      await expect(card.locator("details")).toHaveAttribute("open", "");
       await expect(list).toHaveCount(1);
       await expect(list.getByRole("listitem")).toHaveCount(Math.min(service.components.length, 6));
       for (const component of service.components.slice(0, 6)) {
@@ -3027,9 +3163,10 @@ const inViewport = (locator: Locator) =>
 
 test("opens a long component list with Show all and closes it with Show fewer", async ({ page }) => {
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-spotify");
   await card.locator("summary").click();
+  await expect(card.locator("details")).toHaveAttribute("open", "");
   const list = card.getByRole("list", { name: "Components" });
   const toggle = card.getByRole("button", { name: /^Show all 32/ });
   await expect(list.getByRole("listitem")).toHaveCount(6);
@@ -3089,6 +3226,7 @@ for (const anchoring of ["none", "default"] as const) {
     );
     const card = page.locator("article#service-spotify");
     await card.locator("summary").click();
+    await expect(card.locator("details")).toHaveAttribute("open", "");
     const toggle = card.getByRole("button", { name: /^Show all 32/ });
     await toggle.scrollIntoViewIfNeeded();
     // The feed is above the top of the window.
@@ -3179,6 +3317,16 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
       scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
       return (original as (...values: unknown[]) => void).apply(window, args);
     }) as typeof window.scrollBy;
+    // The scroll events delivered so far: an event comes a frame after the scroll that makes it.
+    const events = { count: 0 };
+    (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents = events;
+    window.addEventListener(
+      "scroll",
+      () => {
+        events.count += 1;
+      },
+      true,
+    );
   });
   // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row and clear the
   // tags early, and the 3:00 jump would then cross a boundary that changes no row count.
@@ -3189,6 +3337,7 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   });
   const card = page.locator("article#service-spotify");
   await card.locator("summary").click();
+  await expect(card.locator("details")).toHaveAttribute("open", "");
   const toggle = card.getByRole("button", { name: /^Show all 32/ });
   await toggle.scrollIntoViewIfNeeded();
   await page.evaluate(() => window.scrollBy(0, 200));
@@ -3198,7 +3347,16 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   const fewer = card.getByRole("button", { name: /^Show fewer/ });
+  const scrollEvents = () =>
+    page.evaluate(() => (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents?.count ?? 0);
+  const eventsBefore = await scrollEvents();
+  const yBefore = await page.evaluate(() => window.scrollY);
   await fewer.scrollIntoViewIfNeeded();
+  // The hook starts its wait for the page to be still when the scroll event arrives, a frame after the scroll, and
+  // a clock jump made before that would find the wait not started and the anchor the one from before the scroll.
+  if ((await page.evaluate(() => window.scrollY)) !== yBefore) {
+    await expect.poll(scrollEvents, { message: "the scroll event arrives" }).toBeGreaterThan(eventsBefore);
+  }
   // The page is still for longer than the hook waits, and it has picked its anchor again.
   await page.clock.fastForward(1000);
   await page.evaluate(
@@ -3210,23 +3368,39 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   const feed = page.locator('section[aria-labelledby="recent-heading"]');
   const rows = await feed.locator("li").count();
   const topOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top);
+  // Where the button is on the page, which the scroll position does not change.
+  const placeOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top + window.scrollY);
   const topBefore = await topOf();
+  const placeBefore = await placeOf();
   await page.clock.fastForward("03:00");
   await expect(feed.locator("li")).not.toHaveCount(rows);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-  // The check adds a row to the feed (the cards drop) and clears the "Changed" tags (the cards above rise by
-  // less), so the cards net drop, and holding them means scrolling down: every step is positive, and the
-  // button the page was scrolled to is where it was in the window.
+  // The check adds a row to the feed (the cards drop) and clears the "Changed" tags of the cards above them (the
+  // cards rise). Which of the two is more depends on the layout: the fixture differs from the server's board on
+  // most of its cards, so most of them wear a tag. The new row adds 63px; clearing the tags frees 36px where their
+  // text wraps one way (a headed Chromium) and 108px where it wraps the other (the headless shell CI runs), so the
+  // cards may net drop or net rise. Holding them means scrolling by exactly the distance they moved, whichever way,
+  // and never a step the other way; and the button the page was scrolled to is where it was in the window.
+  const moved = (await placeOf()) - placeBefore;
+  expect(Math.abs(moved), "the check moved the cards").toBeGreaterThan(1);
   const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy ?? []);
   expect(scrolled.length).toBeGreaterThan(0);
-  expect(scrolled.every((by) => by > 0)).toBe(true);
+  expect(
+    scrolled.every((by) => Math.sign(by) === Math.sign(moved)),
+    `every step of ${scrolled.join(", ")} goes the way the cards moved (${moved})`,
+  ).toBe(true);
+  const followed = scrolled.reduce((sum, by) => sum + by, 0);
+  expect(
+    Math.abs(followed - moved),
+    `the page followed the cards by ${followed}, which moved ${moved}`,
+  ).toBeLessThanOrEqual(1);
   expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
 });
 
 test("operates Show all from the keyboard", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "a keyboard is the desktop project's");
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-spotify");
   await card.locator("summary").focus();
   await page.keyboard.press("Enter");
@@ -3241,7 +3415,7 @@ test("operates Show all from the keyboard", async ({ page }, testInfo) => {
 
 test("gives an attention card the same dropdown, with the working components in it", async ({ page }) => {
   const board = fixtureBoard(Date.now());
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-gcp");
   // The broken components stay in view; the working ones wait in the dropdown.
   await expect(card.locator("[data-component-row]")).toHaveCount(2);
@@ -3249,6 +3423,8 @@ test("gives an attention card the same dropdown, with the working components in 
   await expect(dropdown).toHaveCount(1);
   await expect(dropdown.locator("summary")).toContainText("Working components");
   await dropdown.locator("summary").click();
+  // The dropdown itself says whether the press opened it; a list that never shows could be anything.
+  await expect(dropdown).toHaveAttribute("open", "");
   const list = dropdown.getByRole("list", { name: "Components" });
   await expect(list.getByRole("listitem")).toHaveCount(6);
   await dropdown.getByRole("button", { name: /^Show all 38/ }).click();
@@ -3282,7 +3458,7 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
       startedAt: new Date(Date.now() - 600_000).toISOString(),
     },
   ];
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
 
   // The attention card: the broken component in view, the working ones in the dropdown.
   const card = page.locator("article#service-claude");
@@ -3290,6 +3466,8 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
   const dropdown = card.locator("details[data-healthy-components]");
   await expect(dropdown.locator("summary")).toContainText("Working components");
   await dropdown.locator("summary").click();
+  // The dropdown itself says whether the press opened it; a list that never shows could be anything.
+  await expect(dropdown).toHaveAttribute("open", "");
   const list = dropdown.getByRole("list", { name: "Components" });
   await expect(list.getByRole("listitem")).toHaveCount(6);
   await dropdown.getByRole("button", { name: /^Show all 299/ }).click();
@@ -3307,6 +3485,7 @@ test("shows the dropdown for a Statuspage vendor on a healthy row and on an atte
   const row = page.locator("article#service-chatgpt");
   await expect(group(page, "up").and(row)).toHaveCount(1);
   await row.locator("summary").click();
+  await expect(row.locator("details")).toHaveAttribute("open", "");
   await expect(row.getByRole("list", { name: "Components" }).getByRole("listitem")).toHaveCount(5);
   await expect(row.getByRole("button", { name: /^Show all/ })).toHaveCount(0);
 });
@@ -3319,7 +3498,7 @@ test("closing a long list of broken rows on an attention card keeps its button i
     name: `Broken ${index + 1}`,
     health: "degraded" as const,
   }));
-  await openFixture(page, () => board);
+  await openFixtureInSlot(page, () => board);
   const card = page.locator("article#service-gcp");
   await card.getByRole("button", { name: /^Show all 120/ }).click();
   const fewer = card.getByRole("button", { name: /^Show fewer/ });
