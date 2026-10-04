@@ -11,14 +11,9 @@ import { routeTree } from "./routeTree.gen";
 // scripts) and into a <meta property="csp-nonce"> the browser's router reads back. The browser has no nonce to
 // make: the server's scripts are already running by then, so only the server branch exists.
 const renderingNonce = createIsomorphicFn()
-  .server(() => {
-    try {
-      return nonceForRequest(getRequest());
-    } catch {
-      // Outside a request (a router built for a redirect after the middleware ran): nothing to stamp.
-      return undefined;
-    }
-  })
+  // No try/catch: getRouter runs inside the request's own context (a redirect's router too), so getRequest()
+  // does not throw here. If it ever did, a page with no nonces would not hydrate; better that it fails loudly.
+  .server(() => nonceForRequest(getRequest()))
   .client(() => undefined);
 
 export function getRouter() {

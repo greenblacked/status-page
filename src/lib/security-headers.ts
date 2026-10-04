@@ -43,9 +43,9 @@ export function nonceForRequest(request: Request): string {
  *
  * `style-src` keeps 'unsafe-inline' on purpose. The page needs inline
  * styles that no nonce can cover: React writes `style="..."` attributes
- * (the board sets custom properties and sizes that way), and the framework
- * inlines the route's CSS. A style cannot run code, so the exposure is
- * limited to restyling the page, which is not what this policy guards.
+ * (the board sets custom properties and sizes that way). A style cannot run
+ * code, so the exposure is limited to restyling the page, which is not what
+ * this policy guards. `style-src-attr` could one day tighten this.
  */
 function contentSecurityPolicy(nonce: string): string {
   return [
