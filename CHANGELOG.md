@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Changed
+
+- The footer's disclaimer reads more formally: the board is an independent project, not affiliated with or endorsed by the vendors, and reads their official public status pages and feeds.
+
 ### Fixed
 
 - Tilt lighting moves more smoothly on slower phones. The light used to repaint the glass and restyle most of the board about thirty times a second while you tilted, which made a phone lag. Now the glow is drawn once and only slid across the panel, so moving it no longer repaints anything and the browser's style work all but disappears (on a CPU slowed four times, from about 300-490 ms a second to about 15-35, and from over a hundred repaints to a handful in three seconds). The slide still has a cost: the browser has to commit the moved layers every frame, so the page still does noticeably more work than with the light off (on that slowed CPU, two to four times the main-thread time), and the glow follows your hand on every frame the phone can keep up with, and backs off if frames start to drop. Nothing is done while no panel is on screen. The light looks the same when the phone is held still and close to it while it moves; the floating bar and the settings dialog keep a still sheen instead of one that turns with the tilt.
