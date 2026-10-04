@@ -48,7 +48,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
 | **At home on Apple devices** | Warm paper in light and true black in dark as your system is set, opaque panels with a hairline, the system typeface on Apple devices, and colour kept to small exact points. Pick **Glass** or **Full** in Settings for frosted panels over a still glow, or the slow drift, small glass bubbles that float over the glow, a light that wanders across the cards and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
 | **Open integrations** | A current-status JSON API, an Atom feed, Shields.io badges and Prometheus metrics |
-| **Runs anywhere** | Any Node host or Cloudflare Workers, with an in-memory cache per process or isolate. `docker compose` for a local run with no Node install |
+| **Runs anywhere** | A Docker image (amd64 and arm64, signed), any Node host, or Cloudflare Workers, with an in-memory cache per process or isolate. No keys, no database, no volume |
 
 ## What it watches
 
@@ -175,7 +175,7 @@ pnpm run dev
 
 Open the local URL that Vite prints. The first load reads all twenty sources, which can take a few seconds.
 
-No Node on the machine? Docker is enough: `docker compose up preview` builds the board and serves it on http://127.0.0.1:4173.
+No Node on the machine? Docker is enough: `docker compose up preview` builds the board and serves it on http://127.0.0.1:4173. To run the board rather than work on it, see [Self-host with Docker](#self-host-with-docker).
 
 ### On the board
 
@@ -328,10 +328,47 @@ groups:
 | Where | How |
 | --- | --- |
 | **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `main` to the `status-page` Worker at [status.szolotov.com](https://status.szolotov.com) and creates `stage` as a Worker Preview named `stage` of that same Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com); `dev` deploys nothing. Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested, and a production deploy is rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
-| **Any Node host** | `pnpm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice, and serve `/assets/*` (hashed files that never change) with `Cache-Control: public, max-age=31536000, immutable`, the rule in [`public/_headers`](public/_headers), which only Cloudflare reads; without it a return visit loads Inter too late for `font-display: optional` and stays in the system font. `pnpm run preview` is a smoke test of that build, not a production host |
-| **Docker** | `docker compose up preview` serves the built board from the public CI images, for a local run or a quick demo |
+| **Any Node host** | `pnpm run build`, then `HOST=0.0.0.0 PORT=8080 pnpm start`. [`src/node/serve.ts`](src/node/serve.ts) is a small production server on `node:http` alone: it serves `dist/client` with `Cache-Control: public, max-age=31536000, immutable` on `/assets/*` (hashed files that never change, the rule in [`public/_headers`](public/_headers) that only Cloudflare reads) and an hour on the other files, compresses text with Brotli or gzip, sends the [security headers](src/lib/security-headers.ts) on every response, answers `/healthz`, logs one JSON line per request to stdout and stops cleanly on `SIGTERM`. The settings are in [Self-host with Docker](#self-host-with-docker). `pnpm run preview` is a smoke test of the build, not a production host |
+| **Docker** | [`ghcr.io/greenblacked/status-page`](#self-host-with-docker), the same server in an image that runs as a non-root user on a read-only root. `docker compose up preview` is the other thing: it serves the built board from the public CI images, for a local run or a quick demo |
 
 The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
+
+### Self-host with Docker
+
+Every release publishes `ghcr.io/greenblacked/status-page` for linux/amd64 and linux/arm64 (a Raspberry Pi 4 or 5 included), built from the release's tag with a provenance attestation and an SBOM, and signed with cosign. The board needs no API keys, no database and no volume: the container only needs outbound HTTPS to the vendors. It runs as the unprivileged `node` user and writes nothing to disk, so a read-only root and no capabilities work as they are.
+
+```bash
+docker run -d --name status-page -p 3000:3000 --restart unless-stopped \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  ghcr.io/greenblacked/status-page:latest
+```
+
+Open http://localhost:3000. The same in Compose, saved as `compose.yaml`, then `docker compose up -d`:
+
+```yaml
+services:
+  status-page:
+    image: ghcr.io/greenblacked/status-page:latest
+    ports: ["127.0.0.1:3000:3000"]
+    read_only: true
+    restart: unless-stopped
+```
+
+Pin a version tag (`:X.Y.Z`, as released) or an `@sha256:` digest instead of `:latest` if you want updates to be your decision. Verify what you pulled with the command in [CONTRIBUTING.md](CONTRIBUTING.md#verifying-a-release). To build it yourself: `docker build -t status-page .`, or `docker compose --profile serve up --build status-page` in a checkout (add `--build-arg VITE_STATUS_HISTORY=1` to `docker build` for the [uptime history strip](#on-the-board)).
+
+The container serves plain HTTP and does not terminate TLS: put Caddy, nginx, Traefik or your platform's load balancer in front of it. The security headers include `Strict-Transport-Security`, which browsers ignore over HTTP and obey over HTTPS.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `PORT` | `3000` | The port to listen on, inside the container |
+| `HOST` | `0.0.0.0` in the image, `127.0.0.1` from `pnpm start` | The address to bind |
+| `TRUST_PROXY` | off | Set to `1` behind a reverse proxy that sets `X-Forwarded-Proto` and `X-Forwarded-Host`, so the board sees its public `https://` address. Leave it off when the container is reached directly: any client can send those headers |
+| `SHUTDOWN_TIMEOUT_MS` | `10000` | How long `SIGTERM` waits for requests in flight before closing them |
+
+- **Health:** the image has a `HEALTHCHECK` on `/healthz`, which never reads the board. For a Kubernetes liveness probe use `/healthz`; use `/readyz` for readiness or a monitor ([Integrations](#integrations)).
+- **Logs:** one JSON line per request, plus the collectors' own lines, on stdout, so `docker logs` and any log shipper read them as they are. `/healthz` is not logged while it answers 200.
+- **Scaling:** each process keeps its own 45-second snapshot in memory. Run one container; a second only doubles the requests to the vendors.
+- **Stopping:** `docker stop` sends `SIGTERM`, the server stops accepting connections, lets requests in flight finish and exits 0.
 
 ### Branches and deploys
 
@@ -419,6 +456,7 @@ React 19 on TanStack Start, Tailwind CSS 4, TypeScript in strict mode, Vitest an
 | `pnpm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
 | `pnpm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `pnpm run build` first, and `pnpm exec playwright install chromium webkit` once |
 | `pnpm run build` / `pnpm run preview` | Production build into `dist/`, and a local server for it |
+| `pnpm start` | The production server ([`src/node/serve.ts`](src/node/serve.ts), the one the Docker image runs) for what `pnpm run build` made. `PORT` and `HOST` set the address |
 | `pnpm run build:cf` / `pnpm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
 | `pnpm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
 | `pnpm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
@@ -463,7 +501,8 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 | Lint | Biome lint and format, repository hygiene, documentation links, the changelog section, shellcheck |
 | Types and tests | Strict typecheck; unit tests on the pinned Node and Node 24, with coverage thresholds |
 | Build | Production build and SSR smoke test on both Node versions, with the client bundle size in the job summary |
-| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in light and dark: no console errors or hydration warnings, axe WCAG 2.2 AA, the contrast of every status and text colour on the glass's flat fills (on a fixture board, blur stripped, in light, dark and Increase Contrast), keyboard paths |
+| Docker image | The Dockerfile built for amd64 and started as a self-hoster runs it (read-only root, no capabilities): healthy, smoke-tested, stopped cleanly by `SIGTERM` |
+| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in light and dark, and Chromium again behind the production Node server for its caching, compression and headers: no console errors or hydration warnings, axe WCAG 2.2 AA, the contrast of every status and text colour on the glass's flat fills (on a fixture board, blur stripped, in light, dark and Increase Contrast), keyboard paths |
 | Conventions | Conventional Commit messages and PR title, branch name |
 | Workflows | actionlint and zizmor, so no workflow change weakens the pipeline |
 | Security | CodeQL for TypeScript and the workflows, dependency review |

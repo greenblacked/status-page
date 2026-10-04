@@ -8,6 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- **Self-hosting with Docker.** Each release now publishes a signed `ghcr.io/greenblacked/status-page` image for amd64 and arm64, with provenance and an SBOM. It needs no keys, no database and no volume, runs as a non-root user on a read-only root, has a health check, and stops cleanly on `SIGTERM`. The README has a `docker run` line and a six-line Compose file. Behind it is a small production server for any Node host too (`pnpm start`, with `PORT`, `HOST` and `TRUST_PROXY`): it caches `/assets/*` for a year, compresses text, sends the security headers on every response and logs to stdout.
 - A short note on each **MikroTik RouterOS** and **Windows 11** release, on a line under its row's versions and in its **Details**. RouterOS shows how many changes its own changelog lists and which areas they touch, such as "23 changes: bgp, wifi, container +9 more · 2 important", with the lines MikroTik marks important first in Details; Windows shows what kind of update the version's latest build is (Security update, Optional preview or Out-of-band fix), with its KB article, linked when Microsoft's table links it. A release whose changelog or update type cannot be read, or whose newest changelog section may have been cut off, has no note.
 
 ### Changed
