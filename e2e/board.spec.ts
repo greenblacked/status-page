@@ -244,13 +244,35 @@ async function pinToSlot(page: Page): Promise<void> {
   const offset = Math.floor(Date.now() / 120_000) * 120_000 + 30_000 - Date.now();
   await page.addInitScript((shift) => {
     const Native = Date;
-    const now = () => Native.now() + shift;
+    let stopped: number | null = null;
+    const now = () => stopped ?? Native.now() + shift;
+    (window as Window & { __stopClock?: () => void }).__stopClock = () => {
+      stopped ??= now();
+    };
     window.Date = new Proxy(Native, {
       construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [now()], newTarget),
       apply: (target) => new target(now()).toString(),
       get: (target, key) => (key === "now" ? now : Reflect.get(target, key, target)),
     });
   }, offset);
+}
+
+/**
+ * Stops the page's Date where it is, on a page that pinToSlot moved (timers and frames run on). Every text on the board
+ * that counts from now stands still from here: the running time of an incident, the countdown, the ages. A test of the
+ * board's geometry or of its layout shifts is about what its own actions move, and a clock that crosses a minute
+ * under it moves text that has nothing to do with them. The e2e payloads make that likely and not rare: the dates of
+ * a canned payload are moved to the moment it is read, and several of its incidents began a whole number of hours
+ * before, so "since 14:05 UTC (3h)" reads "(3h 1m)", 23px wider, a minute after the board was built, wherever in a
+ * test that falls (Chromium counts it as a layout shift of 0.0004).
+ */
+async function stopClock(page: Page): Promise<void> {
+  const stopped = await page.evaluate(() => {
+    const stop = (window as Window & { __stopClock?: () => void }).__stopClock;
+    stop?.();
+    return stop !== undefined;
+  });
+  expect(stopped, "the page's clock was pinned (pinToSlot) before it could be stopped").toBe(true);
 }
 
 /**
@@ -933,6 +955,7 @@ async function dockPath(page: Page, step = 8): Promise<{ up: number[]; path: num
  */
 async function revealBoard(page: Page): Promise<DockOffsets & { limit: number }> {
   await steadyBoard(page);
+  await stopClock(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
   test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
@@ -952,6 +975,7 @@ async function revealServedBoard(
   await openFixture(page, () => board(Date.now()), ready);
   await fontsSettled(page);
   await leadSteady(page);
+  await stopClock(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
   test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
