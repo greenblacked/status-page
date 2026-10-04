@@ -340,6 +340,53 @@ async function openSettings(page: Page): Promise<void> {
   await expect(page.getByRole("dialog")).toBeVisible();
 }
 
+/**
+ * The first card's wandering light, as the browser has it: the name of the CSS animation on its ::after, the
+ * wander animations that are running on the page (any card's), and what the pseudo-element draws.
+ */
+const wanderOf = (page: Page) =>
+  page.evaluate(() => {
+    const card = document.querySelector(".spotlight");
+    if (!card) return null;
+    const style = getComputedStyle(card, "::after");
+    const wanders = document
+      .getAnimations()
+      .filter(
+        (animation): animation is CSSAnimation =>
+          animation instanceof CSSAnimation && animation.animationName.startsWith("light-wander"),
+      );
+    return {
+      attribute: card.hasAttribute("data-wander"),
+      animationName: style.animationName,
+      content: style.content,
+      display: style.display,
+      transform: style.transform,
+      translate: style.translate,
+      running: wanders.filter((animation) => animation.playState === "running").length,
+      all: wanders.length,
+    };
+  });
+
+/** Chooses the Full background on every load of this page, after the file's start-on-Glass script. */
+const startOnFull = (page: Page) =>
+  page.addInitScript(() => {
+    try {
+      localStorage.setItem("status-bar:background", "full");
+    } catch {
+      // Storage can refuse; the page then stays Quiet and the tests say so.
+    }
+  });
+
+/** Waits until the first card's light wanders: seeded after hydration, then drawn. */
+async function wandering(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const light = await wanderOf(page);
+      return light?.attribute === true && /^light-wander-[a-d]$/.test(light.animationName) && light.running > 0;
+    })
+    .toBe(true);
+}
+
 const tiltSwitch = (page: Page) => page.getByRole("switch", { name: "Tilt lighting" });
 const storedChoice = (page: Page) => page.evaluate((key) => localStorage.getItem(key), TILT_STORAGE_KEY);
 
@@ -973,6 +1020,135 @@ test.describe("on a touch device", () => {
     await page.emulateMedia({ contrast: "no-preference" });
     await tiltFromRest(page);
     await expect(html(page)).toHaveAttribute("data-tilt", "on");
+  });
+
+  test("wanders on its own in Full with Tilt lighting off, and moves", async ({ page }) => {
+    await startOnFull(page);
+    await page.reload();
+    await hydrated(page);
+    await expect(html(page)).toHaveAttribute("data-background", "full");
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    await wandering(page);
+    const light = await wanderOf(page);
+    expect(light).toMatchObject({ content: '""', display: "block" });
+    // Where it is drawn changes over time, with nothing driving it but the style sheet.
+    await expect.poll(async () => (await wanderOf(page))?.transform, { timeout: 10_000 }).not.toBe(light?.transform);
+    expect(await lightHolders(page)).toBe(0);
+    // Not every card is in step.
+    const seen = await page
+      .locator(".spotlight")
+      .evaluateAll((cards) => new Set(cards.map((card) => getComputedStyle(card, "::after").transform)).size);
+    expect(seen).toBeGreaterThan(1);
+  });
+
+  test("does not wander in Glass or Quiet", async ({ page }) => {
+    // The file starts on Glass.
+    await page.reload();
+    await hydrated(page);
+    await expect(html(page)).toHaveAttribute("data-background", "glass");
+    expect(await wanderOf(page)).toMatchObject({ all: 0, running: 0, content: "none" });
+
+    await page.addInitScript(() => localStorage.removeItem("status-bar:background"));
+    await page.reload();
+    await hydrated(page);
+    await expect(html(page)).not.toHaveAttribute("data-background");
+    expect(await wanderOf(page)).toMatchObject({ all: 0, running: 0, content: "none" });
+  });
+
+  for (const [name, media] of [
+    ["Reduce Motion", { reducedMotion: "reduce" }],
+    ["Increase Contrast", { contrast: "more" }],
+    ["forced colours", { forcedColors: "active" }],
+  ] as const) {
+    test(`does not wander under ${name}, and does again without it`, async ({ page }) => {
+      await startOnFull(page);
+      await page.reload();
+      await hydrated(page);
+      await wandering(page);
+      await page.emulateMedia(media);
+      // The light is hidden outright, so no animation is left running.
+      await expect.poll(async () => wanderOf(page)).toMatchObject({ display: "none", running: 0, all: 0 });
+      await page.emulateMedia({ reducedMotion: "no-preference", contrast: "no-preference", forcedColors: "none" });
+      await wandering(page);
+    });
+  }
+
+  test("does not wander under Reduce glass, and does again without it", async ({ page }) => {
+    await startOnFull(page);
+    await page.reload();
+    await hydrated(page);
+    await wandering(page);
+    await openSettings(page);
+    await page.getByRole("switch", { name: "Reduce glass" }).click();
+    await expect.poll(async () => wanderOf(page)).toMatchObject({ display: "none", running: 0, all: 0 });
+    await page.getByRole("switch", { name: "Reduce glass" }).click();
+    await wandering(page);
+  });
+
+  test("keeps wandering until Tilt lighting really drives the light", async ({ page }) => {
+    await startOnFull(page);
+    await page.reload();
+    await hydrated(page);
+    await wandering(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "true");
+    // Switched on, but no reading yet: nothing drives the light, so the wander is still the light.
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    await wandering(page);
+  });
+
+  test("keeps wandering when motion access is declined", async ({ page }) => {
+    await stubMotionPermission(page, "throws");
+    await startOnFull(page);
+    await page.reload();
+    await hydrated(page);
+    await openSettings(page);
+    await tiltSwitch(page).click();
+    await expect(page.getByText("Motion access was declined")).toBeVisible();
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    await wandering(page);
+  });
+
+  test("hands the light to Tilt lighting while it is on, and takes it back when it is off", async ({ page }) => {
+    const problems = watchConsole(page);
+    await startOnFull(page);
+    await page.reload();
+    await hydrated(page);
+    await wandering(page);
+    await openSettings(page);
+    await page.locator(".spotlight").first().scrollIntoViewIfNeeded();
+
+    await tiltSwitch(page).click();
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+    // The glint is tilt's: the wander is gone from every card (no two animations on one ::after), and
+    // the glint is drawn on the card at the size the tilt gives it, following the tilt.
+    await expect.poll(async () => wanderOf(page)).toMatchObject({ animationName: "none", running: 0, all: 0 });
+    expect((await cardLight(page)).glint).not.toBe("none");
+    await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+    const leftDown = await glintShift(page, ".spotlight");
+    await tiltUntil(page, 30, 45, "--light-x", (x) => x * LIGHT_SIGN <= -0.5);
+    const rightDown = await glintShift(page, ".spotlight");
+    expect(leftDown.x).not.toBeCloseTo(rightDown.x, 0);
+    expect(await wanderOf(page)).toMatchObject({ animationName: "none", running: 0, all: 0 });
+    expect(await lightHolders(page)).toBeGreaterThan(0);
+
+    // Off: the wander comes back, the tilt's animations and values are gone, and nothing is left shifted.
+    await tiltSwitch(page).click();
+    await expect(html(page)).not.toHaveAttribute("data-tilt");
+    expect(await lightHolders(page)).toBe(0);
+    await wandering(page);
+    const back = await wanderOf(page);
+    expect(back?.translate).toBe("none");
+    await expect.poll(async () => (await wanderOf(page))?.transform, { timeout: 10_000 }).not.toBe(back?.transform);
+
+    // And on again: tilt takes it over a second time.
+    await tiltSwitch(page).click();
+    await tiltFromRest(page);
+    await expect(html(page)).toHaveAttribute("data-tilt", "on");
+    await expect.poll(async () => wanderOf(page)).toMatchObject({ animationName: "none", running: 0, all: 0 });
+    expect(problems).toEqual([]);
   });
 
   test("falls back to the properties when an engine takes pseudoElement and draws nothing", async ({ page }) => {

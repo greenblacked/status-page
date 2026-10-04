@@ -643,8 +643,7 @@ test.describe("card light", () => {
       .locator(".spotlight")
       .first()
       .evaluate((node) => getComputedStyle(node, "::after").opacity);
-  // The wander is the hover-capable devices' light; touch screens get Tilt lighting instead, so they draw none here.
-  const fine = (page: Page) => page.evaluate(() => matchMedia("(hover: hover) and (pointer: fine)").matches);
+  // The wander runs on every device, a touch screen's included, unless Tilt lighting has taken the light over.
   const wandering = (page: Page) =>
     page
       .locator(".spotlight")
@@ -667,7 +666,6 @@ test.describe("card light", () => {
     await chooseBackground(page, "full");
     await page.goto("/");
     await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
     await expect.poll(() => wandering(page)).toBe(true);
     expect(
       await page
@@ -684,7 +682,6 @@ test.describe("card light", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
     await expect.poll(() => wandering(page)).toBe(true);
     const before = await lightTransform(page, 0);
     await page.waitForTimeout(2500);
@@ -719,7 +716,6 @@ test.describe("card light", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
     await expect.poll(() => wandering(page)).toBe(true);
     const count = await page.locator(".spotlight").count();
     expect(count).toBeGreaterThan(1);
@@ -733,7 +729,6 @@ test.describe("card light", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
     const display = () =>
       page
         .locator(".spotlight")
@@ -746,14 +741,14 @@ test.describe("card light", () => {
     await expect.poll(display, "hidden under Reduce glass").toBe("none");
   });
 
-  test("touch screens show no wandering light on Full", async ({ page }) => {
+  test("wanders on every device, touch screens too, with no Tilt lighting", async ({ page }) => {
     await chooseBackground(page, "full");
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(await fine(page), "hover-capable devices draw the wandering light");
-    // No Tilt lighting is on, so nothing drives a light here either.
+    // Nothing drives a light here, so the wander is the light on every device.
     await expect(page.locator("html")).not.toHaveAttribute("data-tilt", "on");
+    await expect.poll(() => wandering(page)).toBe(true);
     const light = await page
       .locator(".spotlight")
       .first()
@@ -761,8 +756,8 @@ test.describe("card light", () => {
         const style = getComputedStyle(node, "::after");
         return { animationName: style.animationName, content: style.content };
       });
-    expect(light.animationName).not.toMatch(/light-wander/);
-    expect(light.content).toMatch(/none|normal/);
+    expect(light.animationName).toMatch(/^light-wander-[a-d]$/);
+    expect(light.content).not.toMatch(/none|normal/);
   });
 
   test("stands still under reduced motion", async ({ page }) => {
