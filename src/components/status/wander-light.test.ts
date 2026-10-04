@@ -85,6 +85,7 @@ function fakeCard() {
 describe("startWanderLight", () => {
   let hidden: boolean;
   let tilt: string | undefined;
+  let background: string | undefined;
   let layer: { content: string; display: string };
   let visibility: (() => void) | undefined;
   let clock: number;
@@ -93,6 +94,7 @@ describe("startWanderLight", () => {
     vi.useFakeTimers();
     hidden = false;
     tilt = undefined;
+    background = "glass";
     layer = { content: '""', display: "block" };
     visibility = undefined;
     clock = 100;
@@ -108,7 +110,7 @@ describe("startWanderLight", () => {
       },
       documentElement: {
         get dataset() {
-          return { tilt };
+          return { tilt, background };
         },
       },
       addEventListener: (_: string, fn: () => void) => {
@@ -177,6 +179,26 @@ describe("startWanderLight", () => {
     vi.advanceTimersByTime(WANDER_TICK_MS);
     expect(card.dataset.wander).toBeDefined();
     layer = { content: "none", display: "none" };
+    vi.advanceTimersByTime(WANDER_TICK_MS);
+    expect(card.dataset.wander).toBeUndefined();
+  });
+
+  it("does nothing on Quiet, not even reading a style, and starts when Glass is chosen", () => {
+    let reads = 0;
+    vi.stubGlobal("getComputedStyle", () => {
+      reads++;
+      return layer;
+    });
+    background = undefined;
+    const card = fakeCard();
+    start(card);
+    vi.advanceTimersByTime(WANDER_TICK_MS * 4);
+    expect(reads).toBe(0);
+    expect(card.dataset.wander).toBeUndefined();
+    background = "full";
+    vi.advanceTimersByTime(WANDER_TICK_MS);
+    expect(card.dataset.wander).toBeDefined();
+    background = undefined;
     vi.advanceTimersByTime(WANDER_TICK_MS);
     expect(card.dataset.wander).toBeUndefined();
   });

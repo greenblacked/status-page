@@ -31,7 +31,8 @@ import { GLINT_QUERY } from "@/lib/status/tilt";
  * registered) and `.spotlight > *` resets them, so a write restyles the card and its
  * direct children, not the rows inside.
  *
- * Where it stops: nothing is written while the page is hidden, while Tilt
+ * Where it stops: nothing is written on Quiet (the page's data-background is not glass or full, so the timer
+ * does not even read a style), while the page is hidden, while Tilt
  * lighting is driving the card light (the glint takes the same ::after over on a
  * device with no hover-capable pointer), and while the style sheet hides the
  * layer (Quiet, Reduce Motion, Reduce glass, Increase Contrast, forced colours).
@@ -165,6 +166,9 @@ export function startWanderLight(
     if (document.hidden || tiltDrives()) return pause(cards);
     const sample = cards[0]?.[0];
     if (!sample) return;
+    // On Quiet (the default) there is no light: skip the computed-style read below, the timer does nothing else.
+    const background = document.documentElement.dataset.background;
+    if (background !== "glass" && background !== "full") return pause(cards);
     // The style sheet hides the layer in Quiet, under Reduce Motion, Reduce glass, Increase Contrast and forced colours.
     const layer = getComputedStyle(sample, "::after");
     if (layer.content === "none" || layer.display === "none") return pause(cards);
