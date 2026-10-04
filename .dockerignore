@@ -1,0 +1,15 @@
+# Everything is left out of the build context unless it is listed below, so a
+# local node_modules, dist, .env or .git never reaches the image or its cache.
+*
+
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.json
+!vite.config.ts
+!public
+!src
+
+# Tests, and the generated route tree is rebuilt by the build.
+**/*.test.ts
+src/test
