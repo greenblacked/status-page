@@ -4,7 +4,12 @@ import { service } from "../../test/fixtures.ts";
 import { type Handler, text } from "../../test/stub-fetch.ts";
 import { runWithCloudflareContext } from "./cloudflare-context.ts";
 import { collectBoard } from "./collect-board.ts";
-import { clearMikrotikNotesCache, startMikrotikNotes, withMikrotikNotes } from "./mikrotik-notes.server.ts";
+import {
+  clearMikrotikNotesCache,
+  isWholeChangelog,
+  startMikrotikNotes,
+  withMikrotikNotes,
+} from "./mikrotik-notes.server.ts";
 import { clearReleaseFeedCache, RELEASE_FEED_RETRY_MS, RELEASE_SOURCES } from "./release-feeds.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
 
@@ -251,6 +256,72 @@ describe("MikroTik changelog notes", () => {
       expect(release?.note).toBeUndefined();
     });
 
+    describe("whether the read is the whole file is judged from bytes, not from characters", () => {
+      const RANGE = 65_536;
+      const heading = "What's new in 7.20.2 (2026-Sep-15 09:30):\n";
+      /** Mostly three-byte characters, so the body decodes to well under 64,000 characters. */
+      const line = (at: number) => `*) area${at} - ${"変".repeat(12)};\n`;
+      /** `lead` plus bullet lines, then `tail`, padded with spaces to exactly `size` bytes. */
+      function sized(size: number, lines: number, tail = ""): Uint8Array<ArrayBuffer> {
+        const head = Buffer.from(heading + Array.from({ length: lines }, (_, at) => line(at)).join(""));
+        const end = Buffer.from(tail);
+        const pad = Buffer.alloc(size - head.length - end.length, " ");
+        return new Uint8Array(Buffer.concat([head, pad, end]));
+      }
+      const answer =
+        (body: Uint8Array<ArrayBuffer>, init: { status?: number; headers?: Record<string, string> } = {}): Handler =>
+        () =>
+          new Response(body, {
+            status: init.status ?? 200,
+            headers: { "content-type": "text/plain", ...init.headers },
+          });
+      async function noteOf(handler: Handler) {
+        route({ ...changelogs(), [changelog("7.20.2")]: handler });
+        await startMikrotikNotes([card()]);
+        return withMikrotikNotes([card()])[0].components[0].release;
+      }
+
+      it("the fixture really is 65,536 bytes that decode to fewer than 64,000 characters", () => {
+        const body = sized(RANGE, 900);
+        expect(body.byteLength).toBe(RANGE);
+        expect(new TextDecoder().decode(body).length).toBeLessThan(64_000);
+      });
+
+      it("a full-range read inside the newest section gives the first notes and no note", async () => {
+        const release = await noteOf(answer(sized(RANGE, 900)));
+        expect(release?.notes).toHaveLength(4);
+        expect(release?.note).toBeUndefined();
+      });
+
+      it("the same read with a second heading closing the section gives the exact count", async () => {
+        const release = await noteOf(answer(sized(RANGE, 900, "\nWhat's new in 7.20.1:\n*) x - y;\n")));
+        expect(release?.note?.text).toBe("900 changes: area0, area1, area2 +897 more");
+      });
+
+      it("a short whole file gives a note", async () => {
+        const release = await noteOf(answer(sized(RANGE - 1, 900)));
+        expect(release?.note?.text).toBe("900 changes: area0, area1, area2 +897 more");
+      });
+
+      it("a 206 whose Content-Range total equals the bytes received is the whole file", async () => {
+        const release = await noteOf(
+          answer(sized(RANGE, 900), { status: 206, headers: { "content-range": `bytes 0-${RANGE - 1}/${RANGE}` } }),
+        );
+        expect(release?.note?.text).toBe("900 changes: area0, area1, area2 +897 more");
+      });
+
+      it("a 206 with a larger or unknown total, or a 200 of exactly the range, may have been cut", async () => {
+        for (const range of [`bytes 0-${RANGE - 1}/${RANGE * 4}`, `bytes 0-${RANGE - 1}/*`, "", "garbage"]) {
+          clearMikrotikNotesCache();
+          const release = await noteOf(
+            answer(sized(RANGE, 900), { status: 206, headers: range ? { "content-range": range } : {} }),
+          );
+          expect(release?.note, range).toBeUndefined();
+          expect(release?.notes, range).toHaveLength(4);
+        }
+      });
+    });
+
     it("never throws or rejects, whatever the changelog host does", async () => {
       vi.stubGlobal("fetch", () => Promise.reject(new TypeError("fetch failed")));
       await expect(startMikrotikNotes([card()])).resolves.toBeUndefined();
@@ -475,5 +546,27 @@ describe("MikroTik changelog notes", () => {
       const next = await collectBoard();
       expect(next.services.find((card) => card.id === "mikrotik")?.summary).toContain("What's new in 7.21beta4");
     });
+  });
+});
+
+describe("isWholeChangelog", () => {
+  it("is true for a body shorter than the range, whatever the status", () => {
+    expect(isWholeChangelog(0, 200, "")).toBe(true);
+    expect(isWholeChangelog(65_535, 200, "")).toBe(true);
+    expect(isWholeChangelog(65_535, 206, "bytes 0-65534/999999")).toBe(true);
+  });
+
+  it("is true for a 206 that shows its total equal to the bytes received", () => {
+    expect(isWholeChangelog(65_536, 206, "bytes 0-65535/65536")).toBe(true);
+  });
+
+  it("is false for exactly the range's size without that proof", () => {
+    expect(isWholeChangelog(65_536, 200, "")).toBe(false);
+    expect(isWholeChangelog(65_536, 200, "bytes 0-65535/65536")).toBe(false);
+    expect(isWholeChangelog(65_536, 206, "bytes 0-65535/*")).toBe(false);
+    expect(isWholeChangelog(65_536, 206, "bytes 0-65535/200000")).toBe(false);
+    expect(isWholeChangelog(65_536, 206, "bytes 100-65635/65636")).toBe(false);
+    expect(isWholeChangelog(65_536, 206, "")).toBe(false);
+    expect(isWholeChangelog(200_000, 200, "")).toBe(false);
   });
 });

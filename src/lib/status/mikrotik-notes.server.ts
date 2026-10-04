@@ -38,6 +38,19 @@ const NOTES_TIMEOUT_MS = 4000;
  */
 const CHANGELOG_RANGE_BYTES = 65_536;
 
+/**
+ * Whether a read is certainly the entire file, judged from bytes and HTTP metadata and never from the decoded text
+ * (a cut can fall inside a multi-byte character, so the text's length says nothing about it): a body shorter than
+ * the range asked for was not cut by our own limit, and a 206 whose Content-Range total equals what arrived is the
+ * whole file. Exactly the range's size, an unknown ("*") or missing total, or anything else is not known to be whole.
+ */
+export function isWholeChangelog(received: number, status: number, contentRange: string): boolean {
+  if (received < CHANGELOG_RANGE_BYTES) return true;
+  if (status !== 206) return false;
+  const match = /^bytes 0-(\d{1,15})\/(\d{1,15})$/.exec(contentRange.trim());
+  return match !== null && Number(match[2]) === received && Number(match[1]) === received - 1;
+}
+
 const readings = new Map<string, { at: number; read: MikrotikNotes | undefined }>();
 
 function remember(version: string, read: MikrotikNotes | undefined): void {
@@ -77,7 +90,7 @@ async function readNotes(version: string): Promise<MikrotikNotes | undefined> {
   const url = mikrotikChangelogUrl(version);
   if (!url) return undefined;
   try {
-    const { body } = await fetchText(url, {
+    const { body, bytes, status, contentRange } = await fetchText(url, {
       headers: { Range: `bytes=0-${CHANGELOG_RANGE_BYTES - 1}` },
       timeoutMs: NOTES_TIMEOUT_MS,
     });
@@ -86,7 +99,9 @@ async function readNotes(version: string): Promise<MikrotikNotes | undefined> {
     if (!mikrotikChangelogIsFor(body, version)) return undefined;
     const notes = mikrotikChangelogNotes(body);
     if (notes.length === 0) return undefined;
-    const note = mikrotikChangelogNote(body, version);
+    const note = mikrotikChangelogNote(body, version, {
+      whole: isWholeChangelog(bytes.byteLength, status, contentRange),
+    });
     return { summary: summarizeMikrotikChangelog(body), notes, ...(note ? { note } : {}) };
   } catch {
     return undefined;

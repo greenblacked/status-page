@@ -130,13 +130,20 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  * "23 changes: bgp, wifi, container +9 more · 2 important"; the Details get every area and the important lines'
  * text. Undefined when:
  * - the section is not for `version` (the first heading must name it exactly), or has no change lines;
- * - the section may have been cut: the file was read only as far as MAX_NOTES_SCAN_CHARS and no later heading
- *   shows that this section ended, so a count would be a guess.
+ * - the section may have been cut: a count is made only when a later "What's new in" heading shows that this
+ *   section ended, or when `whole` says the text is certainly the entire file and the scan reached its end within
+ *   MAX_NOTES_SCAN_CHARS. Whether a read was cut is a matter of bytes and HTTP metadata, which the text cannot show
+ *   (a cut that falls among multi-byte characters still decodes to fewer characters than the byte limit), so the
+ *   caller says it; without `whole` the text is taken as possibly cut, and an unclosed section has no note.
  *
  * One forward pass over at most MAX_NOTES_SCAN_CHARS, line by line with indexOf; the area test sees at most
  * NOTE_AREA_CHARS characters of a line.
  */
-export function mikrotikChangelogNote(text: string, version: string): ReleaseNote | undefined {
+export function mikrotikChangelogNote(
+  text: string,
+  version: string,
+  { whole = false }: { whole?: boolean } = {},
+): ReleaseNote | undefined {
   if (!mikrotikChangelogIsFor(text, version)) return undefined;
   const end = Math.min(text.length, MAX_NOTES_SCAN_CHARS);
   // Every distinct area is counted (lowercase, so "BGP" and "bgp" are one); only the first NOTE_MAX_AREAS are named.
@@ -177,8 +184,9 @@ export function mikrotikChangelogNote(text: string, version: string): ReleaseNot
       if (important.length < MAX_NOTE_LINES) important.push(clip(body, MAX_NOTE_CHARS));
     }
   }
-  // The whole file fits the window, or a later heading closed the section: either way the count is the section's.
-  if (changes === 0 || (!ended && text.length > MAX_NOTES_SCAN_CHARS)) return undefined;
+  // A later heading closed the section, or the text is the whole file and was scanned to its end: either way the
+  // count is the section's. Anything else may have lost lines to a cut, and a count would be a guess.
+  if (changes === 0 || (!ended && !(whole && text.length <= MAX_NOTES_SCAN_CHARS))) return undefined;
 
   const total = seenAreas.size;
   const more = total - NOTE_ROW_AREAS;

@@ -224,7 +224,7 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["a long run of blank lines", `What's new in 7.2:\n${"\n".repeat(SIZE)}*) a - b;`],
     ["carriage returns only", `What's new in 7.2:${"\r".repeat(SIZE)}*) a - b;`],
   ])("mikrotikChangelogNote: %s", (_label, text) => {
-    expect(elapsed(() => mikrotikChangelogNote(text, "7.2"))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => mikrotikChangelogNote(text, "7.2", { whole: true }))).toBeLessThan(BUDGET_MS);
   });
 
   it.each([
