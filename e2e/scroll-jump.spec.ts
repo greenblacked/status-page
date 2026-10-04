@@ -17,16 +17,16 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
-type Frame = { t: number; tops: Record<string, number>; y: number; rows: number; by: number };
+type Frame = { t: number; tops: Record<string, number>; y: number; rows: number; by: number; reader: number };
 
 /**
  * Logs the cards on every frame: the top in the window of each one in view, the scroll position, how many rows
- * Recent changes has and how far the page has scrolled itself by (window.scrollBy, which is how the page keeps a
- * place).
+ * Recent changes has, how far the page has scrolled itself by (window.scrollBy, which is how the page keeps a
+ * place) and how far the reader has scrolled it (for the readers that scroll it from the page).
  */
 async function logFrames(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const tracked = window as Window & { __frames?: Frame[]; __logging?: boolean; __by?: number };
+    const tracked = window as Window & { __frames?: Frame[]; __logging?: boolean; __by?: number; __reader?: number };
     tracked.__frames = [];
     tracked.__logging = true;
     const rows = () => document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length;
@@ -43,6 +43,7 @@ async function logFrames(page: Page): Promise<void> {
         y: window.scrollY,
         rows: rows(),
         by: tracked.__by ?? 0,
+        reader: tracked.__reader ?? 0,
       });
       requestAnimationFrame(frame);
     };
@@ -66,6 +67,8 @@ interface Reader {
   readonly at: number;
   /** When, in the page's clock, the page was last scrolled by the reader (a finger that rests has no such moment). */
   readonly movedAt?: number;
+  /** Whether the reader says how far it has scrolled the page (`window.__reader`), so a frame can be judged on what is on screen. */
+  readonly accounted: boolean;
   down(y: number): Promise<void>;
   dragBy(dy: number, step: number): Promise<void>;
   up(): Promise<void>;
@@ -75,6 +78,7 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** A finger on the glass: touch events over DevTools, one move every frame or so. Chromium only. */
 class Finger implements Reader {
+  readonly accounted = false;
   private y = 0;
   /** Where the finger is. */
   get at() {
@@ -118,6 +122,7 @@ type Pad = Window & {
  * (WebKit has no `Touch` constructor), a plain event with the same `touches`, which is all the page reads of it.
  */
 class SyntheticFinger implements Reader {
+  readonly accounted = true;
   private y = 0;
   /** "TouchEvent" or "Event": what the last event was made of. */
   shape = "";
@@ -193,7 +198,12 @@ class SyntheticFinger implements Reader {
       this.y += dy / steps;
       await this.fire("touchmove", this.y);
       // The page follows the finger: a finger that moves up takes the page down with it.
-      await this.page.evaluate((by) => window.scrollTo({ top: window.scrollY - by, behavior: "instant" }), dy / steps);
+      await this.page.evaluate((by) => {
+        const tracked = window as Window & { __reader?: number };
+        const from = window.scrollY;
+        window.scrollTo({ top: from - by, behavior: "instant" });
+        tracked.__reader = (tracked.__reader ?? 0) + window.scrollY - from;
+      }, dy / steps);
       await pause(16);
     }
   }
@@ -207,6 +217,7 @@ class SyntheticFinger implements Reader {
  * a mouse resting on the card the reader is on.
  */
 class Scroller implements Reader {
+  readonly accounted = true;
   private y = 0;
   /** When, in the page's clock, the page was last scrolled. */
   movedAt = 0;
@@ -236,7 +247,10 @@ class Scroller implements Reader {
         // stopped sending them is at rest.
         const room = document.documentElement.scrollHeight - window.innerHeight;
         const to = window.scrollY - by;
-        window.scrollTo({ top: to < 0 || to > room ? window.scrollY + by : to, behavior: "instant" });
+        const tracked = window as Window & { __reader?: number };
+        const from = window.scrollY;
+        window.scrollTo({ top: to < 0 || to > room ? from + by : to, behavior: "instant" });
+        tracked.__reader = (tracked.__reader ?? 0) + window.scrollY - from;
         return performance.now();
       }, dy / steps);
       await pause(16);
@@ -245,16 +259,23 @@ class Scroller implements Reader {
   async up() {}
 }
 
-/** The distance, in px, a frame moved the card on screen beyond what the page's own scroll accounts for. */
-function jumps(frames: Frame[], card: string): number[] {
+/**
+ * The distance, in px, a frame moved the card on screen beyond what the reader's own scroll accounts for.
+ *
+ * A reader that says how far it scrolled the page (`accounted`) is judged on what is on screen: the card's top,
+ * plus the reader's scroll in that frame. Whoever held the place, the page with `scrollBy` or the browser with its
+ * own scroll anchoring, leaves that at 0, and a card that the layout pushed down by a row and nobody held shows as
+ * the row. A reader that does not (a real touch drag over DevTools) is judged on the card's place on the page, less
+ * what the page scrolled itself by, which counts the page's `scrollBy` only: the run of it has no scroll anchoring.
+ */
+function jumps(frames: Frame[], card: string, accounted: boolean): number[] {
   const out: number[] = [];
   for (let i = 1; i < frames.length; i++) {
     const a = frames[i - 1];
     const b = frames[i];
     const [from, to] = [a.tops[card], b.tops[card]];
     if (from === undefined || to === undefined) continue;
-    // Where the card is on the page, less what the page scrolled itself by: a layout shift the page did not hold.
-    out.push(to + b.y - (from + a.y) - (b.by - a.by));
+    out.push(accounted ? to - from + (b.reader - a.reader) : to + b.y - (from + a.y) - (b.by - a.by));
   }
   return out;
 }
@@ -266,12 +287,20 @@ function jumps(frames: Frame[], card: string): number[] {
  * the reader is on where it was.
  *
  * `touching` is whether `reader` is a finger: Recent changes must not change while it is down, even while it rests.
+ *
+ * `anchoring` is what the browser does about scroll anchoring, which holds the place by itself where it works:
+ * - "off": the page's rule switches it off (`overflow-anchor: none`), as on a browser that has none, so only the
+ *   page's own scroll can hold the card;
+ * - "claimed": the browser says it anchors (the property is supported and the page asks for it) but does not,
+ *   here, because the board is out of its reach. Only the page's own scroll can hold the card, as in "off", and a
+ *   page that takes the browser's word for it is wrong;
+ * - "native": the browser does as it does, with nothing switched off.
  */
 async function acrossTheTurn(
   page: Page,
   testInfo: TestInfo,
   makeReader: (viewport: { width: number; height: number }) => Promise<Reader> | Reader,
-  { touching }: { touching: boolean },
+  { touching, anchoring = "off" }: { touching: boolean; anchoring?: "off" | "claimed" | "native" },
 ): Promise<void> {
   test.setTimeout(90_000);
   await page.addInitScript(() => {
@@ -294,8 +323,24 @@ async function acrossTheTurn(
   await hydrated(page);
   await page.getByRole("button", { name: "Refresh status now" }).first().click();
   await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
-  // Safari has no scroll anchoring, and the page cannot lean on it.
-  await page.addStyleTag({ content: "html, body { overflow-anchor: none !important; }" });
+  if (anchoring === "off") {
+    // Safari has no scroll anchoring, and the page cannot lean on it.
+    await page.addStyleTag({ content: "html, body { overflow-anchor: none !important; }" });
+  } else if (anchoring === "claimed") {
+    // The document asks for anchoring, and the browser supports the property, so the page is told it is held. The
+    // body is out of the browser's reach (an element that is not a candidate takes its whole subtree with it).
+    await page.addStyleTag({
+      content: "html { overflow-anchor: auto !important; } body { overflow-anchor: none !important; }",
+    });
+    expect(
+      await page.evaluate(
+        () =>
+          CSS.supports("overflow-anchor", "auto") &&
+          getComputedStyle(document.documentElement).overflowAnchor === "auto",
+      ),
+      "the browser says it anchors",
+    ).toBe(true);
+  }
 
   // The reader is on a card below Recent changes.
   const viewport = page.viewportSize();
@@ -350,7 +395,7 @@ async function acrossTheTurn(
   await page.waitForTimeout(400);
   const frames = await stopLogging(page);
 
-  const moves = jumps(frames, card);
+  const moves = jumps(frames, card, reader.accounted);
   const worst = Math.max(...moves.map(Math.abs));
   const landed = frames.find((frame) => frame.rows > rows0);
   const before = landed ? frames[frames.indexOf(landed) - 1] : undefined;
@@ -361,7 +406,8 @@ async function acrossTheTurn(
     description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows ${touching ? "while touching" : "during the scroll"} ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after ${touching ? "the lift" : "the last scroll"}${shape}`,
   });
   console.log(testInfo.annotations.at(-1)?.description);
-  if (process.env.SCROLL_JUMP_TRACE && landed) {
+  // The frames around the landing are printed when asked for, and whenever the card jumped, so a run that fails says where.
+  if ((process.env.SCROLL_JUMP_TRACE || worst > 1) && landed) {
     const at = frames.indexOf(landed);
     for (const frame of frames.slice(Math.max(0, at - 6), at + 6)) {
       console.log(
@@ -372,6 +418,16 @@ async function acrossTheTurn(
           by: frame.by,
           rows: frame.rows,
         }),
+      );
+    }
+  }
+
+  if (worst > 1) {
+    // Which frame, and what it was doing, when it was not at the landing.
+    const at = moves.findIndex((move) => Math.abs(move) === worst) + 1;
+    for (const frame of frames.slice(Math.max(0, at - 1), at + 1)) {
+      console.log(
+        `worst jump, ${JSON.stringify({ ...frame, tops: frame.tops[card], t: Math.round(frame.t - liftedAt) })}`,
       );
     }
   }
@@ -432,6 +488,32 @@ test("floating bar: the board does not shift under a page that scrolls across th
 }, testInfo) => {
   test.skip(!hasTouch, "the scrolling of a phone or a tablet, which a finger is not the only way to do");
   await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.width / 2), { touching: false });
+});
+
+test("floating bar: holds the card when the browser does not anchor scroll although it says it supports it", async ({
+  page,
+  hasTouch,
+}, testInfo) => {
+  test.skip(!hasTouch, "a finger is a touch project's");
+  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+    touching: true,
+    anchoring: "claimed",
+  });
+});
+
+test("floating bar: holds the card, once and not twice, with the browser's own scroll anchoring left on", async ({
+  page,
+  hasTouch,
+  browserName,
+}, testInfo) => {
+  test.skip(!hasTouch, "a finger is a touch project's");
+  test.skip(browserName !== "chromium", "what a WebKit build anchors differs by version; Chromium's is the one to pin");
+  // Nothing is switched off. Whatever the browser holds, the page scrolls by what is left, so a card that is held
+  // twice (the browser's scroll and the page's on top of it) would show here as a jump the other way.
+  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+    touching: true,
+    anchoring: "native",
+  });
 });
 
 test("floating bar: Recent changes holds the height of its first row on a first visit", async ({ page }) => {
