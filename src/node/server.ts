@@ -37,8 +37,8 @@ export interface NodeServerOptions {
   staticFiles: StaticIndex;
   /**
    * Read the scheme and host from X-Forwarded-Proto and X-Forwarded-Host.
-   * Only for a server that sits behind a reverse proxy that sets them: any
-   * client can send these headers to a server that is reached directly.
+   * Only for a server that sits behind a reverse proxy that sets them. A
+   * server that is reached directly would believe whatever a client sends.
    */
   trustProxy?: boolean;
   /** One structured line per request, and per failure. */
