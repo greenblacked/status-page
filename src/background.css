@@ -567,7 +567,8 @@
     all), or, where an engine cannot do that, --light-x and --light-y (each
     -1..1) written inline on <main> and read here. Unset, every use falls back
     to 0 (var(--light-x, 0)), the board as it always was. The slide amounts
-    (8% and 21.1%) are the same in tilt-light-sink.ts.
+    are the same in tilt-light-sink.ts: 8% of the sheen's layer, and 0.38 of the
+    panel's size for the glint.
 
     The properties' cost is the restyle of everything that inherits them, so
     `.surface > *` resets both to the guaranteed-invalid value: the restyle stops
