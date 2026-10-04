@@ -1,4 +1,4 @@
-import { TILT_LIGHT_SELECTOR, TILT_VAR_X, TILT_VAR_Y } from "@/lib/status/tilt";
+import { GLINT_QUERY, TILT_LIGHT_SELECTOR, TILT_VAR_X, TILT_VAR_Y } from "@/lib/status/tilt";
 
 /**
  * Where the tilt light is written, and when (see src/background.css for what
@@ -50,6 +50,11 @@ import { TILT_LIGHT_SELECTOR, TILT_VAR_X, TILT_VAR_Y } from "@/lib/status/tilt";
  * ResizeObserver: in the animations' keyframes, or, on the properties path, as
  * --glint-dx and --glint-dy on the panel (written when the panel's size changes,
  * not when the light moves).
+ *
+ * Whether a panel has a glint at all is the style sheet's media query (GLINT_QUERY: no hover-capable
+ * pointer), and it can change while the light is on, as a mouse is plugged into or taken off a tablet.
+ * The sink listens to the same query: when it flips, the glint's animations (or its lengths) and its size
+ * observation are made or dropped on every panel, and the light is written once to catch them up.
  */
 
 /** How far the sheen's layer slides at x or y = 1, in percent of the layer itself. The same number as in src/background.css. */
@@ -63,9 +68,6 @@ const GLINT_DY = "--glint-dy";
 const SPAN = 2000;
 const ID_X = "tilt-light-x";
 const ID_Y = "tilt-light-y";
-
-/** The glint is drawn only where there is no hover-capable pointer (the wandering light owns it elsewhere). */
-const GLINT_QUERY = "not ((hover: hover) and (pointer: fine))";
 
 export type LightSink = {
   /** Moves the light. Both numbers are -1..1. */
@@ -118,9 +120,6 @@ function glintReach(host: Element): { x: number; y: number } {
   return { x: GLINT_REACH * box.offsetWidth, y: GLINT_REACH * box.offsetHeight };
 }
 
-/** Whether a panel gets a glint: only the cards that spotlight, and only where the wandering light does not own it. */
-const hasGlint = (host: Element) => host.classList.contains("spotlight") && window.matchMedia(GLINT_QUERY).matches;
-
 export function createLightSink(
   scope: () => HTMLElement | null,
   { animations = pseudoAnimationsSupported() }: { animations?: boolean } = {},
@@ -136,6 +135,10 @@ export function createLightSink(
   let sizes: ResizeObserver | null = null;
   let useAnimations = animations;
   let checked = false;
+  let glintMedia: MediaQueryList | null = null;
+
+  /** Whether a panel gets a glint: only the cards that spotlight, and only where the wandering light does not own it. */
+  const hasGlint = (host: Element) => host.classList.contains("spotlight") && glintMedia?.matches === true;
 
   /** Sets the animations' time to a position; `since` is the position they were last given, and an axis that has not moved is left alone. */
   const setTime = (
@@ -259,6 +262,42 @@ export function createLightSink(
     create(host);
   };
 
+  /** Brings one panel's glint in line with the query as it is now: made where it is wanted, dropped where it is not. */
+  const syncGlint = (host: Element) => {
+    const wanted = hasGlint(host);
+    if (wanted) sizes?.observe(host);
+    else sizes?.unobserve(host);
+    if (!useAnimations) {
+      if (wanted) sizeGlint(host);
+      else {
+        (host as HTMLElement).style.removeProperty(GLINT_DX);
+        (host as HTMLElement).style.removeProperty(GLINT_DY);
+      }
+      return;
+    }
+    const list = tracks.get(host);
+    if (!list) return;
+    const have = list.find((track) => track.glint);
+    if (have && !wanted) {
+      cancelTracks([have]);
+      list.splice(list.indexOf(have), 1);
+    } else if (!have && wanted && getComputedStyle(host, "::after").content !== "none") {
+      list.push(animate(host, "::after", { ...glintReach(host), unit: "px" }));
+    }
+  };
+
+  /** The query flipped: every panel's glint follows, then one write puts the new ones where the light is. */
+  const onGlintChange = () => {
+    if (!target) return;
+    try {
+      for (const host of hosts) syncGlint(host);
+    } catch {
+      fallBack();
+    }
+    written = null;
+    write();
+  };
+
   const write = () => {
     if (!target || !last) return;
     // Nothing on screen: leave the page alone. A panel coming into view is caught up then.
@@ -357,6 +396,8 @@ export function createLightSink(
 
   const connect = (element: HTMLElement) => {
     target = element;
+    glintMedia = window.matchMedia(GLINT_QUERY);
+    glintMedia.addEventListener("change", onGlintChange);
     if (typeof IntersectionObserver !== "undefined") {
       // A little margin, so a panel is lit just before it scrolls in.
       intersections = new IntersectionObserver(onIntersections, { rootMargin: "120px 0px" });
@@ -382,6 +423,8 @@ export function createLightSink(
       mutations?.disconnect();
       intersections?.disconnect();
       sizes?.disconnect();
+      glintMedia?.removeEventListener("change", onGlintChange);
+      glintMedia = null;
       mutations = null;
       intersections = null;
       sizes = null;

@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   BASELINE_TAU_MS,
   createTiltController,
   createWritePacer,
   DEADBAND,
+  GLINT_QUERY,
   gravityFromOrientation,
   LIGHT_RANGE,
   LIGHT_SIGN,
@@ -464,5 +466,16 @@ describe("createWritePacer", () => {
     interval = 33;
     controller.sample(90, 0, 0, 230);
     expect(apply).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("GLINT_QUERY", () => {
+  it("is the media query that wraps the glint's rules in the style sheet", () => {
+    // The sink listens to this query to make and drop the glint's animations; the style sheet decides
+    // by the same words whether the glint is drawn, so the two must not drift apart.
+    const css = readFileSync(new URL("../../background.css", import.meta.url), "utf8");
+    const wrapped = css.split(`@media ${GLINT_QUERY} {`).slice(1);
+    expect(wrapped.length).toBeGreaterThan(0);
+    expect(wrapped.some((rules) => rules.includes(".spotlight::after"))).toBe(true);
   });
 });

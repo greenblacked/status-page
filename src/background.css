@@ -687,6 +687,7 @@
     with the sheen's colours scaled to the same 0.55 it had), where it slides only
     a fraction as far, and so still ends up on the other side of the glint.
   */
+  /* The same query as GLINT_QUERY in src/lib/status/tilt.ts (a test holds them together): the sink listens to it. */
   @media not ((hover: hover) and (pointer: fine)) {
     :root[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::before {
       background:

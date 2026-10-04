@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
-import { LIGHT_SIGN, TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
+import { GLINT_QUERY, LIGHT_SIGN, TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
 
 // Tilt lighting reads the device's motion sensors, which a test browser does
 // not have. These tests stand in for them: they dispatch synthetic
@@ -1022,6 +1022,118 @@ test.describe("on a touch device", () => {
       })
       .toBe(true);
   });
+
+  for (const path of ["animations", "custom properties"] as const) {
+    test(`follows a pointer being attached and detached while the light is on (${path})`, async ({ page }) => {
+      // A touch tablet with a mouse attached has a hover-capable pointer: the glint is not drawn, and the sink
+      // makes none. The query answers for the glint's rules (the page's own style sheet keeps answering as the
+      // device is, a touch one), so the test flips the sink's answer by hand: a controllable stand-in for that
+      // one query, which tells its listeners when it changes.
+      await page.addInitScript(
+        ([query, hasMouse, viaProperties]) => {
+          if (viaProperties) Object.defineProperty(window, "KeyframeEffect", { value: undefined, configurable: true });
+          const real = window.matchMedia.bind(window);
+          let matches = !hasMouse;
+          const listeners = new Set<(event: unknown) => void>();
+          window.matchMedia = (asked: string) => {
+            if (asked !== query) return real(asked);
+            return {
+              media: asked,
+              get matches() {
+                return matches;
+              },
+              onchange: null,
+              addEventListener: (type: string, listener: (event: unknown) => void) => {
+                if (type === "change") listeners.add(listener);
+              },
+              removeEventListener: (type: string, listener: (event: unknown) => void) => {
+                if (type === "change") listeners.delete(listener);
+              },
+              addListener: (listener: (event: unknown) => void) => listeners.add(listener),
+              removeListener: (listener: (event: unknown) => void) => listeners.delete(listener),
+              dispatchEvent: () => true,
+            } as unknown as MediaQueryList;
+          };
+          (window as unknown as { __glintQuery: unknown }).__glintQuery = {
+            set: (value: boolean) => {
+              matches = value;
+              for (const listener of Array.from(listeners)) listener({ matches: value, media: query, type: "change" });
+            },
+            listeners: () => listeners.size,
+          };
+        },
+        [GLINT_QUERY, true, path === "custom properties"] as const,
+      );
+      await page.reload();
+      await hydrated(page);
+      await openSettings(page);
+      await tiltSwitch(page).click();
+      await page.locator(".surface").first().scrollIntoViewIfNeeded();
+      await tiltUntil(page, 0, 0, "--light-y", () => true);
+      await tiltUntil(page, 90, 0, "--light-y", (y) => y * LIGHT_SIGN <= -0.99);
+
+      const flip = (value: boolean) =>
+        page.evaluate(
+          (value) => (window as unknown as { __glintQuery: { set: (v: boolean) => void } }).__glintQuery.set(value),
+          value,
+        );
+      const glintState = () =>
+        page.evaluate(() => {
+          const card = document.querySelector<HTMLElement>(".surface");
+          return {
+            animations: document
+              .getAnimations()
+              .filter(
+                (animation) =>
+                  animation.id.startsWith("tilt-light-") &&
+                  (animation.effect as KeyframeEffect | null)?.pseudoElement === "::after",
+              ).length,
+            dx: card?.style.getPropertyValue("--glint-dx") ?? "",
+            listeners: (window as unknown as { __glintQuery: { listeners: () => number } }).__glintQuery.listeners(),
+          };
+        });
+      const followsLight = async () => {
+        const y = Number(await lightVar(page, "--light-y"));
+        const shift = await glintShift(page);
+        return Math.abs(shift.y - y * 0.38 * shift.h) < 3 && Math.abs(shift.y) > 5;
+      };
+      const still = async () => Math.abs((await glintShift(page)).y) < 0.5;
+
+      // A mouse is attached when the light starts: the sheen follows the light, the glint has nothing made for it.
+      expect(await paintedOf(page, ".surface")).not.toBe(AT_REST);
+      expect(await glintState()).toMatchObject({ animations: 0, dx: "", listeners: 1 });
+      expect(await still()).toBe(true);
+
+      // The mouse is taken off: the glint is made and put where the light is, with no new reading.
+      await flip(true);
+      await expect.poll(followsLight).toBe(true);
+      const on = await glintState();
+      if (path === "animations") expect(on.animations).toBeGreaterThan(0);
+      else expect(on.dx).toMatch(/^\d+(\.\d)?px$/);
+      await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+      await expect
+        .poll(async () => {
+          const x = Number(await lightVar(page, "--light-x"));
+          const shift = await glintShift(page);
+          return Math.abs(shift.x - x * 0.38 * shift.w) < 2 && Math.abs(shift.x) > 20;
+        })
+        .toBe(true);
+
+      // The mouse is attached again: the glint is dropped and the light no longer drives it.
+      await flip(false);
+      await expect.poll(still).toBe(true);
+      expect(await glintState()).toMatchObject({ animations: 0, dx: "" });
+      await tiltUntil(page, 0, 0, "--light-x", (x) => Math.abs(x) < 0.2);
+      await tiltUntil(page, 30, -45, "--light-x", (x) => x * LIGHT_SIGN >= 0.5);
+      expect((await glintShift(page)).x).toBeCloseTo(0, 0);
+      expect(await glintState()).toMatchObject({ animations: 0, dx: "" });
+
+      // Switching the light off takes the listener away with it.
+      await tiltSwitch(page).click();
+      await expect(tiltSwitch(page)).toHaveAttribute("aria-checked", "false");
+      await expect.poll(async () => (await glintState()).listeners).toBe(0);
+    });
+  }
 
   test("writes nothing while no panel is on screen, and catches up when one comes back", async ({ page }) => {
     await page.reload();

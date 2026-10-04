@@ -27,6 +27,13 @@ export const TILT_VAR_Y = "--light-y";
 export const TILT_LIGHT_SELECTOR = ".surface";
 
 /**
+ * Where the glint is drawn: no hover-capable pointer. The same string as the media query that wraps the
+ * glint's rules in src/background.css (a test holds the two together), so the sink can ask the page what
+ * the style sheet is asking, and listen for it to change (a mouse plugged into or taken off a tablet).
+ */
+export const GLINT_QUERY = "not ((hover: hover) and (pointer: fine))";
+
+/**
  * Which way the light moves for a given tilt. The one place to flip it: 1
  * or -1 turns the light toward the other side of the screen on both axes.
  */
