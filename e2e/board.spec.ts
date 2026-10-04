@@ -1720,7 +1720,12 @@ test("search reveal: opens a page that is already scrolled past the field with t
   browserName,
 }) => {
   test.slow();
-  // Every transition that starts on the bar's field, from before the page's own script runs.
+  // Every transition that starts on the bar's field, from before the page's own script runs. And where the page was
+  // when the browser left it. Chromium switches the emulated touch screen off as a navigation starts, before the
+  // page's own pagehide, so a page whose layout has touch-only sizes (the lede's links are 44px targets on a touch
+  // screen and 19px lines without one) shrinks while it is being left: the browser's scroll anchoring moves the
+  // position with it, and the router snapshots that position (TanStack's, in pagehide) and restores it. So what
+  // the reload restores is where the page was left, which is not always the place the test scrolled to.
   await page.addInitScript(() => {
     const runs: string[] = [];
     (window as Window & { __runs?: string[] }).__runs = runs;
@@ -1728,6 +1733,15 @@ test("search reveal: opens a page that is already scrolled past the field with t
       "transitionrun",
       (event) => {
         if ((event.target as Element).closest(".bar-search")) runs.push(`${event.propertyName}`);
+      },
+      true,
+    );
+    window.addEventListener(
+      "pagehide",
+      () => {
+        try {
+          sessionStorage.setItem("e2e:left-at", String(window.scrollY));
+        } catch {}
       },
       true,
     );
@@ -1753,15 +1767,18 @@ test("search reveal: opens a page that is already scrolled past the field with t
     await route.continue().catch(() => {});
   });
   const offsets = await revealBoard(page);
-  const y0 = await scrollDeep(page, offsets);
+  await scrollDeep(page, offsets);
   // Back to the same place the way a reload or a return to the tab does: the browser restores the scroll.
   fontMode = browserName === "chromium" ? "hold" : "pass";
   try {
-    // The held font keeps the load event from firing; Chromium restores the position as the page grows.
+    // The held font keeps the load event from firing; the position is restored without waiting for it.
     await page.reload({ waitUntil: fontMode === "hold" ? "domcontentloaded" : "load" });
+    // Where the old page was left (see the init script): still well past the field, and what the reload must restore.
+    const leftAt = Number(await page.evaluate(() => sessionStorage.getItem("e2e:left-at")));
+    expect(leftAt, "the page was left past the field").toBeGreaterThan(offsets.revealFrom + DOCK_HYSTERESIS);
     await expect
       .poll(() => page.evaluate(() => window.scrollY), { message: "the browser restores the position" })
-      .toBeGreaterThan(y0 - 40);
+      .toBeGreaterThan(leftAt - 40);
   } finally {
     releaseFont();
   }
@@ -3278,6 +3295,15 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
       scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
       return (original as (...values: unknown[]) => void).apply(window, args);
     }) as typeof window.scrollBy;
+    // The scroll events delivered so far: an event comes a frame after the scroll that makes it.
+    (window as Window & { __scrollEvents?: number }).__scrollEvents = 0;
+    window.addEventListener(
+      "scroll",
+      () => {
+        (window as Window & { __scrollEvents: number }).__scrollEvents += 1;
+      },
+      true,
+    );
   });
   // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row and clear the
   // tags early, and the 3:00 jump would then cross a boundary that changes no row count.
@@ -3297,7 +3323,15 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   const fewer = card.getByRole("button", { name: /^Show fewer/ });
+  const scrollEvents = () => page.evaluate(() => (window as Window & { __scrollEvents?: number }).__scrollEvents ?? 0);
+  const eventsBefore = await scrollEvents();
+  const yBefore = await page.evaluate(() => window.scrollY);
   await fewer.scrollIntoViewIfNeeded();
+  // The hook starts its wait for the page to be still when the scroll event arrives, a frame after the scroll, and
+  // a clock jump made before that would find the wait not started and the anchor the one from before the scroll.
+  if ((await page.evaluate(() => window.scrollY)) !== yBefore) {
+    await expect.poll(scrollEvents, { message: "the scroll event arrives" }).toBeGreaterThan(eventsBefore);
+  }
   // The page is still for longer than the hook waits, and it has picked its anchor again.
   await page.clock.fastForward(1000);
   await page.evaluate(
@@ -3309,16 +3343,28 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   const feed = page.locator('section[aria-labelledby="recent-heading"]');
   const rows = await feed.locator("li").count();
   const topOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top);
+  // Where the button is on the page, which the scroll position does not change.
+  const placeOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top + window.scrollY);
   const topBefore = await topOf();
+  const placeBefore = await placeOf();
   await page.clock.fastForward("03:00");
   await expect(feed.locator("li")).not.toHaveCount(rows);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-  // The check adds a row to the feed (the cards drop) and clears the "Changed" tags (the cards above rise by
-  // less), so the cards net drop, and holding them means scrolling down: every step is positive, and the
-  // button the page was scrolled to is where it was in the window.
+  // The check adds a row to the feed (the cards drop) and clears the "Changed" tags of the cards above them (the
+  // cards rise). Which of the two is more depends on the layout: the fixture differs from the server's board on
+  // most of its cards, so most of them wear a tag, and what clearing the tags frees is less than the row where
+  // the text wraps one way (63px against 36px in a headed Chromium) and more where it wraps the other (108px in
+  // the headless shell CI runs), so the cards may net drop or net rise. Holding them means scrolling by exactly the distance they
+  // moved, whichever way; and the button the page was scrolled to is where it was in the window.
+  const moved = (await placeOf()) - placeBefore;
+  expect(Math.abs(moved), "the check moved the cards").toBeGreaterThan(1);
   const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy ?? []);
   expect(scrolled.length).toBeGreaterThan(0);
-  expect(scrolled.every((by) => by > 0)).toBe(true);
+  const followed = scrolled.reduce((sum, by) => sum + by, 0);
+  expect(
+    Math.abs(followed - moved),
+    `the page followed the cards by ${followed}, which moved ${moved}`,
+  ).toBeLessThanOrEqual(1);
   expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
 });
 
