@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "@playwright/test";
+import { WANDER_TICK_MS } from "../src/components/status/wander-light.ts";
 import { TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
 import { expect, test } from "./test";
 
@@ -35,7 +36,8 @@ import { expect, test } from "./test";
 // light-off floor take one, since their timings are only reported. The traced sweep, which
 // counts the paints, raster tasks and restyled elements the assertions rest on, runs
 // once per rate for the full TRACE_MS, because those limits were measured over that
-// long. Set TILT_PERF_RUNS=5 or more to look at the timings more closely. The numbers
+// long. The wandering card light's tests (below) assert counts only, so they take one timed sweep per rate too.
+// Set TILT_PERF_RUNS=5 or more to look at the timings more closely. The numbers
 // print as a table.
 
 const RUNS = Number(process.env.TILT_PERF_RUNS) || 3;
@@ -45,6 +47,21 @@ const SWEEP_MS = 2000;
 const TRACE_MS = 3000;
 const WARMUP_MS = 500;
 const SERVICES = 20;
+// What the wandering card light may add to the floor's counts (see its test): a repaint on every frame would add 180 or more in
+// the traced 3 s, and the counts themselves wander by a dozen on a busy machine. And the rule that holds the period dial still.
+const STILL_DIAL = ".period-sweep, .period-hand { animation: none !important; }";
+const PAINT_SLACK = 40;
+const RASTER_SLACK = 40;
+// Elements the style system may revisit per card and step of the wandering light (the card and its direct children).
+const RESTYLE_PER_STEP = 30;
+// Frames the compositor may draw over the floor's in the traced sweep: a step of the light draws one, about 6 in 3 s; the
+// panel-sized CSS animation drew 100 or more more than the floor.
+const SWAP_SLACK = 40;
+// The idle window (no sweep, no frame loop) and what the wander may add to the floor's recalculations in it: one for each
+// step of the light, 6 in the 3 s (the panel-sized CSS animation it replaced made 21-28 here, and over 150 when it ran on
+// the main thread).
+const IDLE_MS = 3000;
+const IDLE_RECALC_SLACK = 15;
 
 type SweepResult = {
   /** Gaps between consecutive animation frames, in ms. */
@@ -56,8 +73,9 @@ type SweepResult = {
   /** Calls to querySelectorAll whose selector names the lit panels, made inside an animation frame callback, and all calls. */
   qsaLight: number;
   qsaAll: number;
-  /** Calls that wrote --light-x or --light-y, through style.setProperty. */
+  /** Calls that wrote --light-x or --light-y, through style.setProperty, and --wander-x or --wander-y. */
   lightWrites: number;
+  wanderWrites: number;
   /** Times the light moved: bursts of writes (of an animation's time or of the properties) at least 5 ms apart. */
   updates: number;
   /** "long-animation-frame" entries (a frame that blocked the main thread over 50 ms). */
@@ -81,12 +99,16 @@ type Row = {
   scriptMs: number;
   qsaLight: number;
   lightWrites: number;
+  /** Writes of --wander-x or --wander-y during the sweep. */
+  wanderWrites: number;
   /** Light updates per second, and per animation frame. */
   updateHz: number;
   updatesPerFrame: number;
   longFrames: number;
   paints?: number;
   rasters?: number;
+  /** Frames the compositor drew in the traced sweep (Display::DrawAndSwap; the wander test traces them). */
+  swaps?: number;
   /** Elements the style system revisited during the traced sweep, and the light updates in that sweep. */
   restyled?: number;
   tracedUpdates?: number;
@@ -107,7 +129,7 @@ const percentile = (values: number[], p: number) => {
 /** Counts calls the page makes, before any of the page's own scripts exist. */
 async function installSpy(page: Page): Promise<void> {
   await page.addInitScript(() => {
-    const spy = { qsaLight: 0, qsaAll: 0, lightWrites: 0, updates: 0 };
+    const spy = { qsaLight: 0, qsaAll: 0, lightWrites: 0, wanderWrites: 0, updates: 0 };
     (window as unknown as { __spy: typeof spy }).__spy = spy;
     // The light's own code runs from an animation frame callback. A search for the panels made anywhere
     // else (a re-render, the observer that follows a card being added) is the page's other business.
@@ -143,6 +165,8 @@ async function installSpy(page: Page): Promise<void> {
         spy.lightWrites++;
         wrote();
       }
+      // The wandering card light's steps (src/components/status/wander-light.ts): a few a second, not a write per frame.
+      if (typeof name === "string" && name.startsWith("--wander-")) spy.wanderWrites++;
       return (setProperty as (...args: unknown[]) => void).call(this, name, ...rest);
     } as typeof setProperty;
     const time = Object.getOwnPropertyDescriptor(Animation.prototype, "currentTime");
@@ -171,7 +195,9 @@ function sweep(page: Page, durationMs: number): Promise<SweepResult> {
     (durationMs) =>
       new Promise<SweepResult>((resolve) => {
         const spy = (
-          window as unknown as { __spy: { qsaLight: number; qsaAll: number; lightWrites: number; updates: number } }
+          window as unknown as {
+            __spy: { qsaLight: number; qsaAll: number; lightWrites: number; wanderWrites: number; updates: number };
+          }
         ).__spy;
         const before = { ...spy };
         const frames: number[] = [];
@@ -217,6 +243,7 @@ function sweep(page: Page, durationMs: number): Promise<SweepResult> {
             qsaLight: spy.qsaLight - before.qsaLight,
             qsaAll: spy.qsaAll - before.qsaAll,
             lightWrites: spy.lightWrites - before.lightWrites,
+            wanderWrites: spy.wanderWrites - before.wanderWrites,
             updates: spy.updates - before.updates,
             longFrames,
           });
@@ -256,6 +283,7 @@ async function measure(page: Page, cdp: import("@playwright/test").CDPSession, r
     scriptMs: delta("ScriptDuration") * 1000,
     qsaLight: result.qsaLight,
     lightWrites: result.lightWrites,
+    wanderWrites: result.wanderWrites,
     updateHz: result.updates / seconds,
     updatesPerFrame: result.updates / Math.max(1, frames.length),
     longFrames: result.longFrames,
@@ -266,7 +294,8 @@ async function measure(page: Page, cdp: import("@playwright/test").CDPSession, r
 async function traceCounts(
   page: Page,
   cdp: import("@playwright/test").CDPSession,
-): Promise<{ paints: number; rasters: number; restyled: number; updates: number }> {
+  viz = false,
+): Promise<{ paints: number; rasters: number; restyled: number; updates: number; swaps: number }> {
   const names: string[] = [];
   let restyled = 0;
   const onData = (payload: { value: { name?: string; ph?: string; args?: { elementCount?: number } }[] }) => {
@@ -280,7 +309,9 @@ async function traceCounts(
   const complete = new Promise<void>((resolve) => cdp.once("Tracing.tracingComplete", () => resolve()));
   await cdp.send("Tracing.start", {
     transferMode: "ReportEvents",
-    traceConfig: { includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline"] },
+    traceConfig: {
+      includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline", ...(viz ? ["viz"] : [])],
+    },
   });
   const traced = await sweep(page, TRACE_MS);
   await cdp.send("Tracing.end");
@@ -291,6 +322,36 @@ async function traceCounts(
     rasters: names.filter((name) => name === "RasterTask").length,
     restyled,
     updates: traced.updates,
+    swaps: names.filter((name) => name === "Display::DrawAndSwap").length,
+  };
+}
+
+/**
+ * An idle window: nothing of the test's own runs (no sweep, no animation frame loop), so any style recalculation
+ * the trace shows comes from the page itself. A transform animation on the compositor leaves a handful; one
+ * animated on the main thread makes a frame, and a recalculation, every frame.
+ */
+async function idleCounts(
+  page: Page,
+  cdp: import("@playwright/test").CDPSession,
+): Promise<{ recalcs: number; paints: number }> {
+  const names: string[] = [];
+  const onData = (payload: { value: { name?: string; ph?: string }[] }) => {
+    for (const event of payload.value) if (event.name && event.ph !== "M") names.push(event.name);
+  };
+  cdp.on("Tracing.dataCollected", onData);
+  const complete = new Promise<void>((resolve) => cdp.once("Tracing.tracingComplete", () => resolve()));
+  await cdp.send("Tracing.start", {
+    transferMode: "ReportEvents",
+    traceConfig: { includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline"] },
+  });
+  await page.waitForTimeout(IDLE_MS);
+  await cdp.send("Tracing.end");
+  await complete;
+  cdp.off("Tracing.dataCollected", onData);
+  return {
+    recalcs: names.filter((name) => name === "UpdateLayoutTree").length,
+    paints: names.filter((name) => name === "Paint").length,
   };
 }
 
@@ -320,6 +381,7 @@ function table(label: string, rows: Row[]): string {
     "LoAF",
     "paints",
     "rasters",
+    "swaps",
     "restyled/update",
   ];
   const lines = rows.map((row) =>
@@ -343,6 +405,7 @@ function table(label: string, rows: Row[]): string {
       String(row.longFrames),
       row.paints === undefined ? "-" : String(row.paints),
       row.rasters === undefined ? "-" : String(row.rasters),
+      row.swaps === undefined ? "-" : String(row.swaps),
       row.restyled === undefined ? "-" : f(restyledPerUpdate(row), 1),
     ].join(" | "),
   );
@@ -367,6 +430,7 @@ function medianRow(rows: Row[]): Row {
     scriptMs: pick("scriptMs"),
     qsaLight: pick("qsaLight"),
     lightWrites: pick("lightWrites"),
+    wanderWrites: pick("wanderWrites"),
     updateHz: pick("updateHz"),
     updatesPerFrame: pick("updatesPerFrame"),
     longFrames: pick("longFrames"),
@@ -377,7 +441,7 @@ function medianRow(rows: Row[]): Row {
  * Sweeps the page at each throttle rate and returns the median of the timed runs (`runsAt` says how many per
  * rate), with the trace counts. `label` names the tables; the console gets every run, the attachment gets the medians.
  */
-async function collect(page: Page, label: string, runsAt: (rate: number) => number): Promise<Row[]> {
+async function collect(page: Page, label: string, runsAt: (rate: number) => number, viz = false): Promise<Row[]> {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Performance.enable");
   const medians: Row[] = [];
@@ -388,9 +452,10 @@ async function collect(page: Page, label: string, runsAt: (rate: number) => numb
       const each: Row[] = [];
       for (let run = 0; run < runsAt(rate); run++) each.push(await measure(page, cdp, rate));
       const row = medianRow(each);
-      const traced = await traceCounts(page, cdp);
+      const traced = await traceCounts(page, cdp, viz);
       row.paints = traced.paints;
       row.rasters = traced.rasters;
+      if (viz) row.swaps = traced.swaps;
       row.restyled = traced.restyled;
       row.tracedUpdates = traced.updates;
       medians.push(row);
@@ -420,17 +485,17 @@ const holders = (page: Page) => page.evaluate(() => document.querySelectorAll('[
  * page; Chromium 141 has no such call). The test grants motion to its context (see grantMotion), as a
  * visitor who allowed it would have it.
  */
-const seed = (page: Page, tilt: "on" | "off") =>
+const seed = (page: Page, tilt: "on" | "off", background: "glass" | "full" = "glass") =>
   page.addInitScript(
-    ([tiltKey, tilt]) => {
+    ([tiltKey, tilt, background]) => {
       try {
-        localStorage.setItem("status-bar:background", "glass");
+        localStorage.setItem("status-bar:background", background);
         localStorage.setItem(tiltKey, tilt);
       } catch {
         // Storage can refuse; the test then fails at the data-tilt check.
       }
     },
-    [TILT_STORAGE_KEY, tilt],
+    [TILT_STORAGE_KEY, tilt, background],
   );
 
 /** Motion allowed for the pages of a context, which is what the browser's own permission call then answers. */
@@ -533,4 +598,146 @@ test.describe("tilt performance", () => {
     }
     expect(medians[0].updatesPerFrame, "light updates per animation frame at 1x").toBeGreaterThanOrEqual(0.65);
   });
+
+  // The card light that wanders by itself in Glass and Full (src/background.css, src/components/status/wander-light.ts):
+  // on a phone or tablet it runs with Tilt lighting off, so it must not bring the lag back. The floor is the same page
+  // with only the wander's layer hidden (a style rule added by the test), so the difference between the two runs is the
+  // wandering light and nothing else. Both runs stop the period dial's sweep (.period-dial): it animates a registered
+  // property, so by itself it costs a recalculation on nearly every frame, which would hide the wander's share.
+  //
+  // What this guards is the cost of the frosted panels. A layer that moves inside (or over) a panel with a
+  // backdrop-filter makes the compositor draw the panel's blur again on every frame it moves, whatever its size
+  // (a 40px square cost what a panel-sized one did), and a CSS animation moves it on every frame. Measured at 4x on a
+  // Pixel 7 profile with that design (a panel-sized layer, a CSS animation): about 100-170 frames drawn in 3 s against 3-15
+  // for the still page, 400-750 ms of the compositor's CPU time against 1, and a third of the frame rate. So the light is
+  // stepped about twice a second instead (wander-light.ts) and what is asserted are counts that load does not change:
+  //   - the layer is a fixed 432px square on every card, not the card's own size;
+  //   - the frames the compositor drew in the traced 3 s stay near the floor's (the old design adds a hundred or more);
+  //   - the page wrote the light's place a few times a second per card and no more, and nothing of Tilt lighting's;
+  //   - nothing repainted or rasterised for it, and few elements were restyled;
+  //   - in an idle window (no sweep, no frame loop) it adds a handful of style recalculations, not one a frame.
+  // Timings (fps, frame gaps) are in the table, not asserted: they move with how busy the machine is.
+  for (const background of ["full", "glass"] as const) {
+    test(`lets the card light wander in ${background === "full" ? "Full" : "Glass"} on a throttled CPU without redrawing the glass every frame`, async ({
+      page,
+      context,
+    }, testInfo) => {
+      test.setTimeout(300_000);
+      const lights = (target: Page) =>
+        target.evaluate(() => {
+          const drawn = [...document.querySelectorAll<HTMLElement>(".spotlight[data-wander]")].filter(
+            (card) => getComputedStyle(card, "::after").display !== "none" && card.style.getPropertyValue("--wander-x"),
+          );
+          return {
+            count: drawn.length,
+            sizes: [
+              ...new Set(drawn.map((card) => getComputedStyle(card, "::after")).map((s) => `${s.width} ${s.height}`)),
+            ],
+            animations: document
+              .getAnimations()
+              .filter(
+                (animation) => animation instanceof CSSAnimation && animation.animationName.startsWith("light-wander"),
+              ).length,
+          };
+        });
+      await grantMotion(context);
+      await installSpy(page);
+      await seed(page, "off", background);
+      await openBoard(page);
+      await page.addStyleTag({ content: `${STILL_DIAL} .spotlight::after { display: none !important; }` });
+      await expect(page.locator("html")).not.toHaveAttribute("data-tilt");
+      expect((await lights(page)).count, "wandering lights with the wander's layer hidden").toBe(0);
+      const floor = await collect(page, "card light off", () => 1, true);
+      console.log(table(`${testInfo.project.name}, ${background}, card light off`, floor));
+      // Idle: dial still, no sweep, no frame loop of the test's own.
+      const floorIdle = await idleCounts(page, await context.newCDPSession(page));
+      await page.close();
+
+      const lit = await context.newPage();
+      await installSpy(lit);
+      await seed(lit, "off", background);
+      await openBoard(lit);
+      await lit.addStyleTag({ content: STILL_DIAL });
+      await expect(lit.locator("html")).toHaveAttribute("data-background", background);
+      await expect(lit.locator("html")).not.toHaveAttribute("data-tilt");
+      await expect
+        .poll(async () => (await lights(lit)).count, { message: "lights wandering on every card" })
+        .toBeGreaterThan(5);
+      const medians = await collect(
+        lit,
+        `${testInfo.project.name}, ${background}, card light wandering`,
+        () => 1,
+        true,
+      );
+      const report = table(`${testInfo.project.name}, ${background}, card light wandering`, medians);
+      console.log(report);
+      await testInfo.attach(`wander-performance-${background}`, { body: report, contentType: "text/plain" });
+      // Still wandering after the sweeps, and not driven by Tilt lighting.
+      const after = await lights(lit);
+      expect(after.count, "lights wandering after the sweeps").toBeGreaterThan(5);
+      await expect(lit.locator("html")).not.toHaveAttribute("data-tilt");
+      expect(await holders(lit)).toBe(0);
+      if (process.env.TILT_PERF_REPORT_ONLY) return;
+
+      // The layer the compositor moves is the light's own size on every card, never the card's: a card-sized layer
+      // is damaged over the whole card, and a long list's is two lists high.
+      expect(after.sizes, "sizes of the moving layers").toEqual(["432px 432px"]);
+      // Moved by script a step at a time, not by a CSS animation.
+      expect(after.animations, "CSS animations of the old wander").toBe(0);
+
+      // Idle again, with nothing of the test's own asking for frames: the wander alone must not keep the main
+      // thread producing frames.
+      const litIdle = await idleCounts(lit, await context.newCDPSession(lit));
+      console.log(
+        `[wander-perf] ${background} idle ${IDLE_MS / 1000} s: ${litIdle.recalcs} style recalcs (card light off: ${floorIdle.recalcs}), ${litIdle.paints} paints (card light off: ${floorIdle.paints})`,
+      );
+      expect(
+        litIdle.recalcs,
+        `style recalculations in an idle ${IDLE_MS / 1000} s with the wander running, over the card-light-off run's ${floorIdle.recalcs}`,
+      ).toBeLessThanOrEqual(floorIdle.recalcs + IDLE_RECALC_SLACK);
+      expect(litIdle.paints, "paints in the idle window").toBeLessThanOrEqual(floorIdle.paints + PAINT_SLACK);
+
+      const cards = after.count;
+      medians.forEach((row, index) => {
+        const base = floor[index];
+        const at = `at ${row.rate}x`;
+        expect(row.paints ?? 0, `paints ${at}, over the card-light-off run's ${base.paints}`).toBeLessThanOrEqual(
+          (base.paints ?? 0) + PAINT_SLACK,
+        );
+        expect(
+          row.rasters ?? 0,
+          `raster tasks ${at}, over the card-light-off run's ${base.rasters}`,
+        ).toBeLessThanOrEqual((base.rasters ?? 0) + RASTER_SLACK);
+        // The glass is not redrawn every frame: a frame drawn per step of the light at most, a few a second.
+        expect(
+          row.swaps ?? 0,
+          `frames the compositor drew in the traced ${TRACE_MS / 1000} s ${at} (the card-light-off run's ${base.swaps})`,
+        ).toBeLessThanOrEqual((base.swaps ?? 0) + SWAP_SLACK);
+        // At most one place written per step of the light and card, two properties each (a step takes in the sweep's
+        // length, one more for a step on either edge, one for the first, which fills every card).
+        const steps = SWEEP_MS / WANDER_TICK_MS + 2;
+        // The restyle count is the traced sweep's, which is TRACE_MS long.
+        const tracedSteps = TRACE_MS / WANDER_TICK_MS + 2;
+        expect(
+          row.wanderWrites,
+          `writes of the light's place in one ${SWEEP_MS / 1000} s sweep ${at}`,
+        ).toBeLessThanOrEqual(cards * 2 * steps);
+        // Style: at most one recalculation per frame, and a few elements per card and step.
+        expect(
+          row.recalcCount,
+          `style recalculations a second ${at} (${f(row.fps)} fps; the card-light-off run's ${f(base.recalcCount)})`,
+        ).toBeLessThanOrEqual(row.fps + 5);
+        expect(
+          row.restyled ?? 0,
+          `elements restyled in the traced sweep ${at} for ${cards} lights (the card-light-off run's ${base.restyled})`,
+        ).toBeLessThanOrEqual((base.restyled ?? 0) + cards * tracedSteps * RESTYLE_PER_STEP);
+        // No work of the light's own: nothing writes the tilt light, nothing searches for the panels.
+        expect(row.qsaLight, `document searches from frame callbacks ${at}`).toBe(0);
+        expect(row.lightWrites, `tilt light writes ${at}`).toBe(0);
+        console.log(
+          `[wander-perf] ${background} ${at}, over the card-light-off run: ${(row.swaps ?? 0) - (base.swaps ?? 0)} frames drawn, ${(row.paints ?? 0) - (base.paints ?? 0)} paints, ${(row.rasters ?? 0) - (base.rasters ?? 0)} raster tasks, ${(row.restyled ?? 0) - (base.restyled ?? 0)} elements restyled, ${f(row.recalcCount - base.recalcCount)} recalcs/s, p95 ${f(row.p95 - base.p95)} ms, ${f(base.fps - row.fps)} fps lower`,
+        );
+      });
+    });
+  }
 });

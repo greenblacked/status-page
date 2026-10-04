@@ -22,23 +22,26 @@ const lenses = (page: Page) => page.locator(".lenses");
 
 /**
  * The panels' lights at their worst for contrast, held still and drawn whole over every panel, so the result does
- * not depend on where a light happens to be when the page is measured. There are two lights, and a device has one of
- * them: the wandering card light (a pointer that hovers, Full only) and Tilt lighting's glint (a touch screen); the
- * sheen (.surface::before) is under both. Where a light can sit is anywhere in a card (the wander crosses all of
- * it, the glint's centre reaches 12% from an edge), so the worst case is each one at its peak alpha over the whole
- * panel, and the sheen at its brightest, which it is in the upper left corner where the "since" line sits.
+ * not depend on where a light happens to be when the page is measured. There are two lights on the panels' ::after
+ * layer: the wandering card light (Glass and Full, on every device, a 432px layer that wander-light.ts steps with
+ * --wander-x and --wander-y) and, on a touch screen with Tilt lighting on, the glint that takes the same layer over
+ * (a 432px layer a transform moves); the sheen (.surface::before) is under both. Where a light can sit is anywhere
+ * in a card (the wander crosses all of it, the glint's centre reaches 12% from an edge), so the worst case is each
+ * one at its peak alpha over the whole panel, and the sheen at its brightest, which it is in the upper left corner
+ * where the "since" line sits.
  *
  *   dark   white is what hurts: the sheen flat at its brightest, and the stronger of the card light and the glint
  *          (see `strongestLight`) flat on top of it.
  *   light  the dark text loses to a darker backdrop, never to white: no sheen, and the glint's shade flat.
  *
- * Positioned and sized here too, whatever media the real rules sit in (the glint's layer is a 432px square that a
- * transform moves, the card light's a card-sized one that animates), and with Reduce Motion's `display: none` and
- * the animations out of the way, so each is drawn whole, unmoved and fully shown.
+ * Positioned and sized here too, whatever media the real rules sit in: the layer is stretched from the 432px square
+ * to the whole panel (more than the light ever covers), put at the panel's origin whatever --wander-x/y and the
+ * glint's transform say, made fully opaque at once (the wander fades in by a transition), and shown despite Reduce
+ * Motion's `display: none`, so each is drawn whole, unmoved and fully shown.
  */
 const lightsAtTheirStrongest = (colorScheme: "light" | "dark", strongestLight: string) =>
   [
-    `.spotlight::after{content:"";display:block!important;position:absolute!important;inset:0!important;width:auto!important;height:auto!important;border-radius:inherit!important;opacity:1!important;animation:none!important;transform:none!important;translate:none!important;background:var(${colorScheme === "dark" ? strongestLight : "--tilt-shade"})!important}`,
+    `.spotlight::after{content:"";display:block!important;position:absolute!important;inset:0!important;width:auto!important;height:auto!important;border-radius:inherit!important;opacity:1!important;animation:none!important;transition:none!important;transform:none!important;translate:none!important;background:var(${colorScheme === "dark" ? strongestLight : "--tilt-shade"})!important}`,
     colorScheme === "dark"
       ? '.surface::before{content:"";display:block!important;position:absolute!important;inset:0!important;border-radius:inherit!important;animation:none!important;transform:none!important;translate:none!important;background:var(--glass-sheen)!important}'
       : ".surface::before{background:none!important}",
@@ -261,7 +264,9 @@ test.describe("Settings, Background", () => {
 
     await page.locator("label", { hasText: "Glass" }).click();
     await expect(html(page)).toHaveAttribute("data-background", "glass");
-    await expect(group.getByRole("status")).toHaveText("Frosted panels over a still glow.");
+    await expect(group.getByRole("status")).toHaveText(
+      "Frosted panels over a still glow, with a soft light that wanders across the cards.",
+    );
     expect(await stored(page)).toBe("glass");
 
     await page.reload();
@@ -675,40 +680,35 @@ test.describe("card light", () => {
       .locator(".spotlight")
       .first()
       .evaluate((node) => getComputedStyle(node, "::after").opacity);
-  // The wander is the hover-capable devices' light; touch screens get Tilt lighting instead, so they draw none here.
-  const fine = (page: Page) => page.evaluate(() => matchMedia("(hover: hover) and (pointer: fine)").matches);
+  // The wander runs on every device, a touch screen's included, unless Tilt lighting has taken the light over: the page
+  // has given the card a place for it (--wander-x and --wander-y) and the style sheet draws it there.
   const wandering = (page: Page) =>
     page
       .locator(".spotlight")
       .first()
-      .evaluate((node) => node.hasAttribute("data-wander"));
+      .evaluate((node) => node.hasAttribute("data-wander") && node.style.getPropertyValue("--wander-x") !== "");
 
-  test("is drawn on Full and absent on Quiet and Glass", async ({ page }) => {
-    for (const background of ["quiet", "glass"] as const) {
-      await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), background);
-      await page.goto("/");
-      await hydrated(page);
-      expect(
-        await page
-          .locator(".spotlight")
-          .first()
-          .evaluate((node) => getComputedStyle(node, "::after").content),
-      ).toMatch(/none|normal/);
-      await page.evaluate(() => localStorage.clear());
-    }
-    await chooseBackground(page, "full");
-    await page.goto("/");
-    await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
-    await expect.poll(() => wandering(page)).toBe(true);
-    expect(
-      await page
+  test("is drawn on Glass and Full and absent on Quiet", async ({ page }) => {
+    const content = () =>
+      page
         .locator(".spotlight")
         .first()
-        .evaluate((node) => getComputedStyle(node, "::after").content),
-    ).not.toMatch(/none|normal/);
-    // The reveal is a 250ms transition: wait for it to leave 0.
-    await expect.poll(async () => Number(await lightOpacity(page))).toBeGreaterThan(0);
+        .evaluate((node) => getComputedStyle(node, "::after").content);
+    await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), "quiet");
+    await page.goto("/");
+    await hydrated(page);
+    expect(await content()).toMatch(/none|normal/);
+    expect(await wandering(page)).toBe(false);
+    await page.evaluate(() => localStorage.clear());
+    for (const background of ["glass", "full"] as const) {
+      await chooseBackground(page, background);
+      await page.goto("/");
+      await hydrated(page);
+      await expect.poll(() => wandering(page)).toBe(true);
+      expect(await content()).not.toMatch(/none|normal/);
+      // The reveal is a 250ms transition: wait for it to leave 0.
+      await expect.poll(async () => Number(await lightOpacity(page))).toBeGreaterThan(0);
+    }
   });
 
   test("moves on its own and never follows the pointer", async ({ page }) => {
@@ -716,7 +716,6 @@ test.describe("card light", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
     await expect.poll(() => wandering(page)).toBe(true);
     const before = await lightTransform(page, 0);
     await page.waitForTimeout(2500);
@@ -751,7 +750,6 @@ test.describe("card light", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
     await expect.poll(() => wandering(page)).toBe(true);
     const count = await page.locator(".spotlight").count();
     expect(count).toBeGreaterThan(1);
@@ -765,7 +763,6 @@ test.describe("card light", () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(!(await fine(page)), "touch screens draw no wandering light");
     const display = () =>
       page
         .locator(".spotlight")
@@ -778,23 +775,25 @@ test.describe("card light", () => {
     await expect.poll(display, "hidden under Reduce glass").toBe("none");
   });
 
-  test("touch screens show no wandering light on Full", async ({ page }) => {
+  test("wanders on every device, touch screens too, with no Tilt lighting", async ({ page }) => {
     await chooseBackground(page, "full");
     await page.emulateMedia({ reducedMotion: "no-preference" });
     await page.goto("/");
     await hydrated(page);
-    test.skip(await fine(page), "hover-capable devices draw the wandering light");
-    // No Tilt lighting is on, so nothing drives a light here either.
+    // Nothing drives a light here, so the wander is the light on every device.
     await expect(page.locator("html")).not.toHaveAttribute("data-tilt", "on");
+    await expect.poll(() => wandering(page)).toBe(true);
     const light = await page
       .locator(".spotlight")
       .first()
       .evaluate((node) => {
         const style = getComputedStyle(node, "::after");
-        return { animationName: style.animationName, content: style.content };
+        return { animationName: style.animationName, content: style.content, width: style.width, height: style.height };
       });
-    expect(light.animationName).not.toMatch(/light-wander/);
-    expect(light.content).toMatch(/none|normal/);
+    // Not a CSS animation (see wander-light.ts), and a layer of the light's own size, not the card's.
+    expect(light.animationName).toBe("none");
+    expect(light.content).not.toMatch(/none|normal/);
+    expect([light.width, light.height]).toEqual(["432px", "432px"]);
   });
 
   test("stands still under reduced motion", async ({ page }) => {
@@ -933,11 +932,11 @@ test.describe("contrast", () => {
    * found again at each one, in the layout the page has there, and are measured
    * only when the layout is the same before and after the screenshot.
    *
-   * Every panel and list wears the card light on Full (and a touch screen the
-   * glint of Tilt lighting), which Reduce Motion hides, so each background runs
-   * twice: as the page renders under Reduce Motion, and with the lights forced
-   * on at their peak over the whole of every panel (lightsAtTheirStrongest).
-   * Glass and Full both, since Glass is what a touch screen mostly shows.
+   * Every panel and list wears the card light on Glass and on Full (and, with
+   * Tilt lighting on a touch screen, the glint), which Reduce Motion hides, so
+   * each background runs twice: as the page renders under Reduce Motion, and
+   * with the lights forced on at their peak over the whole of every panel, the
+   * wander's layer included (lightsAtTheirStrongest).
    */
   for (const background of ["glass", "full"] as const) {
     for (const colorScheme of ["light", "dark"] as const) {

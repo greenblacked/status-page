@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils";
 const BACKGROUND_LABEL: Record<Background, string> = { quiet: "Quiet", glass: "Glass", full: "Full" };
 const BACKGROUND_HINT: Record<Background, string> = {
   quiet: "Flat paper. Nothing moves behind the page.",
-  glass: "Frosted panels over a still glow.",
-  full: "Adds the slow drift, glass lenses and a light that wanders across the cards.",
+  glass: "Frosted panels over a still glow, with a soft light that wanders across the cards.",
+  full: "Adds the slow drift and glass lenses to Glass.",
 };
 
 /**
