@@ -26,8 +26,9 @@ import { expect, test } from "./test";
 // It needs the DevTools protocol, so it runs on Chromium (the mobile and tablet
 // projects) and is skipped in WebKit and on a desktop.
 //
-// Cost: this runs on two Chromium projects in CI, so it is kept to about 40 s a
-// project. Only the timed sweeps at 1x feed an assertion that depends on timing
+// Cost: this runs on two Chromium projects in CI, so it is kept short: it took 84 s on the mobile project in CI with every
+// sweep 3 s long and repeated, and takes about 50 s with the sweeps below (49 s on a machine busy with other
+// work). Only the timed sweeps at 1x feed an assertion that depends on timing
 // (the light moves on nearly every frame of a screen that keeps up, and is judged
 // only when the frames themselves were on time), so that rate takes TILT_PERF_RUNS
 // of them (default 3) and the median is used; the throttled rates and the
