@@ -244,13 +244,46 @@ async function pinToSlot(page: Page): Promise<void> {
   const offset = Math.floor(Date.now() / 120_000) * 120_000 + 30_000 - Date.now();
   await page.addInitScript((shift) => {
     const Native = Date;
-    const now = () => Native.now() + shift;
+    let stopped: number | null = null;
+    const now = () => stopped ?? Native.now() + shift;
+    (window as Window & { __stopClock?: () => void }).__stopClock = () => {
+      stopped ??= now();
+    };
     window.Date = new Proxy(Native, {
       construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [now()], newTarget),
       apply: (target) => new target(now()).toString(),
       get: (target, key) => (key === "now" ? now : Reflect.get(target, key, target)),
     });
   }, offset);
+}
+
+/**
+ * Stops the page's Date where it is, on a page that pinToSlot moved (timers and frames run on). Every text on the board
+ * that counts from now stands still once the page has drawn the stopped time, which it does on its next one-second
+ * tick (useNow), so this waits that tick out and two frames after it: a minute can turn between the last tick and the
+ * stop, and the tick after it would draw the new minute under whatever the caller starts watching. What stands still:
+ * the running time of an incident, the countdown, the ages. A test of the board's geometry or of its layout shifts
+ * is about what its own actions move, and a clock that crosses a minute under it moves text that has nothing to do
+ * with them. The e2e payloads make that likely and not rare: the dates of
+ * a canned payload are moved to the moment it is read, and several of its incidents began a whole number of hours
+ * before, so "since 14:05 UTC (3h)" reads "(3h 1m)", 23px wider, a minute after the board was built, wherever in a
+ * test that falls (Chromium counts it as a layout shift of 0.0004).
+ */
+async function stopClock(page: Page): Promise<void> {
+  const stopped = await page.evaluate(() => {
+    const stop = (window as Window & { __stopClock?: () => void }).__stopClock;
+    stop?.();
+    return stop !== undefined;
+  });
+  expect(stopped, "the page's clock was pinned (pinToSlot) before it could be stopped").toBe(true);
+  // useNow redraws on a 1 s interval, whose next run is due within 1 s of now and so runs before this timer does;
+  // the frames let what it rendered be laid out and reported.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())), 1_100),
+      ),
+  );
 }
 
 /**
@@ -933,6 +966,7 @@ async function dockPath(page: Page, step = 8): Promise<{ up: number[]; path: num
  */
 async function revealBoard(page: Page): Promise<DockOffsets & { limit: number }> {
   await steadyBoard(page);
+  await stopClock(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
   test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
@@ -952,6 +986,7 @@ async function revealServedBoard(
   await openFixture(page, () => board(Date.now()), ready);
   await fontsSettled(page);
   await leadSteady(page);
+  await stopClock(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
   test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
@@ -2844,14 +2879,20 @@ test("search reveal: no layout shift", async ({ page, browserName }) => {
   test.slow();
   const offsets = await revealBoard(page);
   if (browserName === "chromium") {
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const tracked = window as Window & { __cls?: number };
       tracked.__cls = 0;
-      new PerformanceObserver((list) => {
+      const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries() as unknown as { value: number; hadRecentInput: boolean }[]) {
           if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
         }
-      }).observe({ type: "layout-shift", buffered: false });
+      });
+      observer.observe({ type: "layout-shift", buffered: false });
+      // A shift is worked out when the page makes its next frame, and reported with it, which on a busy machine can
+      // be a while after what moved the page. Let a few frames come, drop what they report, and count from there.
+      for (let frame = 0; frame < 3; frame++) await new Promise((resolve) => requestAnimationFrame(resolve));
+      observer.takeRecords();
+      tracked.__cls = 0;
     });
   }
   const layout = () =>
@@ -4544,38 +4585,52 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   expect(small.small).toEqual([]);
 
   // The links in the verdict's sub line sit in running text, so their reach is padding round them (hit-extend)
-  // on lines 46pt apart (hit-lines, a hair over the 44pt box so a neighbour's edge never takes the tap), not the
-  // words' own box: a tap 21px above or below the middle of the words still lands on the link. (The next test
-  // has the sentence wrap, and checks that no two of them overlap.)
+  // on lines 48pt apart (hit-lines, over the tallest box so a neighbour's edge never takes the tap), not the
+  // words' own box: a tap 21.5px above or below the middle of the words still lands on the link. (The next test
+  // has the sentence wrap, and checks that no two of them overlap.) The box is the face's content area plus the
+  // padding, and the content area is the face's own (at 15px: 19px in Inter, 18px in DejaVu Sans, 17px in
+  // Liberation Sans, and in Inter Fallback 19px where the overrides apply and its own face's 17 to 18px where they
+  // do not). Inter is font-display: optional and a page view keeps the face it was first drawn in,
+  // so which of them this view drew is up to the timing of the font, and it must not decide the result: the
+  // sentence is measured in the page's own face and then in each of the others the font stack can end in.
   const sentence = await page.evaluate(() => {
+    const paragraph = document.querySelector<HTMLElement>("header h1 + p");
     const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
-    const boxes = links.map((link) => {
-      link.scrollIntoView({ block: "center" });
-      const box = link.getBoundingClientRect();
-      const x = box.left + box.width / 2;
-      const y = box.top + box.height / 2;
-      return {
-        name: link.textContent?.trim() ?? "",
-        x: x + window.scrollX,
-        y: y + window.scrollY,
-        reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
-        // What answers above and below, for the failure message: the link that took the tap, or what else.
-        seen: [-21.5, 21.5].map((dy) => {
-          const hit = document.elementFromPoint(x, y + dy);
-          return hit === link
-            ? "itself"
-            : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
-        }),
-      };
+    const own = paragraph?.style.fontFamily ?? "";
+    const faces = ["", "system-ui", "sans-serif", '"Inter Fallback"', '"Liberation Sans"', '"DejaVu Sans"'];
+    const boxes = faces.flatMap((face) => {
+      if (paragraph) paragraph.style.fontFamily = face || own;
+      return links.map((link) => {
+        link.scrollIntoView({ block: "center" });
+        const box = link.getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        return {
+          name: `${link.textContent?.trim() ?? ""}${face ? ` in ${face}` : ""}`,
+          x: x + window.scrollX,
+          y: y + window.scrollY,
+          face,
+          reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
+          // What answers above and below, for the failure message: the link that took the tap, or what else.
+          seen: [-21.5, 21.5].map((dy) => {
+            const hit = document.elementFromPoint(x, y + dy);
+            return hit === link
+              ? "itself"
+              : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
+          }),
+        };
+      });
     });
+    if (paragraph) paragraph.style.fontFamily = own;
     return boxes;
   });
-  expect(sentence.length, "the sub line names services").toBeGreaterThan(1);
+  const own = sentence.filter((link) => link.face === "");
+  expect(own.length, "the sub line names services").toBeGreaterThan(1);
   for (const link of sentence)
     expect(link.reaches, `${link.name} reaches 44px tall (above and below it saw ${link.seen})`).toEqual([true, true]);
   // Neighbours on one line are well apart (WCAG 2.5.8: 24px between centres).
-  for (const [index, link] of sentence.entries()) {
-    const next = sentence[index + 1];
+  for (const [index, link] of own.entries()) {
+    const next = own[index + 1];
     if (next && Math.abs(next.y - link.y) < 4)
       expect(next.x - link.x, `${link.name} to ${next.name}`).toBeGreaterThan(24);
   }
