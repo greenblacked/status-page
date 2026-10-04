@@ -188,16 +188,16 @@ test("a tracker's row names each version's note after it, and a version without 
   const line = (id: string) => page.locator(`#service-${id} [data-card-header] p`);
   // RouterOS: the fresh stable channel, its note, then the long-term channel and its own.
   await expect(line("mikrotik")).toContainText(
-    /Stable 7\.21 · \w{3} \d{1,2} · 23 changes: bgp, bridge, wifi \+9 more · 2 important · Long-term 7\.18\.2 · \w{3} \d{1,2} · 1 change: dhcpv4-server/,
+    /Stable 7\.21 · \w{3} \d{1,2} · 23 changes: bgp, bridge, wifi \+9 more\s· 2 important\s· Long-term 7\.18\.2 · \w{3} \d{1,2} · 1 change: dhcpv4-server/,
   );
   await expect(line("mikrotik").locator("[data-release-note]")).toHaveCount(2);
   // Windows: the update type of each version's latest build.
   await expect(line("windows")).toContainText(
-    /26H2 26300\.1000 · \w{3} \d{1,2} · Security update · 26H1 28000\.1575 · \w{3} \d{1,2} · Optional preview/,
+    /26H2 26300\.1000 · \w{3} \d{1,2} · Security update\s· 26H1 28000\.1575 · \w{3} \d{1,2} · Optional preview/,
   );
   // Apple's feed gives none, and the row is what it was.
   await expect(line("apple-os").locator("[data-release-note]")).toHaveCount(0);
-  await expect(line("apple-os")).toContainText(/^New release iOS 27\.2 beta 2/);
+  await expect(line("apple-os")).toContainText(/^New release\s*iOS 27\.2 beta 2/);
 });
 
 test("the Details show RouterOS's important lines first, then the count and every area", async ({ page }) => {
@@ -205,7 +205,7 @@ test("the Details show RouterOS's important lines first, then the count and ever
   await trigger(page, "mikrotik").click();
   const stable = dialog(page).locator("[data-release-entry]").nth(0);
   const note = stable.locator("[data-release-note-details]");
-  await expect(note.getByRole("list", { name: "Important changes" }).getByRole("listitem")).toHaveCount(2);
+  await expect(note.getByRole("list", { name: "Marked important" }).getByRole("listitem")).toHaveCount(2);
   await expect(note).toContainText("Important · lte - fixed a crash when a modem is removed during a firmware update");
   await expect(note).toContainText("23 changes in 12 areas: bgp, bridge, wifi, lte,");
   await expect(note).toContainText("routing.");
@@ -215,11 +215,7 @@ test("the Details show RouterOS's important lines first, then the count and ever
       const found = entry.querySelector(selector);
       return found ? [...entry.querySelectorAll("*")].indexOf(found) : -1;
     };
-    return [
-      at('[aria-label="Important changes"]'),
-      at("[data-release-note-details] > p"),
-      at('[aria-label="Changes"]'),
-    ];
+    return [at('[aria-label="Marked important"]'), at("[data-release-note-details] > p"), at('[aria-label="Changes"]')];
   });
   expect(order[0]).toBeGreaterThan(-1);
   expect(order[0]).toBeLessThan(order[1]);
@@ -227,7 +223,7 @@ test("the Details show RouterOS's important lines first, then the count and ever
   // The second channel has a count and no important lines; the third has no note and says so.
   const longTerm = dialog(page).locator("[data-release-entry]").nth(1);
   await expect(longTerm).toContainText("1 change in 1 area: dhcpv4-server.");
-  await expect(longTerm.getByRole("list", { name: "Important changes" })).toHaveCount(0);
+  await expect(longTerm.getByRole("list", { name: "Marked important" })).toHaveCount(0);
   const testing = dialog(page).locator("[data-release-entry]").nth(2);
   await expect(testing.locator("[data-release-note-details]")).toHaveCount(0);
   await expect(testing).toContainText("No notes text from MikroTik changelogs.");

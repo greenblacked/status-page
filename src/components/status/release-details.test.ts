@@ -280,10 +280,10 @@ describe("ReleaseDetailsDialog: the release note", () => {
   it("shows the important lines first, then the full sentence, then the first changes without a repeat", () => {
     const first = entry("RouterOS 7 stable");
     expect(first).toContain("data-release-note-details");
-    expect(first).toContain('aria-label="Important changes"');
+    expect(first).toContain('aria-label="Marked important"');
     expect(first).toContain("Important</span> · lte - fixed a crash");
     expect(first).toContain("6 changes in 6 areas: lte, bridge, ipsec, ospf, wifi, bgp.");
-    expect(first.indexOf("Important changes")).toBeLessThan(first.indexOf("6 changes in 6 areas"));
+    expect(first.indexOf("Marked important")).toBeLessThan(first.indexOf("6 changes in 6 areas"));
     expect(first.indexOf("6 changes in 6 areas")).toBeLessThan(first.indexOf('aria-label="Changes"'));
     // "lte - fixed a crash" is listed once, among the important lines.
     expect(first.match(/lte - fixed a crash/g)).toHaveLength(1);

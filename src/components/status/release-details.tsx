@@ -70,10 +70,7 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
       {entry.note ? (
         <div data-release-note-details className="mt-2 flex flex-col gap-1.5 text-footnote">
           {entry.note.important.length > 0 ? (
-            <ul
-              aria-label="Important changes"
-              className="flex list-disc flex-col gap-1 pl-4 text-fg marker:text-subtle"
-            >
+            <ul aria-label="Marked important" className="flex list-disc flex-col gap-1 pl-4 text-fg marker:text-subtle">
               {entry.note.important.map((line, at) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: a changelog can repeat a line; the index only breaks that tie.
                 <li key={at} className="[overflow-wrap:anywhere]">
