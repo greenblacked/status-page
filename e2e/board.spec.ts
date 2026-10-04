@@ -23,13 +23,18 @@ const upList = (page: Page, category: string) =>
   page.locator(`section[aria-labelledby="up-${category}-heading"] article[id^="service-"]`);
 
 /**
- * Waits until React has hydrated the page. The server's markup, cards
+ * Waits until React has hydrated the page and its saved checks are in
+ * (data-hydrated, set in board-view.tsx). The server's markup, cards
  * included, paints before that, and a click on it goes nowhere: on a slow
  * device (WebKit on a phone) a test that clicks as soon as the cards are
- * there can beat the handlers, and the click is lost for good.
+ * there can beat the handlers, and the click is lost for good. The saved
+ * checks add rows to Recent changes in the render after hydration, which
+ * moves what is below it, so the attribute waits for them too. That is a
+ * few renders after the first, so the wait is longer than the default 5s: on
+ * a loaded runner each one takes a while.
  */
 async function hydrated(page: Page): Promise<void> {
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
 /**
@@ -4460,6 +4465,67 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
   await releaseBoard();
   expect(shift, "cumulative layout shift").toBeLessThan(0.02);
 });
+
+// The saved checks arrive in the render after hydration. On a first visit they add the first row to Recent changes
+// (the empty state is shorter), and when a two-minute slot turns between the page being parsed and hydrating they add
+// another past what the page reserved, so everything below moves, the footer's Settings button included. A tap that
+// straddles that move (the press lands on the button, the page shifts, the release lands elsewhere) is lost, and a
+// WebKit run of tilt.spec.ts tapped Settings and found no dialog (the cause is inferred from the measured move; the
+// lost tap itself was not reproduced). So the page says it has hydrated only once the rows are in. A slot that turns
+// later, or a refetch that rewords a row, can still move the page after that, as it can for a visitor.
+for (const visit of ["a first visit", "a slot that turns while the page loads"] as const) {
+  test(`is done moving the footer when the page says it has hydrated, on ${visit}`, async ({ page }) => {
+    const releaseBoard = await holdBoardFetches(page);
+    await page.goto("/");
+    await hydrated(page);
+    await expect(feedRows(page)).toHaveCount(1);
+    await page.addInitScript(() => {
+      const seen = window as Window & { __atHydration?: { height: number; rows: number } };
+      new MutationObserver(() => {
+        if (seen.__atHydration === undefined && document.documentElement.hasAttribute("data-hydrated")) {
+          seen.__atHydration = {
+            height: document.documentElement.scrollHeight,
+            rows: document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length,
+          };
+        }
+      }).observe(document, { attributes: true, subtree: true, attributeFilter: ["data-hydrated"] });
+    });
+    if (visit === "a first visit") {
+      await page.evaluate(() => localStorage.clear());
+    } else {
+      // The clock is two minutes on from the moment the feed's script ran, which saw the slot the page saved.
+      await page.addInitScript(() => {
+        const real = Date.now.bind(Date);
+        const ran = () =>
+          document
+            .querySelector<HTMLElement>('section[aria-labelledby="recent-heading"] .surface')
+            ?.style.getPropertyValue("--feed-reserve");
+        Date.now = () => real() + (ran() ? 130_000 : 0);
+      });
+    }
+    await page.reload();
+    await hydrated(page);
+    await expect(feedRows(page)).toHaveCount(visit === "a first visit" ? 1 : 2);
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    const { atHydration, settled } = await page.evaluate(() => ({
+      atHydration: (window as Window & { __atHydration?: { height: number; rows: number } }).__atHydration,
+      settled: {
+        height: document.documentElement.scrollHeight,
+        rows: document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length,
+      },
+    }));
+    await releaseBoard();
+    // The rows are the exact claim. The height allows for the browser's own rounding only: the moves this guards
+    // against are 10px (the first row) and a whole row (63px).
+    expect(atHydration?.rows, "the rows of Recent changes when the page said it had hydrated").toBe(settled.rows);
+    expect(
+      Math.abs((atHydration?.height ?? Number.NaN) - settled.height),
+      "the page's height change after it said it had hydrated",
+    ).toBeLessThanOrEqual(2);
+  });
+}
 
 // The reserve is measured from the markup the page draws, so it holds at any
 // width and any default font size. 21px is a line of the body text: the one

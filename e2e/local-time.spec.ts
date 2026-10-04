@@ -19,7 +19,7 @@ test.describe("in Berlin", () => {
     });
     page.on("pageerror", (error) => problems.push(`uncaught: ${error.message}`));
     await page.goto("/");
-    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
     const stamp = asOf(page);
     await expect(stamp).toHaveText(/^\d\d:\d\d\sCES?T$/);
     await expect(stamp).toHaveAttribute("title", /^\d{1,2} [A-Z][a-z]{2} \d{4} \d\d:\d\d UTC$/);
@@ -68,7 +68,7 @@ test.describe("in a Russian browser", () => {
 
   test("the date and the clock are English, in the viewer's zone", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
     const date = page.locator("header time").first();
     await expect(date).toHaveText(/^(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday) \d{1,2} [A-Z][a-z]+$/);
     const stamp = asOf(page);
@@ -120,7 +120,7 @@ test("in UTC the hydrated text is the server's text, so nothing moves", async ({
   expect(server, "the server's HTML carries the stamp").not.toBeNull();
   expect(plain(server?.[2])).toBe(utcClock(server?.[1] ?? ""));
 
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
   const bar = page.getByTestId("live-bar");
   await expect(bar).toContainText("Live");
   const stamp = asOf(page);

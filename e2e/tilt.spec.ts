@@ -28,9 +28,9 @@ test.beforeEach(async ({ page }) => {
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const html = (page: Page) => page.locator("html");
 
-/** Waits until React has hydrated the page: the switch handlers are attached only then. */
+/** Waits until React has hydrated the page, saved checks in: the switch handlers are attached only then. */
 async function hydrated(page: Page): Promise<void> {
-  await expect(html(page)).toHaveAttribute("data-hydrated", "");
+  await expect(html(page)).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
 /** Console errors, warnings (React reports hydration mismatches as either) and uncaught exceptions. */
