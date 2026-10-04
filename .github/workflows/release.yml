@@ -27,7 +27,7 @@ name: Release
 #   - Pushing a vX.Y.Z tag by hand.
 # The release has to be on main, have a changelog section and pass the same
 # checks as CI. After every run for main, released or not, main is merged back
-# into stage and then dev (not while dev is paused: scripts/ci/dev-paused), so
+# into stage and then dev (dev is skipped only while paused: scripts/ci/dev-paused), so
 # both carry the release commit and any fix merged into main directly. A push
 # to main, stage or dev that fails fails the run, naming the cause, unless the
 # branch really moved meanwhile (scripts/release/push.sh); a ruleset that
@@ -580,13 +580,13 @@ jobs:
           # ending the script, and stage_pushed is written the moment stage's
           # push succeeds, before dev is touched.
           # While dev is paused (scripts/ci/dev-paused, the same switch the
-          # branch name check reads) nothing lands in it, so merging main
-          # would only conflict with its stale history on every release. Read
-          # once, while main is checked out.
+          # branch name check reads, false today) nothing lands in it, so
+          # merging main would only conflict with its stale history on every
+          # release. Read once, while main is checked out.
           dev_paused="$(./scripts/ci/dev-paused.sh)" || { dev_paused=true; failed=1; }
           for branch in stage dev; do
             if [ "$branch" = dev ] && [ "$dev_paused" = true ]; then
-              echo "::notice::dev is paused (scripts/ci/dev-paused); not merging main into it. When dev is recreated from stage, set the file to false"
+              echo "::notice::dev is paused (scripts/ci/dev-paused); not merging main into it. When dev is back, set the file to false"
               continue
             fi
             listed=0

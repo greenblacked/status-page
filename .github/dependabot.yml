@@ -1,17 +1,16 @@
 version: 2
 updates:
-  # dev is paused (CONTRIBUTING.md), so version updates open against stage
-  # and reach main when the owner promotes stage. Put every target-branch
-  # below back to dev when dev returns. Security updates ignore
-  # target-branch and open against the default branch, without the groups and
-  # ignores below: retarget one at stage, since main takes only stage.
+  # Version updates open against dev and reach stage and then main when the
+  # owner promotes them. Security updates ignore target-branch and open
+  # against the default branch, without the groups and ignores below:
+  # retarget one at dev, since main takes only stage.
   # Dependabot's ecosystem for pnpm is `npm`: it reads pnpm-lock.yaml and
   # keeps it in step with package.json. Moving the pnpm that CI runs
   # (packageManager and its hash) is a change made by hand, which
   # scripts/ci/pnpm-pin.sh checks (CONTRIBUTING.md#dependencies).
   - package-ecosystem: npm
     directory: /
-    target-branch: stage
+    target-branch: dev
     schedule:
       interval: weekly
     # Propose a release only once it has been public for a week. Most
@@ -41,7 +40,7 @@ updates:
         update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
-    target-branch: stage
+    target-branch: dev
     schedule:
       interval: weekly
     # The same, shorter: Actions are pinned by SHA and reviewed, but a

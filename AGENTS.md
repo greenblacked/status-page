@@ -96,15 +96,15 @@ The branch rules are in [CONTRIBUTING.md#branches](CONTRIBUTING.md#branches) and
 
 - Name a branch `<prefix>/<short-kebab-description>` with a prefix from the table in [CONTRIBUTING.md#branches](CONTRIBUTING.md#branches) (`branch.sh` enforces it), lowercase letters, digits and single hyphens only, 50 characters at most. Run `branch.sh` before pushing.
 - `dependabot/...` and `release/vX.Y.Z` are named by tooling; never create them by hand. The prefix is not the commit type.
-- **`dev` is paused** (`true` in `scripts/ci/dev-paused`, read by `branch.sh` and `release.yml`). A pull request goes into `stage` and is squash-merged. `stage` is promoted to `main` by the owner with a merge commit. Nothing is promoted by an agent. When `dev` returns, features go into `dev`, then `dev` to `stage` to `main`.
+- **The flow is `dev` → `stage` → `main`** (`scripts/ci/dev-paused` is `false`, read by `branch.sh` and `release.yml`). Work is committed straight to `dev`, with no feature pull request into it, and only after every local check in "Definition of done" passes. One pull request carries `dev` into `stage` and another carries `stage` into `main`, each merged with a merge commit by the owner. Nothing is promoted by an agent. `stage` takes pull requests only from `dev` (and `chore/sync-main`); `main` only from `stage` and `release/vX.Y.Z`.
 - `main` takes pull requests only from `stage` (and `release/vX.Y.Z`); `main` is never a head branch.
 - One pull request per request, one logical change per commit. Keep pull requests small enough to review in one sitting.
 - Commit subject: Conventional Commit `<type>(<optional scope>): <imperative summary>`.
   - Type is one of `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `ci`, `build`, `style`, `revert`, `release` (only for a release commit or pull request: `release: 0.6.0`, `release: v0.6.0`; no scope, no `!`); at most 72 characters (a trailing ` (#123)` does not count); no trailing period; no "added"/"fixed" past tense. `commits.sh` enforces all of this.
-  - The `pull request title` check (`pr-title.yml`) applies it to the PR title, which becomes the squash commit.
+  - The `pull request title` check (`pr-title.yml`) applies it to a PR title. A commit on `dev` is held to the same rule by the `commit messages` check on the promotion pull request.
   - The title's type picks the release: `feat` is minor, `fix`, `perf` and `revert` are patch, `!` is major, the rest (including `release`) release nothing ([table](CONTRIBUTING.md#releases)).
 - Commits carry the real GitHub author who owns the change ([authorship](CONTRIBUTING.md#authorship)). No tool attribution anywhere that is published: no "generated with" footers, no tool `Co-authored-by` trailers, no session links in commit messages, PR bodies or code.
-- **CHANGELOG.** A pull request with a user-visible change adds lines under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), written for someone reading the board, not the diff. Docs-only, CI-only and refactor-only changes need none. A release turns that section into the GitHub Release notes; `release.yml` cuts a version only when work reaches `main` ([releases](CONTRIBUTING.md#releases)).
+- **CHANGELOG.** A commit (or pull request) with a user-visible change adds lines under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), written for someone reading the board, not the diff. Docs-only, CI-only and refactor-only changes need none. A release turns that section into the GitHub Release notes; `release.yml` cuts a version only when work reaches `main` ([releases](CONTRIBUTING.md#releases)).
 - The PR body follows [`.github/pull_request_template.md`](.github/pull_request_template.md): what changes, why, and the checklist.
 - Never force-push, amend or rebase commits that are already pushed ([docs/git-and-readme.md](docs/git-and-readme.md#authorship)); bring a base branch in with a merge. Delete your branch after it merges, or tell the owner which branches are left.
 - Never merge a pull request yourself. The owner merges, and only when every check on the PR head is green and the target branch's own latest CI run is finished and green. Never merge into a red, pending or queued target.
@@ -149,6 +149,8 @@ The full list is [CONTRIBUTING.md#code-style](CONTRIBUTING.md#code-style) and [#
 - Accessibility is tested: axe WCAG 2.2 AA and a contrast test in `e2e/board.spec.ts`, pixel contrast for the Full background in `e2e/lenses.spec.ts`. Keep the skip link, `sr-only` text for anything conveyed visually only, focus rings and keyboard paths. New motion respects `prefers-reduced-motion`; new translucency sits behind the Glass gate in `src/background.css` with a Reduce glass override. Animate `transform` and `opacity` only; never use the View Transitions API for card moves.
 
 ## Reviewing a pull request
+
+**Review scope: only pull requests whose base branch is `stage` or `main`.** Check the base branch first. For a pull request into any other branch (such as `dev`), or for a push to `dev`, do not review: reply that reviews run on pull requests into `stage` and `main`, and stop.
 
 Applies to any agent asked to review a change here. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md#how-the-repository-defends-itself) first if you have not.
 
@@ -212,10 +214,10 @@ pnpm test
 ./scripts/ci/hygiene.sh
 ./scripts/ci/tokens.sh
 ./scripts/ci/links.sh
-./scripts/ci/commits.sh origin/stage..HEAD
-./scripts/ci/branch.sh "$(git branch --show-current)" stage
+./scripts/ci/commits.sh origin/dev..HEAD
+./scripts/ci/branch.sh "$(git branch --show-current)" dev
 ```
 
 `pnpm run check` covers lint, typecheck, tests, hygiene and links. Also run `pnpm run test:coverage` if you changed logic, and `pnpm run build && pnpm run test:e2e --project=desktop` (plus a WebKit project when the change touches layout, motion or touch) if you changed the UI and the browsers are available. `release-notes.sh` and `pnpm-pin.sh check` if you touched `package.json` or `pnpm-lock.yaml`. Shell script changes: `shellcheck`. Workflow changes: actionlint and zizmor.
 
-Then the pull request into `stage` has every CI job green. **`CI OK`** is the one aggregate check that sums up `lint`, `typecheck`, `test`, `build`, the browser shards, `browser tests (history build)`, `commit messages`, `branch name` and `workflow lint`; `pull request title`, CodeQL (`analyze (javascript-typescript)`, `analyze (actions)`) and `dependency-review` are separate required checks ([branch protection](CONTRIBUTING.md#branch-protection)). A red check is fixed in code, never by weakening the check.
+Then commit to `dev`; the pull request from `dev` into `stage` has every CI job green. **`CI OK`** is the one aggregate check that sums up `lint`, `typecheck`, `test`, `build`, the browser shards, `browser tests (history build)`, `commit messages`, `branch name` and `workflow lint`; `pull request title`, CodeQL (`analyze (javascript-typescript)`, `analyze (actions)`) and `dependency-review` are separate required checks ([branch protection](CONTRIBUTING.md#branch-protection)). A red check is fixed in code, never by weakening the check.

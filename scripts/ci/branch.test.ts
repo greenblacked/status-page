@@ -139,7 +139,18 @@ describe("branch.sh", () => {
     });
   });
 
-  describe("while dev is paused (DEV_PAUSED=true, the default)", () => {
+  describe("the repository's own switch (scripts/ci/dev-paused, DEV_PAUSED not set)", () => {
+    const { DEV_PAUSED: _unset, ...env } = process.env;
+    const run = (name: string, base: string) => spawnSync(SCRIPT, [name, base], { encoding: "utf8", env });
+
+    it("has dev active: stage takes dev, not a feature branch", () => {
+      expect(run("dev", "stage").status).toBe(0);
+      expect(run("feature/board-metrics", "stage").status).not.toBe(0);
+      expect(run("feature/board-metrics", "dev").status).toBe(0);
+    });
+  });
+
+  describe("while dev is paused (DEV_PAUSED=true)", () => {
     const check = (name: string, base?: string, env: Record<string, string> = {}) =>
       checkWith(name, base, { DEV_PAUSED: "true", ...env });
 
@@ -156,12 +167,6 @@ describe("branch.sh", () => {
       ["release/v0.4.0", "main"],
     ])("accepts %s into %s", (name, base) => {
       expect(check(name, base).ok).toBe(true);
-    });
-
-    it("is the default when DEV_PAUSED is not set", () => {
-      const { DEV_PAUSED: _unset, ...env } = process.env;
-      const result = spawnSync(SCRIPT, ["feature/board-metrics", "stage"], { encoding: "utf8", env });
-      expect(result.status).toBe(0);
     });
 
     it.each([

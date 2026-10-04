@@ -4,7 +4,7 @@ name: Deploy
 # Worker, status-page: main deploys it to production (wrangler deploy), stage
 # creates or updates a Worker Preview of it named "stage" (wrangler preview),
 # served at https://stage.status.szolotov.com and never on production
-# traffic. dev, the branch pull requests merge into, deploys nothing: it is
+# traffic. dev, the branch work is committed to, deploys nothing: it is
 # promoted to stage, and stage to main, by the owner. Pull requests into dev,
 # stage and main build and dry-run the deploy with no credentials. A
 # production deploy that does not answer its smoke test is rolled back to the
