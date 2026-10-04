@@ -172,22 +172,31 @@ jobs:
           retention-days: 1
 
   e2e:
-    # One shard per engine and device group. Every project but one runs the
-    # whole suite (the Chromium tablet runs only the search reveal, floating
-    # bar, field's fill and self-hosted Inter tests), but WebKit is several
-    # times slower than Chromium in CI, so each WebKit project gets its own
-    # shard. The three Chromium projects together took about 8.5 minutes, and
-    # over 10 on a slower run, which hit the 10-minute step timeout, so they
-    # are split: desktop alone, mobile and tablet together. Together the
-    # shards run every project exactly once.
+    # One shard per engine and device group. Five projects run the whole suite
+    # and the Chromium tablet runs only the search reveal, floating bar, field's
+    # fill, self-hosted Inter and layout tests; ten more screens (narrow, short,
+    # large, foldable, an Android tablet, phones on their side) run only the
+    # layout tests tagged @layout (e2e/mobile-layout.spec.ts). WebKit is several
+    # times slower than Chromium in CI, so each WebKit device gets its own
+    # shard, with the extra WebKit screens beside the device of their size: the
+    # phones in the iphone shard and the iPad Mini in the ipad shard. The
+    # Chromium projects are split in two so neither comes near the step timeout
+    # (the three full ones alone took about 8.5 minutes, and over 10 on a slower
+    # run): desktop with the larger layout screens, mobile and tablet with the
+    # phone ones. Together the shards run every project exactly once.
     name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Per shard: a Chromium shard runs one or two projects and a WebKit shard
-    # one, which take 3 to 5 minutes, plus getting the browser. Chromium is
+    # Per shard: a Chromium shard runs four or five projects (desktop, or
+    # mobile and tablet, plus three layout screens) and takes about 6 to 9
+    # minutes, the iphone shard four (one full, three of layout tests) up to
+    # about 15, the others one or two, each plus getting the browser. A
+    # project's layout tests add about a seventh of what the whole suite takes
+    # on it (measured on Chromium, summing the tests' own time), about a minute
+    # on a Chromium screen locally, and WebKit is slower. Chromium is
     # downloaded, with its 32 MB of system libraries from apt. WebKit's
-    # libraries are about 125 MB from apt, and on a slow runner that fetch
-    # took over 30 minutes and failed the job, so the WebKit shards run in
+    # libraries are about 125 MB from apt, and on a slow runner that fetch took
+    # over 30 minutes and failed the job, so the WebKit shards run in
     # Playwright's own image (below), which has them and the browser already.
     # apt is not retried: a killed apt keeps the dpkg lock, so a retry in the
     # same job would fail. Pulling the image (about 1 GB compressed) happens
@@ -203,10 +212,10 @@ jobs:
         include:
           - shard: chromium-desktop
             browser: chromium
-            projects: desktop
+            projects: desktop,Galaxy Z Fold 7,Galaxy Tab S9,Pixel 7 landscape
           - shard: chromium-mobile
             browser: chromium
-            projects: mobile,tablet
+            projects: mobile,tablet,Galaxy S9+,Pixel 10,Galaxy Z Fold 7 Cover
           # The image carries WebKit's system libraries and the browser build
           # that matches @playwright/test, so these shards fetch nothing from
           # apt. Pinned by digest (Scorecard) and by tag for the reader; when
@@ -220,11 +229,11 @@ jobs:
             container: &playwright-image mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
           - shard: iphone
             browser: webkit
-            projects: iPhone 17 Pro
+            projects: iPhone 17 Pro,iPhone SE (3rd gen),iPhone 17 Pro Max,iPhone 17 Pro landscape
             container: *playwright-image
           - shard: ipad
             browser: webkit
-            projects: iPad Pro 11
+            projects: iPad Pro 11,iPad Mini
             container: *playwright-image
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -276,10 +285,13 @@ jobs:
           EOF
 
       - name: Browser tests (Playwright)
-        # Shards take 3 to 5 minutes. Chromium's three projects in one shard
-        # took about 8.5 minutes, and over 10 on a slower run, which hit this
-        # limit, hence the two Chromium shards. It stops a hung suite long before the job limit does.
-        timeout-minutes: 10
+        # A project's run takes 3 to 4.3 minutes and its layout tests 1 to 2
+        # more. The Chromium shards take about 6 to 9 minutes and the busiest,
+        # iphone, up to about 15, so this leaves real margin (10 minutes was
+        # hit by the three full Chromium projects in one shard, which took over
+        # 10 on a slower run) and still stops a hung suite well before the job
+        # limit does.
+        timeout-minutes: 25
         env:
           # Comma-separated project names from playwright.config.ts.
           PROJECTS: ${{ matrix.projects }}

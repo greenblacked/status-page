@@ -503,7 +503,7 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 | Types and tests | Strict typecheck; unit tests on the pinned Node and Node 24, with coverage thresholds |
 | Build | Production build and SSR smoke test on both Node versions, with the client bundle size in the job summary |
 | Docker image | The Dockerfile built for amd64 and started as a self-hoster runs it (read-only root, no capabilities): healthy, smoke-tested, stopped cleanly by `SIGTERM` |
-| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in light and dark, and Chromium again behind the production Node server for its caching, compression and headers: no console errors or hydration warnings, axe WCAG 2.2 AA, the contrast of every status and text colour on the glass's flat fills (on a fixture board, blur stripped, in light, dark and Increase Contrast), keyboard paths |
+| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in light and dark, plus layout checks (no overflow or overlap, 44pt targets, the floating bar, sheets and search) on ten more phone, foldable, tablet and landscape screens, and Chromium again behind the production Node server for its caching, compression and headers: no console errors or hydration warnings, axe WCAG 2.2 AA, the contrast of every status and text colour on the glass's flat fills (on a fixture board, blur stripped, in light, dark and Increase Contrast), keyboard paths |
 | Conventions | Conventional Commit messages and PR title, branch name |
 | Workflows | actionlint and zizmor, so no workflow change weakens the pipeline |
 | Security | CodeQL for TypeScript and the workflows, dependency review |

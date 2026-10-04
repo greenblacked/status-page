@@ -368,7 +368,7 @@ test("renders every service with no console errors or hydration warnings", async
   // build late, so the global setup waits for them and asks for the page once they are in hand (e2e/support/
   // global-setup.ts). Without that, this markup would have no release line, and the hydration of those lines and of
   // the MikroTik notes in its Details would be untested. That holds while the canned feeds are younger than their
-  // 30-minute cache; a longer run (all six projects, WebKit last) may get a board built while they are read again,
+  // 30-minute cache; a longer run (all the full-suite projects, WebKit last) may get a board built while they are read again,
   // and then asks only that no line is unexpected.
   if (firstRenderCarriesReleaseLines()) {
     expect(releaseLineIds(html)).toEqual(EXPECTED_RELEASE_LINES);
