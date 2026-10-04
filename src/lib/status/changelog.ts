@@ -191,7 +191,8 @@ export function mikrotikChangelogNote(text: string, version: string): ReleaseNot
       ? `${count} in ${plural(total, "area", "areas")}: ${areas.join(", ")}${total > areas.length ? ` and ${total - areas.length} more` : ""}.`
       : `${count}.`;
   // The Details list at most MAX_NOTE_LINES important lines; say so when the release has more.
-  if (flagged > important.length) detail += ` ${flagged} are marked important; the first ${important.length} are listed.`;
+  if (flagged > important.length)
+    detail += ` ${flagged} are marked important; the first ${important.length} are listed.`;
   return { text: row, detail, ...(important.length > 0 ? { important } : {}) };
 }
 

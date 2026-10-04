@@ -17,15 +17,16 @@ export function ReleaseItem({ children }: { children: ReactNode }) {
 }
 
 /**
- * The short note on a release, after its version on a tracker's line ("23 changes: bgp, wifi, container +9 more").
- * Unlike an item it wraps like text, and breaks anywhere in a word too long for a phone's line, so a long area name
- * can never widen the row.
+ * The line of a tracker's row that carries the short note on a release ("Stable · 23 changes: bgp, wifi, container
+ * +9 more · 2 important"), under the version line. It is clamped to one line on a desktop and two on a phone, ending
+ * in an ellipsis when the note is longer (the Details hold it in full), and breaks anywhere in a word too long for
+ * the line, so a note can never widen the row or grow it past that.
  */
 export function ReleaseNote({ children }: { children: ReactNode }) {
   return (
-    <span data-release-note className="[overflow-wrap:anywhere]">
+    <div data-release-note className="line-clamp-2 text-caption text-subtle [overflow-wrap:anywhere] sm:line-clamp-1">
       {children}
-    </span>
+    </div>
   );
 }
 

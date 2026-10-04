@@ -8,7 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- A short note on each **MikroTik RouterOS** and **Windows 11** release, on its row and in its **Details**. RouterOS shows how many changes its own changelog lists and which areas they touch, such as "23 changes: bgp, wifi, container +9 more · 2 important", with the lines MikroTik marks important first in Details; Windows shows what kind of update the version's latest build is (Security update, Optional preview or Out-of-band fix), with its KB article, linked when Microsoft's table links it. A release whose changelog or update type cannot be read has no note.
+- A short note on each **MikroTik RouterOS** and **Windows 11** release, on a line under its row's versions and in its **Details**. RouterOS shows how many changes its own changelog lists and which areas they touch, such as "23 changes: bgp, wifi, container +9 more · 2 important", with the lines MikroTik marks important first in Details; Windows shows what kind of update the version's latest build is (Security update, Optional preview or Out-of-band fix), with its KB article, linked when Microsoft's table links it. A release whose changelog or update type cannot be read has no note.
 
 ### Fixed
 

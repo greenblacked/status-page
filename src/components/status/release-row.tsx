@@ -34,13 +34,13 @@ export function releaseItems(service: ServiceSnapshot): string[] {
   return releaseParts(service).map((part) => part.item);
 }
 
-/** One item of the line, with the short note on that release (the vendor's own data) when it has one. */
-export type ReleasePart = { item: string; note?: string };
+/** One item of the line, with the channel or version it names and the short note on that release (the vendor's own data) when it has one. */
+export type ReleasePart = { item: string; name: string; note?: string };
 
 /**
- * The line's items each with its note: "7.21beta4 · Sep 19" and "23 changes: bgp, wifi, container +9 more". A release
- * the collector gave no note for (a changelog not read yet, a build the page lists no update type for) has none,
- * and its item is exactly what it was.
+ * The line's items, each with its name and its note ("23 changes: bgp, wifi, container +9 more"). A release the
+ * collector gave no note for (a changelog not read yet, a build the page lists no update type for) has none, and
+ * its item is exactly what it was.
  */
 export function releaseParts(service: ServiceSnapshot): ReleasePart[] {
   const parts = service.components
@@ -50,17 +50,23 @@ export function releaseParts(service: ServiceSnapshot): ReleasePart[] {
     .map((component): ReleasePart => {
       const note = component.release?.note?.text;
       const item = `${component.name} ${component.detail}`;
-      return typeof note === "string" && note.trim() !== "" ? { item, note: note.trim() } : { item };
+      return typeof note === "string" && note.trim() !== ""
+        ? { item, name: component.name, note: note.trim() }
+        : { item, name: component.name };
     });
-  return parts.length > 0 ? parts : [{ item: "No new release" }];
+  return parts.length > 0 ? parts : [{ item: "No new release", name: "" }];
 }
 
 /**
- * A note as the row prints it: the " · " inside it (before "2 important") is joined to the word before it, so a
- * wrapped line never starts with a stray dot. Plain text.
+ * The note the row prints under its line: the first listed release that has one, led by the name of the channel or
+ * version it belongs to ("Stable · 23 changes: bgp, wifi, container +9 more · 2 important"). One note, on one
+ * line, so a row is its version line plus one line on a desktop, whatever the notes of its releases say; the
+ * others are in Details, which lists every release in full. The " · " inside the note is joined to the word before
+ * it, so a line that wraps on a phone never starts with a stray dot. Plain text; undefined when no release has one.
  */
-function rowNote(note: string): string {
-  return note.replaceAll(" · ", "\u00a0· ");
+export function rowNoteOf(parts: ReleasePart[]): string | undefined {
+  const part = parts.find((candidate) => candidate.note);
+  return part?.note ? `${part.name} · ${part.note}`.replaceAll(" · ", "\u00a0· ") : undefined;
 }
 
 /**
@@ -78,6 +84,7 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
   const fresh = hasFreshRelease(service);
   const parts = releaseParts(service);
   const last = parts[parts.length - 1];
+  const note = rowNoteOf(parts);
   return (
     <RowFrame
       service={service}
@@ -88,34 +95,26 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
       lead={<TagIcon aria-hidden strokeWidth={1.7} className={cn("block size-5 text-subtle", ROW_LEAD)} />}
     >
       <div className="flex min-h-(--row-h) min-w-0 items-center">
-        <RowHeader name={service.name} className="relative">
+        <RowHeader
+          name={service.name}
+          className="relative"
+          after={note ? <ReleaseNote>{note}</ReleaseNote> : undefined}
+        >
           {fresh ? (
             <Tag className="mr-1.5 gap-1.5 text-fg">
               <span aria-hidden className="size-1.5 rounded-full bg-accent" />
               New release
             </Tag>
           ) : null}
-          {/* The line wraps between items, never inside one, and "Details" stays with the last. A release's note
-              follows its item and wraps like text, so on a phone it sits under the version. */}
+          {/* The line wraps between items, never inside one, and "Details" stays with the last. */}
           {parts.slice(0, -1).map((part, at) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: two versions can read alike; the index only breaks that tie.
             <Fragment key={at}>
               <ReleaseItem>{part.item} ·</ReleaseItem>{" "}
-              {part.note ? <ReleaseNote>{rowNote(part.note)}&nbsp;·</ReleaseNote> : null}
-              {part.note ? " " : null}
             </Fragment>
           ))}
           <ReleaseTail>
-            <ReleaseItem>
-              {last.item}
-              {last.note ? " ·" : null}
-            </ReleaseItem>
-            {last.note ? (
-              <>
-                {" "}
-                <ReleaseNote>{rowNote(last.note)}</ReleaseNote>
-              </>
-            ) : null}
+            <ReleaseItem>{last.item}</ReleaseItem>
             {emphasized ? (
               <>
                 {" "}

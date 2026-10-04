@@ -393,7 +393,7 @@ describe("release row", () => {
     expect(headerText(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
   });
 
-  it("follows a version with its note, wrapping as text, and leaves a version without one as it was", () => {
+  it("puts the note of the first release that has one on its own line under the versions, led by its name", () => {
     const withNotes: ComponentHealth[] = [
       {
         name: "Stable",
@@ -401,29 +401,43 @@ describe("release row", () => {
         detail: "7.21 · Sep 24",
         release: { version: "7.21", note: { text: "23 changes: bgp, wifi, container +9 more · 2 important" } },
       },
-      { name: "Long-term", health: "operational", detail: "7.18.2 · Jul 22", release: { version: "7.18.2" } },
+      {
+        name: "Long-term",
+        health: "operational",
+        detail: "7.18.2 · Jul 22",
+        release: { version: "7.18.2", note: { text: "1 change: dhcpv4-server" } },
+      },
       { name: "Testing", health: "operational", detail: "7.22beta3" },
     ];
     const html = render("mikrotik", { category: "updates", components: withNotes });
-    // Both items stay whole units; the note is its own wrapping run between them, with its dot kept to the text.
-    expect(headerText(html)).toContain(
-      "Stable 7.21 · Sep 24 · 23 changes: bgp, wifi, container +9 more\u00a0· 2 important\u00a0· Long-term 7.18.2 · Jul 22",
-    );
+    // The versions are the line they were, with no note in them; the one note is a line of its own after it.
+    expect(headerText(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2 · Jul 22");
     expect(html.match(/data-release-item/g)).toHaveLength(2);
-    expect(html.match(/data-release-note="true"/g)).toHaveLength(1);
-    expect(html).toMatch(/data-release-note="true" class="\[overflow-wrap:anywhere\]"/);
     expect(html).not.toMatch(/data-release-item[^>]*>[^<]*changes/);
-    // The last item's note sits inside the tail, before Details.
-    const last = render("mikrotik", {
-      category: "updates",
-      components: [{ ...withNotes[0], health: "operational" }],
-    });
-    const tail = last.slice(last.indexOf("data-release-tail"));
-    expect(tail.indexOf("23 changes")).toBeGreaterThan(-1);
-    expect(tail.indexOf("23 changes")).toBeLessThan(tail.indexOf("data-release-details-trigger"));
-    expect(headerText(last)).toContain(
-      "Stable 7.21 · Sep 24 · 23 changes: bgp, wifi, container +9 more\u00a0· 2 important",
-    );
+    expect(html.match(/data-release-note[ =]/g)).toHaveLength(1);
+    expect(html).toMatch(/<div data-release-note="true" class="line-clamp-2 [^"]*sm:line-clamp-1">/);
+    // Led by its channel, with the dot before "2 important" kept to the words before it.
+    expect(html).toContain("Stable\u00a0· 23 changes: bgp, wifi, container +9 more\u00a0· 2 important</div>");
+    // The second release's note is for Details.
+    expect(html).not.toContain("dhcpv4-server");
+    // The note line is outside the versions' own line, so that line is the same one with or without a note.
+    expect(html.indexOf("data-release-note")).toBeGreaterThan(html.indexOf("data-release-details-trigger"));
+  });
+
+  it("names a later release's note when the first has none, and prints no note line when none has one", () => {
+    const later: ComponentHealth[] = [
+      { name: "Stable", health: "maintenance", detail: "7.21 · Sep 24", release: { version: "7.21" } },
+      {
+        name: "Long-term",
+        health: "operational",
+        detail: "7.18.2 · Jul 22",
+        release: { version: "7.18.2", note: { text: "1 change: dhcpv4-server" } },
+      },
+    ];
+    const html = render("mikrotik", { category: "updates", components: later });
+    expect(html).toContain("Long-term\u00a0· 1 change: dhcpv4-server</div>");
+    const none = render("mikrotik", { category: "updates", components: [later[0]] });
+    expect(none).not.toContain("data-release-note");
   });
 
   it("shows no note for a release whose note is missing, empty or not text", () => {

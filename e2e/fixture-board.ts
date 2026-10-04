@@ -171,7 +171,8 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             "bridge - improved MAC learning performance on CRS3xx series devices",
             "wifi - fixed station roaming between access points on the same channel",
           ],
-          // The note the collector derives from the same changelog: 23 changes, two of them flagged important.
+          // A hand-written note in the shape the collector builds from a changelog (no fixture changelog exists for
+          // 7.21): 23 changes, two of them flagged important. The collector's own output is tested against fixtures.
           note: {
             text: "23 changes: bgp, bridge, wifi +9 more · 2 important",
             detail:
@@ -242,11 +243,29 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             releasedAt: "2026-02-10",
             updatedAt: at(-9 * day).slice(0, 10),
             url: WINDOWS_PAGE,
-            // Its table names the article in text only: the number is shown, with no link.
+            // Its table links the article, as the page fixture does: the link is the table's own.
             note: {
               text: "Optional preview",
               detail: "2026-09 D: an optional, non-security preview of the next monthly update.",
-              reference: { label: "KB5000050" },
+              reference: { label: "KB5000050", url: "https://support.microsoft.com/help/5000050" },
+            },
+          },
+        },
+        {
+          name: "25H2",
+          health: "operational",
+          detail: `26200.8100 · ${formatReleaseAge(at(-26 * day).slice(0, 10))}`,
+          release: {
+            version: "25H2",
+            build: "26200.8100",
+            releasedAt: at(-26 * day).slice(0, 10),
+            url: WINDOWS_PAGE,
+            // Its table names the article in text only (as the page fixture's 25H2 table does): the number is
+            // shown, with no link and none invented.
+            note: {
+              text: "Out-of-band fix",
+              detail: "2026-09 OOB: an out-of-band fix, released outside the monthly schedule.",
+              reference: { label: "KB5000060" },
             },
           },
         },
