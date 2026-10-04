@@ -7,9 +7,8 @@ name: Release
 # release stays a draft. Two more jobs publish the Docker image for the tag,
 # once the release is signed and public (ghcr.io/<owner>/status-page, amd64
 # and arm64, with provenance and an SBOM), and sign it with cosign. Only main
-# is released: work is committed to
-# dev, which never releases, the owner promotes dev to stage (a
-# preview) and stage to main, each in a merge commit
+# is released: work is committed to dev, which never releases, the owner
+# promotes dev to stage (a preview) and stage to main, each in a merge commit
 # (CONTRIBUTING.md#releases). Ways in:
 #   - Merging a pull request into main. The Conventional Commits merged since
 #     the last release pick the next version (scripts/release/next.sh): a
