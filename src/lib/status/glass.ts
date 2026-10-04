@@ -61,7 +61,7 @@ export function applyReduceGlass(root: AttributeTarget, on: boolean): void {
  * Runs in <head> before the body paints, so a visitor who chose Reduce
  * glass never sees a frame of blur first. It only adds an attribute to
  * <html>; React renders the same markup either way, and the switch reads
- * the stored choice again after hydration. Inline, which the page's
- * Content-Security-Policy allows ('unsafe-inline' in script-src).
+ * the stored choice again after hydration. Inline, and run under the
+ * page's Content-Security-Policy by the response's nonce (src/lib/security-headers.ts).
  */
 export const REDUCE_GLASS_BOOT_SCRIPT = `try{if(localStorage.getItem(${JSON.stringify(REDUCE_GLASS_STORAGE_KEY)})==="on")document.documentElement.setAttribute(${JSON.stringify(REDUCE_GLASS_ATTRIBUTE)},"true")}catch(e){}`;

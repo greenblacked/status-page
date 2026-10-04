@@ -63,7 +63,7 @@ export function applyBackground(root: AttributeTarget, value: Background): void 
  * `data-background` for Glass or Full, so those never flash Quiet first. The
  * server writes no attribute (<html> carries suppressHydrationWarning), React
  * renders the same markup either way, and the hooks read the stored choices
- * again after hydration. Inline, which the page's Content-Security-Policy
- * allows ('unsafe-inline' in script-src).
+ * again after hydration. Inline, and run under the page's
+ * Content-Security-Policy by the response's nonce (src/lib/security-headers.ts).
  */
 export const APPEARANCE_BOOT_SCRIPT = `${REDUCE_GLASS_BOOT_SCRIPT};try{var b=localStorage.getItem(${JSON.stringify(BACKGROUND_STORAGE_KEY)});if(b==="glass"||b==="full")document.documentElement.setAttribute(${JSON.stringify(BACKGROUND_ATTRIBUTE)},b)}catch(e){}`;
