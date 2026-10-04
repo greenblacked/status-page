@@ -222,9 +222,9 @@ export function parseWindowsDate(text: string): string | undefined {
   return undefined;
 }
 
-/** A build such as "26300.1234" found in a cell, else undefined. */
+/** A build such as "26300.1234" found in a cell, else undefined. Digits, letters or dots glued on either side refuse it. */
 export function parseWindowsBuild(text: string): string | undefined {
-  const match = text.match(/(?:^|[^\d.])(\d{5}\.\d{1,6})(?![\d.])/);
+  const match = text.match(/(?:^|[^\dA-Za-z.])(\d{5}\.\d{1,6})(?![\dA-Za-z.])/);
   return match?.[1];
 }
 

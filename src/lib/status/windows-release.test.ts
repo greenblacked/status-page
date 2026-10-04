@@ -124,6 +124,11 @@ describe("parseWindowsDate and parseWindowsBuild", () => {
     expect(parseWindowsBuild("26300")).toBeUndefined();
     expect(parseWindowsBuild("126300.1000")).toBeUndefined();
     expect(parseWindowsBuild("1.2.26300.1000")).toBeUndefined();
+    expect(parseWindowsBuild("26100.1742a")).toBeUndefined();
+    expect(parseWindowsBuild("a26100.1742")).toBeUndefined();
+    expect(parseWindowsBuild("KB26100.1742")).toBeUndefined();
+    expect(parseWindowsBuild("OS build 26100.1742")).toBe("26100.1742");
+    expect(parseWindowsBuild("(26100.1742)")).toBe("26100.1742");
   });
 });
 

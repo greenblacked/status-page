@@ -68,6 +68,13 @@ export const MAX_MIKROTIK_NOTES = 4;
 // reaches a second heading within this much is not read further.
 const MAX_NOTES_SCAN_CHARS = 64_000;
 
+/** The start of a section heading, with the space after "in" so "What's new information" is not one. */
+const SECTION_HEADING = "what's new in ";
+
+function isSectionHeading(line: string): boolean {
+  return line.slice(0, SECTION_HEADING.length).toLowerCase() === SECTION_HEADING;
+}
+
 /**
  * The first few notes of a RouterOS changelog's newest section: the bullets
  * ("*) bridge - fixed ...;" and the important "!) ..." ones) between the first
@@ -89,7 +96,7 @@ export function mikrotikChangelogNotes(text: string, max: number = MAX_MIKROTIK_
     const line = text.slice(pos, lineEnd).trim();
     pos = lineEnd + 1;
     if (line.length === 0) continue;
-    if (line.slice(0, 13).toLowerCase() === "what's new in") {
+    if (isSectionHeading(line)) {
       if (inSection) break;
       inSection = true;
       continue;
@@ -161,7 +168,7 @@ export function mikrotikChangelogNote(
     const line = text.slice(pos, lineEnd).trim();
     pos = lineEnd + 1;
     if (line.length === 0) continue;
-    if (line.slice(0, 13).toLowerCase() === "what's new in") {
+    if (isSectionHeading(line)) {
       if (inSection) {
         ended = true;
         break;
@@ -218,9 +225,8 @@ export function mikrotikChangelogIsFor(text: string, version: string): boolean {
     const line = text.slice(pos, lineEnd).trim();
     pos = lineEnd + 1;
     if (line.length === 0) continue;
-    const prefix = "what's new in ";
-    if (line.slice(0, prefix.length).toLowerCase() !== prefix) return false;
-    const rest = line.slice(prefix.length);
+    if (!isSectionHeading(line)) return false;
+    const rest = line.slice(SECTION_HEADING.length);
     if (rest.slice(0, version.length).toLowerCase() !== version.toLowerCase()) return false;
     const next = rest[version.length];
     return next === undefined || next === " " || next === "(" || next === ":";

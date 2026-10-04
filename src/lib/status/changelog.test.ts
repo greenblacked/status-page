@@ -256,6 +256,12 @@ describe("mikrotikChangelogNote", () => {
     }
   });
 
+  it("does not end the section on a line that only starts like a heading", () => {
+    const text = section("*) bgp - a;", "What's new information for routers:", "*) wifi - b;", "*) dns - c;");
+    assert.equal(noteOf(text, "7.2")?.text, "3 changes: bgp, wifi, dns");
+    assert.deepEqual(mikrotikChangelogNotes(text), ["bgp - a", "wifi - b", "dns - c"]);
+  });
+
   it("gives nothing when the read stopped inside the section, rather than a count that may be short", () => {
     // 70 KB of one version with no next heading: the scan window ends before the section does, whole or not.
     const long = `What's new in 7.2:\n${"*) bgp - a change;\n".repeat(4000)}`;
