@@ -40,15 +40,17 @@ const CHANGELOG_RANGE_BYTES = 65_536;
 
 /**
  * Whether a read is certainly the entire file, judged from bytes and HTTP metadata and never from the decoded text
- * (a cut can fall inside a multi-byte character, so the text's length says nothing about it): a body shorter than
- * the range asked for was not cut by our own limit, and a 206 whose Content-Range total equals what arrived is the
- * whole file. Exactly the range's size, an unknown ("*") or missing total, or anything else is not known to be whole.
+ * (a cut can fall inside a multi-byte character, so the text's length says nothing about it): a 206 is judged by its
+ * Content-Range alone, whole only when the total equals what arrived (a server may cut a range shorter than asked);
+ * any other status is whole when the body is shorter than the range asked for, so our own limit did not cut it.
+ * Exactly the range's size, an unknown ("*") or missing total, or anything else is not known to be whole.
  */
 export function isWholeChangelog(received: number, status: number, contentRange: string): boolean {
-  if (received < CHANGELOG_RANGE_BYTES) return true;
-  if (status !== 206) return false;
-  const match = /^bytes 0-(\d{1,15})\/(\d{1,15})$/.exec(contentRange.trim());
-  return match !== null && Number(match[2]) === received && Number(match[1]) === received - 1;
+  if (status === 206) {
+    const match = /^bytes 0-(\d{1,15})\/(\d{1,15})$/.exec(contentRange.trim());
+    return match !== null && Number(match[2]) === received && Number(match[1]) === received - 1;
+  }
+  return received < CHANGELOG_RANGE_BYTES;
 }
 
 const readings = new Map<string, { at: number; read: MikrotikNotes | undefined }>();

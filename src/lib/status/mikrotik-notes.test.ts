@@ -550,17 +550,20 @@ describe("MikroTik changelog notes", () => {
 });
 
 describe("isWholeChangelog", () => {
-  it("is true for a body shorter than the range, whatever the status", () => {
+  it("is true for a body shorter than the range, unless a 206 says otherwise", () => {
     expect(isWholeChangelog(0, 200, "")).toBe(true);
     expect(isWholeChangelog(65_535, 200, "")).toBe(true);
-    expect(isWholeChangelog(65_535, 206, "bytes 0-65534/999999")).toBe(true);
+    expect(isWholeChangelog(65_535, 206, "bytes 0-65534/65535")).toBe(true);
   });
 
   it("is true for a 206 that shows its total equal to the bytes received", () => {
     expect(isWholeChangelog(65_536, 206, "bytes 0-65535/65536")).toBe(true);
   });
 
-  it("is false for exactly the range's size without that proof", () => {
+  it("is false for a cut 206, or a body of the range's size without proof", () => {
+    expect(isWholeChangelog(65_535, 206, "bytes 0-65534/999999")).toBe(false);
+    expect(isWholeChangelog(32_768, 206, "bytes 0-32767/300000")).toBe(false);
+    expect(isWholeChangelog(32_768, 206, "")).toBe(false);
     expect(isWholeChangelog(65_536, 200, "")).toBe(false);
     expect(isWholeChangelog(65_536, 200, "bytes 0-65535/65536")).toBe(false);
     expect(isWholeChangelog(65_536, 206, "bytes 0-65535/*")).toBe(false);
