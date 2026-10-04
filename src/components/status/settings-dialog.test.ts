@@ -18,7 +18,7 @@ function render(
   const tilt = options.tilt ?? { supported: false };
   return renderToStaticMarkup(
     createElement(SettingsDialog, {
-      open: false,
+      opened: null,
       onClose: noop,
       singleKey: options.singleKey ?? true,
       onSingleKeyChange: noop,
