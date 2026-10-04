@@ -3,10 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   parseWindowsBuild,
   parseWindowsDate,
+  parseWindowsKb,
+  parseWindowsUpdateType,
   parseWindowsVersion,
+  readHtmlCells,
   readHtmlTables,
+  textOfTables,
   windowsReleases,
   windowsShippedAt,
+  windowsUpdateNote,
 } from "./windows-release.ts";
 
 const page = readFileSync(
@@ -29,9 +34,9 @@ const versionsTable = (rows: string[], header = "Version|Availability date|Lates
     .join("")}</table>`;
 
 describe("readHtmlTables", () => {
-  it("reads every top-level table as rows of cell text, skipping script, style and comments", () => {
+  it("reads every top-level table (the versions and three history tables) as rows of cell text, skipping script, style and comments", () => {
     const tables = readHtmlTables(page);
-    expect(tables).toHaveLength(2);
+    expect(tables).toHaveLength(4);
     expect(tables[0][0].slice(0, 5)).toEqual([
       "Version",
       "Servicing option",
@@ -220,5 +225,161 @@ describe("windowsShippedAt", () => {
     expect(windowsShippedAt(base)).toBe(base.availableAt);
     expect(windowsShippedAt({ ...base, updatedAt: "2026-09-22T00:00:00.000Z" })).toBe("2026-09-22T00:00:00.000Z");
     expect(windowsShippedAt({ ...base, updatedAt: "2026-01-01T00:00:00.000Z" })).toBe(base.availableAt);
+  });
+});
+
+describe("readHtmlCells", () => {
+  it("keeps the text exactly as readHtmlTables reads it, and the href of the first link in a cell", () => {
+    const html =
+      '<table><tr><th>KB</th></tr><tr><td><a class="x" href="https://support.microsoft.com/help/5000000">KB5000000</a> <a href="https://other.example/">more</a></td><td>plain</td><td><a name="top">no href</a></td></tr></table>';
+    const cells = readHtmlCells(html);
+    expect(textOfTables(cells)).toEqual(readHtmlTables(html));
+    expect(cells[0][1]).toEqual([
+      { text: "KB5000000 more", href: "https://support.microsoft.com/help/5000000" },
+      { text: "plain" },
+      { text: "no href" },
+    ]);
+  });
+
+  it("reads single-quoted and spaced attributes, and ignores a link outside a cell, an empty href and a long tag", () => {
+    const cells = readHtmlCells(
+      `<a href="https://outside.example/"></a><table><tr><td><a  HREF = 'https://a.example/x'>a</a></td><td><a href="">b</a></td><td><a title="${"x".repeat(2100)}" href="https://c.example/">c</a></td><td><a data-href="https://d.example/">d</a></td></tr></table>`,
+    );
+    expect(cells[0][0].map((cell) => cell.href)).toEqual(["https://a.example/x", undefined, undefined, undefined]);
+  });
+});
+
+describe("parseWindowsUpdateType", () => {
+  it("reads B, D and OOB with their month, in any case", () => {
+    expect(parseWindowsUpdateType("2026-09 B")).toEqual({ type: "2026-09 B", kind: "B" });
+    expect(parseWindowsUpdateType(" 2026-09  d ")).toEqual({ type: "2026-09 D", kind: "D" });
+    expect(parseWindowsUpdateType("2026-10 OOB")).toEqual({ type: "2026-10 OOB", kind: "OOB" });
+  });
+
+  it("reads nothing else", () => {
+    for (const text of [
+      "",
+      " ",
+      "B",
+      "2026-09",
+      "2026-09 C",
+      "2026-09 X",
+      "2026-9 B",
+      "26-09 B",
+      "2026/09 B",
+      "2026-09 OOBB",
+      "constructor",
+      "2026-09 __proto__",
+      "abcd-ef B",
+    ]) {
+      expect(parseWindowsUpdateType(text), text).toBeUndefined();
+    }
+  });
+});
+
+describe("parseWindowsKb", () => {
+  it("finds a KB number of four to eight digits", () => {
+    expect(parseWindowsKb("KB5000000")).toBe("KB5000000");
+    expect(parseWindowsKb("see kb5043080 for details")).toBe("KB5043080");
+    expect(parseWindowsKb("KB1234")).toBe("KB1234");
+  });
+
+  it("finds none in anything else", () => {
+    for (const text of ["", "KB", "KB123", "KB12x", "5000000", "kilobyte 5000000", "KB KB KB"]) {
+      expect(parseWindowsKb(text), text).toBeUndefined();
+    }
+  });
+});
+
+describe("windowsUpdateNote", () => {
+  const history = (rows: string[], header = "Servicing option|Update type|Availability date|Build|KB article") =>
+    readHtmlCells(
+      `<table><tr>${header
+        .split("|")
+        .map((cell) => `<th>${cell}</th>`)
+        .join("")}</tr>${rows.map((row) => `<tr>${row}</tr>`).join("")}</table>`,
+    );
+  const row = (
+    type: string,
+    build: string,
+    kb = '<a href="https://support.microsoft.com/help/5000001">KB5000001</a>',
+  ) => `<td>GA</td><td>${type}</td><td>2026-09-09</td><td>${build}</td><td>${kb}</td>`;
+
+  it("maps B, D and OOB to a short label with the table's own KB link", () => {
+    const tables = history([
+      row("2026-09 D", "26100.6800"),
+      row("2026-09 B", "26100.6725", '<a href="https://support.microsoft.com/help/5043080">KB5043080</a>'),
+      row("2026-09 OOB", "26100.6700"),
+    ]);
+    expect(windowsUpdateNote(tables, "26100.6725")).toEqual({
+      text: "Security update",
+      detail: "2026-09 B: the monthly security update.",
+      reference: { label: "KB5043080", url: "https://support.microsoft.com/help/5043080" },
+    });
+    expect(windowsUpdateNote(tables, "26100.6800")?.text).toBe("Optional preview");
+    expect(windowsUpdateNote(tables, "26100.6700")?.text).toBe("Out-of-band fix");
+  });
+
+  it("gives no note without a build, for a build no table lists, or when the row's type is unknown", () => {
+    const tables = history([row("2026-09 B", "26100.6725"), row("2026-09 Q", "26100.6000")]);
+    expect(windowsUpdateNote(tables, undefined)).toBeUndefined();
+    expect(windowsUpdateNote(tables, "")).toBeUndefined();
+    expect(windowsUpdateNote(tables, "26100.9999")).toBeUndefined();
+    expect(windowsUpdateNote(tables, "26100.6000")).toBeUndefined();
+    expect(windowsUpdateNote([], "26100.6725")).toBeUndefined();
+  });
+
+  it("needs both an Update type and a Build column, and ignores the table of versions", () => {
+    expect(
+      windowsUpdateNote(history([row("2026-09 B", "26100.6725")], "Servicing option|Kind|Date|Build|KB"), "26100.6725"),
+    ).toBeUndefined();
+    expect(
+      windowsUpdateNote(
+        history([row("2026-09 B", "26100.6725")], "Servicing option|Update type|Date|Revision|KB"),
+        "26100.6725",
+      ),
+    ).toBeUndefined();
+    expect(
+      windowsUpdateNote(readHtmlCells(page.split("<h2>Windows 11, version 26H2</h2>")[0]), "26300.1000"),
+    ).toBeUndefined();
+  });
+
+  it("works without a KB column, and with a KB cell that has no number or no link", () => {
+    const noKb = history(
+      [`<td>GA</td><td>2026-09 B</td><td>2026-09-09</td><td>26100.6725</td>`],
+      "Servicing option|Update type|Availability date|Build",
+    );
+    expect(windowsUpdateNote(noKb, "26100.6725")).toEqual({
+      text: "Security update",
+      detail: "2026-09 B: the monthly security update.",
+    });
+    const text = history([row("2026-09 B", "26100.6725", "KB5000002")]);
+    expect(windowsUpdateNote(text, "26100.6725")?.reference).toEqual({ label: "KB5000002" });
+    const empty = history([row("2026-09 B", "26100.6725", "")]);
+    expect(windowsUpdateNote(empty, "26100.6725")?.reference).toBeUndefined();
+  });
+
+  it("builds no link of its own: only an https link on support.microsoft.com that the cell has is kept", () => {
+    for (const href of [
+      "http://support.microsoft.com/help/5",
+      "https://microsoft.com/help/5",
+      "/help/5",
+      "javascript:alert(1)",
+      "https://user:pw@support.microsoft.com/help/5",
+    ]) {
+      const tables = history([row("2026-09 B", "26100.6725", `<a href="${href}">KB5000003</a>`)]);
+      expect(windowsUpdateNote(tables, "26100.6725")?.reference, href).toEqual({ label: "KB5000003" });
+    }
+  });
+
+  it("copes with short rows and a table of nothing", () => {
+    expect(
+      windowsUpdateNote(
+        readHtmlCells("<table><tr><th>Update type</th><th>Build</th></tr><tr><td>2026-09 B</td></tr></table>"),
+        "26100.6725",
+      ),
+    ).toBeUndefined();
+    expect(windowsUpdateNote(readHtmlCells("<table></table><table><tr></tr></table>"), "26100.6725")).toBeUndefined();
+    expect(windowsUpdateNote(readHtmlCells(""), "26100.6725")).toBeUndefined();
   });
 });

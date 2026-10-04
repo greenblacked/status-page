@@ -2169,12 +2169,38 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         build: "26300.1000",
         releasedAt: "2026-09-29",
         url: page,
+        // The history table under "Windows 11, version 26H2" lists build 26300.1000 as "2026-09 B", with its
+        // article linked by the table itself.
+        note: {
+          text: "Security update",
+          detail: "2026-09 B: the monthly security update.",
+          reference: { label: "KB5000000", url: "https://support.microsoft.com/help/5000000" },
+        },
       });
       expect(windows.components[1].release).toEqual({
         version: "26H1",
         build: "28000.1575",
         releasedAt: "2026-02-10",
         updatedAt: "2026-09-22",
+        url: page,
+        note: {
+          text: "Optional preview",
+          detail: "2026-09 D: an optional, non-security preview of the next monthly update.",
+          reference: { label: "KB5000050", url: "https://support.microsoft.com/help/5000050" },
+        },
+      });
+      // 25H2's table names its article in text only, so the note has the number and no link.
+      expect(windows.components[2].release?.note).toEqual({
+        text: "Out-of-band fix",
+        detail: "2026-09 OOB: an out-of-band fix, released outside the monthly schedule.",
+        reference: { label: "KB5000060" },
+      });
+      // The page has no history table for 24H2: no note, nothing guessed.
+      expect(windows.components[3].release).toEqual({
+        version: "24H2",
+        build: "26100.8100",
+        releasedAt: "2024-10-01",
+        updatedAt: "2026-09-08",
         url: page,
       });
       expect(windows.incidents).toEqual([]);
@@ -2254,6 +2280,94 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(diffBoards(after, next)).toEqual([
         expect.objectContaining({ id: "windows", release: true, summary: "Windows 11 27H2 released" }),
       ]);
+    });
+
+    describe("Windows release health: the update type note", () => {
+      const noteOf = async (page: string, at = 0) => {
+        vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+        stubFetch({ [URLS.windows]: text(page) });
+        const windows = await collect("windows");
+        expect(windows.failure).toBeUndefined();
+        return windows.components[at].release?.note;
+      };
+      const original = fixture("windows/windows11-release-information.html");
+
+      it("reads the type of the row whose build is the version's latest build", async () => {
+        // 26H1's table also has an older B row for build 28000.1500; the latest build is the D row.
+        expect((await noteOf(original, 1))?.text).toBe("Optional preview");
+        // Only the versions table says 26H1's latest build is the older one: then that build's row is the B row.
+        const older = original.replace(
+          "<td>28000.1575</td>\n<td>2028-03-14</td>",
+          "<td>28000.1500</td>\n<td>2028-03-14</td>",
+        );
+        expect(older).not.toBe(original);
+        expect((await noteOf(older, 1))?.text).toBe("Security update");
+      });
+
+      it("gives no note for a type it does not know, or none at all", async () => {
+        for (const type of ["2026-09 X", "2026-09", "B", "Security", "2026-9 B", "", "2026-09 BB"]) {
+          expect(await noteOf(original.replace("<td>2026-09 B</td>", `<td>${type}</td>`)), type).toBeUndefined();
+        }
+        // The rest of the card is unchanged by it.
+        expect(await noteOf(original.replace("<td>2026-09 B</td>", "<td>2026-09 X</td>"), 1)).toBeDefined();
+      });
+
+      it("reads a lower-case type and one with extra spaces", async () => {
+        expect((await noteOf(original.replace("<td>2026-09 B</td>", "<td>  2026-09 b </td>")))?.text).toBe(
+          "Security update",
+        );
+      });
+
+      it("gives no note when the page has no table with an Update type column", async () => {
+        const noType = original.replaceAll("Update type", "Kind");
+        expect(await noteOf(noType)).toBeUndefined();
+        const noBuild = original.replaceAll("<th>Build</th>", "<th>Revision</th>");
+        expect(await noteOf(noBuild)).toBeUndefined();
+      });
+
+      it("keeps the number but no link when the table's link is not on support.microsoft.com", async () => {
+        for (const href of [
+          "http://support.microsoft.com/help/5000000",
+          "https://evil.example.com/help/5000000",
+          "https://support.microsoft.com.evil.example.com/help/5000000",
+          "javascript:alert(1)",
+          "/help/5000000",
+          "#kb",
+          "",
+        ]) {
+          const note = await noteOf(original.replace("https://support.microsoft.com/help/5000000", href));
+          expect(note?.reference, href).toEqual({ label: "KB5000000" });
+        }
+      });
+
+      it("takes the link the table gives, whatever its number, and builds none of its own", async () => {
+        const note = await noteOf(
+          original.replace("https://support.microsoft.com/help/5000000", "https://support.microsoft.com/topic/x-1"),
+        );
+        expect(note?.reference).toEqual({ label: "KB5000000", url: "https://support.microsoft.com/topic/x-1" });
+        // No KB number in the cell: no reference, even with a link.
+        const none = await noteOf(original.replace(">KB5000000<", ">see the article<"));
+        expect(none?.text).toBe("Security update");
+        expect(none?.reference).toBeUndefined();
+      });
+
+      it("leaves the card's health, versions and summary as without the note", async () => {
+        vi.setSystemTime(new Date("2026-10-01T12:00:00.000Z"));
+        stubFetch({ [URLS.windows]: text(original) });
+        const withNotes = await collect("windows");
+        stubFetch({ [URLS.windows]: text(original.replaceAll("Update type", "Kind")) });
+        const without = await collect("windows");
+        const plain = (card: ServiceSnapshot) => ({
+          ...card,
+          latencyMs: 0,
+          checkedAt: "",
+          components: card.components.map(({ release, ...rest }) => ({
+            ...rest,
+            release: release && { ...release, note: undefined },
+          })),
+        });
+        expect(plain(withNotes)).toEqual(plain(without));
+      });
     });
 
     it("Windows release health: a page without the versions table is unknown with a parser failure", async () => {

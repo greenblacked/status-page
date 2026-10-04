@@ -1,4 +1,6 @@
 import { clip } from "./bounds.ts";
+import type { ReleaseNote } from "./types.ts";
+import { vendorUrl } from "./vendor-url.ts";
 
 /**
  * The Windows 11 versions Microsoft lists on its release health page
@@ -51,25 +53,44 @@ function tidy(text: string): string {
 
 const SPACING_TAGS = new Set(["br", "p", "div", "li", "ul", "ol"]);
 
+/** A table cell: its text, and the `href` of the first link in it when it has one (not checked here). */
+export type TableCell = { text: string; href?: string };
+
+/** The longest tag looked into for an `href`: a link's attributes are short, and a longer tag is not read. */
+const MAX_LINK_TAG_CHARS = 2000;
+const MAX_HREF_CHARS = 500;
+// The attribute is found by one literal ("href") after a space, so there is nothing to backtrack over.
+const HREF = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+
+function hrefOf(tag: string): string | undefined {
+  const match = HREF.exec(tag);
+  const href = (match?.[1] ?? match?.[2] ?? "").trim();
+  return href !== "" && href.length <= MAX_HREF_CHARS ? href : undefined;
+}
+
 /**
- * Every top-level `<table>` of an HTML page as rows of cell text, cut at
- * MAX_TABLES, MAX_ROWS, MAX_CELLS and MAX_CELL_CHARS. Not an HTML parser: it
- * knows `table`, `tr`, `td` and `th`, skips comments, `script` and `style`,
+ * Every top-level `<table>` of an HTML page as rows of cells (text, and the link in the cell when it has one),
+ * cut at MAX_TABLES, MAX_ROWS, MAX_CELLS and MAX_CELL_CHARS. Not an HTML parser: it
+ * knows `table`, `tr`, `td`, `th` and `a`, skips comments, `script` and `style`,
  * and ignores a table nested inside another. Each tag is found with one
  * `indexOf("<")` and one `indexOf(">")` from where the last ended, so the
  * whole page is read once; markup that never closes simply ends the scan.
  */
-export function readHtmlTables(html: string): string[][][] {
-  const tables: string[][][] = [];
-  let table: string[][] | null = null;
-  let row: string[] | null = null;
+export function readHtmlCells(html: string): TableCell[][][] {
+  const tables: TableCell[][][] = [];
+  let table: TableCell[][] | null = null;
+  let row: TableCell[] | null = null;
   let cell: string | null = null;
+  let href: string | undefined;
   let depth = 0;
   let pos = 0;
 
   const endCell = () => {
-    if (cell !== null && row !== null && row.length < MAX_CELLS) row.push(tidy(cell));
+    if (cell !== null && row !== null && row.length < MAX_CELLS) {
+      row.push(href === undefined ? { text: tidy(cell) } : { text: tidy(cell), href });
+    }
     cell = null;
+    href = undefined;
   };
   const endRow = () => {
     endCell();
@@ -134,6 +155,8 @@ export function readHtmlTables(html: string): string[][][] {
           row ??= [];
           cell = "";
         }
+      } else if (name === "a" && !closing && cell !== null && href === undefined && gt - lt <= MAX_LINK_TAG_CHARS) {
+        href = hrefOf(html.slice(lt, gt));
       } else if (cell !== null && SPACING_TAGS.has(name) && cell.length < MAX_CELL_CHARS * 4) {
         cell += " ";
       }
@@ -142,6 +165,16 @@ export function readHtmlTables(html: string): string[][][] {
   endRow();
   if (table !== null && table.length > 0 && tables.length < MAX_TABLES) tables.push(table);
   return tables;
+}
+
+/** The same tables as rows of cell text only. */
+export function readHtmlTables(html: string): string[][][] {
+  return textOfTables(readHtmlCells(html));
+}
+
+/** Rows of cell text out of rows of cells. */
+export function textOfTables(tables: TableCell[][][]): string[][][] {
+  return tables.map((table) => table.map((row) => row.map((cell) => cell.text)));
 }
 
 type Columns = { version: number; available: number; updated: number; build: number };
@@ -238,4 +271,87 @@ export function windowsReleases(tables: string[][][]): WindowsRelease[] {
 /** When a version last shipped something: its latest update, or else its first availability. */
 export function windowsShippedAt(release: WindowsRelease): string {
   return release.updatedAt && release.updatedAt > release.availableAt ? release.updatedAt : release.availableAt;
+}
+
+/**
+ * The update types Microsoft's per-version history tables name, and what each is: "2026-09 B" is the month's
+ * security update (the second-Tuesday "B" release), "2026-09 D" its optional non-security preview, "2026-09 OOB"
+ * an out-of-band fix released outside that schedule. Any other value is not read: no note.
+ */
+const UPDATE_KINDS: Record<string, { label: string; meaning: string }> = {
+  B: { label: "Security update", meaning: "the monthly security update" },
+  D: { label: "Optional preview", meaning: "an optional, non-security preview of the next monthly update" },
+  OOB: { label: "Out-of-band fix", meaning: "an out-of-band fix, released outside the monthly schedule" },
+};
+
+/** "2026-09 B" out of a cell, with the kind it names; undefined for anything else. */
+export function parseWindowsUpdateType(text: string): { type: string; kind: keyof typeof UPDATE_KINDS } | undefined {
+  const value = text.trim();
+  const space = value.lastIndexOf(" ");
+  if (space < 0) return undefined;
+  const month = value.slice(0, space).trim();
+  const kind = value.slice(space + 1).toUpperCase();
+  if (!Object.hasOwn(UPDATE_KINDS, kind)) return undefined;
+  const digit = (at: number) => isDigit(month[at]);
+  if (month.length !== 7 || month[4] !== "-" || ![0, 1, 2, 3, 5, 6].every(digit)) return undefined;
+  return { type: `${month} ${kind}`, kind };
+}
+
+/** "KB5043080" out of a cell: "KB" and four to eight digits, found with a forward scan. */
+export function parseWindowsKb(text: string): string | undefined {
+  const upper = text.toUpperCase();
+  for (let at = upper.indexOf("KB"); at !== -1; at = upper.indexOf("KB", at + 1)) {
+    let end = at + 2;
+    while (end < upper.length && end - at - 2 < 9 && isDigit(upper[end])) end += 1;
+    const digits = end - at - 2;
+    if (digits >= 4 && digits <= 8) return `KB${upper.slice(at + 2, end)}`;
+  }
+  return undefined;
+}
+
+const NO_LINK = "https://invalid.invalid/";
+
+/** A link from the history table's own cell, kept only when it is an https page on support.microsoft.com. */
+function supportLink(href: string | undefined): string | undefined {
+  if (!href) return undefined;
+  // A relative link resolves against a host that is never allowed, so only an absolute https link on
+  // support.microsoft.com comes back; anything else gives the fallback, which reads as no link.
+  const url = vendorUrl(href, NO_LINK, ["support.microsoft.com"]);
+  return url === NO_LINK ? undefined : url;
+}
+
+/**
+ * A note on one Windows build from the page's per-version history tables (the ones with an "Update type" and a
+ * "Build" column; the table of versions has neither): the row whose Build is `build` names its update type, and
+ * its KB article cell the article, linked only when the table itself links it. Undefined when no such table has
+ * the build, when its update type is not one of B, D or OOB, or when `build` is not given. The match is by build
+ * number alone, so no heading has to be associated with a table.
+ */
+export function windowsUpdateNote(tables: TableCell[][][], build: string | undefined): ReleaseNote | undefined {
+  if (!build) return undefined;
+  for (const table of tables) {
+    const headerAt = table.slice(0, 3).findIndex((row) => {
+      const lower = row.map((cell) => cell.text.toLowerCase());
+      return lower.some((cell) => cell.includes("update type")) && lower.some((cell) => cell.includes("build"));
+    });
+    if (headerAt === -1) continue;
+    const lower = table[headerAt].map((cell) => cell.text.toLowerCase());
+    const typeAt = lower.findIndex((cell) => cell.includes("update type"));
+    const buildAt = lower.findIndex((cell) => cell.includes("build"));
+    const kbAt = lower.findIndex((cell) => cell.includes("kb"));
+    for (const row of table.slice(headerAt + 1)) {
+      if (parseWindowsBuild(row[buildAt]?.text ?? "") !== build) continue;
+      const update = parseWindowsUpdateType(row[typeAt]?.text ?? "");
+      if (!update) return undefined;
+      const { label, meaning } = UPDATE_KINDS[update.kind];
+      const kb = kbAt >= 0 ? parseWindowsKb(row[kbAt]?.text ?? "") : undefined;
+      const url = kb && kbAt >= 0 ? supportLink(row[kbAt]?.href) : undefined;
+      return {
+        text: label,
+        detail: `${update.type}: ${meaning}.`,
+        ...(kb ? { reference: { label: kb, ...(url ? { url } : {}) } } : {}),
+      };
+    }
+  }
+  return undefined;
 }

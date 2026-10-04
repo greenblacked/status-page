@@ -25,7 +25,7 @@ import {
   parseRssItems,
 } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
-import { readHtmlTables, windowsReleases } from "./windows-release.ts";
+import { readHtmlCells, readHtmlTables, windowsReleases, windowsUpdateNote } from "./windows-release.ts";
 
 // Vendor bodies are untrusted input that is parsed on the Worker, so no
 // parser may take more than linear time on one. Each case below is a crafted
@@ -225,6 +225,40 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["carriage returns only", `What's new in 7.2:${"\r".repeat(SIZE)}*) a - b;`],
   ])("mikrotikChangelogNote: %s", (_label, text) => {
     expect(elapsed(() => mikrotikChangelogNote(text, "7.2"))).toBeLessThan(BUDGET_MS);
+  });
+
+  it.each([
+    ["links that never close", `<table><tr><td>${'<a href="'.repeat(SIZE / 9)}`],
+    ["an href with no end quote", `<table><tr><td><a href="${"x".repeat(SIZE)}`],
+    ["a tag of attributes", `<table><tr><td><a ${'a="b" '.repeat(SIZE / 6)}href="https://support.microsoft.com/">x`],
+    ["a tag of spaces before an equals sign", `<table><tr><td><a href${" ".repeat(SIZE)}="x">x`],
+    ["many links in one cell", `<table><tr><td>${'<a href="https://a.example/">x</a>'.repeat(SIZE / 33)}`],
+    [
+      "a cell of KB-like text",
+      `<table><tr><th>Update type</th><th>Build</th><th>KB</th></tr><tr><td>2026-09 B</td><td>26100.6725</td><td>${"KB".repeat(SIZE / 2)}</td></tr>`,
+    ],
+    [
+      "a cell of digits after KB",
+      `<table><tr><th>Update type</th><th>Build</th><th>KB</th></tr><tr><td>2026-09 B</td><td>26100.6725</td><td>KB${"1".repeat(SIZE)}</td></tr>`,
+    ],
+    [
+      "an update type of spaces",
+      `<table><tr><th>Update type</th><th>Build</th></tr><tr><td>${" ".repeat(SIZE)}B</td><td>26100.6725</td></tr>`,
+    ],
+    [
+      "a build of dots and digits",
+      `<table><tr><th>Update type</th><th>Build</th></tr><tr><td>2026-09 B</td><td>${"1.".repeat(SIZE / 2)}</td></tr>`,
+    ],
+    [
+      "the most tables, each with many rows",
+      "<table><tr><th>Update type</th><th>Build</th></tr>"
+        .concat("<tr><td>2026-09 B</td><td>1.1</td></tr>".repeat(100), "</table>")
+        .repeat(60),
+    ],
+  ])("windowsUpdateNote: %s", (_label, html) => {
+    let cells: ReturnType<typeof readHtmlCells> = [];
+    expect(elapsed(() => (cells = readHtmlCells(html)))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => windowsUpdateNote(cells, "26100.6725"))).toBeLessThan(BUDGET_MS);
   });
 
   it("splitAppleBuild: a version made of parentheses and of spaces", () => {
