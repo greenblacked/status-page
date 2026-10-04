@@ -10,6 +10,7 @@
 !public
 !src
 
-# Tests, and the generated route tree is rebuilt by the build.
+# Tests are not needed to build. The generated route tree (src/routeTree.gen.ts)
+# is copied with src; the build regenerates it.
 **/*.test.ts
 src/test
