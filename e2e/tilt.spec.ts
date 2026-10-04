@@ -399,18 +399,6 @@ async function wanderHoldsStill(page: Page, ms = 1600): Promise<void> {
 const tiltSwitch = (page: Page) => page.getByRole("switch", { name: "Tilt lighting" });
 const storedChoice = (page: Page) => page.evaluate((key) => localStorage.getItem(key), TILT_STORAGE_KEY);
 
-/**
- * How many of Tilt lighting's animations a panel has on one of its pseudo-elements (the glint is the ::after's, which the
- * wandering light draws when nothing is tilting, in Glass and Full: so its content says nothing about the glint).
- */
-const tiltTracksOn = (card: Element, pseudo: "::before" | "::after") =>
-  card
-    .getAnimations({ subtree: true })
-    .filter(
-      (animation) =>
-        animation.id.startsWith("tilt-light") && (animation.effect as KeyframeEffect | null)?.pseudoElement === pseudo,
-    ).length;
-
 /** The first panel's light-carrying pseudo-elements, as the browser computes them. */
 const cardLight = (page: Page) =>
   page
@@ -420,7 +408,15 @@ const cardLight = (page: Page) =>
       sheen: getComputedStyle(card, "::before").backgroundImage,
       sheenMoves: getComputedStyle(card, "::before").transform,
       glint: getComputedStyle(card, "::after").content,
-      glintTracks: tiltTracksOn(card, "::after"),
+      // How many of Tilt lighting's animations the glint has. The glint is the ::after's, which the wandering light draws
+      // when nothing is tilting (in Glass and Full), so its content says nothing about whether the glint is there.
+      glintTracks: card
+        .getAnimations({ subtree: true })
+        .filter(
+          (animation) =>
+            animation.id.startsWith("tilt-light") &&
+            (animation.effect as KeyframeEffect | null)?.pseudoElement === "::after",
+        ).length,
       glintImage: getComputedStyle(card, "::after").backgroundImage,
       glintWidth: getComputedStyle(card, "::after").width,
       glintHeight: getComputedStyle(card, "::after").height,
