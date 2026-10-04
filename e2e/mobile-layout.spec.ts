@@ -46,6 +46,47 @@ import { expect, test } from "./test";
 // A failing check attaches a screenshot of the page as it was.
 
 test.describe("mobile layout", { tag: "@layout" }, () => {
+  // The audit has to be able to fail: each of these breaks the page on purpose and expects the audit to say so, so a
+  // change to it that stops seeing sideways overflow (the page clips it, so scrollWidth never shows it) or an overlap
+  // fails here and not silently everywhere else.
+  test.describe("the audit", () => {
+    test.beforeEach(async ({ page }) => {
+      await installAudit(page);
+      await openBoard(page, "quiet");
+    });
+
+    test("sees a card wider than the screen", async ({ page }) => {
+      await cards(page)
+        .first()
+        .evaluate((element) => {
+          element.style.minWidth = "900px";
+        });
+      const found = await auditNow(page);
+      expect(found.overflow.join("\n")).toContain("spans");
+    });
+
+    test("sees a word too long for its box", async ({ page }) => {
+      await page.evaluate(() => {
+        const title = document.querySelector("header h1");
+        if (title) title.append(" ".concat("x".repeat(80)));
+      });
+      const found = await auditNow(page);
+      expect(found.overflow.join("\n")).toMatch(/text <h1>|holds \d+px of content/);
+    });
+
+    test("sees two cards on top of each other", async ({ page }) => {
+      // The second card moved onto the first, wherever the grid put them.
+      await page.evaluate(() => {
+        const [first, second] = document.querySelectorAll<HTMLElement>('article[id^="service-"]');
+        const a = first.getBoundingClientRect();
+        const b = second.getBoundingClientRect();
+        second.style.transform = `translate(${a.left - b.left}px, ${a.top - b.top + 20}px)`;
+      });
+      const found = await auditNow(page);
+      expect(found.overlap.join("\n")).toContain("cards");
+    });
+  });
+
   for (const background of BACKGROUNDS) {
     test.describe(`on the ${background} background`, () => {
       test.beforeEach(async ({ page }) => {
