@@ -12,6 +12,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Changed
 
+- In the **Full** background the light that wanders across the cards now also runs on phones and tablets, with or without **Tilt lighting**; before, only a screen with a mouse or trackpad had it. It is the same slow, random drift (each card its own path, speed and starting point), moved by the compositor so it repaints nothing, and it stays off in Quiet and Glass and under Reduce Motion, Reduce glass, Increase Contrast and forced colours. While Tilt lighting is on and following the device it takes the cards' light over, and the wander comes back when it is switched off, declined or paused.
 - The footer's disclaimer reads more formally: the board is an independent project, not affiliated with or endorsed by the vendors, and reads their official public status pages and feeds.
 
 ### Fixed
