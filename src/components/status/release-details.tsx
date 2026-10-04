@@ -244,9 +244,19 @@ export function ReleaseDetails({
   service: ServiceSnapshot;
   variant: "inline" | "line" | "button";
 }) {
-  const [open, setOpen] = useState(false);
+  // Which press opened the pop-up showing now, or null when none is. Each press is a new pop-up (a new `key`), and a
+  // pop-up closes only the press it was opened by. A modal <dialog> shuts itself on Escape and tells the page with a
+  // `close` event that comes later, as a task of its own; a press between the two (a slow page, a quick key) found
+  // the state still open, changed nothing, and was undone by the event, which closed what it had meant to open.
+  const [pressed, setPressed] = useState<number | null>(null);
+  const presses = useRef(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
+  const open = pressed !== null;
+  const press = () => {
+    presses.current += 1;
+    setPressed(presses.current);
+  };
   useEffect(() => {
     if (wasOpen.current && !open) trigger.current?.focus();
     wasOpen.current = open;
@@ -257,7 +267,7 @@ export function ReleaseDetails({
       <button
         ref={trigger}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={press}
         aria-haspopup="dialog"
         data-release-details-trigger
         className={cn(
@@ -278,8 +288,15 @@ export function ReleaseDetails({
         <ChevronRight className="size-3.5 shrink-0" aria-hidden />
       </button>
       {/* On <body>, not inside the row: a <dialog> may not sit in the row's <p>, and nothing of the row's layout reaches it. */}
-      {open
-        ? createPortal(<ReleaseDetailsDialog service={service} onClose={() => setOpen(false)} />, document.body)
+      {pressed !== null
+        ? createPortal(
+            <ReleaseDetailsDialog
+              key={pressed}
+              service={service}
+              onClose={() => setPressed((current) => (current === pressed ? null : current))}
+            />,
+            document.body,
+          )
         : null}
     </>
   );
