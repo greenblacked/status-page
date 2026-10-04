@@ -1,4 +1,4 @@
-import type { CDPSession, Page } from "@playwright/test";
+import type { CDPSession, Page, TestInfo } from "@playwright/test";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 import { expect, test } from "./test";
 
@@ -57,8 +57,23 @@ async function stopLogging(page: Page): Promise<Frame[]> {
   });
 }
 
-/** A finger on the glass: touch events over DevTools, one move every frame or so. */
-class Finger {
+/**
+ * Something that moves the page the way a reader does. `down`, `dragBy` and `up` are a finger's: the page moves with
+ * it, so the card under it stays under it. `at` is where, on the screen, the reader's attention is.
+ */
+interface Reader {
+  readonly at: number;
+  /** When, in the page's clock, the page was last scrolled by the reader (a finger that rests has no such moment). */
+  readonly movedAt?: number;
+  down(y: number): Promise<void>;
+  dragBy(dy: number, step: number): Promise<void>;
+  up(): Promise<void>;
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A finger on the glass: touch events over DevTools, one move every frame or so. Chromium only. */
+class Finger implements Reader {
   private y = 0;
   /** Where the finger is. */
   get at() {
@@ -83,12 +98,116 @@ class Finger {
     for (let i = 0; i < steps; i++) {
       this.y += dy / steps;
       await this.send("touchMove", this.y);
-      await new Promise((resolve) => setTimeout(resolve, 16));
+      await pause(16);
     }
   }
   async up() {
     await this.send("touchEnd", this.y);
   }
+}
+
+type Pad = Window & {
+  __pad?: { fire: (type: string, y: number, live: boolean) => string };
+};
+
+/**
+ * A finger that every engine can have: the touch events the page listens to (touchstart, touchmove, touchend), made
+ * in the page and sent to the card under the finger, and the page scrolled with it a step at a time, as the browser
+ * would. A real TouchEvent where the engine has the constructors (iOS, and Chromium with touch emulation); where it
+ * has not, a plain event with the same `touches`, which is all the page reads of it.
+ */
+class SyntheticFinger implements Reader {
+  private y = 0;
+  /** "TouchEvent" or "Event": what the last event was made of. */
+  shape = "";
+  get at() {
+    return this.y;
+  }
+  constructor(
+    private readonly page: Page,
+    private readonly x: number,
+  ) {}
+  private async fire(type: "touchstart" | "touchmove" | "touchend", y: number) {
+    this.shape = await this.page.evaluate(
+      ([type, y]) => (window as Pad).__pad?.fire(type as string, y as number, type !== "touchend") ?? "",
+      [type, y],
+    );
+  }
+  async down(y: number) {
+    this.y = y;
+    await this.page.evaluate(
+      ([x, y]) => {
+        const target = document.elementFromPoint(x, y) ?? document.body;
+        (window as Pad).__pad = {
+          fire(type, at, live) {
+            const node = target.isConnected ? target : document.body;
+            const point = { identifier: 1, target: node, clientX: x, clientY: at, pageX: x, pageY: at + scrollY };
+            try {
+              const touch = new Touch(point);
+              node.dispatchEvent(
+                new TouchEvent(type, {
+                  bubbles: true,
+                  cancelable: true,
+                  composed: true,
+                  touches: live ? [touch] : [],
+                  targetTouches: live ? [touch] : [],
+                  changedTouches: [touch],
+                }),
+              );
+              return "TouchEvent";
+            } catch {
+              const event = new Event(type, { bubbles: true, cancelable: true, composed: true });
+              const list = live ? [point] : [];
+              Object.defineProperties(event, {
+                touches: { value: list },
+                targetTouches: { value: list },
+                changedTouches: { value: [point] },
+              });
+              node.dispatchEvent(event);
+              return "Event";
+            }
+          },
+        };
+      },
+      [this.x, y],
+    );
+    await this.fire("touchstart", y);
+  }
+  async dragBy(dy: number, step: number) {
+    const steps = Math.max(1, Math.round(Math.abs(dy) / step));
+    for (let i = 0; i < steps; i++) {
+      this.y += dy / steps;
+      await this.fire("touchmove", this.y);
+      // The page follows the finger: a finger that moves up takes the page down with it.
+      await this.page.evaluate((by) => window.scrollTo({ top: window.scrollY - by, behavior: "instant" }), dy / steps);
+      await pause(16);
+    }
+  }
+  async up() {
+    await this.fire("touchend", this.y);
+  }
+}
+
+/** No finger at all: the page scrolled a step at a time (a wheel, the keys, the glide of a flick), which is scroll events alone. */
+class Scroller implements Reader {
+  /** When, in the page's clock, the page was last scrolled. */
+  movedAt = 0;
+  constructor(
+    private readonly page: Page,
+    readonly at: number,
+  ) {}
+  async down() {}
+  async dragBy(dy: number, step: number) {
+    const steps = Math.max(1, Math.round(Math.abs(dy) / step));
+    for (let i = 0; i < steps; i++) {
+      this.movedAt = await this.page.evaluate((by) => {
+        window.scrollTo({ top: window.scrollY - by, behavior: "instant" });
+        return performance.now();
+      }, dy / steps);
+      await pause(16);
+    }
+  }
+  async up() {}
 }
 
 /** The distance, in px, a frame moved the card on screen beyond what the page's own scroll accounts for. */
@@ -105,11 +224,20 @@ function jumps(frames: Frame[], card: string): number[] {
   return out;
 }
 
-test("floating bar: the board does not shift under a finger that scrolls across the turn of a slot", async ({
-  page,
-  isMobile,
-}, testInfo) => {
-  test.skip(!isMobile && testInfo.project.name !== "tablet", "a finger is a touch project's");
+/**
+ * The reader is on a card below Recent changes. Two and a half seconds before the board's check at the turn of a
+ * slot, `reader` starts to move the page, for about four and a half seconds, so the turn falls inside the gesture.
+ * Then it stops (a finger rests, still down, for a moment and lifts), and the check must land after, with the card
+ * the reader is on where it was.
+ *
+ * `touching` is whether `reader` is a finger: Recent changes must not change while it is down, even while it rests.
+ */
+async function acrossTheTurn(
+  page: Page,
+  testInfo: TestInfo,
+  makeReader: (viewport: { width: number; height: number }) => Promise<Reader> | Reader,
+  { touching }: { touching: boolean },
+): Promise<void> {
   test.setTimeout(90_000);
   await page.addInitScript(() => {
     const tracked = window as Window & { __by?: number };
@@ -134,7 +262,7 @@ test("floating bar: the board does not shift under a finger that scrolls across 
   // Safari has no scroll anchoring, and the page cannot lean on it.
   await page.addStyleTag({ content: "html, body { overflow-anchor: none !important; }" });
 
-  // The reader is on a card below Recent changes, with the finger on it.
+  // The reader is on a card below Recent changes.
   const viewport = page.viewportSize();
   if (!viewport) throw new Error("no viewport");
   await page.evaluate(
@@ -152,35 +280,36 @@ test("floating bar: the board does not shift under a finger that scrolls across 
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   expect(await feedRows(page).count(), "the turn has not come yet").toBe(rows0);
 
-  const cdp = await page.context().newCDPSession(page);
-  const finger = new Finger(cdp, viewport.width / 2);
+  const reader = await makeReader(viewport);
   await logFrames(page);
-  await finger.down(viewport.height * 0.7);
+  await reader.down(viewport.height * 0.7);
   const downAt = await page.evaluate(() => Date.now());
-  expect(await feedRows(page).count(), "the turn had not come when the finger went down").toBe(rows0);
+  expect(await feedRows(page).count(), "the turn had not come when the reader started").toBe(rows0);
   // About four and a half seconds of dragging, up and down so the card stays on screen, across the turn.
   const dragStart = Date.now();
   while (Date.now() - dragStart < 4_500) {
-    await finger.dragBy(-90, 3);
-    await finger.dragBy(90, 3);
+    await reader.dragBy(-90, 3);
+    await reader.dragBy(90, 3);
   }
-  // The finger rests a moment, still down, before it lifts: no scroll events, and still not the time to update.
-  await new Promise((resolve) => setTimeout(resolve, 400));
-  const rowsWhileTouching = await page.evaluate(
-    () => document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length,
-  );
-  const liftedAt = await page.evaluate(() => performance.now());
-  // The card the finger is on as it lifts: the one the reader is looking at.
+  let rowsWhileTouching = rows0;
+  if (touching) {
+    // The finger rests a moment, still down, before it lifts: no scroll events, and still not the time to update.
+    await pause(400);
+    rowsWhileTouching = await feedRows(page).count();
+  }
+  // Where the gesture ends, in the page's clock: the lift of a finger, else the last scroll step.
+  const liftedAt = touching ? await page.evaluate(() => performance.now()) : (reader.movedAt ?? Number.NaN);
+  // The card the reader is on as the gesture ends: the one they are looking at.
   const card = await page.evaluate(
     ([x, y]) => document.elementFromPoint(x, y)?.closest('article[id^="service-"]')?.id ?? "",
-    [viewport.width / 2, finger.at],
+    [viewport.width / 2, reader.at],
   );
-  expect(card, "the finger is on a card").not.toBe("");
+  expect(card, "the reader is on a card").not.toBe("");
   const upAt = await page.evaluate(() => Date.now());
-  await finger.up();
+  await reader.up();
   // The turn of the slot fell inside the gesture: without it the test would hold nothing back.
   const turnAt = (Math.floor(downAt / SLOT_MS) + 1) * SLOT_MS;
-  expect(upAt, "the finger was still down at the turn of the slot").toBeGreaterThanOrEqual(turnAt);
+  expect(upAt, "the reader was still moving the page at the turn of the slot").toBeGreaterThanOrEqual(turnAt);
   // The check lands once the page is still.
   await expect.poll(() => feedRows(page).count(), { timeout: 5_000 }).toBeGreaterThan(rows0);
   await page.waitForTimeout(400);
@@ -191,9 +320,10 @@ test("floating bar: the board does not shift under a finger that scrolls across 
   const landed = frames.find((frame) => frame.rows > rows0);
   const before = landed ? frames[frames.indexOf(landed) - 1] : undefined;
   const topOf = (frame: Frame | undefined) => frame?.tops[card] ?? Number.NaN;
+  const shape = reader instanceof SyntheticFinger ? `; events made as ${reader.shape}` : "";
   testInfo.annotations.push({
     type: "numbers",
-    description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows while touching ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after the lift`,
+    description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows while touching ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after the lift${shape}`,
   });
   console.log(testInfo.annotations.at(-1)?.description);
   if (process.env.SCROLL_JUMP_TRACE && landed) {
@@ -213,6 +343,7 @@ test("floating bar: the board does not shift under a finger that scrolls across 
 
   // Nothing came in under the finger, across the turn of the slot.
   expect(rowsWhileTouching, "Recent changes did not change while the finger was down").toBe(rows0);
+  // Nor while the page was being scrolled: every frame up to the end of the gesture shows the rows it began with.
   expect(
     frames.filter((frame) => frame.t < liftedAt).every((frame) => frame.rows === rows0),
     "no row came in during the gesture",
@@ -223,11 +354,49 @@ test("floating bar: the board does not shift under a finger that scrolls across 
   expect(landed, "the check landed").toBeDefined();
   if (landed && before) {
     expect(landed.t, "the check lands after the lift").toBeGreaterThanOrEqual(liftedAt);
+    // With no finger to wait for, it waits out the page's own stillness: 150 ms after the last scroll event.
+    if (!touching) expect(landed.t - liftedAt, "the check waits for the page to be still").toBeGreaterThanOrEqual(100);
     expect(
       Math.abs(topOf(landed) - topOf(before)),
       "the card is where it was when the check landed",
     ).toBeLessThanOrEqual(1);
   }
+}
+
+test("floating bar: the board does not shift under a finger that scrolls across the turn of a slot", async ({
+  page,
+  isMobile,
+  browserName,
+}, testInfo) => {
+  test.skip(
+    browserName !== "chromium",
+    "it drives a real touch drag through CDP, which only Chromium has (WebKit has the next test)",
+  );
+  test.skip(!isMobile && testInfo.project.name !== "tablet", "a finger is a touch project's");
+  await acrossTheTurn(
+    page,
+    testInfo,
+    async (viewport) => new Finger(await page.context().newCDPSession(page), viewport.width / 2),
+    {
+      touching: true,
+    },
+  );
+});
+
+test("floating bar: the board does not shift under touch events that come with a scroll across the turn of a slot", async ({
+  page,
+  hasTouch,
+}, testInfo) => {
+  test.skip(!hasTouch, "a finger is a touch project's");
+  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), { touching: true });
+});
+
+test("floating bar: the board does not shift under a page that scrolls across the turn of a slot", async ({
+  page,
+  hasTouch,
+}, testInfo) => {
+  test.skip(!hasTouch, "the scrolling of a phone or a tablet, which a finger is not the only way to do");
+  await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.height * 0.5), { touching: false });
 });
 
 test("floating bar: Recent changes holds the height of its first row on a first visit", async ({ page }) => {
