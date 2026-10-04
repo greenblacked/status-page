@@ -338,6 +338,75 @@ jobs:
             test-results/
           retention-days: 7
 
+  server:
+    name: browser tests (node server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Makes playwright.config.ts start src/node/serve.ts, the server the
+      # Docker image runs, instead of `vite preview`; the @node-server tests
+      # skip themselves without it.
+      E2E_SERVER: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain (pnpm install)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
+
+      - name: Install Playwright's Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build (pnpm run build)
+        run: pnpm run build
+
+      # Chromium on a desktop and on a phone: what differs from the preview
+      # is the server, not the engine, so WebKit is left to the other jobs.
+      - name: Browser tests behind the production server (Playwright)
+        run: pnpm exec playwright test --project=desktop --project=mobile --grep @node-server
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-report-node-server
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  image:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Dockerfile that release.yml publishes, built for this runner and
+      # started the way the README runs it. Nothing is pushed.
+      # BuildKit's own image is pinned by tag and digest, as in release.yml;
+      # move the two together.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: status-page:smoke
+
+      - name: Smoke-test the image
+        run: ./scripts/ci/image-smoke.sh status-page:smoke
+
   commits:
     name: commit messages
     runs-on: ubuntu-latest
@@ -419,7 +488,7 @@ jobs:
     # request waiting on a check that was skipped.
     name: CI OK
     if: always()
-    needs: [lint, typecheck, test, build, e2e, history, commits, branch, workflows]
+    needs: [lint, typecheck, test, build, e2e, history, server, image, commits, branch, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

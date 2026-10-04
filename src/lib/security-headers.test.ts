@@ -19,6 +19,13 @@ describe("securityHeaders", () => {
     expect(securityHeaders({ dev: true, nonce: NONCE })["Strict-Transport-Security"]).toBe(hsts);
   });
 
+  it("takes another Strict-Transport-Security value, or none, for a server that decides it for itself", () => {
+    expect(securityHeaders({ dev: false, nonce: NONCE, hsts: "max-age=60" })["Strict-Transport-Security"]).toBe(
+      "max-age=60",
+    );
+    expect(securityHeaders({ dev: false, nonce: NONCE, hsts: false })).not.toHaveProperty("Strict-Transport-Security");
+  });
+
   it("runs scripts only by nonce, with 'self' as the old-browser fallback and no 'unsafe-inline'", () => {
     const csp = securityHeaders({ dev: false, nonce: NONCE })["Content-Security-Policy"] ?? "";
     const scriptSrc = csp.split("; ").find((directive) => directive.startsWith("script-src "));

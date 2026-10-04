@@ -51,3 +51,15 @@ updates:
       github-actions:
         patterns:
           - "*"
+  # The Dockerfile's Node base image: its tag and digest move together. A new
+  # Node major is a decision made by hand with engines and .nvmrc.
+  - package-ecosystem: docker
+    directory: /
+    target-branch: stage
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]

@@ -6,7 +6,7 @@ Instructions for AI coding and review agents working in this repository. Humans 
 
 Status Page is a public status board at [status.szolotov.com](https://status.szolotov.com) (the `stage` branch is previewed at [stage.status.szolotov.com](https://stage.status.szolotov.com)). It reads each vendor's own official status source and puts the answers on one page. Its rules, from [the README](README.md#why-status-page): official sources or nothing, no data beats a guess, zero setup (no API keys, accounts or environment variables), and the vendor has the last word (every card links to the vendor's page).
 
-Stack: TanStack Start (React 19), Tailwind CSS v4, strict TypeScript, Vitest, Playwright with axe, Biome. It runs on Cloudflare Workers (`wrangler.jsonc`, one Worker named `status-page`) and on plain Node via `pnpm run build` / `pnpm run preview`.
+Stack: TanStack Start (React 19), Tailwind CSS v4, strict TypeScript, Vitest, Playwright with axe, Biome. It runs on Cloudflare Workers (`wrangler.jsonc`, one Worker named `status-page`) and on plain Node via `pnpm run build` / `pnpm start` (the production server in `src/node/`, which the Docker image runs; `pnpm run preview` is only a smoke test of the build).
 
 How data flows:
 
@@ -32,6 +32,7 @@ The **catalog** (`src/lib/status/catalog.ts`) lists every service: id, name, cat
 | `src/routes/` | TanStack Start file routes; `src/routeTree.gen.ts` is generated, do not edit it |
 | `src/styles.css`, `src/background.css`, `src/apple.css` | Design tokens and the Quiet / Glass / Full backgrounds |
 | `src/server.cloudflare.ts` | Worker entry: passes robots setting and version metadata to the handler; no storage, no cron |
+| `src/node/` | Production Node server on `node:http` alone: `serve.ts` (entry: env, signals, logs), `server.ts` (request handling, compression, security headers), `static.ts` (cache rules, content types, in-memory file index). It runs under Node's type stripping, so imports carry `.ts` extensions and `.ts` imports from `src/lib/` must be relative, never `@/`. The `Dockerfile` copies only this directory and `src/lib/security-headers.ts` into the image |
 | `src/test/` | Shared test helpers (`stub-fetch.ts` routes the global `fetch` to canned payloads) |
 | `e2e/` | Playwright specs; `test.ts` is the `test` they import, `fixture-board.ts` serves a fixture board, `support/` cuts the preview server off from the vendors |
 | `scripts/ci/` | Checks CI runs and contributors can run the same way (`*.sh`, plus TypeScript helpers and their tests) |
@@ -58,6 +59,7 @@ For local browser tests install the browsers once (`pnpm exec playwright install
 | --- | --- |
 | `pnpm run dev` | Dev server with hot reload |
 | `pnpm run build` / `pnpm run preview` | Production build into `dist/`, and a local server for it on `127.0.0.1:4173` |
+| `pnpm start` | The production server (`src/node/serve.ts`) for that build; `PORT`, `HOST`, `TRUST_PROXY`. `docker build -t status-page .` makes the image ([README](README.md#self-host-with-docker)) |
 | `pnpm run build:cf` / `pnpm run preview:cf` / `pnpm run deploy:dry-run` | The Cloudflare Worker build, run in workerd, and a dry-run deploy ([details](CONTRIBUTING.md#locally)) |
 | `pnpm run typecheck` | `tsc6 --noEmit` (strict, no unused locals or parameters; `tsc6` is the command `@typescript/typescript6` ships) |
 | `pnpm run lint` / `pnpm run lint:fix` | Biome check (lint, format, import order) / apply fixes. CI runs `pnpm exec biome ci .` |

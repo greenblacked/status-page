@@ -6,6 +6,8 @@
 #   docker compose run --rm node24        # the same on the Node 24 line
 #   docker compose up preview             # serve the built board on http://127.0.0.1:4173
 #   docker compose run --rm security      # trivy (HIGH/CRITICAL) and gitleaks over the repository
+#   docker compose --profile serve up --build status-page
+#                                         # build the Dockerfile and run the production image on http://127.0.0.1:3000
 #
 # The images are public, so pulls are anonymous. Tags are the rolling
 # bookworm-v1 line; set CI_NODE22_IMAGE, CI_NODE24_IMAGE or CI_SECURITY_IMAGE to
@@ -66,6 +68,22 @@ services:
       timeout: 6s
       retries: 3
       start_period: 90s
+
+  # The production image from the Dockerfile, as a self-hoster runs it: the
+  # built board behind src/node/serve.ts, as the unprivileged user, with a
+  # read-only root and no capabilities. (Self-hosting from the published
+  # image is in the README, "Self-host with Docker".)
+  status-page:
+    profiles: [serve]
+    build: .
+    image: status-page:local
+    ports:
+      - "127.0.0.1:3000:3000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
 
   security:
     profiles: [security]
