@@ -688,10 +688,12 @@
     not a CSS animation on purpose: a layer that moves in a blurred panel makes
     the compositor draw the panel's blur again on every frame it moves, and a
     glide moves on every one (the size of the layer does not matter, the panel is
-    drawn whole). A step is a few pixels of a soft gradient, too small to see, and
-    the page is drawn twice a second for it, not sixty times. wander-light.ts has the
-    numbers. The properties reset below `.surface > *`, so a write restyles
-    the surface and its direct children only.
+    drawn whole). A step is a few pixels of a soft gradient (wander-light.ts has the
+    numbers: up to 5% of the card's height, a few levels of colour at most), and
+    the page is drawn twice a second for it, not sixty times. The properties
+    reset below `.spotlight > *`, so a write restyles the surface and its direct
+    children only. While the page pauses the light it takes data-wander off, which
+    fades the layer out, and puts it back at the right place.
 
     It runs on every device, a phone or tablet included, in Glass and Full, with
     or without Tilt lighting. Where Tilt lighting is driving the light on a touch device
@@ -728,7 +730,7 @@
     On a touch device there is no pointer to follow, so with Tilt lighting on
     (data-tilt, set only while the light is being driven) a soft light sits on
     the card and slides with --light-x/--light-y. Devices with a hover-capable
-    pointer have no glint: the wandering light (Full, above) stays on its own.
+    pointer have no glint: the wandering light (Glass and Full, above) stays on its own.
     Where there is a glint, it takes the wandering light's ::after over for as
     long as data-tilt is on, and the wander runs again when it goes off.
 
@@ -1045,8 +1047,8 @@
 
 /*
   Reduced motion: the global rule in styles.css stops every animation (the
-  drift, the bubbles' float, the dial's sweep and the card light's wander); the
-  card light would be left standing still, so it is hidden here.
+  drift, the bubbles' float and the dial's sweep); the card light is moved by a
+  timer, not an animation, so that rule does not reach it, and it is hidden here.
 */
 @media (prefers-reduced-motion: reduce) {
   .spotlight::after {
