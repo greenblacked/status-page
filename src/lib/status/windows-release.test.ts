@@ -294,6 +294,19 @@ describe("parseWindowsKb", () => {
     expect(parseWindowsKb("MKB1234 then KB5043080")).toBe("KB5043080");
   });
 
+  it("accepts punctuation, whitespace, an underscore or the end of the text after the digits", () => {
+    for (const text of ["KB5043080.", "KB5043080)", "KB5043080 ", "KB5043080-", "KB5043080_", "KB5043080,x"]) {
+      expect(parseWindowsKb(text), text).toBe("KB5043080");
+    }
+  });
+
+  it("refuses a KB number with letters run on and goes on to a later one", () => {
+    expect(parseWindowsKb("KB5043080X")).toBeUndefined();
+    expect(parseWindowsKb("KB5043080x")).toBeUndefined();
+    expect(parseWindowsKb("KB500308a")).toBeUndefined();
+    expect(parseWindowsKb("KB5043080X then KB5043081")).toBe("KB5043081");
+  });
+
   it("finds none in anything else", () => {
     for (const text of [
       "",

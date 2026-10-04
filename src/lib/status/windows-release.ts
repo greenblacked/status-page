@@ -304,19 +304,27 @@ export function parseWindowsUpdateType(text: string): { type: string; kind: keyo
   return { type: `${month} ${kind}`, kind };
 }
 
+/** An ASCII letter (the text is upper-cased first) or digit; false for undefined, i.e. outside the text. */
+function isAsciiAlnum(char: string | undefined): boolean {
+  return char !== undefined && (isDigit(char) || (char >= "A" && char <= "Z"));
+}
+
 /**
  * "KB5043080" out of a cell: "KB" and six or seven digits, the first not 0 (real articles look like that), found
- * with a forward scan. "KB" must not follow a letter or digit and the digits must not run on into more digits, so
- * "MKB1234", "KB0000" and "KB12345678" give none rather than a made-up reference.
+ * with a forward scan. "KB" must not follow an ASCII letter or digit and the digits must not be followed by one
+ * either (more digits or letters run on), so "MKB1234", "KB0000", "KB12345678" and "KB5043080X" give none rather
+ * than a made-up reference. Only ASCII letters and digits count as run-on: punctuation, whitespace, an underscore
+ * and the end of the text may follow ("KB5043080.", "(KB5043080)", "KB5043080_"). A rejected token does not stop
+ * the scan, so a later valid "KB" in the same text is still found.
  */
 export function parseWindowsKb(text: string): string | undefined {
   const upper = text.toUpperCase();
   for (let at = upper.indexOf("KB"); at !== -1; at = upper.indexOf("KB", at + 1)) {
-    const before = upper[at - 1];
-    if (isDigit(before) || (before !== undefined && before >= "A" && before <= "Z")) continue;
+    if (isAsciiAlnum(upper[at - 1])) continue;
     let end = at + 2;
     while (end < upper.length && isDigit(upper[end])) end += 1;
     const digits = end - at - 2;
+    if (isAsciiAlnum(upper[end])) continue;
     if ((digits === 6 || digits === 7) && upper[at + 2] !== "0") return `KB${upper.slice(at + 2, end)}`;
   }
   return undefined;
