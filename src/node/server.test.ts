@@ -113,7 +113,6 @@ function get(path: string, headers: Record<string, string> = {}, method = "GET")
   });
 }
 
-const expectedSecurity = securityHeaders({ dev: false, nonce: "-", hsts: DEFAULT_NODE_HSTS });
 function expectSecurityHeaders(response: { headers: Headers }) {
   // The policy carries a nonce of its own for each response; every other header is fixed.
   const csp = response.headers.get("content-security-policy") ?? "";
@@ -224,7 +223,7 @@ describe("the app handler", () => {
     expectSecurityHeaders(response);
     const own = await get("/with-header");
     expect(own.response.headers.get("x-frame-options")).toBe("SAMEORIGIN");
-    expect(own.response.headers.get("strict-transport-security")).toBe(expectedSecurity["Strict-Transport-Security"]);
+    expect(own.response.headers.get("strict-transport-security")).toBe(DEFAULT_NODE_HSTS);
   });
 
   it("keeps each Set-Cookie as its own header", async () => {
