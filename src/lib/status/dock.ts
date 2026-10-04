@@ -249,6 +249,15 @@ export function readerMoved({
 }
 
 /**
+ * Whether the hero's field, which the bar's field in use is about to give way to, is wholly clear of the bar: its top
+ * edge at or below the bar's bottom edge. `revealFrom` counts the hero's field as in view once only its bottom edge
+ * clears the bar, and a field handed the focus there is under the bar while it is typed in. Pure.
+ */
+export function heroFieldClear(heroTop: number, barBottom: number): boolean {
+  return heroTop >= barBottom - 0.5;
+}
+
+/**
  * How long after a key typed into a search field the board's change from it can still be moving the page: the key's
  * render, the layout of the next frame (where the browser moves the page) and the frame after it. Time, not frames,
  * because no frame runs while nothing changes, and a scroll a long while after the last key is the reader's.

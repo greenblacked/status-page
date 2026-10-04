@@ -12,6 +12,7 @@ import {
   dockFrame,
   dockGeometry,
   focusReveal,
+  heroFieldClear,
   quietScrolling,
   REVEAL_REST,
   type RevealMemo,
@@ -86,7 +87,8 @@ export const WIDE = "(min-width: 64rem)";
  *   - A search written in the field keeps it showing while `heroAway` (`keepRevealed`).
  *   - The two fields are never on screen together, and a field being typed in is not lost to the layout: when a
  *     filter shortens the board and the page ends up above `revealFrom` without the reader scrolling (`readerMoved`),
- *     the focus, the text and the caret of the bar's field move to the hero's, which is then in view. The reader's
+ *     the focus, the text and the caret of the bar's field move to the hero's, once that is wholly clear of the bar
+ *     (`heroFieldClear`; until then the bar's field stays up and in use, not under it). The reader's
  *     own scroll up past `revealFrom` lets the bar's field go (a blur) as it always did.
  *     A key typed into a search field is such a layout change: the results shorten the page and the browser moves it by
  *     part of that (`typing`, for `TYPING_MS` after the key), which is no scroll by the reader either, even when
@@ -434,9 +436,18 @@ export function useSearchDock({
         if (byReader || !(hero instanceof HTMLInputElement)) {
           // The reader scrolled up to the hero: let the field go; blur tells the bar's own focus tracking.
           focused.blur();
+        } else if (
+          next.barShown &&
+          !heroFieldClear(hero.getBoundingClientRect().top, insets.barTop + bar.offsetHeight)
+        ) {
+          // The layout did, but the hero's field is only just out from behind the bar and would still be under it
+          // (a tablet, a phone on its side): the bar's field stays up and in use until the board moves the field
+          // clear of the bar, or the reader scrolls.
+          const at = clampScroll(y, maxScroll);
+          memo = { heroAway: true, revealed: true, dir: "up", pivot: at, lastY: at };
         } else {
           // The layout did (a filter shortened the board): the reader is still typing, so the focus, the text and
-          // the caret go to the hero's field, which is in view.
+          // the caret go to the hero's field, which is in view and clear of the bar.
           handFocus(focused, hero);
         }
       }

@@ -12,6 +12,7 @@ import {
   dockGeometry,
   focusReveal,
   HIDE_DOWN_PX,
+  heroFieldClear,
   quietScroll,
   quietScrolling,
   REVEAL_REST,
@@ -726,5 +727,17 @@ describe("readerMoved", () => {
     expect(readerMoved({ from: 0, scrollY: -30, limit: 800, lastLimit: 800 })).toBe(false);
     // And one past a nearer end is the layout's clamp.
     expect(readerMoved({ from: 600, scrollY: 640, limit: 560, lastLimit: 800 })).toBe(false);
+  });
+});
+
+describe("heroFieldClear", () => {
+  it("is true only once the hero's field is wholly below the bar", () => {
+    // The tablet's bar ends at 56: the field at [27,71] is half under it, [56,100] is clear.
+    expect(heroFieldClear(27, 56)).toBe(false);
+    expect(heroFieldClear(55, 56)).toBe(false);
+    expect(heroFieldClear(56, 56)).toBe(true);
+    expect(heroFieldClear(80, 56)).toBe(true);
+    // Sub-pixel rounding of the two edges does not hold a field that is clear.
+    expect(heroFieldClear(55.6, 56)).toBe(true);
   });
 });
