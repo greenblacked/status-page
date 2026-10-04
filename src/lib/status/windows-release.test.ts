@@ -286,14 +286,32 @@ describe("parseWindowsUpdateType", () => {
 });
 
 describe("parseWindowsKb", () => {
-  it("finds a KB number of four to eight digits", () => {
+  it("finds a KB number of six or seven digits", () => {
     expect(parseWindowsKb("KB5000000")).toBe("KB5000000");
+    expect(parseWindowsKb("KB5043080")).toBe("KB5043080");
     expect(parseWindowsKb("see kb5043080 for details")).toBe("KB5043080");
-    expect(parseWindowsKb("KB1234")).toBe("KB1234");
+    expect(parseWindowsKb("(KB500308)")).toBe("KB500308");
+    expect(parseWindowsKb("MKB1234 then KB5043080")).toBe("KB5043080");
   });
 
   it("finds none in anything else", () => {
-    for (const text of ["", "KB", "KB123", "KB12x", "5000000", "kilobyte 5000000", "KB KB KB"]) {
+    for (const text of [
+      "",
+      "KB",
+      "KB123",
+      "KB1234",
+      "KB12x",
+      "KB0000",
+      "KB00000000",
+      "KB0123456",
+      "MKB1234",
+      "MKB5043080",
+      "KB12345678X",
+      "KB123456789",
+      "5000000",
+      "kilobyte 5000000",
+      "KB KB KB",
+    ]) {
       expect(parseWindowsKb(text), text).toBeUndefined();
     }
   });
@@ -384,6 +402,18 @@ describe("windowsUpdateNote", () => {
       const tables = history([row("2026-09 B", "26100.6725", `<a href="${href}">KB5000003</a>`)]);
       expect(windowsUpdateNote(tables, "26100.6725")?.reference, href).toEqual({ label: "KB5000003" });
     }
+  });
+
+  it("drops the link when it points at a different article than the KB label", () => {
+    const tables = history([
+      row("2026-09 B", "26100.6725", '<a href="https://support.microsoft.com/help/5099999">KB5043080</a>'),
+      row("2026-09 B", "26100.6726", '<a href="https://support.microsoft.com/help/5043080">KB5043080</a>'),
+    ]);
+    expect(windowsUpdateNote(tables, "26100.6725")?.reference).toEqual({ label: "KB5043080" });
+    expect(windowsUpdateNote(tables, "26100.6726")?.reference).toEqual({
+      label: "KB5043080",
+      url: "https://support.microsoft.com/help/5043080",
+    });
   });
 
   it("copes with short rows and a table of nothing", () => {

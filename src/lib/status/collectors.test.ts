@@ -2340,11 +2340,11 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         }
       });
 
-      it("takes the link the table gives, whatever its number, and builds none of its own", async () => {
+      it("takes the link the table gives only when it names the same article, and builds none of its own", async () => {
         const note = await noteOf(
-          original.replace("https://support.microsoft.com/help/5000000", "https://support.microsoft.com/topic/x-1"),
+          original.replace("https://support.microsoft.com/help/5000000", "https://support.microsoft.com/help/5099999"),
         );
-        expect(note?.reference).toEqual({ label: "KB5000000", url: "https://support.microsoft.com/topic/x-1" });
+        expect(note?.reference).toEqual({ label: "KB5000000" });
         // No KB number in the cell: no reference, even with a link.
         const none = await noteOf(original.replace(">KB5000000<", ">see the article<"));
         expect(none?.text).toBe("Security update");

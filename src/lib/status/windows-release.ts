@@ -304,33 +304,47 @@ export function parseWindowsUpdateType(text: string): { type: string; kind: keyo
   return { type: `${month} ${kind}`, kind };
 }
 
-/** "KB5043080" out of a cell: "KB" and four to eight digits, found with a forward scan. */
+/**
+ * "KB5043080" out of a cell: "KB" and six or seven digits, the first not 0 (real articles look like that), found
+ * with a forward scan. "KB" must not follow a letter or digit and the digits must not run on into more digits, so
+ * "MKB1234", "KB0000" and "KB12345678" give none rather than a made-up reference.
+ */
 export function parseWindowsKb(text: string): string | undefined {
   const upper = text.toUpperCase();
   for (let at = upper.indexOf("KB"); at !== -1; at = upper.indexOf("KB", at + 1)) {
+    const before = upper[at - 1];
+    if (isDigit(before) || (before !== undefined && before >= "A" && before <= "Z")) continue;
     let end = at + 2;
-    while (end < upper.length && end - at - 2 < 9 && isDigit(upper[end])) end += 1;
+    while (end < upper.length && isDigit(upper[end])) end += 1;
     const digits = end - at - 2;
-    if (digits >= 4 && digits <= 8) return `KB${upper.slice(at + 2, end)}`;
+    if ((digits === 6 || digits === 7) && upper[at + 2] !== "0") return `KB${upper.slice(at + 2, end)}`;
   }
   return undefined;
 }
 
 const NO_LINK = "https://invalid.invalid/";
 
-/** A link from the history table's own cell, kept only when it is an https page on support.microsoft.com. */
-function supportLink(href: string | undefined): string | undefined {
+/**
+ * A link from the history table's own cell, kept only when it is an https page on support.microsoft.com whose
+ * path has the KB's number as a whole segment, so the label never links to a different article.
+ */
+function supportLink(href: string | undefined, kb: string): string | undefined {
   if (!href) return undefined;
   // A relative link resolves against a host that is never allowed, so only an absolute https link on
   // support.microsoft.com comes back; anything else gives the fallback, which reads as no link.
   const url = vendorUrl(href, NO_LINK, ["support.microsoft.com"]);
-  return url === NO_LINK ? undefined : url;
+  if (url === NO_LINK) return undefined;
+  try {
+    return new URL(url).pathname.split("/").includes(kb.slice(2)) ? url : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
  * A note on one Windows build from the page's per-version history tables (the ones with an "Update type" and a
  * "Build" column; the table of versions has neither): the row whose Build is `build` names its update type, and
- * its KB article cell the article, linked only when the table itself links it. Undefined when no such table has
+ * its KB article cell the article, linked only when the table itself links that very article. Undefined when no such table has
  * the build, when its update type is not one of B, D or OOB, or when `build` is not given. The match is by build
  * number alone, so no heading has to be associated with a table.
  */
@@ -352,7 +366,7 @@ export function windowsUpdateNote(tables: TableCell[][][], build: string | undef
       if (!update) return undefined;
       const { label, meaning } = UPDATE_KINDS[update.kind];
       const kb = kbAt >= 0 ? parseWindowsKb(row[kbAt]?.text ?? "") : undefined;
-      const url = kb && kbAt >= 0 ? supportLink(row[kbAt]?.href) : undefined;
+      const url = kb && kbAt >= 0 ? supportLink(row[kbAt]?.href, kb) : undefined;
       return {
         text: label,
         detail: `${update.type}: ${meaning}.`,
