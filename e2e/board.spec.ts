@@ -4506,8 +4506,13 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
 // straddles that move (the press lands on the button, the page shifts, the release lands elsewhere) is lost, and a
 // WebKit run of tilt.spec.ts tapped Settings and found no dialog (the cause is inferred from the measured move; the
 // lost tap itself was not reproduced). So the page says it has hydrated only once the rows are in. A slot that turns
-// later, or a refetch that rewords a row, can still move the page after that, as it can for a visitor.
-for (const visit of ["a first visit", "a slot that turns while the page loads"] as const) {
+// later, or a refetch that rewords a row, can still move the page after that, as it can for a visitor. While a finger
+// is down the board holds the new rows back, and the page must wait for them too.
+for (const visit of [
+  "a first visit",
+  "a slot that turns while the page loads",
+  "a slot that turns while a finger is down",
+] as const) {
   test(`is done moving the footer when the page says it has hydrated, on ${visit}`, async ({ page }) => {
     const releaseBoard = await holdBoardFetches(page);
     await page.goto("/");
@@ -4535,6 +4540,27 @@ for (const visit of ["a first visit", "a slot that turns while the page loads"] 
             .querySelector<HTMLElement>('section[aria-labelledby="recent-heading"] .surface')
             ?.style.getPropertyValue("--feed-reserve");
         Date.now = () => real() + (ran() ? 130_000 : 0);
+      });
+    }
+    if (visit === "a slot that turns while a finger is down") {
+      // The board holds a new row back while a finger is on the page, so the page must not say it has hydrated
+      // before the row is drawn. The finger goes down the moment the board starts to watch for touches (it is
+      // there when the saved checks come in, however long the load takes) and lifts two seconds later.
+      await page.addInitScript(() => {
+        const touch = (fingers: number) => {
+          const event = new Event(fingers > 0 ? "touchstart" : "touchend");
+          Object.defineProperty(event, "touches", { value: new Array(fingers).fill({}) });
+          window.dispatchEvent(event);
+        };
+        const add = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function (this: EventTarget, ...args: Parameters<typeof add>) {
+          add.apply(this, args);
+          if (this === window && args[0] === "touchstart" && !(window as Window & { __down?: true }).__down) {
+            (window as Window & { __down?: true }).__down = true;
+            touch(1);
+            window.setTimeout(() => touch(0), 2000);
+          }
+        };
       });
     }
     await page.reload();
