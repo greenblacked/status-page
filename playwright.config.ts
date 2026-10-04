@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { chromiumArgs } from "./e2e/support/chromium-args.ts";
 import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 
 // Browser tests against the production build, served the way CI's smoke
@@ -25,13 +26,9 @@ const run = process.env.E2E_RUN;
 // the Chromium projects only; the WebKit ones always use Playwright's own.
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 
-// Chromium may resolve this machine and nothing else, so a page that asks another host fails to connect (and e2e/test.ts
-// fails the test). It is done here, not with a route, because a routed page has no HTTP cache, which the tests of the
-// self-hosted Inter need.
-const chromiumLaunch = {
-  executablePath,
-  args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"],
-};
+// Chromium's other hosts are cut off at launch (e2e/support/chromium-args.ts), not with a route, which would switch
+// off its HTTP cache.
+const chromiumLaunch = { executablePath, args: chromiumArgs };
 
 export default defineConfig({
   testDir: "e2e",
