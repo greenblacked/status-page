@@ -155,6 +155,8 @@ test("floating bar: the board does not shift under a finger that scrolls across 
   const finger = new Finger(cdp, viewport.width / 2);
   await logFrames(page);
   await finger.down(viewport.height * 0.7);
+  const downAt = await page.evaluate(() => Date.now());
+  expect(await feedRows(page).count(), "the turn had not come when the finger went down").toBe(rows0);
   // About four and a half seconds of dragging, up and down so the card stays on screen, across the turn.
   const dragStart = Date.now();
   while (Date.now() - dragStart < 4_500) {
@@ -173,7 +175,11 @@ test("floating bar: the board does not shift under a finger that scrolls across 
     [viewport.width / 2, finger.at],
   );
   expect(card, "the finger is on a card").not.toBe("");
+  const upAt = await page.evaluate(() => Date.now());
   await finger.up();
+  // The turn of the slot fell inside the gesture: without it the test would hold nothing back.
+  const turnAt = (Math.floor(downAt / SLOT_MS) + 1) * SLOT_MS;
+  expect(upAt, "the finger was still down at the turn of the slot").toBeGreaterThanOrEqual(turnAt);
   // The check lands once the page is still.
   await expect.poll(() => feedRows(page).count(), { timeout: 5_000 }).toBeGreaterThan(rows0);
   await page.waitForTimeout(400);
