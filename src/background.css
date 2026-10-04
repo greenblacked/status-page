@@ -88,17 +88,20 @@
 
   /*
     The card light is on every Full card at once, so in dark it is held to a
-    whisper: at 0.1 it cut --color-subtle to 3.59:1 at its centre. 0.02 keeps
-    4.5:1 (the lenses spec measures it with the light forced on).
+    whisper: at 0.1 it cut --color-subtle to 3.59:1 at its centre. At 0.02 the
+    lenses spec, which forces the lights at their peak over every panel, measures
+    4.9:1 or better with the sheen at its brightest under it.
   */
   --spot-color: light-dark(rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.02));
   /*
     Tilt lighting's glint: stronger than the card light's on the light panels, since white on them is
-    otherwise unseen. In dark it is held to the same whisper as the card light, and for the same reason:
-    it is on every card at once and its centre can sit anywhere in one, so --color-subtle has to hold 4.5:1
-    under its peak, on top of the sheen at its brightest (the lenses spec forces both, flat over every
-    panel). At 0.08 that was 3.9:1; 0.015 keeps 4.7. The shade is the other way round (it darkens the
-    light panels, which hurts their dark text): 0.05 was 4.49:1 under the peak, 0.03 keeps 4.7.
+    otherwise unseen. In dark it is held to a whisper, and for the same reason: it is on every card at
+    once and its centre can sit anywhere in one, so --color-subtle has to hold 4.5:1 under its peak, on
+    top of the sheen at its brightest. At 0.08 that was 3.9:1; at 0.015 it is no tighter than the card light
+    (the lenses spec forces whichever is stronger, and measures 4.9 or better with the dark --color-subtle
+    of background.css), and every bit more would come out of that margin. The shade is the other way
+    round (it darkens the light panels, which hurts their dark text): 0.05 was 4.49:1 under the peak,
+    0.03 keeps 4.7.
   */
   --tilt-glint: light-dark(rgb(255 255 255 / 0.95), rgb(255 255 255 / 0.015));
   --tilt-shade: light-dark(rgb(16 24 40 / 0.03), transparent);
@@ -167,6 +170,27 @@
   --aurora-2: light-dark(oklch(0.95 0.03 255 / 0.55), oklch(0.5 0.096 265 / 0.14));
   --aurora-3: light-dark(oklch(0.955 0.024 300 / 0.45), oklch(0.42 0.09 305 / 0.1));
   --aurora-4: light-dark(oklch(0.96 0.024 40 / 0.35), oklch(0.5 0.042 240 / 0.08));
+}
+
+/*
+  The quietest text on the glass panels, in dark. The panels are the backdrop's
+  aurora plus a few percent of white (fill, tint, sheen, and on a touch screen the
+  glint), and the fixed aurora is brighter in some places than others, so the same
+  text is on a lighter spot the further the page is scrolled. #8f8a80 held 4.5:1 at rest
+  with little to spare (4.8:1 at its worst) and not at all once the sheen and the light
+  are at their peak, 4.3 (the lenses spec forces both over every panel and measures at
+  every scroll offset). #9a958a keeps 5.5 at rest and 4.9 at their peak. Light is not
+  affected (4.7 at the peak, whatever the scroll), nor is Quiet, which has no glass.
+  Increase Contrast keeps its own, brighter tone (styles.css).
+*/
+:root:is([data-background="glass"], [data-background="full"]) {
+  --color-subtle: light-dark(#6a655c, #9a958a);
+}
+
+@media (prefers-contrast: more) {
+  :root:is([data-background="glass"], [data-background="full"]) {
+    --color-subtle: light-dark(#57534b, #b9b4a9);
+  }
 }
 
 @layer components {
