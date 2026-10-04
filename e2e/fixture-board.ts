@@ -171,11 +171,25 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             "bridge - improved MAC learning performance on CRS3xx series devices",
             "wifi - fixed station roaming between access points on the same channel",
           ],
+          // The note the collector derives from the same changelog: 23 changes, two of them flagged important.
+          note: {
+            text: "23 changes: bgp, bridge, wifi +9 more · 2 important",
+            detail:
+              "23 changes in 12 areas: bgp, bridge, wifi, lte, ipsec, ospf, container, dhcpv4-server, console, system, ppp, routing.",
+            important: [
+              "lte - fixed a crash when a modem is removed during a firmware update",
+              "system - changed the default firewall policy",
+            ],
+          },
         }),
         release("Long-term", "operational", at(-70 * day), "7.18.2", {
           url: "https://download.mikrotik.com/routeros/7.18.2/CHANGELOG",
           linkLabel: "Release notes",
           notes: ["dhcpv4-server - fixed lease expiry reported in the wrong unit"],
+          note: {
+            text: "1 change: dhcpv4-server",
+            detail: "1 change in 1 area: dhcpv4-server.",
+          },
         }),
         release("Testing", "operational", at(-20 * day), "7.22beta3", {
           url: "https://download.mikrotik.com/routeros/7.22beta3/CHANGELOG",
@@ -210,6 +224,12 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             build: "26300.1000",
             releasedAt: at(-2 * day).slice(0, 10),
             url: WINDOWS_PAGE,
+            // The update type of its latest build from the page's history table, with the article the table links.
+            note: {
+              text: "Security update",
+              detail: "2026-09 B: the monthly security update.",
+              reference: { label: "KB5000000", url: "https://support.microsoft.com/help/5000000" },
+            },
           },
         },
         {
@@ -222,6 +242,12 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             releasedAt: "2026-02-10",
             updatedAt: at(-9 * day).slice(0, 10),
             url: WINDOWS_PAGE,
+            // Its table names the article in text only: the number is shown, with no link.
+            note: {
+              text: "Optional preview",
+              detail: "2026-09 D: an optional, non-security preview of the next monthly update.",
+              reference: { label: "KB5000050" },
+            },
           },
         },
       ],

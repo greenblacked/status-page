@@ -223,3 +223,59 @@ describe("a status card's release feed", () => {
     expect(third?.releasedAt).toBeUndefined();
   });
 });
+
+describe("releaseEntries: the release note", () => {
+  const withNote = (release: NonNullable<ComponentHealth["release"]>) =>
+    releaseEntries(
+      service("mikrotik", {
+        category: "updates",
+        sourceUrl: SOURCE,
+        components: [{ name: "Stable", health: "operational", release }],
+      }),
+    )[0];
+
+  it("carries the note: the row text, the fuller sentence, the important lines and the linked article", () => {
+    const entry = withNote({
+      version: "7.2",
+      notes: ["lte - fixed a crash", "bgp - fixed a leak"],
+      note: {
+        text: "2 changes: lte, bgp · 1 important",
+        detail: "2 changes in 2 areas: lte, bgp.",
+        important: ["lte - fixed a crash"],
+        reference: { label: "KB5000000", url: "https://support.microsoft.com/help/5000000" },
+      },
+    });
+    expect(entry.note).toEqual({
+      text: "2 changes: lte, bgp · 1 important",
+      detail: "2 changes in 2 areas: lte, bgp.",
+      important: ["lte - fixed a crash"],
+      reference: { label: "KB5000000", url: "https://support.microsoft.com/help/5000000" },
+    });
+    // The important line is shown in the note and not again among the first changes.
+    expect(entry.notes).toEqual(["bgp - fixed a leak"]);
+  });
+
+  it("has no note when the release has none or it has no text, and drops what is not text", () => {
+    expect(withNote({ version: "7.2" }).note).toBeUndefined();
+    for (const note of [{ text: "" }, { text: "  " }, { text: 3 }, null, "text"]) {
+      expect(withNote({ version: "7.2", note: note as never }).note, JSON.stringify(note)).toBeUndefined();
+    }
+    const entry = withNote({
+      version: "7.2",
+      note: { text: "ok", detail: 5, important: ["a", "", 3, "b"], reference: { label: "" } } as never,
+    });
+    expect(entry.note).toEqual({ text: "ok", important: ["a", "b"] });
+  });
+
+  it("links the article only when it is an https link that is not the tracker's own page", () => {
+    const link = (url: string | undefined) =>
+      withNote({ version: "7.2", note: { text: "ok", reference: { label: "KB1", url } } }).note?.reference;
+    expect(link("https://support.microsoft.com/help/1")).toEqual({
+      label: "KB1",
+      url: "https://support.microsoft.com/help/1",
+    });
+    for (const bad of ["http://support.microsoft.com/help/1", "javascript:alert(1)", "", undefined, SOURCE]) {
+      expect(link(bad), String(bad)).toEqual({ label: "KB1" });
+    }
+  });
+});

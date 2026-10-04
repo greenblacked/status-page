@@ -17,6 +17,19 @@ export function ReleaseItem({ children }: { children: ReactNode }) {
 }
 
 /**
+ * The short note on a release, after its version on a tracker's line ("23 changes: bgp, wifi, container +9 more").
+ * Unlike an item it wraps like text, and breaks anywhere in a word too long for a phone's line, so a long area name
+ * can never widen the row.
+ */
+export function ReleaseNote({ children }: { children: ReactNode }) {
+  return (
+    <span data-release-note className="[overflow-wrap:anywhere]">
+      {children}
+    </span>
+  );
+}
+
+/**
  * The end of a release line: the last item with "Details ›" (and the Changed
  * tag, when there is one). It moves to the next line whole while it fits, and
  * wraps inside, between the item and the button, only when it is wider than the

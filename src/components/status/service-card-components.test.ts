@@ -393,6 +393,57 @@ describe("release row", () => {
     expect(headerText(html)).toContain("Stable 7.21 · Sep 24 · Long-term 7.18.2");
   });
 
+  it("follows a version with its note, wrapping as text, and leaves a version without one as it was", () => {
+    const withNotes: ComponentHealth[] = [
+      {
+        name: "Stable",
+        health: "maintenance",
+        detail: "7.21 · Sep 24",
+        release: { version: "7.21", note: { text: "23 changes: bgp, wifi, container +9 more · 2 important" } },
+      },
+      { name: "Long-term", health: "operational", detail: "7.18.2 · Jul 22", release: { version: "7.18.2" } },
+      { name: "Testing", health: "operational", detail: "7.22beta3" },
+    ];
+    const html = render("mikrotik", { category: "updates", components: withNotes });
+    // Both items stay whole units; the note is its own wrapping run between them, with its dot kept to the text.
+    expect(headerText(html)).toContain(
+      "Stable 7.21 · Sep 24 · 23 changes: bgp, wifi, container +9 more\u00a0· 2 important\u00a0· Long-term 7.18.2 · Jul 22",
+    );
+    expect(html.match(/data-release-item/g)).toHaveLength(2);
+    expect(html.match(/data-release-note="true"/g)).toHaveLength(1);
+    expect(html).toMatch(/data-release-note="true" class="\[overflow-wrap:anywhere\]"/);
+    expect(html).not.toMatch(/data-release-item[^>]*>[^<]*changes/);
+    // The last item's note sits inside the tail, before Details.
+    const last = render("mikrotik", {
+      category: "updates",
+      components: [{ ...withNotes[0], health: "operational" }],
+    });
+    const tail = last.slice(last.indexOf("data-release-tail"));
+    expect(tail.indexOf("23 changes")).toBeGreaterThan(-1);
+    expect(tail.indexOf("23 changes")).toBeLessThan(tail.indexOf("data-release-details-trigger"));
+    expect(headerText(last)).toContain(
+      "Stable 7.21 · Sep 24 · 23 changes: bgp, wifi, container +9 more\u00a0· 2 important",
+    );
+  });
+
+  it("shows no note for a release whose note is missing, empty or not text", () => {
+    for (const note of [undefined, { text: "" }, { text: "  " }, { text: 3 }, null]) {
+      const html = render("mikrotik", {
+        category: "updates",
+        components: [
+          {
+            name: "Stable",
+            health: "operational",
+            detail: "7.21 · Sep 24",
+            release: { version: "7.21", note: note as never },
+          },
+        ],
+      });
+      expect(html, JSON.stringify(note)).not.toContain("data-release-note");
+      expect(headerText(html)).toContain("Stable 7.21 · Sep 24");
+    }
+  });
+
   it("says No new release when the tracker lists no versions", () => {
     const html = render("mikrotik", { category: "updates", components: up(2) });
     expect(header(html)).toContain("No new release");

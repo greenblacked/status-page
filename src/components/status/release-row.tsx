@@ -2,7 +2,7 @@
 import { Tag as TagIcon } from "lucide-react";
 import { Fragment } from "react";
 import { ReleaseDetails } from "@/components/status/release-details";
-import { ReleaseItem, ReleaseTail } from "@/components/status/release-line";
+import { ReleaseItem, ReleaseNote, ReleaseTail } from "@/components/status/release-line";
 import type { ServiceCardProps } from "@/components/status/service-card-shared";
 import { ChangedTag, ROW_LEAD, RowFrame, RowHeader } from "@/components/status/service-row";
 import { Tag } from "@/components/ui/tag";
@@ -31,12 +31,36 @@ export function releaseLine(service: ServiceSnapshot): string {
 
 /** The items of that line, "Stable 7.21 · Sep 24" each, which the row keeps whole when it wraps. */
 export function releaseItems(service: ServiceSnapshot): string[] {
-  const versions = service.components
+  return releaseParts(service).map((part) => part.item);
+}
+
+/** One item of the line, with the short note on that release (the vendor's own data) when it has one. */
+export type ReleasePart = { item: string; note?: string };
+
+/**
+ * The line's items each with its note: "7.21beta4 · Sep 19" and "23 changes: bgp, wifi, container +9 more". A release
+ * the collector gave no note for (a changelog not read yet, a build the page lists no update type for) has none,
+ * and its item is exactly what it was.
+ */
+export function releaseParts(service: ServiceSnapshot): ReleasePart[] {
+  const parts = service.components
     .filter((component) => component.detail)
     .sort((a, b) => Number(b.health === "maintenance") - Number(a.health === "maintenance"))
     .slice(0, MAX_VERSIONS)
-    .map((component) => `${component.name} ${component.detail}`);
-  return versions.length > 0 ? versions : ["No new release"];
+    .map((component): ReleasePart => {
+      const note = component.release?.note?.text;
+      const item = `${component.name} ${component.detail}`;
+      return typeof note === "string" && note.trim() !== "" ? { item, note: note.trim() } : { item };
+    });
+  return parts.length > 0 ? parts : [{ item: "No new release" }];
+}
+
+/**
+ * A note as the row prints it: the " · " inside it (before "2 important") is joined to the word before it, so a
+ * wrapped line never starts with a stray dot. Plain text.
+ */
+function rowNote(note: string): string {
+  return note.replaceAll(" · ", "\u00a0· ");
 }
 
 /**
@@ -52,8 +76,8 @@ export function releaseItems(service: ServiceSnapshot): string[] {
  */
 export function ReleaseRow({ service, emphasized, released, starred, onToggleStar }: ServiceCardProps) {
   const fresh = hasFreshRelease(service);
-  const items = releaseItems(service);
-  const last = items[items.length - 1];
+  const parts = releaseParts(service);
+  const last = parts[parts.length - 1];
   return (
     <RowFrame
       service={service}
@@ -71,15 +95,27 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
               New release
             </Tag>
           ) : null}
-          {/* The line wraps between items, never inside one, and "Details" stays with the last. */}
-          {items.slice(0, -1).map((item, at) => (
+          {/* The line wraps between items, never inside one, and "Details" stays with the last. A release's note
+              follows its item and wraps like text, so on a phone it sits under the version. */}
+          {parts.slice(0, -1).map((part, at) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: two versions can read alike; the index only breaks that tie.
             <Fragment key={at}>
-              <ReleaseItem>{item} ·</ReleaseItem>{" "}
+              <ReleaseItem>{part.item} ·</ReleaseItem>{" "}
+              {part.note ? <ReleaseNote>{rowNote(part.note)}&nbsp;·</ReleaseNote> : null}
+              {part.note ? " " : null}
             </Fragment>
           ))}
           <ReleaseTail>
-            <ReleaseItem>{last}</ReleaseItem>
+            <ReleaseItem>
+              {last.item}
+              {last.note ? " ·" : null}
+            </ReleaseItem>
+            {last.note ? (
+              <>
+                {" "}
+                <ReleaseNote>{rowNote(last.note)}</ReleaseNote>
+              </>
+            ) : null}
             {emphasized ? (
               <>
                 {" "}
