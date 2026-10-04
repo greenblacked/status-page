@@ -103,7 +103,7 @@ export function mikrotikChangelogNotes(text: string, max: number = MAX_MIKROTIK_
 
 /** Areas the row names before "+N more". */
 const NOTE_ROW_AREAS = 3;
-/** Distinct areas the Details list; a release touches a few dozen at most, and the rest is counted, not listed. */
+/** Distinct areas the Details name; every area is counted, and the ones past this are left unnamed ("and 15 more"). */
 const NOTE_MAX_AREAS = 30;
 /** The longest text before " - " that still reads as an area ("dhcpv4-server", "ipv6 nd"), not a sentence. */
 const NOTE_AREA_CHARS = 24;
@@ -139,7 +139,9 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 export function mikrotikChangelogNote(text: string, version: string): ReleaseNote | undefined {
   if (!mikrotikChangelogIsFor(text, version)) return undefined;
   const end = Math.min(text.length, MAX_NOTES_SCAN_CHARS);
-  const areas = new Map<string, string>();
+  // Every distinct area is counted (lowercase, so "BGP" and "bgp" are one); only the first NOTE_MAX_AREAS are named.
+  const seenAreas = new Set<string>();
+  const areas: string[] = [];
   const important: string[] = [];
   let changes = 0;
   let flagged = 0;
@@ -166,7 +168,10 @@ export function mikrotikChangelogNote(text: string, version: string): ReleaseNot
     if (!body) continue;
     changes += 1;
     const area = changeArea(body);
-    if (area && areas.size < NOTE_MAX_AREAS && !areas.has(area.toLowerCase())) areas.set(area.toLowerCase(), area);
+    if (area && !seenAreas.has(area.toLowerCase())) {
+      seenAreas.add(area.toLowerCase());
+      if (areas.length < NOTE_MAX_AREAS) areas.push(area);
+    }
     if (line[0] === "!") {
       flagged += 1;
       if (important.length < MAX_NOTE_LINES) important.push(clip(body, MAX_NOTE_CHARS));
@@ -175,15 +180,18 @@ export function mikrotikChangelogNote(text: string, version: string): ReleaseNot
   // The whole file fits the window, or a later heading closed the section: either way the count is the section's.
   if (changes === 0 || (!ended && text.length > MAX_NOTES_SCAN_CHARS)) return undefined;
 
-  const named = [...areas.values()];
-  const more = named.length - NOTE_ROW_AREAS;
-  let row = plural(changes, "change", "changes");
-  if (named.length > 0) row += `: ${named.slice(0, NOTE_ROW_AREAS).join(", ")}${more > 0 ? ` +${more} more` : ""}`;
+  const total = seenAreas.size;
+  const more = total - NOTE_ROW_AREAS;
+  const count = plural(changes, "change", "changes");
+  let row = count;
+  if (total > 0) row += `: ${areas.slice(0, NOTE_ROW_AREAS).join(", ")}${more > 0 ? ` +${more} more` : ""}`;
   if (flagged > 0) row += ` · ${flagged} important`;
-  const detail =
-    named.length > 0
-      ? `${plural(changes, "change", "changes")} in ${plural(named.length, "area", "areas")}: ${named.join(", ")}.`
-      : `${plural(changes, "change", "changes")}.`;
+  let detail =
+    total > 0
+      ? `${count} in ${plural(total, "area", "areas")}: ${areas.join(", ")}${total > areas.length ? ` and ${total - areas.length} more` : ""}.`
+      : `${count}.`;
+  // The Details list at most MAX_NOTE_LINES important lines; say so when the release has more.
+  if (flagged > important.length) detail += ` ${flagged} are marked important; the first ${important.length} are listed.`;
   return { text: row, detail, ...(important.length > 0 ? { important } : {}) };
 }
 

@@ -186,13 +186,39 @@ describe("mikrotikChangelogNote", () => {
     );
   });
 
-  it("lists at most thirty areas in the Details and five important lines", () => {
+  it("lists at most thirty areas in the Details and five important lines, and says how many it left out", () => {
     const lines = Array.from({ length: 40 }, (_, at) => `!) area${at} - important change ${at};`);
     const note = mikrotikChangelogNote(section(...lines), "7.2");
-    assert.equal(note?.text, "40 changes: area0, area1, area2 +27 more · 40 important");
+    // Every area is counted, not only the ones named: 40 areas, 3 on the row, 30 in the Details.
+    assert.equal(note?.text, "40 changes: area0, area1, area2 +37 more · 40 important");
     assert.equal(note?.important?.length, 5);
-    assert.equal(note?.detail?.startsWith("40 changes in 30 areas: area0, area1"), true);
+    assert.equal(note?.detail?.startsWith("40 changes in 40 areas: area0, area1"), true);
+    assert.equal(note?.detail?.includes("area29, and"), false);
+    assert.equal(note?.detail?.includes("area29 and 10 more."), true);
     assert.equal(note?.detail?.includes("area30"), false);
+    assert.equal(note?.detail?.endsWith("40 are marked important; the first 5 are listed."), true);
+  });
+
+  it("counts the areas past thirty exactly, not as the thirty it names", () => {
+    const lines = Array.from({ length: 45 }, (_, at) => `*) area${at} - change ${at};`);
+    const note = mikrotikChangelogNote(`${section(...lines)}\nWhat's new in 7.1:\n*) x - y;\n`, "7.2");
+    assert.equal(note?.text, "45 changes: area0, area1, area2 +42 more");
+    assert.equal(note?.detail?.startsWith("45 changes in 45 areas: area0"), true);
+    assert.equal(note?.detail?.endsWith("area29 and 15 more."), true);
+    // A repeated area still counts once, whichever side of the thirtieth it falls on.
+    const repeated = [...lines, "*) AREA44 - again;", "*) area0 - again;"];
+    assert.equal(mikrotikChangelogNote(section(...repeated), "7.2")?.text, "47 changes: area0, area1, area2 +42 more");
+  });
+
+  it("says how many important lines the Details leave out, and says nothing when it lists them all", () => {
+    const flagged = (count: number) => Array.from({ length: count }, (_, at) => `!) bgp - important ${at};`);
+    const seven = mikrotikChangelogNote(section(...flagged(7), "*) wifi - fixed;"), "7.2");
+    assert.equal(seven?.text, "8 changes: bgp, wifi · 7 important");
+    assert.equal(seven?.important?.length, 5);
+    assert.equal(seven?.detail, "8 changes in 2 areas: bgp, wifi. 7 are marked important; the first 5 are listed.");
+    const five = mikrotikChangelogNote(section(...flagged(5)), "7.2");
+    assert.equal(five?.important?.length, 5);
+    assert.equal(five?.detail, "5 changes in 1 area: bgp.");
   });
 
   it("reads only the version's own section, never an older one below it", () => {
