@@ -189,6 +189,11 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["nested tables", `${"<table><tr><td>".repeat(SIZE / 16)}x`],
     ["a long cell of entity-like text", `<table><tr><td>${"&#".repeat(SIZE / 2)}`],
     ["a long cell of spaces and tags", `<table><tr><td>${" <b>".repeat(SIZE / 4)}`],
+    ["links with attributes that never end", `<table><tr><td>${"<a a ".repeat(SIZE / 5)}`],
+    ["links with unclosed quotes", `<table><tr><td>${"<a title='x ".repeat(SIZE / 11)}`],
+    ["links with alternating quotes", `<table><tr><td>${`<a x='y" `.repeat(SIZE / 9)}`],
+    ["links with a long unterminated value", `<table><tr><td>${`<a href="${"x".repeat(SIZE)}`}`],
+    ["links with unquoted values", `<table><tr><td>${"<a href=x=".repeat(SIZE / 9)}`],
   ])("readHtmlTables: %s", (_label, html) => {
     let tables: ReturnType<typeof readHtmlTables> = [];
     expect(elapsed(() => (tables = readHtmlTables(html)))).toBeLessThan(BUDGET_MS);

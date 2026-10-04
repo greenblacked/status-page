@@ -59,13 +59,65 @@ export type TableCell = { text: string; href?: string };
 /** The longest tag looked into for an `href`: a link's attributes are short, and a longer tag is not read. */
 const MAX_LINK_TAG_CHARS = 2000;
 const MAX_HREF_CHARS = 500;
-// The attribute is found by one literal ("href") after a space, so there is nothing to backtrack over.
-const HREF = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
 
-function hrefOf(tag: string): string | undefined {
-  const match = HREF.exec(tag);
-  const href = (match?.[1] ?? match?.[2] ?? "").trim();
-  return href !== "" && href.length <= MAX_HREF_CHARS ? href : undefined;
+function isSpace(char: string | undefined): boolean {
+  return char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f";
+}
+
+/**
+ * The start tag of an `<a>` read attribute by attribute: `name`, `name=value` with the value in double quotes,
+ * single quotes or bare. `from` is just past the tag name, `lt` the `<`. Returns where the tag really ends (its
+ * first `>` outside a quoted value, so a `>` inside a title does not end it) and the value of its `href`
+ * attribute, which only an attribute named `href` gives, never text inside another attribute's value or a name
+ * such as `data-href`. The first `href` wins, as in a browser. Undefined when the tag is malformed (a stray quote,
+ * `<` or `=`, a quote that never closes, no `>` within MAX_LINK_TAG_CHARS of `lt`): such a tag has no link.
+ * One forward pass over at most MAX_LINK_TAG_CHARS characters; every step moves forward and a quoted value is
+ * found with one indexOf, so nothing backtracks.
+ */
+function readAnchor(html: string, from: number, lt: number): { href?: string; end: number } | undefined {
+  const limit = Math.min(html.length, lt + MAX_LINK_TAG_CHARS);
+  let href: string | undefined;
+  let seenHref = false;
+  let at = from;
+  while (at < limit) {
+    const char = html[at];
+    if (isSpace(char) || char === "/") {
+      at += 1;
+      continue;
+    }
+    if (char === ">") return { ...(href === undefined ? {} : { href }), end: at };
+    if (char === "<" || char === '"' || char === "'" || char === "=") return undefined;
+    const nameStart = at;
+    while (at < limit && !isSpace(html[at]) && !"=/><\"'".includes(html[at])) at += 1;
+    const isHref = at - nameStart === 4 && html.slice(nameStart, at).toLowerCase() === "href";
+    while (at < limit && isSpace(html[at])) at += 1;
+    let value: string | undefined;
+    if (html[at] === "=") {
+      at += 1;
+      while (at < limit && isSpace(html[at])) at += 1;
+      const quote = html[at];
+      if (quote === '"' || quote === "'") {
+        const close = html.indexOf(quote, at + 1);
+        if (close === -1 || close >= limit) return undefined;
+        value = html.slice(at + 1, close);
+        at = close + 1;
+      } else {
+        const valueStart = at;
+        while (at < limit && !isSpace(html[at]) && html[at] !== ">") {
+          if ("<\"'=`".includes(html[at])) return undefined;
+          at += 1;
+        }
+        if (at === valueStart || at >= limit) return undefined;
+        value = html.slice(valueStart, at);
+      }
+    }
+    if (isHref && !seenHref) {
+      seenHref = true;
+      const trimmed = value?.trim() ?? "";
+      href = trimmed !== "" && trimmed.length <= MAX_HREF_CHARS ? trimmed : undefined;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -73,7 +125,8 @@ function hrefOf(tag: string): string | undefined {
  * cut at MAX_TABLES, MAX_ROWS, MAX_CELLS and MAX_CELL_CHARS. Not an HTML parser: it
  * knows `table`, `tr`, `td`, `th` and `a`, skips comments, `script` and `style`,
  * and ignores a table nested inside another. Each tag is found with one
- * `indexOf("<")` and one `indexOf(">")` from where the last ended, so the
+ * `indexOf("<")` and one `indexOf(">")` from where the last ended (an `<a>`
+ * is read attribute by attribute instead, see readAnchor), so the
  * whole page is read once; markup that never closes simply ends the scan.
  */
 export function readHtmlCells(html: string): TableCell[][][] {
@@ -155,8 +208,13 @@ export function readHtmlCells(html: string): TableCell[][][] {
           row ??= [];
           cell = "";
         }
-      } else if (name === "a" && !closing && cell !== null && href === undefined && gt - lt <= MAX_LINK_TAG_CHARS) {
-        href = hrefOf(html.slice(lt, gt));
+      } else if (name === "a" && !closing) {
+        // The tag may run past the first ">" (one inside a quoted value), so the scan says where it ends.
+        const anchor = readAnchor(html, nameEnd, lt);
+        if (anchor !== undefined) {
+          pos = anchor.end + 1;
+          if (cell !== null && href === undefined) href = anchor.href;
+        }
       } else if (cell !== null && SPACING_TAGS.has(name) && cell.length < MAX_CELL_CHARS * 4) {
         cell += " ";
       }

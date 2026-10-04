@@ -254,6 +254,61 @@ describe("readHtmlCells", () => {
   });
 });
 
+describe("readHtmlCells links", () => {
+  const hrefs = (anchor: string) =>
+    readHtmlCells(`<table><tr><td>${anchor}</td></tr></table>`)[0][0].map((cell) => cell.href);
+  const KB = "https://support.microsoft.com/help/5000001";
+
+  it("takes no link from text inside another attribute's value", () => {
+    expect(hrefs(`<a title="see href='${KB}'">KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a title='see href="${KB}"'>KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a title="x" alt="href=${KB}">KB5000001</a>`)).toEqual([undefined]);
+  });
+
+  it("takes no link from an attribute whose name only ends in href", () => {
+    expect(hrefs(`<a data-href="${KB}">KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a xhref='${KB}'>KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a hrefs="${KB}">KB5000001</a>`)).toEqual([undefined]);
+  });
+
+  it("reads double-quoted, single-quoted and unquoted values, in any case", () => {
+    expect(hrefs(`<a href="${KB}">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a href='${KB}'>k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a href=${KB}>k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a class=x href=${KB} id=y>k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a HREF="${KB}">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<A\n  Href\n=\n'${KB}'\n>k</A>`)).toEqual([KB]);
+  });
+
+  it("finds an href after an attribute holding a '>' inside quotes, and keeps the text clean", () => {
+    const cells = readHtmlCells(`<table><tr><td><a title="a > b" href="${KB}">KB5000001</a></td></tr></table>`);
+    expect(cells[0][0]).toEqual([{ text: "KB5000001", href: KB }]);
+    expect(hrefs(`<a title='1 > 0' data-x="<td>" href='${KB}'>k</a>`)).toEqual([KB]);
+  });
+
+  it("uses the first href of a tag and the first link of a cell that has one", () => {
+    expect(hrefs(`<a href="${KB}" href="https://other.example/">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a href="">k</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a href="" href="${KB}">k</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a name="top">a</a><a href="${KB}">b</a>`)).toEqual([KB]);
+  });
+
+  it("gives no link for a malformed tag", () => {
+    for (const tag of [
+      `<a href="${KB}>k</a>`,
+      `<a href='${KB}>k</a>`,
+      `<a href=>k</a>`,
+      `<a ="${KB}">k</a>`,
+      `<a href="${KB}"" >k</a>`,
+      `<a <b href="${KB}">k</a>`,
+      `<a href=${KB}"x">k</a>`,
+      `<a href="${"x".repeat(501)}">k</a>`,
+    ]) {
+      expect(hrefs(tag), tag).toEqual([undefined]);
+    }
+  });
+});
+
 describe("parseWindowsUpdateType", () => {
   it("reads B, D and OOB with their month, in any case", () => {
     expect(parseWindowsUpdateType("2026-09 B")).toEqual({ type: "2026-09 B", kind: "B" });
