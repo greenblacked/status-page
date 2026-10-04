@@ -14,6 +14,7 @@
 // so the tests can start it on a port of their own.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
@@ -45,24 +46,55 @@ export interface NodeServerOptions {
   log?: (entry: Record<string, unknown>) => void;
   /** A request body larger than this is refused with 413. The board takes none, so the default is small. */
   maxBodyBytes?: number;
+  /**
+   * The Strict-Transport-Security value for every response, or false to send
+   * none. The app's own header (it includes subdomains, for the Cloudflare
+   * staging site) is replaced: a self-hoster's domain may carry plain-HTTP
+   * services. Default: max-age=31536000.
+   */
+  hsts?: string | false;
+}
+
+export const DEFAULT_NODE_HSTS = "max-age=31536000";
+
+/** The HSTS environment variable: "on" (default), "subdomains" or "off". */
+export function hstsFromEnv(value: string | undefined): string | false {
+  switch ((value ?? "").trim().toLowerCase()) {
+    case "":
+    case "on":
+    case "1":
+    case "true":
+      return DEFAULT_NODE_HSTS;
+    case "subdomains":
+      return `${DEFAULT_NODE_HSTS}; includeSubDomains`;
+    case "off":
+    case "0":
+    case "false":
+      return false;
+    default:
+      throw new Error(`HSTS must be "on", "subdomains" or "off", got "${value}"`);
+  }
 }
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const NO_BODY_STATUSES = new Set([204, 205, 304]);
 
 /** The text of a response the server makes itself (bad request, failure), with the security headers. */
-function plain(res: ServerResponse, status: number, text: string, head: boolean): void {
+function plain(res: ServerResponse, status: number, text: string, head: boolean, hsts: string | false): void {
   const headers = new Headers({ "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
-  addSecurityHeaders(headers);
+  addSecurityHeaders(headers, hsts);
   headers.set("Content-Length", String(Buffer.byteLength(text)));
   writeHead(res, status, headers);
   res.end(head ? undefined : text);
 }
 
-function addSecurityHeaders(headers: Headers): void {
-  for (const [name, value] of Object.entries(securityHeaders({ dev: false }))) {
+function addSecurityHeaders(headers: Headers, hsts: string | false): void {
+  for (const [name, value] of Object.entries(securityHeaders({ dev: false, hsts }))) {
     if (!headers.has(name)) headers.set(name, value);
   }
+  // The server decides HSTS, whatever the app put on its response.
+  if (hsts === false) headers.delete("Strict-Transport-Security");
+  else headers.set("Strict-Transport-Security", hsts);
 }
 
 /** Sends the status line and headers; Set-Cookie stays one header per cookie. */
@@ -127,9 +159,10 @@ async function sendResponse(
   res: ServerResponse,
   response: Response,
   head: boolean,
+  hsts: string | false,
 ): Promise<void> {
   const headers = new Headers(response.headers);
-  addSecurityHeaders(headers);
+  addSecurityHeaders(headers, hsts);
   const { status, body } = response;
   const empty = head || !body || NO_BODY_STATUSES.has(status);
 
@@ -181,13 +214,19 @@ async function sendResponse(
 }
 
 /** A file from dist/client, from memory, with a validator and the encoding the request asked for. */
-async function sendStatic(req: IncomingMessage, res: ServerResponse, file: StaticFile, head: boolean): Promise<void> {
+async function sendStatic(
+  req: IncomingMessage,
+  res: ServerResponse,
+  file: StaticFile,
+  head: boolean,
+  hsts: string | false,
+): Promise<void> {
   const headers = new Headers({
     "Content-Type": file.contentType,
     "Cache-Control": file.cacheControl,
     ETag: file.etag,
   });
-  addSecurityHeaders(headers);
+  addSecurityHeaders(headers, hsts);
   if (file.compressible) appendVary(headers, "Accept-Encoding");
 
   if (etagMatches(req.headers["if-none-match"], file.etag)) {
@@ -209,32 +248,39 @@ async function sendStatic(req: IncomingMessage, res: ServerResponse, file: Stati
 }
 
 export function createNodeServer(options: NodeServerOptions): Server {
-  const { handler, staticFiles, trustProxy = false, log, maxBodyBytes = DEFAULT_MAX_BODY_BYTES } = options;
+  const {
+    handler,
+    staticFiles,
+    trustProxy = false,
+    log,
+    maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
+    hsts = DEFAULT_NODE_HSTS,
+  } = options;
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = req.method ?? "GET";
     const head = method === "HEAD";
     const rawUrl = req.url ?? "/";
     // Only origin-form targets ("/path?query"); a proxy-style absolute URL or "*" is not a request for this server.
-    if (!rawUrl.startsWith("/")) return plain(res, 400, "Bad Request\n", head);
+    if (!rawUrl.startsWith("/")) return plain(res, 400, "Bad Request\n", head, hsts);
     let url: URL;
     let headers: Headers;
     try {
       url = new URL(`${requestOrigin(req, trustProxy)}${rawUrl}`);
       headers = toHeaders(req);
     } catch {
-      return plain(res, 400, "Bad Request\n", head);
+      return plain(res, 400, "Bad Request\n", head, hsts);
     }
 
     if (method === "GET" || head) {
       const path = decodePathname(url.pathname);
       const file = path === null ? undefined : staticFiles.get(path);
-      if (file) return sendStatic(req, res, file, head);
+      if (file) return sendStatic(req, res, file, head, hsts);
     }
 
     const hasBody = method !== "GET" && !head;
     if (hasBody && Number(req.headers["content-length"]) > maxBodyBytes) {
-      return plain(res, 413, "Payload Too Large\n", head);
+      return plain(res, 413, "Payload Too Large\n", head, hsts);
     }
     // A client that hangs up cancels the request the app is still working on.
     const abort = new AbortController();
@@ -254,16 +300,29 @@ export function createNodeServer(options: NodeServerOptions): Server {
     } catch (error) {
       if (abort.signal.aborted) return;
       if (error instanceof BodyTooLarge || (error as { cause?: unknown })?.cause instanceof BodyTooLarge) {
-        return plain(res, 413, "Payload Too Large\n", head);
+        return plain(res, 413, "Payload Too Large\n", head, hsts);
       }
       log?.({ level: "error", msg: "handler failed", path: url.pathname, error: String(error) });
-      return plain(res, 500, "Internal Server Error\n", head);
+      return plain(res, 500, "Internal Server Error\n", head, hsts);
     }
-    await sendResponse(req, res, response, head);
+    await sendResponse(req, res, response, head, hsts);
   }
+
+  // Requests in flight per socket. Node's closeIdleConnections() skips a
+  // socket that has connected but sent nothing yet (a browser preconnect, a
+  // proxy's pooled connection), and that would hold a graceful shutdown until
+  // its timeout; so the sockets are counted here and closeIdleConnections is
+  // extended to destroy the ones with no request in flight.
+  const inFlight = new Map<Socket, number>();
 
   const server = createServer((req, res) => {
     const started = performance.now();
+    const socket = req.socket;
+    inFlight.set(socket, (inFlight.get(socket) ?? 0) + 1);
+    res.once("close", () => {
+      const count = inFlight.get(socket);
+      if (count !== undefined) inFlight.set(socket, Math.max(0, count - 1));
+    });
     res.once("close", () => {
       const path = (req.url ?? "").split("?")[0];
       // Probes every few seconds would drown the log; a failing one is still written.
@@ -282,12 +341,23 @@ export function createNodeServer(options: NodeServerOptions): Server {
       // A failure while streaming: the status line is gone, so all that is left is to drop the connection.
       if (!res.headersSent) {
         log?.({ level: "error", msg: "request failed", path: req.url, error: String(error) });
-        plain(res, 500, "Internal Server Error\n", req.method === "HEAD");
+        plain(res, 500, "Internal Server Error\n", req.method === "HEAD", hsts);
       } else {
         res.destroy();
       }
     });
   });
+  server.on("connection", (socket) => {
+    inFlight.set(socket, 0);
+    socket.once("close", () => inFlight.delete(socket));
+  });
+  const closeIdleConnections = server.closeIdleConnections.bind(server);
+  server.closeIdleConnections = () => {
+    closeIdleConnections();
+    for (const [socket, count] of inFlight) {
+      if (count === 0) socket.destroy();
+    }
+  };
   // Longer than the 60 s idle timeout most load balancers use, so the proxy
   // closes a connection first and never writes to one this server just closed.
   server.keepAliveTimeout = 65_000;

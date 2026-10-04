@@ -1,13 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { request as httpRequest } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { securityHeaders } from "../lib/security-headers.ts";
-import { createNodeServer } from "./server.ts";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { DEFAULT_HSTS, securityHeaders } from "../lib/security-headers.ts";
+import { createNodeServer, DEFAULT_NODE_HSTS, hstsFromEnv } from "./server.ts";
 import { IMMUTABLE_CACHE_CONTROL, indexStaticFiles, SHORT_CACHE_CONTROL } from "./static.ts";
 
 const css = "body { color: red; }\n".repeat(200);
@@ -41,6 +41,8 @@ beforeAll(async () => {
       });
       if (pathname === "/healthz") return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });
       if (pathname === "/throw") throw new Error("boom");
+      if (pathname === "/app-hsts")
+        return new Response("x", { headers: { "Strict-Transport-Security": DEFAULT_HSTS } });
       if (pathname === "/with-header")
         return new Response("x", { headers: { "X-Frame-Options": "SAMEORIGIN", "Set-Cookie": "a=1" } });
       if (pathname === "/cookies") {
@@ -111,7 +113,7 @@ function get(path: string, headers: Record<string, string> = {}, method = "GET")
   });
 }
 
-const expectedSecurity = securityHeaders({ dev: false });
+const expectedSecurity = securityHeaders({ dev: false, hsts: DEFAULT_NODE_HSTS });
 function expectSecurityHeaders(response: { headers: Headers }) {
   for (const [name, value] of Object.entries(expectedSecurity)) expect(response.headers.get(name), name).toBe(value);
 }
@@ -237,7 +239,9 @@ describe("the app handler", () => {
     const { response, bytes } = await get("/healthz");
     expect(response.status).toBe(200);
     expect(bytes.toString()).toBe("ok\n");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The request line is logged when the response closes; wait for the next request's line to be sure it was not.
+    await get("/page");
+    await vi.waitFor(() => expect(logs.some((entry) => entry.path === "/page")).toBe(true));
     expect(logs.filter((entry) => entry.path === "/healthz")).toEqual([]);
   });
 
@@ -305,11 +309,111 @@ describe("the app handler", () => {
   it("logs a line per request with method, path without the query, status and time", async () => {
     logs.length = 0;
     await get("/page?secret=1");
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await vi.waitFor(() => expect(logs.some((entry) => entry.path === "/page")).toBe(true));
     const line = logs.find((entry) => entry.path === "/page");
     expect(line).toMatchObject({ level: "info", msg: "request", method: "GET", status: 200 });
     expect(typeof line?.ms).toBe("number");
     expect(JSON.stringify(logs)).not.toContain("secret");
+  });
+});
+
+describe("HSTS", () => {
+  async function hstsOf(hsts: string | false | undefined, path: string): Promise<string | null> {
+    const custom = createNodeServer({
+      staticFiles: new Map(),
+      ...(hsts === undefined ? {} : { hsts }),
+      handler: () => new Response("x", { headers: { "Strict-Transport-Security": DEFAULT_HSTS } }),
+    });
+    await new Promise<void>((resolve) => custom.listen(0, "127.0.0.1", resolve));
+    try {
+      const response = await fetch(`http://127.0.0.1:${(custom.address() as AddressInfo).port}${path}`);
+      return response.headers.get("strict-transport-security");
+    } finally {
+      custom.closeAllConnections();
+      await new Promise((resolve) => custom.close(resolve));
+    }
+  }
+
+  it("sends no includeSubDomains by default, replacing the app's own header", async () => {
+    expect(DEFAULT_HSTS).toContain("includeSubDomains");
+    expect(DEFAULT_NODE_HSTS).toBe("max-age=31536000");
+    expect((await get("/app-hsts")).response.headers.get("strict-transport-security")).toBe(DEFAULT_NODE_HSTS);
+    expect((await get("/page")).response.headers.get("strict-transport-security")).toBe(DEFAULT_NODE_HSTS);
+    expect((await get("/assets/app-abc.css")).response.headers.get("strict-transport-security")).toBe(
+      DEFAULT_NODE_HSTS,
+    );
+  });
+
+  it("can be changed or left out, on the app's responses and the server's own", async () => {
+    expect(await hstsOf("max-age=60", "/")).toBe("max-age=60");
+    expect(await hstsOf(false, "/")).toBeNull();
+    expect(await hstsOf(false, "/bad target")).toBeNull();
+  });
+
+  it("reads the HSTS variable", () => {
+    expect(hstsFromEnv(undefined)).toBe(DEFAULT_NODE_HSTS);
+    expect(hstsFromEnv("")).toBe(DEFAULT_NODE_HSTS);
+    expect(hstsFromEnv("on")).toBe(DEFAULT_NODE_HSTS);
+    expect(hstsFromEnv("Subdomains")).toBe(`${DEFAULT_NODE_HSTS}; includeSubDomains`);
+    expect(hstsFromEnv("off")).toBe(false);
+    expect(hstsFromEnv("0")).toBe(false);
+    expect(() => hstsFromEnv("maybe")).toThrow(/HSTS must be/);
+  });
+});
+
+describe("closing idle connections", () => {
+  async function startServer() {
+    const own = createNodeServer({
+      staticFiles: new Map(),
+      handler: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return new Response("slow done", { headers: { "Content-Type": "text/plain" } });
+      },
+    });
+    await new Promise<void>((resolve) => own.listen(0, "127.0.0.1", resolve));
+    const port = (own.address() as AddressInfo).port;
+    // A socket that connects and never sends a byte; resolves once the server has accepted it.
+    async function silentSocket() {
+      const accepted = new Promise<void>((resolve) => own.once("connection", () => resolve()));
+      const socket = connect(port, "127.0.0.1");
+      await accepted;
+      return socket;
+    }
+    return { own, port, silentSocket };
+  }
+
+  it("destroys a socket that connected and sent nothing, so a graceful close is quick", async () => {
+    const { own, silentSocket } = await startServer();
+    const silent = await silentSocket();
+    // Node's own closeIdleConnections() leaves this socket open.
+    const closed = new Promise<void>((resolve) => silent.once("close", resolve));
+    const began = performance.now();
+    const stopped = new Promise((resolve) => own.close(resolve));
+    own.closeIdleConnections();
+    await closed;
+    await stopped;
+    expect(performance.now() - began).toBeLessThan(1000);
+  });
+
+  it("lets a request in flight finish while the idle sockets go", async () => {
+    const { own, port, silentSocket } = await startServer();
+    const silent = await silentSocket();
+    const silentClosed = new Promise<void>((resolve) => silent.once("close", resolve));
+    const busy = new Promise<string>((resolve, reject) => {
+      httpRequest(`http://127.0.0.1:${port}/`, { agent: false }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => resolve(Buffer.concat(chunks).toString()));
+      })
+        .on("error", reject)
+        .end();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const stopped = new Promise((resolve) => own.close(resolve));
+    own.closeIdleConnections();
+    await silentClosed;
+    expect(await busy).toBe("slow done");
+    await stopped;
   });
 });
 

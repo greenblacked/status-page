@@ -17,6 +17,11 @@ describe("securityHeaders", () => {
     expect(securityHeaders({ dev: true })["Strict-Transport-Security"]).toBe(hsts);
   });
 
+  it("takes another Strict-Transport-Security value, or none, for a server that decides it itself", () => {
+    expect(securityHeaders({ dev: false, hsts: "max-age=60" })["Strict-Transport-Security"]).toBe("max-age=60");
+    expect(securityHeaders({ dev: false, hsts: false })).not.toHaveProperty("Strict-Transport-Security");
+  });
+
   it("keeps inline scripts and styles, which hydration needs, and nothing broader", () => {
     const csp = securityHeaders({ dev: false })["Content-Security-Policy"];
     expect(csp).toContain("script-src 'self' 'unsafe-inline';");

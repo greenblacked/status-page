@@ -52,11 +52,22 @@ fi
 
 # SIGTERM, then Docker's own 10 s before it would send SIGKILL: a server that
 # handles the signal exits at once with 0, one that does not is killed (137).
+# A connection that never sends a request (a browser preconnect, a proxy's
+# pooled socket) is held open meanwhile: the server must close it rather than
+# wait out its shutdown timeout, or `docker stop` runs into that SIGKILL.
+exec 3<>"/dev/tcp/127.0.0.1/$port"
+began="$SECONDS"
 docker stop "$name" >/dev/null
+exec 3>&-
+if [ $((SECONDS - began)) -ge 8 ]; then
+  echo "::error::the container took $((SECONDS - began)) s to stop with an idle connection open" >&2
+  docker logs "$name" >&2
+  exit 1
+fi
 code="$(docker inspect --format '{{.State.ExitCode}}' "$name")"
 if [ "$code" != 0 ]; then
   echo "::error::the container stopped with exit code $code after SIGTERM, not 0" >&2
   docker logs "$name" >&2
   exit 1
 fi
-echo "ok  SIGTERM stops the container with exit code 0"
+echo "ok  SIGTERM stops the container with exit code 0, idle connection open"

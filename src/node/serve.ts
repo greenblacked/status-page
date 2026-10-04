@@ -6,7 +6,10 @@
 //   HOST         address to bind (default 127.0.0.1; the image sets 0.0.0.0)
 //   TRUST_PROXY  1 when a reverse proxy in front sets X-Forwarded-Proto and
 //                X-Forwarded-Host, so the app sees its public https:// origin
-//   SHUTDOWN_TIMEOUT_MS  how long a SIGTERM waits for open requests (default 10000)
+//   HSTS         Strict-Transport-Security: max-age=31536000 by default;
+//                "subdomains" adds includeSubDomains, "off" sends no header
+//   SHUTDOWN_TIMEOUT_MS  how long a SIGTERM waits for open requests (default
+//                5000, under the 10 s `docker stop` allows before SIGKILL)
 //
 // One JSON line per request goes to stdout, so `docker logs` and any log
 // shipper read it as it is. SIGTERM and SIGINT stop accepting connections,
@@ -17,7 +20,7 @@
 
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
-import { createNodeServer } from "./server.ts";
+import { createNodeServer, hstsFromEnv } from "./server.ts";
 import { indexStaticFiles } from "./static.ts";
 
 // React and the server entry pick their production code from NODE_ENV when
@@ -53,6 +56,7 @@ async function main(): Promise<void> {
   const server = createNodeServer({
     handler: (request) => app.default.fetch(request),
     staticFiles,
+    hsts: hstsFromEnv(process.env.HSTS),
     trustProxy: ["1", "true"].includes((process.env.TRUST_PROXY ?? "").toLowerCase()),
     log,
   });
@@ -61,9 +65,9 @@ async function main(): Promise<void> {
   function shutdown(signal: string): void {
     if (stopping) return;
     stopping = true;
-    const timeout = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 10_000;
+    const timeout = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 5_000;
     log({ level: "info", msg: "shutting down", signal });
-    // Stop taking new connections; idle keep-alive ones close now, busy ones when their response ends.
+    // Stop taking new connections; idle ones (keep-alive, or connected and silent) close now, busy ones when their response ends.
     server.close((error) => {
       if (error) log({ level: "error", msg: "close failed", error: String(error) });
       log({ level: "info", msg: "stopped" });

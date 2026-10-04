@@ -23,17 +23,31 @@ const CONTENT_SECURITY_POLICY = [
 ].join("; ");
 
 /**
+ * Browsers ignore it over plain HTTP, so local previews are unaffected.
+ * includeSubDomains covers the staging site on a subdomain of the same
+ * HTTPS-only Worker. No `preload`: that is a commitment made to browsers
+ * through a list, not something a response header should opt into alone.
+ * The Node server (src/node) does not use this default: a self-hoster's
+ * domain may carry plain-HTTP services, so it sends no includeSubDomains
+ * unless asked to.
+ */
+export const DEFAULT_HSTS = "max-age=31536000; includeSubDomains";
+
+/**
  * In development the Vite client injects scripts and opens a websocket, so
  * the Content-Security-Policy is left out there; everything else applies.
  */
-export function securityHeaders({ dev }: { dev: boolean }): Record<string, string> {
+export function securityHeaders({
+  dev,
+  hsts = DEFAULT_HSTS,
+}: {
+  dev: boolean;
+  /** The Strict-Transport-Security value, or false to leave the header out (a server that decides it for itself). */
+  hsts?: string | false;
+}): Record<string, string> {
   return {
     ...(dev ? {} : { "Content-Security-Policy": CONTENT_SECURITY_POLICY }),
-    // Browsers ignore it over plain HTTP, so local previews are unaffected.
-    // includeSubDomains covers the staging site on a subdomain of the same
-    // HTTPS-only Worker. No `preload`: that is a commitment made to browsers
-    // through a list, not something a response header should opt into alone.
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    ...(hsts === false ? {} : { "Strict-Transport-Security": hsts }),
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",

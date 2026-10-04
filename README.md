@@ -356,19 +356,20 @@ services:
 
 Pin a version tag (`:X.Y.Z`, as released) or an `@sha256:` digest instead of `:latest` if you want updates to be your decision. Verify what you pulled with the command in [CONTRIBUTING.md](CONTRIBUTING.md#verifying-a-release). To build it yourself: `docker build -t status-page .`, or `docker compose --profile serve up --build status-page` in a checkout (add `--build-arg VITE_STATUS_HISTORY=1` to `docker build` for the [uptime history strip](#on-the-board)).
 
-The container serves plain HTTP and does not terminate TLS: put Caddy, nginx, Traefik or your platform's load balancer in front of it. The security headers include `Strict-Transport-Security`, which browsers ignore over HTTP and obey over HTTPS.
+The container serves plain HTTP and does not terminate TLS: put Caddy, nginx, Traefik or your platform's load balancer in front of it. The security headers include `Strict-Transport-Security` (see `HSTS` below), which browsers ignore over HTTP and obey over HTTPS.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `PORT` | `3000` | The port to listen on, inside the container |
 | `HOST` | `0.0.0.0` in the image, `127.0.0.1` from `pnpm start` | The address to bind |
 | `TRUST_PROXY` | off | Set to `1` behind a reverse proxy that sets `X-Forwarded-Proto` and `X-Forwarded-Host`, so the board sees its public `https://` address. Leave it off when the container is reached directly: any client can send those headers |
-| `SHUTDOWN_TIMEOUT_MS` | `10000` | How long `SIGTERM` waits for requests in flight before closing them |
+| `HSTS` | on | `Strict-Transport-Security: max-age=31536000`, which browsers obey only over HTTPS and which pins just the host that sent it. `subdomains` adds `includeSubDomains` (only if every subdomain of your domain is HTTPS-only); `off` sends no header, for a proxy that sets its own |
+| `SHUTDOWN_TIMEOUT_MS` | `5000` | How long `SIGTERM` waits for requests in flight before closing them. Keep it under the 10 s `docker stop` allows before `SIGKILL` |
 
 - **Health:** the image has a `HEALTHCHECK` on `/healthz`, which never reads the board. For a Kubernetes liveness probe use `/healthz`; use `/readyz` for readiness or a monitor ([Integrations](#integrations)).
 - **Logs:** one JSON line per request, plus the collectors' own lines, on stdout, so `docker logs` and any log shipper read them as they are. `/healthz` is not logged while it answers 200.
 - **Scaling:** each process keeps its own 45-second snapshot in memory. Run one container; a second only doubles the requests to the vendors.
-- **Stopping:** `docker stop` sends `SIGTERM`, the server stops accepting connections, lets requests in flight finish and exits 0.
+- **Stopping:** `docker stop` sends `SIGTERM`, the server stops accepting connections, closes the idle ones (including a connection that never sent a request), lets requests in flight finish and exits 0, within `SHUTDOWN_TIMEOUT_MS`. For a longer drain raise both: `--stop-timeout 30` (`stop_grace_period: 30s` in Compose) and `SHUTDOWN_TIMEOUT_MS=25000`.
 
 ### Branches and deploys
 
