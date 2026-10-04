@@ -185,7 +185,11 @@ run_checks() {
     if [ -z "$nonce" ]; then
       fail "/: script-src names no nonce"
     else
-      grep -aqF "nonce=\"$nonce\"" "$work/body" || fail "/: the page's scripts do not carry the policy's nonce"
+      grep -aqF "nonce=\"$nonce\"" "$work/body" || fail "/: the page carries no element with the policy's nonce"
+      # Every <script> tag, not just any element: one without the nonce is blocked by the browser.
+      if grep -ao '<script[^>]*>' "$work/body" | grep -vqF "nonce=\"$nonce\""; then
+        fail "/: a script without the policy's nonce"
+      fi
     fi
     case "$(printf '%s' "$csp" | tr ';' '\n' | grep -a 'script-src')" in
       *unsafe-inline*) fail "/: script-src allows 'unsafe-inline'" ;;
