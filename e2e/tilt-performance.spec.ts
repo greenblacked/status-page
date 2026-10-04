@@ -1,5 +1,6 @@
-import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 import { TILT_STORAGE_KEY } from "../src/lib/status/tilt.ts";
+import { expect, test } from "./test";
 
 // How smoothly Tilt lighting runs on a slow phone. A test browser has no motion
 // sensor and a fast CPU, so this stands in for both: it dispatches synthetic
