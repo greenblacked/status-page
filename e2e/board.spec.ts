@@ -3296,11 +3296,12 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
       return (original as (...values: unknown[]) => void).apply(window, args);
     }) as typeof window.scrollBy;
     // The scroll events delivered so far: an event comes a frame after the scroll that makes it.
-    (window as Window & { __scrollEvents?: number }).__scrollEvents = 0;
+    const events = { count: 0 };
+    (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents = events;
     window.addEventListener(
       "scroll",
       () => {
-        (window as Window & { __scrollEvents: number }).__scrollEvents += 1;
+        events.count += 1;
       },
       true,
     );
@@ -3323,7 +3324,8 @@ test("scrolls to hold the cards after a tap with anchoring off", async ({ page }
   // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   const fewer = card.getByRole("button", { name: /^Show fewer/ });
-  const scrollEvents = () => page.evaluate(() => (window as Window & { __scrollEvents?: number }).__scrollEvents ?? 0);
+  const scrollEvents = () =>
+    page.evaluate(() => (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents?.count ?? 0);
   const eventsBefore = await scrollEvents();
   const yBefore = await page.evaluate(() => window.scrollY);
   await fewer.scrollIntoViewIfNeeded();
