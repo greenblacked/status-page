@@ -84,11 +84,11 @@ export default defineConfig({
     // for the bar's lead text to sit in the flow before the field's slot, which only WebKit's iPad would
     // otherwise cover. It runs the tests of the search reveal (the bar's copy of the field), the field's fill, the
     // floating bar, the self-hosted Inter (a late or a cached one, on a hero that wraps differently by width), the
-    // page's hydration under its Content-Security-Policy and the layout tests (@layout), not the whole suite: the
-    // rest has its Chromium coverage at the other two sizes.
+    // page's hydration under its Content-Security-Policy, the tilt lighting performance run and the layout tests
+    // (@layout), not the whole suite: the rest has its Chromium coverage at the other two sizes.
     {
       name: "tablet",
-      grep: /search reveal|floating bar|field's fill|self-hosted Inter|content security policy|@layout/i,
+      grep: /search reveal|floating bar|field's fill|self-hosted Inter|content security policy|tilt performance|@layout/i,
       use: { ...devices["iPad Pro 11"], defaultBrowserType: "chromium", launchOptions: chromiumLaunch },
     },
     { name: "Desktop Safari", use: { ...devices["Desktop Safari"] } },

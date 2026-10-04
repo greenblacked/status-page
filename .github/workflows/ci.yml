@@ -172,23 +172,31 @@ jobs:
           retention-days: 1
 
   e2e:
-    # One shard per engine and device group. Five projects run the whole suite
-    # and the Chromium tablet runs only the search reveal, floating bar, field's
-    # fill, self-hosted Inter and layout tests; ten more screens (narrow, short,
-    # large, foldable, an Android tablet, phones on their side) run only the
-    # layout tests tagged @layout (e2e/mobile-layout.spec.ts). WebKit is several
-    # times slower than Chromium in CI, so each WebKit device gets its own
-    # shard, with the extra WebKit screens beside the device of their size: the
-    # phones in the iphone shard and the iPad Mini in the ipad shard. The
-    # Chromium projects are split in two so neither comes near the step timeout
-    # (the three full ones alone took about 8.5 minutes, and over 10 on a slower
-    # run): desktop with the larger layout screens, mobile and tablet with the
-    # phone ones. Together the shards run every project exactly once.
+    # One shard per engine and device group, so each finishes well inside its
+    # step timeout and a red one names the device. Five projects run the whole
+    # suite and the Chromium tablet runs only the search reveal, floating bar,
+    # field's fill, self-hosted Inter, content security policy, tilt performance
+    # and layout tests; ten more screens (narrow, short, large, foldable, an
+    # Android tablet, phones on their side) run only the layout tests tagged
+    # @layout (e2e/mobile-layout.spec.ts). WebKit is several times slower than
+    # Chromium in CI, so each WebKit device gets its own shard, with the extra
+    # WebKit screens beside the device of their size: the phones in the iphone
+    # shard and the iPad Mini in the ipad shard. The Chromium projects are split
+    # in two so neither comes near the step timeout (the three full ones alone
+    # took 8.3 to 9 minutes before the tilt performance runs were added, and
+    # over 10 on a slower run): desktop with the larger layout screens, mobile
+    # and tablet (which carry the tilt performance runs) with the phone ones.
+    # Together the shards run every one of the 16 projects exactly once.
+    #
+    # The checks that come out are named `browser tests (<shard>)`:
+    # chromium-desktop, chromium-mobile, desktop-safari, iphone and ipad. Only
+    # `CI OK` is required by branch protection (CONTRIBUTING.md#ci), so a shard
+    # can be split or renamed without touching the rulesets.
     name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
     # Per shard: a Chromium shard runs four or five projects (desktop, or
-    # mobile and tablet, plus three layout screens) and takes about 6 to 9
+    # mobile and tablet, plus three layout screens) and takes about 6 to 11
     # minutes, the iphone shard four (one full, three of layout tests) up to
     # about 15, the others one or two, each plus getting the browser. A
     # project's layout tests add about a seventh of what the whole suite takes
@@ -286,11 +294,12 @@ jobs:
 
       - name: Browser tests (Playwright)
         # A project's run takes 3 to 4.3 minutes and its layout tests 1 to 2
-        # more. The Chromium shards take about 6 to 9 minutes and the busiest,
-        # iphone, up to about 15, so this leaves real margin (10 minutes was
-        # hit by the three full Chromium projects in one shard, which took over
-        # 10 on a slower run) and still stops a hung suite well before the job
-        # limit does.
+        # more. The Chromium shards take about 6 to 11 minutes and the busiest,
+        # iphone, up to about 15 (the tilt performance runs are part of the
+        # Chromium ones), so this leaves real margin (10 minutes was hit by the
+        # three full Chromium projects in one shard, and 15 would leave the
+        # iphone shard on a slow runner no room) and still stops a hung suite
+        # well before the job limit does.
         timeout-minutes: 25
         env:
           # Comma-separated project names from playwright.config.ts.
