@@ -2868,14 +2868,21 @@ test("search reveal: no layout shift", async ({ page, browserName }) => {
   test.slow();
   const offsets = await revealBoard(page);
   if (browserName === "chromium") {
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const tracked = window as Window & { __cls?: number };
       tracked.__cls = 0;
-      new PerformanceObserver((list) => {
+      const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries() as unknown as { value: number; hadRecentInput: boolean }[]) {
           if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
         }
-      }).observe({ type: "layout-shift", buffered: false });
+      });
+      observer.observe({ type: "layout-shift", buffered: false });
+      // A shift is worked out when the page makes its next frame, and reported with it, which on a busy machine can
+      // be a while after what moved the page: the clock was stopped a moment ago, and whatever it moved just before
+      // is reported here. Let those frames come, drop what they report, and count from a page that is at rest.
+      for (let frame = 0; frame < 3; frame++) await new Promise((resolve) => requestAnimationFrame(resolve));
+      observer.takeRecords();
+      tracked.__cls = 0;
     });
   }
   const layout = () =>
