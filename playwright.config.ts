@@ -30,6 +30,24 @@ const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 // off its HTTP cache.
 const chromiumLaunch = { executablePath, args: chromiumArgs };
 
+// The tests of how the page lays out on a screen carry this tag (e2e/mobile-layout.spec.ts). The projects of the
+// extra screens run nothing else, and every other project runs them with the rest.
+const LAYOUT = /@layout/;
+
+// The extra screens, with the engine their device profile belongs to: Playwright's own profile for each, named by it.
+const LAYOUT_DEVICES = [
+  { name: "Galaxy S9+", browser: "chromium" },
+  { name: "Pixel 10", browser: "chromium" },
+  { name: "Galaxy Z Fold 7", browser: "chromium" },
+  { name: "Galaxy Z Fold 7 Cover", browser: "chromium" },
+  { name: "Galaxy Tab S9", browser: "chromium" },
+  { name: "Pixel 7 landscape", browser: "chromium" },
+  { name: "iPhone SE (3rd gen)", browser: "webkit" },
+  { name: "iPhone 17 Pro Max", browser: "webkit" },
+  { name: "iPad Mini", browser: "webkit" },
+  { name: "iPhone 17 Pro landscape", browser: "webkit" },
+] as const;
+
 export default defineConfig({
   testDir: "e2e",
   fullyParallel: true,
@@ -64,12 +82,21 @@ export default defineConfig({
     // its Chromium coverage at the other two sizes.
     {
       name: "tablet",
-      grep: /search reveal|floating bar|field's fill|self-hosted Inter/i,
+      grep: /search reveal|floating bar|field's fill|self-hosted Inter|@layout/i,
       use: { ...devices["iPad Pro 11"], defaultBrowserType: "chromium", launchOptions: chromiumLaunch },
     },
     { name: "Desktop Safari", use: { ...devices["Desktop Safari"] } },
     { name: "iPhone 17 Pro", use: { ...devices["iPhone 17 Pro"] } },
     { name: "iPad Pro 11", use: { ...devices["iPad Pro 11"] } },
+    // More screens, each running only the tests tagged @layout (e2e/mobile-layout.spec.ts): the sizes the projects above
+    // do not cover, where a layout breaks first. Narrow (a 320px Galaxy S9+), short (an iPhone SE), large (an iPhone
+    // 17 Pro Max), foldable (a Galaxy Z Fold 7 open and on its cover screen), an Android tablet, and phones on their
+    // side. The suite's other tests are not about a size, so the projects above have them.
+    ...LAYOUT_DEVICES.map(({ name, browser }) => ({
+      name,
+      grep: LAYOUT,
+      use: browser === "chromium" ? { ...devices[name], launchOptions: chromiumLaunch } : { ...devices[name] },
+    })),
   ],
   webServer: {
     command: `pnpm run preview --port ${port} --strictPort`,
