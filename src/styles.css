@@ -1,5 +1,14 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
 @import "./background.css";
+
+/*
+  The scan is named, not left to .gitignore: the Docker build has none, so
+  Tailwind would read dist/ in the server pass and make a second stylesheet
+  under a hash the client pass never wrote. Tests are left out so a build
+  with and without them is the same.
+*/
+@source not "./**/*.test.ts";
+@source not "./test";
 
 /*
   Quiet Hand: warm paper (true black in the dark), opaque panels with a
