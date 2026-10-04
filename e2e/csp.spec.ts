@@ -1,4 +1,6 @@
 import type { Page } from "@playwright/test";
+import { ALERTS_UNSUPPORTED_ATTRIBUTE } from "../src/lib/status/alerts-support.ts";
+import { BACKGROUND_STORAGE_KEY } from "../src/lib/status/background.ts";
 import { expect, test } from "./test";
 
 // The Content-Security-Policy runs a script only by the nonce of its own response (src/lib/security-headers.ts),
@@ -88,6 +90,27 @@ test("content security policy: hydrates the board with no violation and no conso
   expect(await violations()).toEqual([]);
 });
 
+test("content security policy: runs each boot script once and adds no script after hydration", async ({ page }) => {
+  // The router's Script effect re-appends a script it cannot match by its nonce attribute, which a browser hides under
+  // a header policy (getAttribute returns ""); that would run the boot scripts a second time. They are rendered by
+  // hand, so the head keeps exactly the one copy the server wrote.
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await page.waitForLoadState("networkidle");
+  const copies = await page.evaluate(
+    ({ appearance, alerts }) => {
+      const inline = [...document.head.querySelectorAll("script:not([src])")].map((el) => el.textContent ?? "");
+      return {
+        appearance: inline.filter((text) => text.includes(appearance)).length,
+        alerts: inline.filter((text) => text.includes(alerts)).length,
+      };
+    },
+    { appearance: BACKGROUND_STORAGE_KEY, alerts: ALERTS_UNSUPPORTED_ATTRIBUTE },
+  );
+  expect(copies).toEqual({ appearance: 1, alerts: 1 });
+});
+
 test("content security policy: search, settings, Details and Refresh all work under it", async ({ page }) => {
   const violations = await watchPolicy(page);
   await page.goto("/");
@@ -130,6 +153,8 @@ test("content security policy: search, settings, Details and Refresh all work un
   const reduceGlass = page.getByRole("switch", { name: "Reduce glass" });
   await reduceGlass.click();
   await expect(reduceGlass).toHaveAttribute("aria-checked", "true");
+  // The page's own list dies with the document, so read it before the reload.
+  expect(await violations()).toEqual([]);
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-reduce-transparency", "true");
   await expect(cards(page)).toHaveCount(SERVICES);
