@@ -189,7 +189,7 @@ async function openFixture(
  * openFixture, with the page's Date 30 s into a slot (pinToSlot) first, for a test that presses something on the
  * board. At the turn of a slot (every two minutes of the wall clock) the page refetches, adds a row to Recent
  * changes and clears the "Changed" tags, which moves every card under a tag by 36px to 108px, and where the browser
- * has no scroll anchoring (WebKit) useHoldPlace scrolls the page by the same distance a moment later. A press made
+ * has no scroll anchoring (WebKit) useHeldBoard scrolls the page by the same distance a moment later. A press made
  * in the second or two after a turn can find the board moving under it. With the page 30 s in, the next turn is 90 s
  * away, past the end of any of these tests. Tests that install page.clock and fast-forward it pin the page already.
  */

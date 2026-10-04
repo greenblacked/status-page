@@ -215,16 +215,24 @@ describe("FEED_RESERVE_SCRIPT", () => {
   it("reserves one row for a store with no checks, which the load makes the first of", () => {
     const { property, measured } = run(store([]), 65);
     expect(property).toBe("65px");
-    expect(measured).toContain("Nothing changed</p><p");
+    expect(measured).toContain("First check</p><p");
+    expect(measured).toContain("0 of 0 up");
   });
 
-  it("sets nothing when there is nothing readable saved", () => {
-    for (const stored of [null, "", "not json", "null", store("nope")]) expect(run(stored).property).toBeNull();
-    expect(
-      run(() => {
-        throw new Error("blocked");
-      }).property,
-    ).toBeNull();
+  it("reserves the first check's row on a first visit, when nothing readable is saved", () => {
+    // The load's own check, before its counts are known: what the feed draws for it at once is "0 of 0 up".
+    const none = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+    const firstCheck = [pulse(0, { opening: true, counts: none })];
+    for (const stored of [null, "", "not json", "null", store("nope")]) {
+      const { property, measured } = run(stored, 64);
+      expect(property, String(stored)).toBe("64px");
+      expect(measured, String(stored)).toContain(realOutline(firstCheck));
+    }
+    const blocked = run(() => {
+      throw new Error("blocked");
+    });
+    expect(blocked.property).toBe("321px");
+    expect(blocked.measured).toContain("First check");
   });
 
   it("sets nothing when the measured height is nothing", () => {
