@@ -71,7 +71,7 @@ For local browser tests install the browsers once (`pnpm exec playwright install
 
 **Browser tests** (`playwright.config.ts`):
 
-- Six projects: `desktop` and `mobile` (Chromium), `tablet` (Chromium at iPad size, runs only the search reveal, floating-bar, field's fill and self-hosted Inter tests), and the WebKit projects `Desktop Safari`, `iPhone 17 Pro` and `iPad Pro 11`.
+- Six projects: `desktop` and `mobile` (Chromium), `tablet` (Chromium at iPad size, runs only the search reveal, floating-bar, field's fill, self-hosted Inter, content security policy and tilt performance tests), and the WebKit projects `Desktop Safari`, `iPhone 17 Pro` and `iPad Pro 11`.
 - Pick some with `--project`, for example `pnpm run test:e2e --project=desktop`.
 - CI runs Chromium on the runner (two shards: `desktop`, and `mobile` with `tablet`) and the three WebKit projects as separate shards inside Playwright's container image (pinned by digest in `ci.yml`), because WebKit's system libraries are slow to fetch. WebKit on a bare Linux machine needs those libraries ([CONTRIBUTING.md#ci](CONTRIBUTING.md#ci)).
 - When `@playwright/test` moves, the image tag and digest in `ci.yml` move with it.
