@@ -1,4 +1,4 @@
-import type { Locator } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { HIDE_DOWN_PX, REVEAL_UP_PX } from "../src/lib/status/dock.ts";
 import { fixtureBoard, longHeroBoard } from "./fixture-board";
 import {
@@ -434,13 +434,103 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         }
         await live.click();
         await expect(live).toBeFocused();
-        // Set in one go: typing a key at a time into the bar's field drops the focus once the results move the page
-        // (a finding of this audit), and what is held here is that the field takes a query and the results fit.
+        // Set in one go: what is held here is that the field takes a query and the results fit. A key at a time,
+        // which moves the page under the typing, is the next test.
         await live.fill("git");
         await expect(heroSearch(page)).toHaveValue("git");
         await expect(cards(page).first()).toBeVisible();
         await fieldFits(live, "bar field with a query");
         await resultsFit("bar field, results for git");
+      });
+
+      /**
+       * Scrolls past the field, up far enough to reveal the bar's field, and taps it. Phones and the iPad turned up:
+       * from 64rem the field is docked and never revealed, so the caller skips there.
+       */
+      const focusBarField = async (page: Page) => {
+        const fieldBottom = await page
+          .locator(".search-dock")
+          .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
+        const deep = Math.ceil(fieldBottom) + 200;
+        expect(deep, "the page is long enough to scroll down in").toBeLessThan((await maxScroll(page)) - 160);
+        await scrollAndSettle(page, deep);
+        await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+        await scrollAndSettle(page, deep - (REVEAL_UP_PX + 4));
+        await expect(controlBar(page)).toHaveAttribute("data-revealed", "");
+        await page
+          .locator(".bar-search")
+          .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+        await barSearch(page).click();
+        await expect(barSearch(page)).toBeFocused();
+      };
+      const twoFrames = (page: Page) =>
+        page.evaluate(
+          () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+        );
+
+      // A key typed into the bar's field filters the board, which shortens the page, and the browser moves the page
+      // by part of that (it holds a card the search may just have removed). That is no scroll by the reader, so the
+      // field in use must not be let go of: on a phone, losing it closes the keyboard and ends the search.
+      test("keeps the focus in the search field while the bar's field is typed in, a key at a time", async ({
+        page,
+      }) => {
+        test.slow();
+        await openBoard(page, background, { steady: true });
+        test.skip(await isWide(page), "from 64rem the field is docked in the bar and is never revealed");
+        await focusBarField(page);
+        let typed = "";
+        for (const key of "github") {
+          typed += key;
+          await page.keyboard.press(key);
+          await twoFrames(page);
+          const now = await page.evaluate(() => {
+            const active = document.activeElement;
+            const field =
+              active instanceof HTMLInputElement && active.hasAttribute("data-search-input") ? active : null;
+            const box = field?.getBoundingClientRect();
+            return {
+              tag: active?.tagName,
+              which: field?.dataset.searchInput,
+              value: field?.value,
+              shown: field ? field.checkVisibility() && !field.closest("[inert]") : false,
+              onScreen: box ? box.bottom > 0 && box.top < window.innerHeight : false,
+            };
+          });
+          expect(now.which, `after "${typed}" the focus is in a search field, not on ${now.tag}`).toBeDefined();
+          expect(now.value, `after "${typed}" the field holds what was typed`).toBe(typed);
+          expect(now.shown && now.onScreen, `after "${typed}" the field in use can be seen`).toBe(true);
+          await expect(heroSearch(page)).toHaveValue(typed);
+          const results = await cards(page).count();
+          expect(results, `after "${typed}" the results are shown`).toBeGreaterThan(0);
+          expect(results, `after "${typed}" the search has narrowed the board`).toBeLessThan(SERVICES);
+        }
+      });
+
+      // The other half: a scroll the reader makes with the bar's field in use is still theirs. Up to the hero lets
+      // the field go and takes the bar away, as it always did, after a query that has moved the page.
+      test("still lets the bar's field go when the reader scrolls up to the hero after typing", async ({ page }) => {
+        test.slow();
+        await openBoard(page, background, { steady: true });
+        test.skip(await isWide(page), "from 64rem the field is docked in the bar and is never revealed");
+        // The first key moves the page and the focus goes where it is in view; the field is let go of and taken in
+        // the bar again, with the query written, before the reader's scroll.
+        await focusBarField(page);
+        await page.keyboard.press("g");
+        await twoFrames(page);
+        await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+        await twoFrames(page);
+        await focusBarField(page);
+        // A key was typed a moment ago (the page's note of it is all this sends); the page does not change in the
+        // frames that follow, so what moves it now is the reader.
+        await barSearch(page).evaluate((input) => input.dispatchEvent(new Event("input", { bubbles: true })));
+        await scrollAndSettle(page, 0);
+        await twoFrames(page);
+        const left = await page.evaluate(() => {
+          const active = document.activeElement;
+          return active instanceof HTMLInputElement && active.hasAttribute("data-search-input");
+        });
+        expect(left, "the reader's scroll up to the hero let the field go").toBe(false);
+        await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
       });
 
       // The bar's compact verdict on the longest hero is cut at 134px of 143px on a 320px screen today (a finding of
