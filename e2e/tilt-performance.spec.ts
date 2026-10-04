@@ -26,12 +26,23 @@ import { expect, test } from "./test";
 // It needs the DevTools protocol, so it runs on Chromium (the mobile and tablet
 // projects) and is skipped in WebKit and on a desktop.
 //
-// TILT_PERF_RUNS (default 3) sets how many timed sweeps are made per throttle
-// rate; the medians are reported and asserted. The numbers print as a table.
+// Cost: this runs on two Chromium projects in CI, so it is kept to about 40 s a
+// project. Only the timed sweeps at 1x feed an assertion that depends on timing
+// (the light moves on nearly every frame of a screen that keeps up, and is judged
+// only when the frames themselves were on time), so that rate takes TILT_PERF_RUNS
+// of them (default 3) and the median is used; the throttled rates and the
+// light-off floor take one, since their timings are only reported. The traced sweep, which
+// counts the paints, raster tasks and restyled elements the assertions rest on, runs
+// once per rate for the full TRACE_MS, because those limits were measured over that
+// long. Set TILT_PERF_RUNS=5 or more to look at the timings more closely. The numbers
+// print as a table.
 
 const RUNS = Number(process.env.TILT_PERF_RUNS) || 3;
-const SWEEP_MS = 3000;
-const WARMUP_MS = 1000;
+/** A timed sweep: long enough for ~180 readings and ~120 frames, and only reported (except at 1x, see above). */
+const SWEEP_MS = 2000;
+/** The traced sweep: the paint, raster and restyle limits below were measured over 3 s. */
+const TRACE_MS = 3000;
+const WARMUP_MS = 500;
 const SERVICES = 20;
 
 type SweepResult = {
@@ -270,7 +281,7 @@ async function traceCounts(
     transferMode: "ReportEvents",
     traceConfig: { includedCategories: ["devtools.timeline", "disabled-by-default-devtools.timeline"] },
   });
-  const traced = await sweep(page, SWEEP_MS);
+  const traced = await sweep(page, TRACE_MS);
   await cdp.send("Tracing.end");
   await complete;
   cdp.off("Tracing.dataCollected", onData);
@@ -362,10 +373,10 @@ function medianRow(rows: Row[]): Row {
 }
 
 /**
- * Sweeps the page at each throttle rate and returns the median of the timed runs, with the trace counts.
- * `label` names the tables; the console gets every run, the attachment gets the medians.
+ * Sweeps the page at each throttle rate and returns the median of the timed runs (`runsAt` says how many per
+ * rate), with the trace counts. `label` names the tables; the console gets every run, the attachment gets the medians.
  */
-async function collect(page: Page, label: string, runs: number): Promise<Row[]> {
+async function collect(page: Page, label: string, runsAt: (rate: number) => number): Promise<Row[]> {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Performance.enable");
   const medians: Row[] = [];
@@ -374,7 +385,7 @@ async function collect(page: Page, label: string, runs: number): Promise<Row[]> 
       await cdp.send("Emulation.setCPUThrottlingRate", { rate });
       await sweep(page, WARMUP_MS);
       const each: Row[] = [];
-      for (let run = 0; run < runs; run++) each.push(await measure(page, cdp, rate));
+      for (let run = 0; run < runsAt(rate); run++) each.push(await measure(page, cdp, rate));
       const row = medianRow(each);
       const traced = await traceCounts(page, cdp);
       row.paints = traced.paints;
@@ -457,8 +468,9 @@ test.describe("tilt performance", () => {
     await seed(page, "off");
     await openBoard(page);
     await expect(page.locator("html")).not.toHaveAttribute("data-tilt");
-    const floor = await collect(page, "light off", RUNS);
-    console.log(table(`${testInfo.project.name}, light off, median of ${RUNS} runs`, floor));
+    // The floor is only compared by its trace counts and reported, so a single timed sweep per rate does.
+    const floor = await collect(page, "light off", () => 1);
+    console.log(table(`${testInfo.project.name}, light off`, floor));
     await page.close();
 
     const lit = await context.newPage();
@@ -466,8 +478,8 @@ test.describe("tilt performance", () => {
     await seed(lit, "on");
     await openBoard(lit);
     await firstReading(lit);
-    const medians = await collect(lit, testInfo.project.name, RUNS);
-    const report = table(`${testInfo.project.name}, median of ${RUNS} runs`, medians);
+    const medians = await collect(lit, testInfo.project.name, (rate) => (rate === 1 ? RUNS : 1));
+    const report = table(`${testInfo.project.name}, median of ${RUNS} runs at 1x, one at the throttled rates`, medians);
     console.log(report);
     await testInfo.attach("tilt-performance", { body: report, contentType: "text/plain" });
     // The light must still be driven after the sweeps, from one element at most.
