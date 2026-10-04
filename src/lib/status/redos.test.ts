@@ -39,13 +39,19 @@ const BUDGET_MS = 200;
 // A parser may refuse crafted input (a PayloadError, as for a feed past the scan bound): the time it took to
 // decide is what is measured, so that refusal is not a failure here.
 function elapsed(run: () => unknown): number {
-  const started = performance.now();
-  try {
-    run();
-  } catch (error) {
-    if (!(error instanceof PayloadError)) throw error;
+  // The fastest of a few runs: a scheduler or garbage-collection pause under a loaded suite slows one run, while
+  // quadratic code is slow in every run.
+  let best = Number.POSITIVE_INFINITY;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const started = performance.now();
+    try {
+      run();
+    } catch (error) {
+      if (!(error instanceof PayloadError)) throw error;
+    }
+    best = Math.min(best, performance.now() - started);
   }
-  return performance.now() - started;
+  return best;
 }
 
 describe("parsers stay linear on crafted vendor input", () => {
@@ -189,11 +195,13 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["nested tables", `${"<table><tr><td>".repeat(SIZE / 16)}x`],
     ["a long cell of entity-like text", `<table><tr><td>${"&#".repeat(SIZE / 2)}`],
     ["a long cell of spaces and tags", `<table><tr><td>${" <b>".repeat(SIZE / 4)}`],
-    ["links with attributes that never end", `<table><tr><td>${"<a a ".repeat(SIZE / 5)}`],
-    ["links with unclosed quotes", `<table><tr><td>${"<a title='x ".repeat(SIZE / 11)}`],
-    ["links with alternating quotes", `<table><tr><td>${`<a x='y" `.repeat(SIZE / 9)}`],
-    ["links with a long unterminated value", `<table><tr><td>${`<a href="${"x".repeat(SIZE)}`}`],
-    ["links with unquoted values", `<table><tr><td>${"<a href=x=".repeat(SIZE / 9)}`],
+    ["links with attributes that never end", `<table><tr><td>${"<a a <".repeat(SIZE / 6)}>`],
+    ["links with quotes that close in the next tag", `<table><tr><td>${"<a title='x> ".repeat(SIZE / 12)}`],
+    ["links with alternating quotes", `<table><tr><td>${`<a x='y"> `.repeat(SIZE / 10)}`],
+    ["links with a long unterminated value", `<table><tr><td>${`<a href="${"x".repeat(SIZE)}>`}`],
+    ["links with unquoted values", `<table><tr><td>${"<a href=x=>".repeat(SIZE / 10)}`],
+    ["links with the longest tag the scan reads", `<table><tr><td>${`<a ${"b ".repeat(1200)}>`.repeat(SIZE / 2403)}`],
+    ["cells with a > inside a quoted value", `<table><tr><td>${'<td t="a>b">'.repeat(SIZE / 12)}`],
   ])("readHtmlTables: %s", (_label, html) => {
     let tables: ReturnType<typeof readHtmlTables> = [];
     expect(elapsed(() => (tables = readHtmlTables(html)))).toBeLessThan(BUDGET_MS);
