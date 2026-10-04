@@ -12,6 +12,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "build:cf": "DEPLOY_TARGET=cloudflare vite build",
+    "start": "node src/node/serve.ts",
     "preview": "vite preview --host 127.0.0.1",
     "preview:cf": "DEPLOY_TARGET=cloudflare vite preview --host 127.0.0.1",
     "deploy:dry-run": "WRANGLER_SEND_METRICS=false wrangler deploy --dry-run --config dist/server/wrangler.json",
