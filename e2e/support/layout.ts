@@ -2,6 +2,7 @@ import type { Locator, Page, TestInfo } from "@playwright/test";
 import type { BoardSnapshot } from "../../src/lib/status/types.ts";
 import { serveBoard } from "../fixture-board";
 import { expect } from "../test";
+import { pinToSlot } from "./pin-to-slot";
 
 // What the tests of how the page lays out on a screen share (e2e/mobile-layout.spec.ts): opening the board on a
 // background, the page-side audit that reads its geometry, and the helpers that scroll and wait on the page's own
@@ -30,23 +31,6 @@ export async function fontsSettled(page: Page): Promise<void> {
     await document.fonts.ready;
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
-}
-
-/**
- * Moves the page's Date to 30 s into a two-minute slot (see pinToSlot in board.spec.ts): the turn of a slot adds a
- * row to Recent changes and refetches, which moves the page under a test that scrolls.
- */
-export async function pinToSlot(page: Page): Promise<void> {
-  const offset = Math.floor(Date.now() / 120_000) * 120_000 + 30_000 - Date.now();
-  await page.addInitScript((shift) => {
-    const Native = Date;
-    const now = () => Native.now() + shift;
-    window.Date = new Proxy(Native, {
-      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [now()], newTarget),
-      apply: (target) => new target(now()).toString(),
-      get: (target, key) => (key === "now" ? now : Reflect.get(target, key, target)),
-    });
-  }, offset);
 }
 
 /** Waits until the bar's lead line has settled to its live words, which move the slot of the bar's field. */
