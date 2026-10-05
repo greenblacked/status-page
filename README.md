@@ -511,6 +511,26 @@ Every pull request, and every push to `dev`, runs the same checks (a push has no
 
 Outside pull requests, an hourly job calls every real vendor and opens an issue when a source breaks, OpenSSF Scorecard grades the supply chain on every push to `main` (the project also has an [OpenSSF Best Practices](https://www.bestpractices.dev/projects/15113) entry), and Dependabot proposes updates only once a release has been public for a few days. [.github/workflows/README.md](.github/workflows/README.md) covers each workflow.
 
+#### Workflows
+
+One file per workflow in [.github/workflows](.github/workflows); the triggers are read from the files themselves. A push to `dev` is checked like a pull request into `stage`, and deploys nothing.
+
+| Workflow | What it does | Push to `dev` | Push to `stage` | Push to `main` | Pull request | Schedule or manual |
+| --- | --- | --- | --- | --- | --- | --- |
+| [`ci.yml`](.github/workflows/ci.yml) | Every check under Quality gates, summed up by `CI OK` | Yes (commit messages checked against `stage`; no branch name) | Yes | Yes | Yes (adds the branch name check) | Manual, and a merge queue |
+| [`codeql.yml`](.github/workflows/codeql.yml) | CodeQL for the TypeScript sources and the workflows | Yes | Yes | Yes | Yes | Weekly, manual |
+| [`dependency-review.yml`](.github/workflows/dependency-review.yml) | Blocks high or critical vulnerabilities in dependency changes | Yes (against `stage`) | No | No | Yes | No |
+| [`deploy.yml`](.github/workflows/deploy.yml) | Builds the Worker, runs it in workerd; deploys `stage` (preview) and `main` (production) | Build and dry-run only | Build, then deploy the preview | Build, then deploy production | Build and dry-run only | Manual on `main` or `stage`; also started by `release.yml` after it syncs `stage` |
+| [`pr-title.yml`](.github/workflows/pr-title.yml) | The PR title is a Conventional Commit | No | No | No | Yes (only here; the branch name is checked by `ci.yml`, also only here) | No |
+| [`ci-triage.yml`](.github/workflows/ci-triage.yml) | One comment and a `ci-failed` label naming why a PR's checks failed | No | No | No | Yes (after CI, CodeQL or Dependency review finishes) | No |
+| [`release.yml`](.github/workflows/release.yml) | Versions, tags, signs and publishes what reaches `main`, then syncs `stage` and `dev` | No | No | Yes | No | Manual, or a `vX.Y.Z` tag |
+| [`scorecard.yml`](.github/workflows/scorecard.yml) | OpenSSF Scorecard of the supply chain | No | No | Yes | No | Weekly, manual, branch protection changes |
+| [`source-health.yml`](.github/workflows/source-health.yml) | Calls every real vendor and opens an issue when a source breaks | No | No | No | No | Hourly, manual |
+| [`base-images.yml`](.github/workflows/base-images.yml) | Runs `compose.yaml` against the shared CI images | No | No | No | Only when `compose.yaml`, its script or the dependencies change | Weekly, manual |
+| [`screenshot.yml`](.github/workflows/screenshot.yml) | Captures the board with live data for `docs/board.png` | No | No | No | Only when the workflow itself changes | Manual |
+
+Details for each are in [.github/workflows/README.md](.github/workflows/README.md).
+
 **Releases:** work is committed to `dev`, which never releases, and the owner promotes `dev` to `stage` (the preview) and `stage` to `main`. Merging `stage` into `main` with a merge commit releases everything it brings: CI picks the version from the commit types, commits the bump, tags it `vX.Y.Z`, publishes a GitHub Release with notes taken from [CHANGELOG.md](CHANGELOG.md), and merges `main` back into `stage` and `dev`. [CONTRIBUTING.md](CONTRIBUTING.md#releases) has the details.
 
 **Adding a service:** add a catalog entry in `src/lib/status/catalog.ts` and a collector in `src/lib/status/sources.server.ts`, read only an official machine-readable source, map it onto the five states, and add it to [What it watches](#what-it-watches) in the same commit. [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-service) has the full checklist.
