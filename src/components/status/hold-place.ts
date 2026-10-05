@@ -196,7 +196,10 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
       if (event.pointerType === "touch") input.touched(event.clientX, event.clientY);
       else {
         // What the event says of the mouse, for the reader-spot to tell a move from a report made as the page scrolls.
-        // Each is left out where the browser has none to give (an old Safari has no movement on a pointer event).
+        // Each is left out where the browser has none to give (an old Safari has no movement on a pointer event). A
+        // screen place of exactly 0,0 and a movement of 0 are passed as they are: an automated WebKit gives both on
+        // every move made by automation (after a wheel the engine's own reports carry a real screen place, screen =
+        // client), and the reader-spot then judges by the window place alone (see `createReaderSpot`).
         input.pointed(event.clientX, event.clientY, {
           pressed: event.type === "pointerdown",
           screen: Number.isFinite(event.screenX + event.screenY) ? { x: event.screenX, y: event.screenY } : undefined,
