@@ -13,6 +13,28 @@
 @source not "./lib/status/__fixtures__";
 
 /*
+  Tailwind's dark: variant follows the effective theme, not the system's
+  setting alone. By default it compiles to a prefers-color-scheme media
+  query, which would ignore the day/night switch, so a dark: class would stay
+  light for a visitor who chose night on a light system (and the reverse).
+  Here it matches under <html data-theme="night">, and falls back to the
+  system's setting only while <html> has no data-theme (a page whose scripts
+  did not run), the same rule the switch's own styles use. :where() keeps the
+  specificity at zero, as the default variant has.
+*/
+@custom-variant dark {
+  &:where(:root[data-theme="night"], :root[data-theme="night"] *) {
+    @slot;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+      @slot;
+    }
+  }
+}
+
+/*
   Quiet Hand: warm paper (true black in the dark), opaque panels with a
   hairline, one translucent layer (the floating bar), and colour rationed to
   small exact points. Every colour the board uses is a token here, in a light
