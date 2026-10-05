@@ -179,9 +179,12 @@ jobs:
     # and layout tests; ten more screens (narrow, short, large, foldable, an
     # Android tablet, phones on their side) run only the layout tests tagged
     # @layout (e2e/mobile-layout.spec.ts). WebKit is several times slower than
-    # Chromium in CI, so each WebKit device gets its own shard, with the extra
-    # WebKit screens beside the device of their size: the phones in the iphone
-    # shard and the iPad Mini in the ipad shard. The Chromium projects are split
+    # Chromium in CI, so each full-suite WebKit device gets its own shard (a Mac,
+    # an iPhone, an iPad) and the four WebKit layout screens (three iPhones and
+    # the iPad Mini) share a fourth, webkit-layout. They were once split between
+    # the iphone and ipad shards, and the iphone one then took 25 minutes in CI
+    # (385 tests passed in 23.8 against a 25-minute step limit), too close for a
+    # slow runner. The Chromium projects are split
     # in two so neither comes near the step timeout (the three Chromium
     # projects, desktop, mobile and tablet, alone took 8.3 to 9 minutes before
     # the tilt performance runs were added, and over 10 on a slower run):
@@ -190,7 +193,8 @@ jobs:
     # Together the shards run every one of the 16 projects exactly once.
     #
     # The checks that come out are named `browser tests (<shard>)`:
-    # chromium-desktop, chromium-mobile, desktop-safari, iphone and ipad. Only
+    # chromium-desktop, chromium-mobile, desktop-safari, iphone, ipad and
+    # webkit-layout. Only
     # `CI OK` is required by branch protection (CONTRIBUTING.md#ci), so a shard
     # can be split or renamed without touching the rulesets.
     name: browser tests (${{ matrix.shard }})
@@ -198,9 +202,11 @@ jobs:
     runs-on: ubuntu-latest
     # Per shard: a Chromium shard runs four or five projects (desktop, or
     # mobile and tablet, plus three layout screens) and takes about 6 to 11
-    # minutes, the iphone shard four (one full, three of layout tests) about 12
-    # to 17 (an estimate, not yet measured in CI), the others one or two, each
-    # plus getting the browser. A project's layout tests add about a seventh of
+    # minutes (measured: 8m51s and 12m), the WebKit shards one full project
+    # each, desktop-safari 10m34s measured, iphone and ipad about 15 to 18
+    # (they were 25m04s and 18m10s with the layout screens), and webkit-layout
+    # four layout-only projects of 33 tests each, about 10 to 13, each plus
+    # getting the browser. A project's layout tests add about a seventh of
     # what the whole suite takes on it (measured on Chromium, summing the
     # tests' own time), about a minute on a Chromium screen locally, and WebKit
     # is slower. Chromium is downloaded, with its 32 MB of system libraries
@@ -239,11 +245,16 @@ jobs:
             container: &playwright-image mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
           - shard: iphone
             browser: webkit
-            projects: iPhone 17 Pro,iPhone SE (3rd gen),iPhone 17 Pro Max,iPhone 17 Pro landscape
+            projects: iPhone 17 Pro
             container: *playwright-image
           - shard: ipad
             browser: webkit
-            projects: iPad Pro 11,iPad Mini
+            projects: iPad Pro 11
+            container: *playwright-image
+          # The WebKit screens that run only the @layout tests (33 each).
+          - shard: webkit-layout
+            browser: webkit
+            projects: iPhone SE (3rd gen),iPhone 17 Pro Max,iPhone 17 Pro landscape,iPad Mini
             container: *playwright-image
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -298,11 +309,13 @@ jobs:
         # A Chromium project's run takes 3 to 4.3 minutes and a WebKit one's 6
         # to 10 in CI (iPhone 17 Pro 7.6 and 9.9, iPad Pro 11 8.0 and 9.4); a
         # screen's layout tests add 1 to 2 more. The Chromium shards take about
-        # 6 to 11 minutes and the busiest, iphone, about 12 to 17 (an estimate;
-        # the tilt performance runs are part of the Chromium ones), so this
-        # leaves real margin (10 minutes was hit by the three Chromium projects
-        # in one shard, and 15 would leave the iphone shard on a slow runner no
-        # room) and still stops a hung suite well before the job limit does.
+        # 6 to 11 minutes and the busiest, iphone and ipad, about 15 to 18 (an
+        # estimate from the measured 23.8 and 17 minutes with the layout
+        # screens; the tilt performance runs are part of the Chromium ones), so
+        # this leaves real margin (10 minutes was hit by the three Chromium
+        # projects in one shard, and the iphone shard with its three layout
+        # screens ran 23.8 of these 25) and still stops a hung suite well
+        # before the job limit does.
         timeout-minutes: 25
         env:
           # Comma-separated project names from playwright.config.ts.
