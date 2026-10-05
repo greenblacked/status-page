@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { verdict } from "../src/lib/status/verdict.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
+import { pinToSlot, stopClock } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
 // The bubble layer (src/components/status/lens-field.tsx and the .lens rules in
@@ -955,6 +956,10 @@ test.describe("contrast", () => {
           // Tall enough for the hero and the first lists, so plenty of subtle and muted runs are whole on screen.
           await page.setViewportSize({ width: 1280, height: 1200 });
           await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+          // The page's Date is pinned 30 s into a slot and stopped once the board is in (below): the run is long
+          // (a screenshot at each of several offsets), and the turn of a slot that lands in it adds a row to Recent
+          // changes and clears the "Changed" tags, which moves the page under the offsets it is measured at.
+          await pinToSlot(page);
           await page.goto("/");
           await hydrated(page);
           // Measured at a pixel ratio of 1: the runs' boxes are in CSS pixels, and so are the screenshot's.
@@ -963,6 +968,9 @@ test.describe("contrast", () => {
           // The most urgent card's "since" line sits at the brightest corner of a panel.
           await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
           await page.waitForTimeout(500);
+          // Stopped for the rest of the test: no turn of the slot and no refetch by the clock can land while the page
+          // is scrolled and photographed, however slow the run is. The click above is the one update it needs.
+          await stopClock(page);
           // The click left the pointer on the Refresh button, and scrolling would bring other things under it:
           // hover brightens the chips and rows, which is not what is measured here.
           await page.mouse.move(0, 0);
