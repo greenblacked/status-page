@@ -138,6 +138,11 @@ type Sweep = {
   longestGap: number;
   gapStartedAt: number;
   gapEndedAt: number;
+  /**
+   * A flick: the longest gap between two scroll events that began at or after the lift, which is the only kind that lets
+   * the board's wait run out (a gap during the drag is held by the finger), however long the longest gap overall was.
+   */
+  glideGap?: { length: number; startedAt: number; endedAt: number };
   /** When the gesture began. */
   startedAt: number;
   /** What the last touch event was made of ("TouchEvent" or "Event"), for a finger. */
@@ -238,6 +243,16 @@ async function sweep(
                   gapEndedAt = seen[i];
                 }
               }
+              // The same, among the gaps that began once the finger had lifted.
+              let glideGap: Sweep["glideGap"];
+              if (lifted) {
+                glideGap = { length: 0, startedAt: lifted.at, endedAt: lifted.at };
+                for (let i = 1; i < seen.length; i++) {
+                  if (seen[i - 1] >= lifted.at && seen[i] - seen[i - 1] > glideGap.length) {
+                    glideGap = { length: seen[i] - seen[i - 1], startedAt: seen[i - 1], endedAt: seen[i] };
+                  }
+                }
+              }
               resolve({
                 y: at,
                 lastStepAt,
@@ -245,6 +260,7 @@ async function sweep(
                 longestGap,
                 gapStartedAt,
                 gapEndedAt,
+                glideGap,
                 startedAt: start,
                 shape,
                 lifted,
@@ -818,7 +834,19 @@ async function acrossTheTurn(
 
   const reader = await makeReader(viewport);
   await logFrames(page);
+  // A mouse that moves after the lift comes from far off. It is not left where the Refresh click put it, a few px from
+  // the place: WebKit reports an unmoved cursor again as the page glides, and the page tells that from a move by its
+  // window place, so a move of 1 or 2 px would be taken for it (and the arrival, within 1 px of the place, would be
+  // counted for the old cursor's reports).
+  const park = { x: 4, y: viewport.height - 4 };
+  if (mouseMoves) await page.mouse.move(park.x, park.y);
   const place = overBoard ? await findMousePlace(page) : undefined;
+  if (place && mouseMoves) {
+    expect(
+      Math.hypot(place.x - park.x, place.y - park.y),
+      "the real mouse move covers a distance the page can tell from a re-report of the cursor",
+    ).toBeGreaterThan(50);
+  }
   if (place && strayMouse) await leaveMouse(page, place, { fake: fakeMove });
   if (place && mouseMoves) await watchMouseArrival(page, place, rows0);
   const stray = strayMouse && place ? place.piece : "";
@@ -918,26 +946,36 @@ async function acrossTheTurn(
     }
   }
 
-  // A flick's update lands once the glide is over. One that landed in the middle of it, with the page left still for
-  // as long as the board waits (a gap between two scroll events that began after the lift, with the update landing once
-  // that wait was up and before the gap ended, a frame of slack for the frame that saw it), is the machine stalling (the
-  // glide is a step a frame, and the card the reader is on is only marked when it is over), and is reported as that.
-  // A gap in the finger's drag cannot be the reason: a finger that is down holds the board whatever the gaps.
-  const glideStall = reader.swept;
-  if (
+  // A flick's update lands once the glide is over. One that landed in the middle of it is the board not waiting for the
+  // glide, unless the page was left still for as long as the board waits: a gap between two scroll events that began after
+  // the lift, with the update landing once that wait was up and before the gap ended (a frame of slack for the frame that
+  // saw it). That is the machine stalling (the glide is a step a frame, and the card the reader is on is only marked when
+  // it is over), and is reported as that. A gap in the finger's drag cannot be the reason: a finger that is down holds the
+  // board whatever the gaps.
+  const glideGap = reader.swept?.glideGap;
+  const stalled = Boolean(
     flicked &&
-    landed &&
-    landed.t < liftedAt + glide &&
-    glideStall &&
-    glideStall.gapStartedAt >= liftedAt &&
-    glideStall.longestGap >= SETTLE_MS &&
-    landed.t >= glideStall.gapStartedAt + SETTLE_MS &&
-    landed.t <= glideStall.gapEndedAt + FRAME_SLACK_MS
-  ) {
+      landed &&
+      glideGap &&
+      glideGap.length >= SETTLE_MS &&
+      landed.t >= glideGap.startedAt + SETTLE_MS &&
+      landed.t <= glideGap.endedAt + FRAME_SLACK_MS,
+  );
+  const scrollGaps = reader.swept
+    ? `${reader.swept.events} scroll events, longest gap between them ${reader.swept.longestGap.toFixed(0)} ms, longest after the lift ${(glideGap?.length ?? 0).toFixed(0)} ms (the board waits ${SETTLE_MS})`
+    : "no scroll events";
+  if (flicked && landed && landed.t < liftedAt + glide - FRAME_SLACK_MS) {
+    const msEarly = Math.round(liftedAt + glide - landed.t);
+    if (stalled) {
+      expect(
+        glideGap?.length ?? 0,
+        `the machine stalled: the update landed ${msEarly} ms before the glide was over, after ${(glideGap?.length ?? 0).toFixed(0)} ms between two scroll events, longer than the ${SETTLE_MS} ms the board waits for a page to be still`,
+      ).toBeLessThan(SETTLE_MS);
+    }
     expect(
-      glideStall.longestGap,
-      `the machine stalled: the update landed ${Math.round(liftedAt + glide - landed.t)} ms before the glide was over, after ${glideStall.longestGap.toFixed(0)} ms between two scroll events, longer than the ${SETTLE_MS} ms the board waits for a page to be still`,
-    ).toBeLessThan(SETTLE_MS);
+      landed.t,
+      `the board did not wait for the glide: the update landed ${Math.round(landed.t - liftedAt)} ms after the lift, ${msEarly} ms before the glide of ${glide} ms was over, with no stall to explain it (${scrollGaps})`,
+    ).toBeGreaterThanOrEqual(liftedAt + glide - FRAME_SLACK_MS);
   }
 
   // With no finger, a row that came in during the gesture is the board's fault only if the page was left still: a gap between two
@@ -977,7 +1015,7 @@ async function acrossTheTurn(
     expect(onAt, "the mouse reached the place after the finger lifted").toBeDefined();
     expect(
       onAt ?? Number.NaN,
-      `the mouse reached the place ${Math.round((onAt ?? 0) - (landed?.t ?? 0))} ms after the update landed, so there was nothing for the hold to keep (the machine stalled)`,
+      `the mouse reached the place ${Math.round((onAt ?? 0) - (landed?.t ?? 0))} ms after the update landed (the mouse ${Math.round((onAt ?? Number.NaN) - liftedAt)} ms after the lift, the update ${Math.round((landed?.t ?? Number.NaN) - liftedAt)} ms after it, the glide ${glide} ms; ${scrollGaps}), so there was nothing for the hold to keep${stalled ? " (the machine stalled)" : ""}`,
     ).toBeLessThan(landed?.t ?? Number.POSITIVE_INFINITY);
     const mouseSaid = await page.evaluate(() => (window as Window & { __mouseMoves?: string[] }).__mouseMoves ?? []);
     console.log(
