@@ -19,7 +19,29 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
-type Frame = { t: number; tops: Record<string, number>; y: number; rows: number; by: number; reader: number };
+type Frame = {
+  t: number;
+  tops: Record<string, number>;
+  y: number;
+  rows: number;
+  by: number;
+  reader: number;
+  /** Which element the "mouse" top is of, and what it is, once the mouse is on the board (see `watchMouseArrival`). */
+  mouseId?: number;
+  piece?: string;
+};
+
+/** What `watchMouseArrival` leaves in the page for the frames to follow: the piece the mouse is over, until the update lands. */
+type HeldPiece = {
+  rows0: number;
+  /** Whether a real mouse has reached the place after the finger lifted. */
+  on: boolean;
+  /** Whether the update has landed: the piece is what was held, and is not picked again. */
+  landed: boolean;
+  id?: number;
+  piece?: string;
+  pick(): void;
+};
 
 /**
  * Logs the cards on every frame: the top in the window of each one in view, the scroll position, how many rows
@@ -28,12 +50,25 @@ type Frame = { t: number; tops: Record<string, number>; y: number; rows: number;
  */
 async function logFrames(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const tracked = window as Window & { __frames?: Frame[]; __logging?: boolean; __by?: number; __reader?: number };
+    const tracked = window as Window & {
+      __frames?: Frame[];
+      __logging?: boolean;
+      __by?: number;
+      __reader?: number;
+      __held?: HeldPiece;
+    };
     tracked.__frames = [];
     tracked.__logging = true;
     const rows = () => document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length;
     const frame = () => {
       if (!tracked.__logging) return;
+      // The piece under a mouse that has reached the board is picked again on every frame until the update lands:
+      // the page picks what it holds right before it, so the last frame before the landing says which it is.
+      const held = tracked.__held;
+      if (held?.on && !held.landed) {
+        if (rows() > held.rows0) held.landed = true;
+        else held.pick();
+      }
       tracked.__frames?.push({
         t: performance.now(),
         tops: Object.fromEntries([
@@ -56,6 +91,8 @@ async function logFrames(page: Page): Promise<void> {
         rows: rows(),
         by: tracked.__by ?? 0,
         reader: tracked.__reader ?? 0,
+        mouseId: held?.on ? held.id : undefined,
+        piece: held?.on ? held.piece : undefined,
       });
       requestAnimationFrame(frame);
     };
@@ -446,10 +483,15 @@ async function findMousePlace(page: Page): Promise<MousePlace> {
     const board = document.getElementById("services");
     if (!feed || !board) return null;
     const x = board.getBoundingClientRect().right - 12;
+    // What a mouse can be left over (kept for `watchMouseArrival`, which asks it of whatever is under the mouse then).
+    const isPiece = (target: Element | null): boolean => {
+      if (!target || target === board || !board.contains(target) || target.contains(feed)) return false;
+      return Boolean(feed.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING);
+    };
+    (window as Window & { __isPiece?: typeof isPiece }).__isPiece = isPiece;
     for (let y = 8; y < window.innerHeight; y += 8) {
       const target = document.elementFromPoint(x, y);
-      if (!target || target === board || !board.contains(target) || target.contains(feed)) continue;
-      if (!(feed.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING)) continue;
+      if (!target || !isPiece(target)) continue;
       target.setAttribute("data-mouse-piece", "");
       return { x, y, piece: `${target.tagName} at ${Math.round(x)},${y}` };
     }
@@ -457,6 +499,69 @@ async function findMousePlace(page: Page): Promise<MousePlace> {
   });
   expect(place, "a mouse can be left over a piece of the board that a new row does not move").not.toBeNull();
   return place as MousePlace;
+}
+
+/**
+ * The reader's hand on the mouse, for a test whose mouse moves after the finger has lifted. A real mouse (a trusted
+ * pointermove) first reaching `place` after the lift is kept in `__mouseOnAt`, in the page's clock. From then on the
+ * piece of the board under the mouse is picked on every frame (and marked `data-mouse-piece`, with `mouseId` and
+ * `piece` on the frame) until the update lands, as the page picks what it holds right before it: the element at the
+ * mouse's place, whatever the glide has put there, so the piece judged is the one that is held and not one chosen
+ * before the gesture. It is left unmarked on a frame where what is under the mouse is not a piece a new row does not
+ * move (see `findMousePlace`), which the test then reports.
+ */
+async function watchMouseArrival(page: Page, place: MousePlace, rows0: number): Promise<void> {
+  await page.evaluate(
+    ([x, y, rows0]) => {
+      const tracked = window as Window & {
+        __lifted?: boolean;
+        __mouseOnAt?: number;
+        __mouseMoves?: string[];
+        __isPiece?: (target: Element | null) => boolean;
+        __held?: HeldPiece;
+      };
+      const ids = new WeakMap<Element, number>();
+      let issued = 0;
+      const held: HeldPiece = {
+        rows0: rows0 as number,
+        on: false,
+        landed: false,
+        pick() {
+          const under = document.elementFromPoint(x as number, y as number);
+          const piece = tracked.__isPiece?.(under) ? under : null;
+          for (const old of document.querySelectorAll("[data-mouse-piece]")) {
+            if (old !== piece) old.removeAttribute("data-mouse-piece");
+          }
+          if (!piece) {
+            held.id = undefined;
+            held.piece = under ? `${under.tagName}${under.id ? `#${under.id}` : ""}.${under.className}` : "nothing";
+            return;
+          }
+          piece.setAttribute("data-mouse-piece", "");
+          if (!ids.has(piece)) ids.set(piece, ++issued);
+          held.id = ids.get(piece);
+          held.piece = `${piece.tagName}${piece.id ? `#${piece.id}` : ""}.${piece.className}`;
+        },
+      };
+      tracked.__held = held;
+      document.addEventListener(
+        "pointermove",
+        (event) => {
+          if (!event.isTrusted || event.pointerType !== "mouse" || !tracked.__lifted) return;
+          // What each move said of itself, for a run where the page took none of them for the mouse moving.
+          tracked.__mouseMoves = tracked.__mouseMoves ?? [];
+          tracked.__mouseMoves.push(
+            `${Math.round(event.clientX)},${Math.round(event.clientY)} by ${event.movementX},${event.movementY}`,
+          );
+          if (Math.abs(event.clientX - (x as number)) > 1 || Math.abs(event.clientY - (y as number)) > 1) return;
+          tracked.__mouseOnAt ??= performance.now();
+          held.on = true;
+        },
+        { capture: true },
+      );
+    },
+    [place.x, place.y, rows0],
+  );
 }
 
 /**
@@ -584,6 +689,8 @@ function jumpsBetween(frames: Frame[], card: string, accounted: boolean): Jump[]
     const b = frames[i];
     const [from, to] = [a.tops[card], b.tops[card]];
     if (from === undefined || to === undefined) continue;
+    // The piece under the mouse is a different element when the mouse is over another: no move of one to the other.
+    if (card === "mouse" && a.mouseId !== b.mouseId) continue;
     out.push({
       move: accounted ? to - from + (b.reader - a.reader) : to + b.y - (from + a.y) - (b.by - a.by),
       from: a,
@@ -713,6 +820,7 @@ async function acrossTheTurn(
   await logFrames(page);
   const place = overBoard ? await findMousePlace(page) : undefined;
   if (place && strayMouse) await leaveMouse(page, place, { fake: fakeMove });
+  if (place && mouseMoves) await watchMouseArrival(page, place, rows0);
   const stray = strayMouse && place ? place.piece : "";
   await reader.down(viewport.height * 0.7);
   const downAt = await page.evaluate(() => Date.now());
@@ -811,13 +919,24 @@ async function acrossTheTurn(
   }
 
   // A flick's update lands once the glide is over. One that landed in the middle of it, with the page left still for
-  // as long as the board waits, is the machine stalling (the glide is a step a frame, and the card the reader is on is
-  // only marked when it is over), and is reported as that.
-  if (flicked && landed && landed.t < liftedAt + glide) {
-    const longestGap = reader.swept?.longestGap ?? 0;
+  // as long as the board waits (a gap between two scroll events that began after the lift, with the update landing once
+  // that wait was up and before the gap ended, a frame of slack for the frame that saw it), is the machine stalling (the
+  // glide is a step a frame, and the card the reader is on is only marked when it is over), and is reported as that.
+  // A gap in the finger's drag cannot be the reason: a finger that is down holds the board whatever the gaps.
+  const glideStall = reader.swept;
+  if (
+    flicked &&
+    landed &&
+    landed.t < liftedAt + glide &&
+    glideStall &&
+    glideStall.gapStartedAt >= liftedAt &&
+    glideStall.longestGap >= SETTLE_MS &&
+    landed.t >= glideStall.gapStartedAt + SETTLE_MS &&
+    landed.t <= glideStall.gapEndedAt + FRAME_SLACK_MS
+  ) {
     expect(
-      longestGap,
-      `the machine stalled: the update landed ${Math.round(liftedAt + glide - landed.t)} ms before the glide was over, after ${longestGap.toFixed(0)} ms between two scroll events, longer than the ${SETTLE_MS} ms the board waits for a page to be still`,
+      glideStall.longestGap,
+      `the machine stalled: the update landed ${Math.round(liftedAt + glide - landed.t)} ms before the glide was over, after ${glideStall.longestGap.toFixed(0)} ms between two scroll events, longer than the ${SETTLE_MS} ms the board waits for a page to be still`,
     ).toBeLessThan(SETTLE_MS);
   }
 
@@ -850,7 +969,51 @@ async function acrossTheTurn(
   if (mouseMoves) {
     // The reader moved the mouse onto the board above the row: that is what they are on, and it stays where it is,
     // while the card the finger was on drops by the row.
-    const piece = Math.max(...jumps(frames, "mouse", true).map(Math.abs));
+    // From the moment the mouse is on the board: until then the page holds the card the finger left, so whatever moves
+    // the piece before (a layout shift above it, say) is not the hold's to answer for. The piece is the one under the
+    // mouse on each frame up to the landing (see `watchMouseArrival`): the one the page holds is the one under it on the
+    // last frame before. Its moves are judged on the frames it was under the mouse, the landing included.
+    const onAt = await page.evaluate(() => (window as Window & { __mouseOnAt?: number }).__mouseOnAt);
+    expect(onAt, "the mouse reached the place after the finger lifted").toBeDefined();
+    expect(
+      onAt ?? Number.NaN,
+      `the mouse reached the place ${Math.round((onAt ?? 0) - (landed?.t ?? 0))} ms after the update landed, so there was nothing for the hold to keep (the machine stalled)`,
+    ).toBeLessThan(landed?.t ?? Number.POSITIVE_INFINITY);
+    const mouseSaid = await page.evaluate(() => (window as Window & { __mouseMoves?: string[] }).__mouseMoves ?? []);
+    console.log(
+      `the mouse reached the place ${Math.round((onAt ?? Number.NaN) - liftedAt)} ms after the lift, the update landed ${Math.round((landed?.t ?? Number.NaN) - liftedAt)} ms after it; its moves: ${mouseSaid.join(" | ")}`,
+    );
+    const held = frames.filter((frame) => frame.t >= (onAt ?? Number.POSITIVE_INFINITY));
+    const heldBefore = held.filter((frame) => landed && frame.t < landed.t).at(-1);
+    expect(
+      heldBefore?.mouseId,
+      `what is under the mouse when the update lands is a piece of the board that a new row does not move: ${heldBefore?.piece}`,
+    ).toBeDefined();
+    const pieceJumps = jumpsBetween(held, "mouse", true);
+    expect(
+      pieceJumps.some((jump) => jump.to === landed),
+      "the landing is among the frames judged for the piece under the mouse",
+    ).toBe(true);
+    const piece = Math.max(...pieceJumps.map((jump) => Math.abs(jump.move)));
+    if (piece > 1) {
+      // Where the move was, and what was under the mouse then and now, for a run that fails to say.
+      const worstPiece = pieceJumps.find((jump) => Math.abs(jump.move) === piece);
+      for (const frame of worstPiece ? [worstPiece.from, worstPiece.to] : []) {
+        console.log(
+          `worst piece jump, ${JSON.stringify({ ...frame, tops: frame.tops.mouse, t: Math.round(frame.t - liftedAt) })}`,
+        );
+      }
+      const now = await page.evaluate(
+        ([x, y]) => {
+          const under = document.elementFromPoint(x, y);
+          return under ? `${under.tagName}#${under.id}.${under.className}` : "nothing";
+        },
+        [place?.x ?? 0, place?.y ?? 0],
+      );
+      console.log(
+        `under the mouse at the end: ${now}; landed ${Math.round((landed?.t ?? 0) - liftedAt)} ms after the lift`,
+      );
+    }
     expect(
       piece,
       `the piece of the board under the mouse jumped ${piece.toFixed(1)} px in a frame`,
@@ -973,7 +1136,8 @@ test("floating bar: holds what a mouse is over once it moves after the finger ha
   await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
     touching: true,
     mouseMoves: true,
-    glide: 400,
+    // Long enough for the mouse to get there: its steps are a round trip each, and the update lands a moment after the glide.
+    glide: 1_500,
   });
 });
 
