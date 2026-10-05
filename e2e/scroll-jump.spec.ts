@@ -617,23 +617,131 @@ async function acrossTheTurn(
   page: Page,
   testInfo: TestInfo,
   makeReader: (viewport: { width: number; height: number }) => Promise<Reader> | Reader,
-  {
-    touching,
-    anchoring = "off",
-    strayMouse = false,
-    fakeMove = false,
-    mouseMoves = false,
-    glide = 0,
-  }: {
-    touching: boolean;
-    anchoring?: "off" | "claimed" | "native";
-    strayMouse?: boolean;
-    fakeMove?: boolean;
-    mouseMoves?: boolean;
-    glide?: number;
-  },
+  options: AcrossOptions,
+): Promise<void> {
+  const marks: Record<string, unknown> = {};
+  let failure: unknown;
+  try {
+    await acrossTheTurnRun(page, testInfo, makeReader, options, marks);
+  } catch (error) {
+    failure = error;
+  }
+  // DIAGNOSIS (WebKit): the tests that have a name fail on purpose with what the page heard of the mouse.
+  if (options.diag && page.context().browser()?.browserType().name() === "webkit") {
+    const message = failure instanceof Error ? failure.message.slice(0, 600) : String(failure ?? "passed");
+    throw new Error(await diagnosis(page, options.diag, { ...marks, original: message }));
+  }
+  if (failure) throw failure;
+}
+
+type AcrossOptions = {
+  touching: boolean;
+  anchoring?: "off" | "claimed" | "native";
+  strayMouse?: boolean;
+  fakeMove?: boolean;
+  mouseMoves?: boolean;
+  glide?: number;
+  /** DIAGNOSIS: the name the test fails on purpose under in WebKit, with the reports the page heard. */
+  diag?: string;
+};
+
+/** DIAGNOSIS: every pointer and mouse report the document hears (raw fields), and the log of the product's own. */
+async function captureReports(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const tracked = window as Window & { __holdLog?: unknown[]; __raw?: unknown[] };
+    tracked.__holdLog = [];
+    tracked.__raw = [];
+    const seen = (event: Event) => {
+      const e = event as PointerEvent;
+      tracked.__raw?.push({
+        t: Math.round(performance.now()),
+        type: e.type,
+        trusted: e.isTrusted,
+        pointerType: e.pointerType,
+        cx: e.clientX,
+        cy: e.clientY,
+        sx: e.screenX,
+        sy: e.screenY,
+        mx: e.movementX,
+        my: e.movementY,
+      });
+    };
+    for (const type of ["pointermove", "mousemove", "pointerdown", "mousedown", "wheel"]) {
+      document.addEventListener(type, seen, { capture: true, passive: true });
+    }
+  });
+}
+
+type Logged = Record<string, unknown> & { t: number };
+
+/** Equal reports (all but the time) become one with a count and the times of the first and the last. */
+function squash(entries: Logged[]): Record<string, unknown>[] {
+  const groups = new Map<string, Record<string, unknown>>();
+  for (const { t, ...rest } of entries) {
+    const key = JSON.stringify(rest);
+    const group = groups.get(key);
+    if (group) {
+      group.n = (group.n as number) + 1;
+      group.t1 = t;
+    } else groups.set(key, { t0: t, t1: t, n: 1, ...rest });
+  }
+  return [...groups.values()].sort((a, b) => (a.t0 as number) - (b.t0 as number));
+}
+
+/** DIAGNOSIS: the message of a test that fails on purpose: the marks, then the reports, as JSON lines. */
+async function diagnosis(page: Page, name: string, marks: Record<string, unknown>): Promise<string> {
+  const read = await page
+    .evaluate(() => {
+      const tracked = window as Window & { __holdLog?: unknown[]; __raw?: unknown[] };
+      return {
+        hold: tracked.__holdLog ?? [],
+        raw: tracked.__raw ?? [],
+        win: {
+          sx: window.screenX,
+          sy: window.screenY,
+          w: window.innerWidth,
+          h: window.innerHeight,
+          dpr: devicePixelRatio,
+        },
+        ua: navigator.userAgent,
+      };
+    })
+    .catch((error: unknown) => ({
+      hold: [] as unknown[],
+      raw: [] as unknown[],
+      win: String(error),
+      ua: "",
+    }));
+  const lines = (entries: Logged[], keep: number) => {
+    const grouped = squash(entries);
+    const heavy = (entry: Record<string, unknown>) =>
+      entry.trusted !== false ||
+      entry.accepted === true ||
+      entry.type === "pick" ||
+      !String(entry.type).startsWith("p");
+    const chosen = grouped.length > keep ? grouped.filter(heavy).slice(0, keep) : grouped;
+    return chosen.map((entry) => JSON.stringify(entry));
+  };
+  const text = [
+    `DIAG ${name}`,
+    JSON.stringify({ marks, win: read.win, ua: read.ua }),
+    `-- product log (reader-spot): t0/t1/n, type, trusted, cx/cy client, sx/sy screen, mx/my movement, accepted, reports, spot`,
+    ...lines(read.hold as Logged[], 90),
+    `-- raw reports the document heard`,
+    ...lines(read.raw as Logged[], 60),
+  ].join("\n");
+  return text.length > 55_000 ? `${text.slice(0, 55_000)} ...` : text;
+}
+
+async function acrossTheTurnRun(
+  page: Page,
+  testInfo: TestInfo,
+  makeReader: (viewport: { width: number; height: number }) => Promise<Reader> | Reader,
+  { touching, anchoring = "off", strayMouse = false, fakeMove = false, mouseMoves = false, glide = 0 }: AcrossOptions,
+  marks: Record<string, unknown>,
 ): Promise<void> {
   test.setTimeout(90_000);
+  await captureReports(page);
   await page.addInitScript(() => {
     const tracked = window as Window & { __by?: number };
     tracked.__by = 0;
@@ -761,6 +869,14 @@ async function acrossTheTurn(
   const moves = jumps(frames, card, reader.accounted);
   const worst = Math.max(...moves.map(Math.abs));
   const landed = frames.find((frame) => frame.rows > rows0);
+  Object.assign(marks, {
+    liftedAt: Math.round(liftedAt),
+    landedAt: landed ? Math.round(landed.t) : null,
+    worstCardJump: Number(worst.toFixed(1)),
+    mousePieceJump: Number(Math.max(0, ...jumps(frames, "mouse", true).map(Math.abs)).toFixed(1)),
+    downAt: Math.round(downAt),
+    rows0,
+  });
   const before = landed ? frames[frames.indexOf(landed) - 1] : undefined;
   const topOf = (frame: Frame | undefined) => frame?.tops[card] ?? Number.NaN;
   const gaps = reader.swept
@@ -892,7 +1008,10 @@ test("floating bar: the board does not shift under a page that scrolls across th
   hasTouch,
 }, testInfo) => {
   test.skip(!hasTouch, "the scrolling of a phone or a tablet, which a finger is not the only way to do");
-  await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.width / 2), { touching: false });
+  await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.width / 2), {
+    touching: false,
+    diag: "scroller",
+  });
 });
 
 test("floating bar: holds the card under the finger, not a mouse that was left over the board above it", async ({
@@ -921,6 +1040,7 @@ test("floating bar: holds the card of a flick, although a mouse left over the bo
     touching: true,
     strayMouse: true,
     glide: 400,
+    diag: "stray-flick",
   });
 });
 
@@ -937,6 +1057,7 @@ test("floating bar: holds the card of a flick, although the browser reports a mo
     strayMouse: true,
     fakeMove: true,
     glide: 400,
+    diag: "fake-move-flick",
   });
 });
 
@@ -951,6 +1072,7 @@ test("floating bar: holds what a mouse is over once it moves after the finger ha
     touching: true,
     mouseMoves: true,
     glide: 400,
+    diag: "mouse-moves",
   });
 });
 
@@ -977,6 +1099,20 @@ test("floating bar: holds the card, once and not twice, with the browser's own s
     touching: true,
     anchoring: "native",
   });
+});
+
+test("diagnosis: what WebKit reports of a mouse move and a wheel", async ({ page, browserName }) => {
+  test.skip(browserName !== "webkit", "it is WebKit's reports that are wanted");
+  await captureReports(page);
+  await serveBoard(page, () => fixtureBoard(Date.now()));
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  await page.mouse.move(100, 100);
+  await page.mouse.move(200, 300, { steps: 5 });
+  await page.mouse.wheel(0, 200);
+  await page.waitForTimeout(800);
+  throw new Error(await diagnosis(page, "isolated-mouse", {}));
 });
 
 test("floating bar: Recent changes holds the height of its first row on a first visit", async ({ page }) => {

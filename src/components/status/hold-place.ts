@@ -157,6 +157,8 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
   if (waiting && (performance.now() < hurriedUntil.current || !motion().moving())) {
     const element = root.current;
     const picked = element ? pickAnchor(element, input.spot()) : null;
+    const sink = (window as Window & { __holdLog?: unknown[] }).__holdLog;
+    if (Array.isArray(sink)) sink.push({ t: Math.round(performance.now()), type: "pick", spot: input.spot() });
     anchor.current = element && picked ? holdsOf(element, picked) : null;
     setShown(latest);
   }
@@ -187,17 +189,25 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
   // browser takes the gesture for a scroll and ends them. A pen's pointer events go with the mouse's; on a touch
   // screen its touch events tell of it as a finger.
   useEffect(() => {
+    // Diagnosis only: a test opts in with `window.__holdLog = []`; production has no such array.
+    const log = (entry: Record<string, unknown>) => {
+      const sink = (window as Window & { __holdLog?: unknown[] }).__holdLog;
+      if (Array.isArray(sink)) sink.push({ t: Math.round(performance.now()), ...entry });
+    };
     const touch = (event: TouchEvent) => {
+      log({ type: event.type });
       // A finger that lifts is heard of too, so its memory runs from the lift, not from the touch of a long press.
       const first = event.touches[0] ?? event.changedTouches[0];
       if (first) input.touched(first.clientX, first.clientY);
     };
     const track = (event: PointerEvent) => {
-      if (event.pointerType === "touch") input.touched(event.clientX, event.clientY);
-      else {
+      if (event.pointerType === "touch") {
+        log({ type: event.type, pointerType: "touch" });
+        input.touched(event.clientX, event.clientY);
+      } else {
         // What the event says of the mouse, for the reader-spot to tell a move from a report made as the page scrolls.
         // Each is left out where the browser has none to give (an old Safari has no movement on a pointer event).
-        input.pointed(event.clientX, event.clientY, {
+        const accepted = input.pointed(event.clientX, event.clientY, {
           pressed: event.type === "pointerdown",
           screen: Number.isFinite(event.screenX + event.screenY) ? { x: event.screenX, y: event.screenY } : undefined,
           movement:
@@ -205,9 +215,24 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
               ? { x: event.movementX, y: event.movementY }
               : undefined,
         });
+        log({
+          type: event.type,
+          trusted: event.isTrusted,
+          pointerType: event.pointerType,
+          cx: event.clientX,
+          cy: event.clientY,
+          sx: event.screenX,
+          sy: event.screenY,
+          mx: event.movementX,
+          my: event.movementY,
+          accepted,
+          reports: input.reportsMovement(),
+          spot: input.spot(),
+        });
       }
     };
     const release = (event: Event) => {
+      log({ type: event.type, pointerType: "pointerType" in event ? event.pointerType : undefined });
       if (event.type === "keydown") return input.keyed();
       // A mouse that is lifted is still over the page, and a finger that is lifted is remembered for a while.
       const type = "pointerType" in event ? event.pointerType : "";

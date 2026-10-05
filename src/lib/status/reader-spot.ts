@@ -57,7 +57,7 @@ export function createReaderSpot(now: () => number, memoryMs: number) {
   let finger: (Spot & { at: number }) | null = null;
   return {
     /** The mouse (or a pen above the glass) moved or pressed to here, with what the event says of it (see above). */
-    pointed(x: number, y: number, { pressed = false, screen, movement }: MouseReport = {}) {
+    pointed(x: number, y: number, { pressed = false, screen, movement }: MouseReport = {}): boolean {
       // The screen place is kept for every report, those that are not taken too: it is what the next is compared with.
       const before = lastScreen;
       if (screen) lastScreen = screen;
@@ -65,15 +65,18 @@ export function createReaderSpot(now: () => number, memoryMs: number) {
       if (said) reportsMovement = true;
       if (!pressed) {
         // Within a pixel, for a browser that reports the same place with a fraction of difference.
-        if (seen && !apart(seen, { x, y })) return;
+        if (seen && !apart(seen, { x, y })) return false;
         if (screen || movement) {
           const went = !reportsMovement && screen !== undefined && before !== null && apart(before, screen);
-          if (!said && !went) return;
+          if (!said && !went) return false;
         }
       }
       seen = { x, y };
       mouse = { x, y };
+      return true;
     },
+    /** Whether the browser has said the mouse moved by a distance other than 0 (diagnosis only). */
+    reportsMovement: () => reportsMovement,
     /** A finger is at here (a pen on the glass sends touch events too). It takes the place of a mouse that was left behind. */
     touched(x: number, y: number) {
       finger = { x, y, at: now() };
