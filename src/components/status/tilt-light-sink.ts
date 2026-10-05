@@ -137,7 +137,11 @@ export function createLightSink(
   let checked = false;
   let glintMedia: MediaQueryList | null = null;
 
-  /** Whether a panel gets a glint: only the cards that spotlight, and only where the wandering light does not own it. */
+  /**
+   * Whether a panel gets a glint: only the cards that spotlight, and only where no hover-capable pointer is. While the
+   * light is on the glint takes the wandering light's ::after over there (its transform wins in the style sheet, and the page stops writing the
+   * wander's place, see wander-light.ts); where a pointer hovers the wander keeps it and there is no glint.
+   */
   const hasGlint = (host: Element) => host.classList.contains("spotlight") && glintMedia?.matches === true;
 
   /** Sets the animations' time to a position; `since` is the position they were last given, and an axis that has not moved is left alone. */
