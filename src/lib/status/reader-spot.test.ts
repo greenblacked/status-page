@@ -198,11 +198,14 @@ describe("createReaderSpot", () => {
       spot.touched(417, 778);
       spot.pointed(792, 62, { movement: still });
       expect(spot.spot()).toEqual({ x: 417, y: 778 });
-      // Nor the first report of a mouse on a page, which has no place to be compared with.
+    });
+
+    it("judges a first report with no place on the screen and no move by its window place, which is new", () => {
+      // Before the browser has shown any movement, a report with nothing to be told by is judged by the window place.
       const fresh = reader().spot;
       fresh.touched(417, 778);
       fresh.pointed(792, 62, { movement: still });
-      expect(fresh.spot()).toEqual({ x: 417, y: 778 });
+      expect(fresh.spot()).toEqual({ x: 792, y: 62 });
     });
 
     it("does not take the first report of the mouse on the page if it says nothing, and takes the one after that moves", () => {
@@ -239,6 +242,130 @@ describe("createReaderSpot", () => {
       expect(spot.spot()).toBeNull();
       spot.pointed(320, 200, { screen: { x: 820, y: 300 }, movement: { x: 20, y: 0 } });
       expect(spot.spot()).toEqual({ x: 320, y: 200 });
+    });
+  });
+
+  /**
+   * Replays of what Playwright's WebKit reported in CI (run 37305167362 of the diagnostic branch): every engine mouse
+   * report has screenX = screenY = 0 and movementX = movementY = 0, whatever the mouse did. A step is a report of the
+   * mouse (`move`, a `press`), a finger (`touch`) or the browser saying the mouse left; `spot` is what the reader is on
+   * right after it.
+   */
+  describe("what WebKit under automation reports (screen 0,0 and movement 0 on every report)", () => {
+    type Step =
+      | { do: "move" | "press"; x: number; y: number; spot: { x: number; y: number } | null }
+      | { do: "touch"; x: number; y: number; spot: { x: number; y: number } | null };
+
+    const zeros = { screen: { x: 0, y: 0 }, movement: { x: 0, y: 0 } };
+
+    function replay(steps: Step[], advance = 0) {
+      const { spot, advance: wait } = reader();
+      steps.forEach((step, index) => {
+        if (step.do === "touch") spot.touched(step.x, step.y);
+        else spot.pointed(step.x, step.y, { pressed: step.do === "press", ...zeros });
+        wait(advance);
+        expect(spot.spot(), `after step ${index} (${step.do} ${step.x},${step.y})`).toEqual(step.spot);
+      });
+    }
+
+    it("holds the card under the mouse the Scroller moved to (iPad Pro 11 and iPhone 17 Pro, scroller)", () => {
+      // iPad: 792,62 (move, then press), the same again, a move to 417,835 (the card), the page's own repeat at 417,835.8.
+      replay([
+        { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "press", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "move", x: 417, y: 835, spot: { x: 417, y: 835 } },
+        { do: "touch", x: 417, y: 835.8, spot: { x: 417, y: 835.8 } },
+        { do: "move", x: 417, y: 835.8, spot: { x: 417, y: 835.8 } },
+        { do: "move", x: 417, y: 835, spot: { x: 417, y: 835.8 } },
+      ]);
+      // iPhone: the same with 376,46 and 201,476.
+      replay([
+        { do: "move", x: 376, y: 46, spot: { x: 376, y: 46 } },
+        { do: "press", x: 376, y: 46, spot: { x: 376, y: 46 } },
+        { do: "move", x: 376, y: 46, spot: { x: 376, y: 46 } },
+        { do: "move", x: 201, y: 476, spot: { x: 201, y: 476 } },
+        { do: "move", x: 201, y: 476.7, spot: { x: 201, y: 476 } },
+      ]);
+    });
+
+    it("holds the mouse piece once the mouse moves after the finger has lifted (mouse-moves)", () => {
+      // iPad: the finger's glide ends, then moves 791,60 / 791,59 / 790,58 / 790,57 / 790,56 of the mouse.
+      replay([
+        { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "press", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "touch", x: 417, y: 835.8, spot: { x: 417, y: 835.8 } },
+        { do: "touch", x: 417, y: 775.8, spot: { x: 417, y: 775.8 } },
+        { do: "move", x: 791, y: 60, spot: { x: 791, y: 60 } },
+        { do: "move", x: 791, y: 59, spot: { x: 791, y: 59 } },
+        { do: "move", x: 790, y: 58, spot: { x: 790, y: 58 } },
+        { do: "move", x: 790, y: 57, spot: { x: 790, y: 57 } },
+        { do: "move", x: 790, y: 56, spot: { x: 790, y: 56 } },
+      ]);
+      // iPhone: 375,46 then 374,47 then 374,48, after a finger at 201,476.7.
+      replay([
+        { do: "move", x: 376, y: 46, spot: { x: 376, y: 46 } },
+        { do: "press", x: 376, y: 46, spot: { x: 376, y: 46 } },
+        { do: "touch", x: 201, y: 476.7, spot: { x: 201, y: 476.7 } },
+        { do: "move", x: 375, y: 46, spot: { x: 375, y: 46 } },
+        { do: "move", x: 374, y: 47, spot: { x: 374, y: 47 } },
+        { do: "move", x: 374, y: 48, spot: { x: 374, y: 48 } },
+      ]);
+    });
+
+    it("keeps the finger's card when the mouse moved before the touch and is only reported again (stray-flick, fake-move-flick)", () => {
+      // iPad: the engine's move to 790,56 comes before the touch and counts; the page's repeats of it while the page
+      // glides (trusted: false, the same place) do not, and nor does the one the engine makes at 792,62 on a repaint.
+      replay([
+        { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "press", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "move", x: 790, y: 56, spot: { x: 790, y: 56 } },
+        { do: "touch", x: 417, y: 832.8, spot: { x: 417, y: 832.8 } },
+        { do: "move", x: 790, y: 56, spot: { x: 417, y: 832.8 } },
+        { do: "touch", x: 417, y: 775.8, spot: { x: 417, y: 775.8 } },
+        { do: "move", x: 790, y: 56, spot: { x: 417, y: 775.8 } },
+        { do: "move", x: 790.4, y: 56, spot: { x: 417, y: 775.8 } },
+      ]);
+      // iPhone: 376,46 pressed, a move to 374,56, then repeats of 374,56 under a finger at 201,473.7.
+      replay([
+        { do: "move", x: 376, y: 46, spot: { x: 376, y: 46 } },
+        { do: "press", x: 376, y: 46, spot: { x: 376, y: 46 } },
+        { do: "move", x: 374, y: 56, spot: { x: 374, y: 56 } },
+        { do: "touch", x: 201, y: 473.7, spot: { x: 201, y: 473.7 } },
+        { do: "move", x: 374, y: 56, spot: { x: 201, y: 473.7 } },
+        { do: "move", x: 374, y: 56, spot: { x: 201, y: 473.7 } },
+      ]);
+    });
+
+    it("takes the steps of an isolated mouse and not the engine's own report at the same place after a wheel (Desktop Safari)", () => {
+      const { spot } = reader();
+      for (const [x, y] of [
+        [100, 100],
+        [120, 140],
+        [140, 180],
+        [160, 220],
+        [180, 260],
+        [200, 300],
+      ] as const) {
+        spot.pointed(x, y, zeros);
+        expect(spot.spot()).toEqual({ x, y });
+      }
+      // A finger took the spot, then the engine reports the mouse where it is, with the first real screen place.
+      spot.touched(50, 400);
+      spot.pointed(200, 300, { screen: { x: 200, y: 300 }, movement: { x: 0, y: 0 } });
+      expect(spot.spot()).toEqual({ x: 50, y: 400 });
+    });
+
+    it("does not take the engine's first report with a real screen place after a scroll, when the screen place was 0,0 before", () => {
+      // The scroll moved what is under a mouse the page saw at 200,300; the report at 200,310 has the first real
+      // screen place, with nothing before it to be compared with, so it says nothing.
+      const { spot } = reader();
+      spot.pointed(200, 300, zeros);
+      spot.touched(50, 400);
+      spot.pointed(200, 310, { screen: { x: 200, y: 310 }, movement: { x: 0, y: 0 } });
+      expect(spot.spot()).toEqual({ x: 50, y: 400 });
     });
   });
 });
