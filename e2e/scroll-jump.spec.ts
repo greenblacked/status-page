@@ -471,7 +471,8 @@ async function findMousePlace(page: Page): Promise<MousePlace> {
  * and a mousemove 100 ms after the last scroll event, at a window place that the page did not see the mouse at (over
  * another piece of the board that a new row does not move), though the cursor has not moved on the screen: no
  * movement, and the same place on the screen as the last report (a fixed, real one where the engine's reports have
- * none: they are 0,0 under WebKit's automation). The page makes them itself (a script cannot send a
+ * none: they are 0,0 on every move made by automation under WebKit; after a wheel the engine's own reports carry a real
+ * screen place, screen = client). The page makes them itself (a script cannot send a
  * trusted event), so what the product tells them by must be what they say, not that they are trusted. The times they
  * were made at are kept in `__fakedAt`, to know they came before the update landed.
  */
@@ -541,16 +542,18 @@ async function leaveMouse(page: Page, place: MousePlace, { fake }: { fake: boole
         }
         return { target: piece, at: { x: x + 2, y: y + 14 } };
       };
-      // The same place on the screen for every such report, and a real one: where the engine gives none (WebKit under
-      // automation puts 0,0 in every report) a move and this look alike in what the event says, so the made report
-      // stands for a device that has one, as it would on a Mac.
+      // The same place on the screen for every such report, and a real one: where the engine gives none (WebKit puts
+      // 0,0 on every move made by automation) a move and this look alike in what the event says, so the made report
+      // stands for a device that has one, as it would on a Mac. The place is the one the engine itself gives for that
+      // cursor (the window's place on the screen + the client place). The first made report is turned away because no
+      // real screen place came before it; the later ones by being at the same screen place.
       let fakeScreen: { x: number; y: number } | null = null;
       const screenOfFake = () => {
         const { x, y, screenX, screenY } = cursor();
         fakeScreen ??=
           screenX !== 0 || screenY !== 0
             ? { x: screenX, y: screenY }
-            : { x: window.screenX + x + 1, y: window.screenY + y + 1 };
+            : { x: window.screenX + x, y: window.screenY + y };
         return fakeScreen;
       };
       let timer = 0;

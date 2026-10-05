@@ -13,7 +13,8 @@ export type MouseReport = {
    * a browser gives a real place on the screen, scrolling the page under a mouse does not change it; where it does
    * not (iPadOS gives a place in the page), it may, so it is not relied on once the browser has shown it reports
    * movement. Exactly 0,0 is no place at all: it is what an automated browser (Playwright's WebKit) and a browser
-   * that fills none put there, on every report, so it is neither kept nor compared with. (A real cursor in the
+   * that fills none put there, on every move made by automation (after a wheel the engine's own reports carry a real
+   * screen place, screen = client), so it is neither kept nor compared with. (A real cursor in the
    * screen's top left pixel is then judged as a report with no screen place, which only costs it the screen test.)
    */
   screen?: Spot;

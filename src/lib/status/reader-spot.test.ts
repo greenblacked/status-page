@@ -246,12 +246,13 @@ describe("createReaderSpot", () => {
   });
 
   /**
-   * Replays of what Playwright's WebKit reported in CI (run 37305167362 of the diagnostic branch): every engine mouse
-   * report has screenX = screenY = 0 and movementX = movementY = 0, whatever the mouse did. A step is a report of the
+   * Replays of what Playwright's WebKit reported in CI (run 37305167362 of the diagnostic branch): every move made by
+   * automation has screenX = screenY = 0 and movementX = movementY = 0, whatever the mouse did; after a wheel the
+   * engine's own reports carry a real screen place (screen = client). A step is a report of the
    * mouse (`move`, a `press`), a finger (`touch`) or the browser saying the mouse left; `spot` is what the reader is on
    * right after it.
    */
-  describe("what WebKit under automation reports (screen 0,0 and movement 0 on every report)", () => {
+  describe("what WebKit under automation reports (screen 0,0 and movement 0 on every move made by automation)", () => {
     type Step =
       | {
           do: "move" | "press";
@@ -328,7 +329,7 @@ describe("createReaderSpot", () => {
 
     it("keeps the finger's card when the mouse moved before the touch and is only reported again (stray-flick, fake-move-flick)", () => {
       // iPad: the engine's move to 790,56 comes before the touch and counts; the page's repeats of it while the page
-      // glides (trusted: false, the same place) do not, and nor does the one the engine makes at 792,62 on a repaint.
+      // glides (trusted: false, the same place) do not.
       replay([
         { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
         { do: "press", x: 792, y: 62, spot: { x: 792, y: 62 } },
@@ -338,6 +339,7 @@ describe("createReaderSpot", () => {
         { do: "move", x: 790, y: 56, spot: { x: 417, y: 832.8 } },
         { do: "touch", x: 417, y: 775.8, spot: { x: 417, y: 775.8 } },
         { do: "move", x: 790, y: 56, spot: { x: 417, y: 775.8 } },
+        // Added, not logged: a report a fraction of a pixel from the place last seen (790,56) is no move (rule 1).
         { do: "move", x: 790.4, y: 56, spot: { x: 417, y: 775.8 } },
       ]);
       // iPhone: 376,46 pressed, a move to 374,56, then repeats of 374,56 under a finger at 201,473.7.
