@@ -495,7 +495,7 @@ CI checks the name. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the rules (l
 
 ### Quality gates
 
-Every pull request runs the same checks, and `CI OK` sums them up in one required check:
+Every pull request, and every push to `dev`, runs the same checks (a push has no PR title or branch name to check), and `CI OK` sums them up in one required check:
 
 | Check | What it guards |
 | --- | --- |
