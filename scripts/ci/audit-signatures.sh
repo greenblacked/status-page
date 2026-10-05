@@ -21,8 +21,10 @@
 # trustPolicy in pnpm-workspace.yaml is the nearest control (see
 # CONTRIBUTING.md#dependencies).
 #
-# A failure to reach the registry (or a 5xx from it) is retried, three
-# attempts. A signature that does not verify is not: it fails at once.
+# A failure to reach the registry (or a 5xx from it, or a manifest response
+# whose body cannot be read) is retried, three attempts. A signature that does
+# not verify is not: it fails at once, and a retry that still fails fails the
+# job.
 #
 # Run locally: ./scripts/ci/audit-signatures.sh [pnpm-lock.yaml] (after `pnpm install`)
 set -uo pipefail
@@ -43,11 +45,15 @@ audit_signatures() {
     printf '%s\n' "$output" >&2
     # A package that fails verification is reported with the key id it was
     # signed with, or as missing its signature; that is never retried. Only a
-    # registry that could not answer is (pnpm lists a package whose manifest
+    # registry that could not answer is. pnpm lists a package whose manifest
     # came back as a 5xx under "invalid registry signature" too, but with the
-    # status instead of a key id).
+    # status instead of a key id; likewise one whose manifest response was
+    # truncated or corrupt ("Failed to request the packument endpoint ...
+    # error decoding response body"). The key id / missing check comes first,
+    # so an output that mixes a real invalid signature with an unreadable
+    # manifest still fails at once.
     if grep -qE 'has an invalid registry signature with keyid|missing registry signature' <<<"$output" ||
-      ! grep -qiE 'ERR_PNPM_AUDIT_SIGNATURE_KEYS_FETCH_FAIL|error sending request|responded with (429|5[0-9][0-9])|timed out|timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|connection (reset|closed|refused)' <<<"$output"; then
+      ! grep -qiE 'ERR_PNPM_AUDIT_SIGNATURE_KEYS_FETCH_FAIL|error sending request|Failed to request the packument endpoint|error decoding response body|responded with (429|5[0-9][0-9])|timed out|timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|connection (reset|closed|refused)' <<<"$output"; then
       echo "::error::pnpm audit signatures failed on a package, not on reaching the registry" >&2
       return 1
     fi

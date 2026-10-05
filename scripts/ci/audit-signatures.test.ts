@@ -34,6 +34,11 @@ const NO_KEYS =
   "Error: ERR_PNPM_AUDIT_SIGNATURE_KEYS_FETCH_FAIL\n\n  x Failed to request the registry keys endpoint (at https://registry.npmjs.org/-/npm/v1/keys): error sending request";
 const SERVER_ERROR =
   "1 package has an invalid registry signature:\n\nThe packument endpoint (at https://registry.npmjs.org/clsx) responded with 503: Service Unavailable";
+// A manifest response that came back unreadable (truncated or corrupt body):
+// pnpm lists the package under "invalid registry signature" with this cause
+// instead of a key id (CI run 37353864878).
+const UNREADABLE_MANIFEST =
+  "audited 306 packages\n\n306 packages have verified registry signatures\n\n1 package has an invalid registry signature:\n\n| @playwright/test@1.63.0 | https://registry.npmjs.org/ | Failed to request the packument endpoint (at https://registry.npmjs.org/@playwright%2Ftest): error decoding response body for url (https://registry.npmjs.org/@playwright%2Ftest) |\n\nSomeone might have tampered with this package since it was published on the registry!";
 
 // The registry's signing key, shaped the way npm publishes it.
 const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
@@ -157,5 +162,33 @@ describe("audit-signatures.sh", () => {
     expect(ok).toBe(false);
     expect(calls).toHaveLength(3);
     expect(output).toContain("could not reach the registry in 3 attempts");
+  });
+
+  it("retries a manifest the registry returned unreadable, then passes", async () => {
+    const { ok, calls, output } = await run([UNREADABLE_MANIFEST]);
+    expect(calls).toHaveLength(2);
+    expect(output).toContain("could not reach the registry (attempt 1 of 3); retrying");
+    expect(ok).toBe(true);
+  });
+
+  it("gives up after three attempts when the manifest never comes back readable", async () => {
+    const { ok, calls, output } = await run([UNREADABLE_MANIFEST, UNREADABLE_MANIFEST, UNREADABLE_MANIFEST]);
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(3);
+    expect(output).toContain("could not reach the registry in 3 attempts");
+  });
+
+  it("fails at once when an unreadable manifest is listed beside an invalid signature", async () => {
+    const mixed = `${UNREADABLE_MANIFEST}\n\n${INVALID}`;
+    const { ok, calls, output } = await run([mixed]);
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(1);
+    expect(output).toContain("failed on a package, not on reaching the registry");
+  });
+
+  it("fails at once when an unreadable manifest is listed beside a missing signature", async () => {
+    const { ok, calls } = await run([`${UNREADABLE_MANIFEST}\n\n${MISSING}`]);
+    expect(ok).toBe(false);
+    expect(calls).toHaveLength(1);
   });
 });
