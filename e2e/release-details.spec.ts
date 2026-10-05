@@ -511,7 +511,14 @@ test("is a small centred panel on a desktop and a sheet from the bottom edge on 
     expect(radius[0]).not.toBe("0px");
     expect(radius[1]).toBe("0px");
   } else {
-    expect(geometry.width).toBeLessThanOrEqual(416.5);
+    // 26rem up to a desktop (64rem), 34rem on one; both fit the viewport with a 1rem margin each side.
+    if (viewport.width >= 1024) {
+      expect(geometry.width).toBeGreaterThanOrEqual(543.5);
+      expect(geometry.width).toBeLessThanOrEqual(544.5);
+    } else {
+      expect(geometry.width).toBeLessThanOrEqual(416.5);
+    }
+    expect(geometry.width).toBeLessThanOrEqual(viewport.width - 32 + 0.5);
     // Centred in the viewport, less the page's thin scrollbar (up to 15px, so 7.5px of offset).
     expect(Math.abs((geometry.left + geometry.right) / 2 - viewport.width / 2)).toBeLessThanOrEqual(8);
     expect(geometry.top).toBeGreaterThan(0);
