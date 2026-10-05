@@ -253,7 +253,14 @@ describe("createReaderSpot", () => {
    */
   describe("what WebKit under automation reports (screen 0,0 and movement 0 on every report)", () => {
     type Step =
-      | { do: "move" | "press"; x: number; y: number; spot: { x: number; y: number } | null }
+      | {
+          do: "move" | "press";
+          x: number;
+          y: number;
+          spot: { x: number; y: number } | null;
+          /** A real place on the screen, for a report that has one (the made report of the end-to-end test). */
+          screen?: { x: number; y: number };
+        }
       | { do: "touch"; x: number; y: number; spot: { x: number; y: number } | null };
 
     const zeros = { screen: { x: 0, y: 0 }, movement: { x: 0, y: 0 } };
@@ -262,22 +269,27 @@ describe("createReaderSpot", () => {
       const { spot, advance: wait } = reader();
       steps.forEach((step, index) => {
         if (step.do === "touch") spot.touched(step.x, step.y);
-        else spot.pointed(step.x, step.y, { pressed: step.do === "press", ...zeros });
+        else
+          spot.pointed(step.x, step.y, {
+            pressed: step.do === "press",
+            ...zeros,
+            ...(step.screen && { screen: step.screen }),
+          });
         wait(advance);
         expect(spot.spot(), `after step ${index} (${step.do} ${step.x},${step.y})`).toEqual(step.spot);
       });
     }
 
     it("holds the card under the mouse the Scroller moved to (iPad Pro 11 and iPhone 17 Pro, scroller)", () => {
-      // iPad: 792,62 (move, then press), the same again, a move to 417,835 (the card), the page's own repeat at 417,835.8.
+      // iPad: 792,62 (move, then press), the same again, a move to 417,835 (the card), the page's own repeat at 417,835.8 (a pointermove
+      // with trusted: false; the Scroller has no finger) and the engine's 417,835 again, both ignored.
       replay([
         { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
         { do: "press", x: 792, y: 62, spot: { x: 792, y: 62 } },
         { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
         { do: "move", x: 417, y: 835, spot: { x: 417, y: 835 } },
-        { do: "touch", x: 417, y: 835.8, spot: { x: 417, y: 835.8 } },
-        { do: "move", x: 417, y: 835.8, spot: { x: 417, y: 835.8 } },
-        { do: "move", x: 417, y: 835, spot: { x: 417, y: 835.8 } },
+        { do: "move", x: 417, y: 835.8, spot: { x: 417, y: 835 } },
+        { do: "move", x: 417, y: 835, spot: { x: 417, y: 835 } },
       ]);
       // iPhone: the same with 376,46 and 201,476.
       replay([
@@ -336,6 +348,27 @@ describe("createReaderSpot", () => {
         { do: "touch", x: 201, y: 473.7, spot: { x: 201, y: 473.7 } },
         { do: "move", x: 374, y: 56, spot: { x: 201, y: 473.7 } },
         { do: "move", x: 374, y: 56, spot: { x: 201, y: 473.7 } },
+      ]);
+    });
+
+    it("keeps the finger's card against the made hover report, which has the same real screen place each time (fake-move-flick)", () => {
+      // e2e/scroll-jump.spec.ts, `fake`: 100 ms after the last scroll event the page reports the mouse again at another
+      // window place (788,40), with no movement and one fixed, real screen place (the engine's own has none under
+      // WebKit's automation, so a made report stands for a device that has one). The first real place has nothing
+      // before it and a repeat has not changed, so neither is a move; the mouse that then really moves is one.
+      const fake = { screen: { x: 1788, y: 140 } };
+      replay([
+        { do: "move", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "press", x: 792, y: 62, spot: { x: 792, y: 62 } },
+        { do: "move", x: 790, y: 56, spot: { x: 790, y: 56 } },
+        { do: "touch", x: 417, y: 832.8, spot: { x: 417, y: 832.8 } },
+        { do: "move", x: 790, y: 56, spot: { x: 417, y: 832.8 } },
+        { do: "touch", x: 417, y: 775.8, spot: { x: 417, y: 775.8 } },
+        { do: "move", x: 790, y: 56, spot: { x: 417, y: 775.8 } },
+        { do: "move", x: 788, y: 40, spot: { x: 417, y: 775.8 }, ...fake },
+        { do: "touch", x: 417, y: 700.8, spot: { x: 417, y: 700.8 } },
+        { do: "move", x: 788, y: 20, spot: { x: 417, y: 700.8 }, ...fake },
+        { do: "move", x: 791, y: 60, spot: { x: 791, y: 60 } },
       ]);
     });
 
