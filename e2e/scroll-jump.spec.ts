@@ -99,6 +99,17 @@ type Sweep = {
   startedAt: number;
   /** What the last touch event was made of ("TouchEvent" or "Event"), for a finger. */
   shape: string;
+  /** A flick: what the page was when the finger lifted, read in the page at that moment. */
+  lifted?: {
+    /** In the page's clock (`performance.now()`), and by its `Date.now()`. */
+    at: number;
+    date: number;
+    /** The rows of Recent changes, and the card under the finger ("" for none). */
+    rows: number;
+    card: string;
+  };
+  /** A flick: whether something was marked `data-probe` where the finger is, once the glide was over. */
+  probed?: boolean;
 };
 
 /**
@@ -110,13 +121,21 @@ type Sweep = {
  * main thread keeps up (the page clock is Playwright's, so after a stall of the page the steps that came due run
  * back to back, and the gap shows in the scroll events). `finger` makes a touchmove (with `__pad`, see
  * SyntheticFinger) before each step, the page following the finger as the browser would.
+ *
+ * `flick` goes on from the finger's `ms` to the glide of a flick, in the same loop: a frame after the last move
+ * the finger lifts (its touchend), with the page still moving and the scroll event of that last step just sent,
+ * and the page glides on without it for `glide` ms. A lift that came after a round trip to the test process would
+ * have no scroll event within `SETTLE_MS` before it on a loaded machine, and a page that has not scrolled for that
+ * long is at rest as far as the board is concerned. What the test needs of the lift is read in the page at that
+ * moment (`lifted`), and what the reader is on, once the glide is over, is marked `data-probe` before anything
+ * else can run (`probed`). Between two cards it is the card below the finger.
  */
 async function sweep(
   page: Page,
-  { ms, finger, y, lift = false }: { ms: number; finger: boolean; y: number; lift?: boolean },
+  { ms, finger, y, flick }: { ms: number; finger: boolean; y: number; flick?: { glide: number; x: number } },
 ): Promise<Sweep> {
   return page.evaluate(
-    ({ ms, finger, y, lift }) =>
+    ({ ms, finger, y, flick }) =>
       new Promise<Sweep>((resolve) => {
         const STEP = 3;
         const RUN = 30;
@@ -124,8 +143,6 @@ async function sweep(
           __reader?: number;
           __pad?: { fire: (type: string, y: number, live: boolean) => string };
         };
-        // The finger lifts as the sweep begins, with the page still moving, as in a flick: no rest for the board to take.
-        if (lift) tracked.__pad?.fire("touchend", y, false);
         const seen: number[] = [];
         const onScroll = () => seen.push(performance.now());
         window.addEventListener("scroll", onScroll, { passive: true });
@@ -134,8 +151,35 @@ async function sweep(
         let shape = "";
         let steps = 0;
         let lastStepAt = start;
+        let lifted: Sweep["lifted"];
+        let probed: boolean | undefined;
+        let over = start + ms;
+        let moving = finger;
         const frame = () => {
-          if (performance.now() - start >= ms) {
+          if (flick && !lifted && performance.now() >= over) {
+            // As in a flick: the finger lifts with the page still moving, and no rest for the board to take.
+            tracked.__pad?.fire("touchend", at, false);
+            const under = document.elementFromPoint(flick.x, at);
+            lifted = {
+              at: performance.now(),
+              date: Date.now(),
+              rows: document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length,
+              card: under?.closest('article[id^="service-"]')?.id ?? "",
+            };
+            moving = false;
+            over = lifted.at + flick.glide;
+          }
+          if (performance.now() >= over) {
+            if (flick) {
+              // What the page moved under the finger as it glided is what the reader is on now, which the board
+              // holds, and not the card the gesture began on. Marked here, with the last step's scroll event just
+              // sent, a hundred and fifty ms short of the update.
+              const under = document.elementFromPoint(flick.x, at);
+              const cards = [...document.querySelectorAll('article[id^="service-"]')];
+              const probe = under?.closest("article") ? under : cards.find((c) => c.getBoundingClientRect().top >= at);
+              probe?.setAttribute("data-probe", "");
+              probed = Boolean(probe);
+            }
             // One frame more, for the scroll event of the last step.
             requestAnimationFrame(() => {
               window.removeEventListener("scroll", onScroll);
@@ -158,6 +202,8 @@ async function sweep(
                 gapEndedAt,
                 startedAt: start,
                 shape,
+                lifted,
+                probed,
               });
             });
             return;
@@ -166,7 +212,7 @@ async function sweep(
           const by = (Math.floor(steps++ / RUN) % 2 === 0 ? -1 : 1) * STEP;
           const from = window.scrollY;
           let to = from - by;
-          if (finger) {
+          if (moving) {
             at += by;
             shape = tracked.__pad?.fire("touchmove", at, true) ?? shape;
           } else {
@@ -182,7 +228,7 @@ async function sweep(
         };
         requestAnimationFrame(frame);
       }),
-    { ms, finger, y, lift },
+    { ms, finger, y, flick },
   );
 }
 
@@ -325,9 +371,14 @@ class SyntheticFinger implements Reader {
   async up() {
     await this.fire("touchend", this.y);
   }
-  /** The finger lifts and the page glides on for `ms` without it, all inside the page, with no rest between. */
-  async lift(ms: number) {
-    this.swept = await sweep(this.page, { ms, finger: false, y: this.y, lift: true });
+  /**
+   * The gesture and then the lift of a flick, in one go inside the page: the finger drags for `ms`, lifts a frame
+   * after its last move, and the page glides on without it for `glide` ms (see `sweep`).
+   */
+  async flick(ms: number, glide: number) {
+    this.swept = await sweep(this.page, { ms, finger: true, y: this.y, flick: { glide, x: this.x } });
+    this.y = this.swept.y;
+    this.shape = this.swept.shape || this.shape;
   }
 }
 
@@ -422,6 +473,14 @@ function jumps(frames: Frame[], card: string, accounted: boolean): number[] {
     out.push(accounted ? to - from + (b.reader - a.reader) : to + b.y - (from + a.y) - (b.by - a.by));
   }
   return out;
+}
+
+/** A flick (see `SyntheticFinger.flick`), and what the page read as the finger lifted. */
+async function flick(reader: SyntheticFinger, glide: number): Promise<NonNullable<Sweep["lifted"]>> {
+  await reader.flick(4_500, glide);
+  const lifted = reader.swept?.lifted;
+  if (!lifted) throw new Error("the finger did not lift");
+  return lifted;
 }
 
 /**
@@ -522,43 +581,40 @@ async function acrossTheTurn(
   const downAt = await page.evaluate(() => Date.now());
   expect(await feedRows(page).count(), "the turn had not come when the reader started").toBe(rows0);
   // About four and a half seconds of dragging, up and down so the card stays on screen, across the turn.
-  await reader.gesture(4_500);
+  // A flick is the whole of it in the page, the lift included: a finger that lifts a few round trips after the last
+  // scroll has rested, as far as the board can tell, and the update lands before the page glides on.
+  const flicked = glide > 0 && reader instanceof SyntheticFinger ? await flick(reader, glide) : undefined;
+  if (!flicked) await reader.gesture(4_500);
   let rowsWhileTouching = rows0;
-  if (touching) {
+  if (touching && !flicked) {
     // The finger rests a moment, still down, before it lifts: no scroll events, and still not the time to update.
-    // A flick has no rest: the finger lifts as the page is still moving.
-    if (!glide) await pause(400);
+    await pause(400);
     rowsWhileTouching = await feedRows(page).count();
   }
+  if (flicked) rowsWhileTouching = flicked.rows;
   // Where the gesture ends, in the page's clock: the lift of a finger, else the last scroll step.
-  const liftedAt = touching ? await page.evaluate(() => performance.now()) : (reader.movedAt ?? Number.NaN);
+  const liftedAt = flicked
+    ? flicked.at
+    : touching
+      ? await page.evaluate(() => performance.now())
+      : (reader.movedAt ?? Number.NaN);
   // The card the reader is on as the gesture ends: the one they are looking at.
-  let card = await page.evaluate(
-    ([x, y]) => document.elementFromPoint(x, y)?.closest('article[id^="service-"]')?.id ?? "",
-    [viewport.width / 2, reader.at],
-  );
+  let card =
+    flicked?.card ??
+    (await page.evaluate(
+      ([x, y]) => document.elementFromPoint(x, y)?.closest('article[id^="service-"]')?.id ?? "",
+      [viewport.width / 2, reader.at],
+    ));
   expect(card, "the reader is on a card").not.toBe("");
-  const upAt = await page.evaluate(() => Date.now());
-  // A flick: the finger lifts and the page glides on, without it, for `glide` ms. A mouse left over the board is
-  // reported again as it scrolls, now that the finger's own events are over, and must not be taken for the reader.
-  if (glide > 0 && reader instanceof SyntheticFinger) await reader.lift(glide);
-  else await reader.up();
-  if (glide > 0) {
+  const upAt = flicked ? flicked.date : await page.evaluate(() => Date.now());
+  if (flicked) {
     // The page moved under the finger as it glided. What the reader is on now is what is under it, which the page
     // holds, and not the card it began on: a tag cleared higher up in the same card moves the card's top, not that.
     // Between two cards it is on the one below. The frames follow it as "probe".
-    const marked = await page.evaluate(
-      ([x, y]) => {
-        const under = document.elementFromPoint(x, y);
-        const cards = [...document.querySelectorAll('article[id^="service-"]')];
-        const probe = under?.closest("article") ? under : cards.find((c) => c.getBoundingClientRect().top >= y);
-        probe?.setAttribute("data-probe", "");
-        return Boolean(probe);
-      },
-      [viewport.width / 2, reader.at],
-    );
-    expect(marked, "the reader is on something after the glide").toBe(true);
+    expect(reader.swept?.probed, "the reader is on something after the glide").toBe(true);
     card = "probe";
+  } else {
+    await reader.up();
   }
   // The turn of the slot fell inside the gesture: without it the test would hold nothing back.
   const turnAt = (Math.floor(downAt / SLOT_MS) + 1) * SLOT_MS;
