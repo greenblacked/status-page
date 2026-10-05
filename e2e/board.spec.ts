@@ -2684,7 +2684,10 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
       bar: rect(bar),
       field: rect(document.querySelector(".bar-search .search-field")),
       dot: rect(bar?.querySelector("p") ?? null),
-      firstButton: rect(bar?.querySelector("button") ?? null),
+      // The first button the bar draws: below 640px the day/night switch is not (display: none), and has no box.
+      firstButton: rect(
+        [...(bar?.querySelectorAll("button") ?? [])].find((button) => button.getBoundingClientRect().width > 0) ?? null,
+      ),
       refresh: rect(bar?.querySelector('button[aria-label="Refresh status now"]') ?? null),
     };
   });

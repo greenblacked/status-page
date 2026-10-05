@@ -12,6 +12,13 @@ export const BACKGROUNDS = ["quiet", "glass", "full"] as const;
 export type Background = (typeof BACKGROUNDS)[number];
 
 export const SERVICES = 20;
+
+/**
+ * The floor a "44px target" check holds a control to. WebKit lays out in sub-pixel units, and at a scaled viewport a
+ * 44px box can read 43.9997, so the checks judge 43.5 and up as 44, the way the target audit below does (that one runs
+ * inside the page and so repeats the number).
+ */
+export const TARGET_FLOOR = 43.5;
 export const cards = (page: Page) => page.locator('article[id^="service-"]');
 /** The floating bar, found by its markup: Playwright's role queries skip it while it is `inert`. */
 export const controlBar = (page: Page) => page.locator('section[aria-label="Board controls"]');

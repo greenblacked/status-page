@@ -13,6 +13,28 @@ import { type BrowserContext, test as base, expect, type Request } from "@playwr
 // stray request fails to connect and is reported here. A request that does finish was answered by the test's own
 // page.route, so it is not a stray. WebKit has no such switch, so its stray requests are aborted.
 
+// The board's appearance is its own choice now (src/lib/theme.ts): a stored one, else the visitor's clock, night
+// from 20:00 to 06:00. A test that emulates a colour scheme, or says nothing and gets Playwright's light, means
+// that appearance, and must not turn out to be the one the machine's clock gives at 22:00. So every page of the
+// test's context stores the theme that matches the scheme it is emulating, at each load and again when the
+// emulated scheme changes (emulateMedia on a loaded page), and the board is told to read it. Tests that are about
+// the choice or the clock turn this off with `test.use({ pinTheme: false })` and set their own.
+export const PIN_THEME = `(() => {
+  try {
+    const dark = matchMedia("(prefers-color-scheme: dark)");
+    const pin = () => {
+      try {
+        localStorage.setItem("theme", dark.matches ? "night" : "day");
+      } catch {}
+    };
+    pin();
+    dark.addEventListener("change", () => {
+      pin();
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+  } catch {}
+})();`;
+
 const LOCAL = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 export const isStray = (href: string) => {
@@ -34,7 +56,12 @@ export function watchStrays(context: BrowserContext): () => string[] {
   return () => [...asked].map((request) => request.url());
 }
 
-export const test = base.extend<{ stayLocal: undefined }>({
+export const test = base.extend<{ stayLocal: undefined; pinTheme: boolean }>({
+  pinTheme: [true, { option: true }],
+  context: async ({ context, pinTheme }, use) => {
+    if (pinTheme) await context.addInitScript(PIN_THEME);
+    await use(context);
+  },
   stayLocal: [
     async ({ context, browserName }, use) => {
       const aborted: string[] = [];

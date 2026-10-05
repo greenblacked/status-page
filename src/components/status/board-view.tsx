@@ -11,6 +11,7 @@ import { ClockedLiveBar, NextIn, useFreshness } from "@/components/status/live-b
 import { ClockedPeriodDial } from "@/components/status/period-dial";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { SiteFooter } from "@/components/status/site-footer";
+import { ThemeSwitch } from "@/components/status/theme-switch";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { useBoardAlerts } from "@/components/status/use-alerts";
 import { useBackground } from "@/components/status/use-background";
@@ -384,8 +385,10 @@ export function BoardView({
           controls={
             // With the bar up, its copies are the ones in reach: Tab goes from them to the search field.
             <WhileBarUp store={dock}>
-              {(barUp) => (
+              {(barUp, barHasSwitch) => (
                 <>
+                  {/* Only when the bar draws its own: on a phone it has none, and the hero's must stay reachable. */}
+                  <ThemeSwitch skipTab={barHasSwitch} />
                   <AlertsButton skipTab={barUp} state={alerts.state} onToggle={alerts.toggle} />
                   <RefreshButton skipTab={barUp} fetching={fetching} onRefresh={() => void handleRefresh()} />
                 </>
@@ -437,6 +440,7 @@ export function BoardView({
               />
             }
           >
+            <ThemeSwitch className="max-sm:hidden" />
             <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
             <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
           </CompactHeader>

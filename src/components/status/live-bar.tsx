@@ -141,8 +141,26 @@ const HIDDEN_TICK_MS = 10_000;
 
 function subscribeBarText(onChange: () => void): () => void {
   const list = window.matchMedia(BAR_TEXT_QUERY);
-  list.addEventListener("change", onChange);
-  return () => list.removeEventListener("change", onChange);
+  // MediaQueryList is an EventTarget from iOS 14; before it, addListener is all there is.
+  if (typeof list.addEventListener === "function") {
+    list.addEventListener("change", onChange);
+    return () => list.removeEventListener("change", onChange);
+  }
+  list.addListener(onChange);
+  return () => list.removeListener(onChange);
+}
+
+/**
+ * Whether the floating bar is wide enough to draw its text and the day/night switch (from 640px). Below that the bar
+ * leaves the switch out to keep its width for the verdict, so the hero's copy stays the one in reach. True on the
+ * server, as for the countdown, which only decides what the bar draws once it is up.
+ */
+export function useBarWide(): boolean {
+  return useSyncExternalStore(
+    subscribeBarText,
+    () => window.matchMedia(BAR_TEXT_QUERY).matches,
+    () => true,
+  );
 }
 
 /**
@@ -151,10 +169,6 @@ function subscribeBarText(onChange: () => void): () => void {
  * keeps it true enough to be read at any moment and costs the phone nothing between.
  */
 export function NextIn({ refetchJitterMs }: { refetchJitterMs: number }) {
-  const shown = useSyncExternalStore(
-    subscribeBarText,
-    () => window.matchMedia(BAR_TEXT_QUERY).matches,
-    () => true,
-  );
+  const shown = useBarWide();
   return nextInText(useNow(shown ? 1000 : HIDDEN_TICK_MS, true), refetchJitterMs);
 }

@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useDockSelect } from "@/components/status/compact-header";
+import { useBarWide } from "@/components/status/live-bar";
 import type { AlertsState } from "@/components/status/use-alerts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,11 +29,21 @@ const ALERT_TITLE: Record<AlertsState, string> = {
 };
 
 /**
- * Hands its children whether the floating bar is up. It is the one part of the
- * hero that renders when that changes, so the board does not.
+ * Hands its children whether the floating bar is up, and whether it carries a
+ * copy of the day/night switch (up, and 640px or wider: below that the switch is
+ * left out of the bar). It is the one part of the hero that renders when that
+ * changes, so the board does not.
  */
-export function WhileBarUp({ store, children }: { store: DockStore; children: (barUp: boolean) => ReactNode }) {
-  return children(useDockSelect(store, (state) => state.barShown));
+export function WhileBarUp({
+  store,
+  children,
+}: {
+  store: DockStore;
+  children: (barUp: boolean, barHasSwitch: boolean) => ReactNode;
+}) {
+  const barUp = useDockSelect(store, (state) => state.barShown);
+  const wide = useBarWide();
+  return children(barUp, barUp && wide);
 }
 
 /**
