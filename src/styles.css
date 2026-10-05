@@ -1174,6 +1174,18 @@ article[id^="service-"],
 }
 
 /*
+  On a desktop (the same 64rem the header row switches at) the panel is a step
+  wider, 34rem instead of 26rem: its notes and links read in fewer, longer
+  lines. Tablets keep the narrow panel. Only the Details; the settings dialog
+  has its own width.
+*/
+@media (min-width: 64rem) {
+  .details-dialog {
+    width: min(34rem, calc(100vw - 2rem));
+  }
+}
+
+/*
   The signature. The pen underline draws itself once, left to right, when the
   headline first mounts (the element keeps its key, so a refetch never redraws
   it); the loop around an outage fades and settles in. Transform and opacity
