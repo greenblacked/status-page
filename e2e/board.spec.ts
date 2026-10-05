@@ -3537,6 +3537,53 @@ test("closing a long list of broken rows on an attention card keeps its button i
   expect(await inViewport(more)).toBe(true);
 });
 
+/** The fixture board with only the named services needing a look: every other one that is down is made healthy. */
+function boardNeedingLook(
+  now: number,
+  keep: readonly string[],
+  grok: "operational" | "degraded" = "operational",
+): BoardSnapshot {
+  const base = fixtureBoard(now, { grok });
+  const services = base.services.map((item) =>
+    keep.includes(item.id) || item.health === "operational" || item.category === "updates"
+      ? item
+      : { ...item, health: "operational" as const, summary: "All systems operational", components: [], incidents: [] },
+  );
+  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const item of services) counts[item.health] += 1;
+  return { ...base, services, counts };
+}
+
+test("gives a lone Needs a look card the whole column, and two cards a half each", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const now = Date.now();
+  let board = boardNeedingLook(now, ["gcp"]);
+  await openFixture(page, () => board, { id: "gcp", label: "Degraded" });
+
+  const attention = group(page, "attention");
+  const column = page.locator('[data-group="attention"] .\\@container').first();
+  await expect(attention).toHaveCount(1);
+  const widths = async () => ({
+    column: (await column.boundingBox())?.width ?? 0,
+    cards: await attention.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width)),
+  });
+  let measured = await widths();
+  expect(measured.column).toBeGreaterThan(600);
+  expect(Math.abs(measured.cards[0] - measured.column)).toBeLessThanOrEqual(1);
+
+  // Two cards keep the two-column grid: each takes about half.
+  board = boardNeedingLook(now, ["gcp", "grok"], "degraded");
+  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+  await expect(attention).toHaveCount(2);
+  measured = await widths();
+  for (const width of measured.cards) expect(Math.abs(width - (measured.column - 12) / 2)).toBeLessThanOrEqual(1);
+
+  // A phone has one column either way: a card is as wide as the column.
+  await page.setViewportSize({ width: 390, height: 800 });
+  measured = await widths();
+  for (const width of measured.cards) expect(Math.abs(width - measured.column)).toBeLessThanOrEqual(1);
+});
+
 test("leads Needs attention with the most urgent service and follows the data", async ({ page }) => {
   let board = fixtureBoard(Date.now());
   await openFixture(page, () => board);
