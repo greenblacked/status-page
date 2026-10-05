@@ -451,7 +451,10 @@ jobs:
     name: commit messages
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name == 'pull_request'
+    # A pull request, and a push to dev: dev is checked against stage, the
+    # range its pull request into stage will check, so the check does not
+    # wait for that pull request to be opened.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -464,8 +467,9 @@ jobs:
       - name: Check Conventional Commits
         # Branch names are attacker-controlled on a fork PR, so the ref goes
         # through the environment instead of being interpolated into the shell.
+        # A push to dev has no base_ref: the base is stage.
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || 'stage' }}
         run: |
           git fetch --no-tags origin "$BASE_REF"
           ./scripts/ci/commits.sh "origin/$BASE_REF..HEAD"
@@ -474,6 +478,8 @@ jobs:
     name: branch name
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Pull requests only: a push to dev has no head branch name to check (the
+    # branch is dev itself), and the base-and-head rule is about a pull request.
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -539,7 +545,8 @@ jobs:
           jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<<"$RESULTS"
           # `e2e` is a matrix: its result is `failure` or `cancelled` if any
           # shard failed, was cancelled or timed out.
-          # `skipped` is fine: commit and branch checks run on pull requests only.
+          # `skipped` is fine: the branch check runs on pull requests only, and the
+          # commit check on pull requests and pushes to dev.
           if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<<"$RESULTS" >/dev/null; then
             echo "::error::a required job failed or was cancelled"
             exit 1

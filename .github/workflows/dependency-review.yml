@@ -1,8 +1,15 @@
 name: Dependency review
 
+# A pull request is reviewed as GitHub compares it (its base to its head). A
+# push to dev is reviewed against stage, the branch its pull request goes
+# into: the merge-base of stage and the pushed commit, to the pushed commit,
+# which is what a pull request from dev into stage would compare. Pushes to
+# stage and main are not reviewed: they only receive what was reviewed before.
 on:
   pull_request:
     branches: [main, stage, dev]
+  push:
+    branches: [dev]
 
 permissions:
   contents: read
@@ -12,6 +19,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Check out dev and stage
+        # A push has no base commit in its event, so find it in the history.
+        if: github.event_name == 'push'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pick the commits to compare
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+          else
+            # A push to dev: what dev has that stage does not.
+            git fetch --no-tags origin stage
+            base="$(git merge-base origin/stage "$PUSH_SHA")" || { echo "::error::no common ancestor of stage and $PUSH_SHA to compare dev against"; exit 1; }
+            head="$PUSH_SHA"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "Reviewing $base...$head"
+
       # The review action hard-fails with "Dependency review is not supported
       # on this repository" whenever the repository's Dependency graph setting
       # is off. That is a settings problem, not a finding, and no commit can
@@ -23,8 +59,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ steps.range.outputs.base }}
+          HEAD_SHA: ${{ steps.range.outputs.head }}
         run: |
           api() { # $1 = output file, $2 = API path; prints the HTTP status
             curl --silent --show-error --retry 3 --max-time 30 \
@@ -57,11 +93,11 @@ jobs:
               # the dependency graph itself, not about credentials.
               echo "available=false" >> "$GITHUB_OUTPUT"
               settings="https://github.com/$REPO/settings/security_analysis"
-              echo "::warning title=Dependency review skipped::Dependency graph is not enabled (HTTP $status), so dependency changes in this PR were NOT reviewed. Enable it at $settings to turn this gate on."
+              echo "::warning title=Dependency review skipped::Dependency graph is not enabled (HTTP $status), so dependency changes in this run were NOT reviewed. Enable it at $settings to turn this gate on."
               {
                 echo "### Dependency review skipped"
                 echo
-                echo "The Dependency graph API answered HTTP $status, so dependency changes in this pull request were **not reviewed**."
+                echo "The Dependency graph API answered HTTP $status, so dependency changes in this run were **not reviewed**."
                 echo "Enable **Dependency graph** at $settings and re-run this job to turn the gate on."
               } >> "$GITHUB_STEP_SUMMARY"
               cat "$body"
@@ -77,5 +113,9 @@ jobs:
         if: steps.graph.outputs.available == 'true'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
+          # The action requires both refs outside a pull request. For a pull
+          # request they are the very commits it would take from the event.
+          base-ref: ${{ steps.range.outputs.base }}
+          head-ref: ${{ steps.range.outputs.head }}
           fail-on-severity: high
           fail-on-scopes: runtime, development, unknown
