@@ -258,7 +258,7 @@ test.describe("before the first paint", () => {
     const response = await request.get("/");
     const nonce = /'nonce-([^']+)'/.exec(response.headers()["content-security-policy"] ?? "")?.[1];
     expect(nonce).toBeTruthy();
-    const tags = (await response.text()).match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) ?? [];
+    const tags = (await response.text()).match(/<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi) ?? [];
     const boot = tags.filter((tag) => tag.includes('setAttribute("data-theme"'));
     expect(boot).toHaveLength(1);
     expect(boot[0]).toContain(`nonce="${nonce}"`);
