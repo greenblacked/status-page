@@ -14,7 +14,13 @@ export type Spot = { x: number; y: number };
  * the browser takes the gesture for a scroll, and the update comes a moment after); a mouse is where it was until it
  * leaves the page or a key is pressed, since a mouse at rest on a card is the reader being on it.
  */
-export function createReaderSpot(now: () => number, memoryMs: number) {
+export function createReaderSpot(
+  now: () => number,
+  memoryMs: number,
+  // DIAGNOSTIC (throwaway): told of each decision, with the state after it.
+  log?: (decision: string, state: Record<string, unknown>) => void,
+) {
+  const snap = () => ({ mouse, seen, finger, t: now() });
   let mouse: Spot | null = null;
   // Where the mouse was last seen, kept when `mouse` is cleared by a finger or a key, to know a repeat of it.
   let seen: Spot | null = null;
@@ -23,14 +29,19 @@ export function createReaderSpot(now: () => number, memoryMs: number) {
     /** The mouse (or a pen above the glass) moved or pressed to here. */
     pointed(x: number, y: number, pressed = false) {
       // Within a pixel, for a browser that reports the same place with a fraction of difference.
-      if (!pressed && seen && Math.abs(seen.x - x) < 1 && Math.abs(seen.y - y) < 1) return;
+      if (!pressed && seen && Math.abs(seen.x - x) < 1 && Math.abs(seen.y - y) < 1) {
+        log?.("repeat-ignored", snap());
+        return;
+      }
       seen = { x, y };
       mouse = { x, y };
+      log?.(pressed ? "mouse-pressed" : "mouse-taken", snap());
     },
     /** A finger is at here (a pen on the glass sends touch events too). It takes the place of a mouse that was left behind. */
     touched(x: number, y: number) {
       finger = { x, y, at: now() };
       mouse = null;
+      log?.("finger", snap());
     },
     /**
      * The mouse left the page, or a pen lifted. Where it was last seen is kept, since a browser may go on reporting
@@ -38,11 +49,17 @@ export function createReaderSpot(now: () => number, memoryMs: number) {
      */
     left() {
       mouse = null;
+      log?.("left(mouse cleared, seen kept)", snap());
     },
     /** A key was pressed: the reader is where the keyboard focus is, not where a pointer or a finger was. */
     keyed() {
       mouse = null;
       finger = null;
+      log?.("keyed", snap());
+    },
+    /** DIAGNOSTIC: the whole state. */
+    peek() {
+      return snap();
     },
     /** What the reader is on now, if the last thing they did says: the mouse, else a finger that lifted a moment ago. */
     spot(): Spot | null {

@@ -18,6 +18,8 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
+const round1 = (value: number | undefined) => (value === undefined ? value : Math.round(value * 10) / 10);
+
 type Frame = { t: number; tops: Record<string, number>; y: number; rows: number; by: number; reader: number };
 
 /**
@@ -158,6 +160,10 @@ async function sweep(
         const frame = () => {
           if (flick && !lifted && performance.now() >= over) {
             // As in a flick: the finger lifts with the page still moving, and no rest for the board to take.
+            (window as unknown as { __tlog?: (k: string, d?: string) => void }).__tlog?.(
+              "TEST LIFT",
+              `sy${Math.round(scrollY)}`,
+            );
             tracked.__pad?.fire("touchend", at, false);
             const under = document.elementFromPoint(flick.x, at);
             lifted = {
@@ -222,6 +228,10 @@ async function sweep(
             if (to < 0 || to > room) to = from + by;
           }
           window.scrollTo({ top: to, behavior: "instant" });
+          (window as unknown as { __tlog?: (k: string, d?: string) => void }).__tlog?.(
+            moving ? "TEST drag step" : "TEST GLIDE step",
+            `to${Math.round(to)} sy${Math.round(scrollY)}`,
+          );
           tracked.__reader = (tracked.__reader ?? 0) + window.scrollY - from;
           lastStepAt = performance.now();
           requestAnimationFrame(frame);
@@ -317,6 +327,10 @@ class SyntheticFinger implements Reader {
         let cancelled = false;
         (window as Pad).__pad = {
           fire(type, at, live) {
+            (window as unknown as { __tlog?: (k: string, d?: string) => void }).__tlog?.(
+              `TEST fire ${type}`,
+              `${Math.round(x)},${Math.round(at)} sy${Math.round(scrollY)}`,
+            );
             const node = target.isConnected ? target : document.body;
             // As on a phone: a pointer goes down with the finger, and is cancelled when the browser takes the
             // gesture for a scroll, while the touch events go on.
@@ -442,8 +456,13 @@ async function leaveMouseAtTheEdge(page: Page): Promise<string> {
       if (!target || target === board || !board.contains(target) || target.contains(feed)) continue;
       if (!(feed.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING)) continue;
       const init = { pointerId: 1, pointerType: "mouse", isPrimary: true, clientX: x, clientY: y };
-      const move = () =>
+      const move = () => {
+        (window as unknown as { __tlog?: (k: string, d?: string) => void }).__tlog?.(
+          "TEST stray mouse replay",
+          `${Math.round(x)},${y} sy${Math.round(scrollY)}`,
+        );
         target.dispatchEvent(new PointerEvent("pointermove", { ...init, bubbles: true, composed: true }));
+      };
       move();
       window.addEventListener("scroll", move, { passive: true });
       return `${target.tagName} at ${Math.round(x)},${y}`;
@@ -511,6 +530,57 @@ async function acrossTheTurn(
   }: { touching: boolean; anchoring?: "off" | "claimed" | "native"; strayMouse?: boolean; glide?: number },
 ): Promise<void> {
   test.setTimeout(90_000);
+  // DIAGNOSTIC (throwaway): the timeline of the events the page receives, and the test's own, in order.
+  await page.addInitScript(() => {
+    const w = window as Window & { __tl?: unknown[]; __tlog?: (kind: string, detail?: string) => void };
+    const tl: unknown[] = [];
+    w.__tl = tl;
+    let epoch = 0;
+    w.__tlog = (kind, detail = "") => {
+      const t = Math.round(performance.now());
+      // Runs are folded only within the same side of the lift.
+      if (kind === "TEST LIFT") epoch++;
+      kind = `${kind}${epoch ? ` [after lift]` : ""}`;
+      for (let i = tl.length - 1; i >= Math.max(0, tl.length - 14); i--) {
+        const old = tl[i] as [number, string, string, number, number, string];
+        if (old[1] === kind && t - old[4] < 150) {
+          old[3]++;
+          old[4] = t;
+          old[5] = detail;
+          return;
+        }
+      }
+      if (tl.length >= 300) tl.shift();
+      tl.push([t, kind, detail, 1, t, detail]);
+    };
+    const at = (event: Event) => {
+      const e = event as PointerEvent & TouchEvent;
+      const p = e.touches?.[0] ?? e.changedTouches?.[0] ?? e;
+      const x = (p as { clientX?: number }).clientX;
+      const y = (p as { clientY?: number }).clientY;
+      const kind = `got ${event.type}${e.pointerType ? `/${e.pointerType}` : ""}${event.isTrusted ? " TRUSTED" : ""}`;
+      w.__tlog?.(
+        kind,
+        x === undefined
+          ? `sy${Math.round(scrollY)}`
+          : `${Math.round(x)},${Math.round(y as number)} sy${Math.round(scrollY)}`,
+      );
+    };
+    for (const type of [
+      "pointerdown",
+      "pointermove",
+      "pointerup",
+      "pointercancel",
+      "touchstart",
+      "touchmove",
+      "touchend",
+      "touchcancel",
+      "mousemove",
+      "scroll",
+    ])
+      window.addEventListener(type, at, { capture: true, passive: true });
+    document.documentElement.addEventListener("pointerleave", at, { passive: true });
+  });
   await page.addInitScript(() => {
     const tracked = window as Window & { __by?: number };
     tracked.__by = 0;
@@ -623,11 +693,87 @@ async function acrossTheTurn(
   await expect.poll(() => feedRows(page).count(), { timeout: 5_000 }).toBeGreaterThan(rows0);
   await page.waitForTimeout(400);
   const frames = await stopLogging(page);
+  const holdLog = await page.evaluate(() => (window as Window & { __holdLog?: unknown[] }).__holdLog ?? []);
+  const timeline = await page.evaluate(() => (window as Window & { __tl?: unknown[] }).__tl ?? []);
 
   const moves = jumps(frames, card, reader.accounted);
   const worst = Math.max(...moves.map(Math.abs));
   const landed = frames.find((frame) => frame.rows > rows0);
   const before = landed ? frames[frames.indexOf(landed) - 1] : undefined;
+  // DIAGNOSTIC (throwaway): the hold's own log and the frames around the landing or the jump, for a failing assertion's message.
+  const diag = () => {
+    const rel = (t: number) => Math.round(t - liftedAt);
+    const jumpAt = worst > 1 ? moves.findIndex((move) => Math.abs(move) === worst) + 1 : -1;
+    const around = (index: number) =>
+      frames
+        .slice(Math.max(0, index - 2), index + 2)
+        .map((frame) => [rel(frame.t), round1(frame.y), round1(frame.tops[card]), frame.rows].join(","));
+    type Pt = { x: number; y: number } | null | undefined;
+    const pt = (p: Pt) => (p ? `${Math.round(p.x)},${Math.round(p.y)}` : "-");
+    const el = (d: unknown) => {
+      const e = d as { tag: string; cls: string; id: string; data: string[]; text: string; top: number } | null;
+      return e
+        ? `${e.tag}.${e.cls.slice(0, 18)}#${e.id}${e.data.length ? `[${e.data.join(" ").slice(0, 40)}]` : ""}"${e.text}"@${e.top}`
+        : "-";
+    };
+    // [time, priority (1 = noise), line]
+    const lines: [number, number, string, number][] = [];
+    for (const raw of holdLog) {
+      // biome-ignore lint/suspicious/noExplicitAny: throwaway diagnostic
+      const e = raw as Record<string, any>;
+      if (e.what === "env") continue;
+      const t = e.at as number;
+      const times = e.n > 1 ? `x${e.n}->${rel(e.to)}` : "";
+      if (e.what === "spot") {
+        const range = e.n > 1 ? `..${e.x1},${e.y1}` : "";
+        const st =
+          e.mouse !== undefined
+            ? ` m${pt(e.mouse)} s${pt(e.seen)} f${e.finger ? `${pt(e.finger)}@${rel(e.finger.at)}` : "-"}`
+            : "";
+        const noise = e.decision === "repeat-ignored" || e.type === "touchmove" ? 1 : 3;
+        lines.push([t, noise, `H ${e.type}/${e.pt} ${e.x},${e.y}${range} ${times} => ${e.decision}${st}`, e.to ?? t]);
+      } else if (e.what === "pick") {
+        lines.push([t, 4, `H pick from=${el(e.from)} under=${el(e.under)} below=${e.usedBelow} holds=${e.holds}`, t]);
+      } else if (e.what === "accept") {
+        const l = e.latest ?? {};
+        lines.push([
+          t,
+          5,
+          `H ACCEPT ${e.branch} mouse=${pt(l.mouse)} seen=${pt(l.seen)} finger=${l.finger ? `${pt(l.finger)}@${rel(l.finger.at)}` : "-"} used=${pt(e.used)} below=${e.usedBelow} anchor=${el(e.anchor)} places=${e.places} sy=${e.scrollY}`,
+          t,
+        ]);
+      } else if (e.what === "layout") {
+        // biome-ignore lint/suspicious/noExplicitAny: throwaway diagnostic
+        const m = (e.measured ?? []).map((q: any) => `${q.el}:${q.was}->${q.now}`).join(" ");
+        lines.push([
+          t,
+          5,
+          `H LAYOUT held=${e.held} sy=${e.scrollY} moving=${e.moving} [${m}] resid=${e.residual} exit=${e.exit} top ${e.topBefore}->${e.topAfter} sy2=${e.scrollYAfter}`,
+          t,
+        ]);
+      } else lines.push([t, 5, `H ${e.what} top=${e.top} sy=${e.scrollY}`, t]);
+    }
+    for (const raw of timeline) {
+      const [t, kind, first, n, last, lastDetail] = raw as [number, string, string, number, number, string];
+      const noise = /step|scroll|touchmove|mousemove|replay/.test(kind) ? 1 : 2;
+      lines.push([t, noise, `T ${kind} ${first}${n > 1 ? ` .. ${lastDetail} x${n}->${rel(last)}` : ""}`, last]);
+    }
+    lines.sort((a, b) => a[0] - b[0]);
+    // The lines before the gesture's last second are of little use; then the noise goes first, oldest first.
+    let kept = lines.filter(([, , , last]) => rel(last) > -400);
+    const text = (list: typeof lines) => list.map(([t, , line]) => `${rel(t)} ${line}`).join("\n");
+    for (let level = 1; text(kept).length > 3000 && level <= 3; level++) {
+      const drop = kept.filter(([, pr]) => pr <= level);
+      let over = text(kept).length - 3000;
+      for (const item of drop) {
+        if (over <= 0) break;
+        over -= `${rel(item[0])} ${item[2]}\n`.length;
+        kept = kept.filter((k) => k !== item);
+      }
+    }
+    const out = `\nTIMELINE (ms from lift; H=hold log, T=test/page events)\n${text(kept)}\nframes t,y,cardTop,rows jump=${jumpAt >= 0 ? around(jumpAt).join(" | ") : "-"} landing=${landed ? around(frames.indexOf(landed)).join(" | ") : "-"}`;
+    return ` || DIAG ${out.length > 3500 ? `${out.slice(0, 3500)}...` : out}`;
+  };
   const topOf = (frame: Frame | undefined) => frame?.tops[card] ?? Number.NaN;
   const gaps = reader.swept
     ? `; ${reader.swept.events} scroll events, longest gap between them ${reader.swept.longestGap.toFixed(0)} ms (the board waits ${SETTLE_MS})`
@@ -683,23 +829,33 @@ async function acrossTheTurn(
     ).toBeLessThan(SETTLE_MS);
   }
   // Nothing came in under the finger, across the turn of the slot.
-  expect(rowsWhileTouching, "Recent changes did not change while the finger was down").toBe(rows0);
+  expect(
+    rowsWhileTouching,
+    `Recent changes did not change while the finger was down${rowsWhileTouching === rows0 ? "" : diag()}`,
+  ).toBe(rows0);
   // Nor while the page was being scrolled: every frame up to the end of the gesture shows the rows it began with.
   expect(
     frames.filter((frame) => frame.t < liftedAt).every((frame) => frame.rows === rows0),
-    "no row came in during the gesture",
+    `no row came in during the gesture${frames.filter((frame) => frame.t < liftedAt).every((frame) => frame.rows === rows0) ? "" : diag()}`,
   ).toBe(true);
   // And the card never moved on screen beyond the finger, a frame at a time.
-  expect(worst, `the card jumped ${worst.toFixed(1)} px in a frame`).toBeLessThanOrEqual(1);
+  expect(worst, `the card jumped ${worst.toFixed(1)} px in a frame${worst > 1 ? diag() : ""}`).toBeLessThanOrEqual(1);
   // The update lands after the gesture, a moment after the page is still, with the card still where it was.
-  expect(landed, "the check landed").toBeDefined();
+  expect(landed, `the check landed${landed ? "" : diag()}`).toBeDefined();
   if (landed && before) {
-    expect(landed.t, "the check lands after the lift").toBeGreaterThanOrEqual(liftedAt);
+    expect(landed.t, `the check lands after the lift${landed.t >= liftedAt ? "" : diag()}`).toBeGreaterThanOrEqual(
+      liftedAt,
+    );
     // With no finger to wait for, it waits out the page's own stillness: 150 ms after the last scroll event.
-    if (!touching) expect(landed.t - liftedAt, "the check waits for the page to be still").toBeGreaterThanOrEqual(100);
+    if (!touching) {
+      expect(
+        landed.t - liftedAt,
+        `the check waits for the page to be still${landed.t - liftedAt >= 100 ? "" : diag()}`,
+      ).toBeGreaterThanOrEqual(100);
+    }
     expect(
       Math.abs(topOf(landed) - topOf(before)),
-      "the card is where it was when the check landed",
+      `the card is where it was when the check landed${Math.abs(topOf(landed) - topOf(before)) <= 1 ? "" : diag()}`,
     ).toBeLessThanOrEqual(1);
   }
 }

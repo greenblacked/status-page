@@ -13,6 +13,67 @@ const RECHECK_MS = 100;
 /** How long a press of Refresh keeps the board's update from waiting for the page to be still. */
 const HURRY_MS = 1_000;
 
+// DIAGNOSTIC (throwaway): every decision of the held board is recorded in window.__holdLog.
+type HoldLogWindow = Window & { __holdLog?: unknown[]; __holdLogEnv?: boolean };
+const round = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? Math.round(value * 100) / 100 : value;
+function holdLog(entry: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const w = window as HoldLogWindow;
+    if (!w.__holdLog) w.__holdLog = [];
+    const log = w.__holdLog;
+    if (!w.__holdLogEnv) {
+      w.__holdLogEnv = true;
+      log.push({
+        what: "env",
+        overflowAnchor: getComputedStyle(document.documentElement).overflowAnchor,
+        supports: typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto"),
+        scrollBehavior: document.scrollingElement ? getComputedStyle(document.scrollingElement).scrollBehavior : null,
+      });
+    }
+    const now = round(performance.now());
+    // Runs of the same thing (a touchmove and a mouse replay on every frame) are folded into one entry with a count.
+    const key = typeof entry.key === "string" ? `${entry.key}/${liftEpoch}` : null;
+    if (key) {
+      for (let i = log.length - 1; i >= Math.max(0, log.length - 14); i--) {
+        const old = log[i] as { key?: string; at?: number; n?: number; to?: number; x1?: number; y1?: number };
+        if (old.key === key && (now as number) - (old.to ?? old.at ?? 0) < 150) {
+          old.n = (old.n ?? 1) + 1;
+          old.to = now as number;
+          old.x1 = entry.x as number;
+          old.y1 = entry.y as number;
+          return;
+        }
+      }
+    }
+    if (log.length >= 300) log.shift();
+    log.push({ at: now, n: 1, ...entry, key });
+  } catch {}
+}
+function describe(element: Element | null | undefined) {
+  if (!element) return null;
+  const data = Array.from(element.attributes)
+    .filter((attribute) => attribute.name.startsWith("data-"))
+    .map((attribute) => `${attribute.name}=${attribute.value.slice(0, 20)}`);
+  return {
+    tag: element.tagName,
+    cls: (element.getAttribute("class") ?? "").split(/\s+/)[0] ?? "",
+    id: element.id,
+    data,
+    text: (element.textContent ?? "").trim().slice(0, 30),
+    top: round(element.getBoundingClientRect().top),
+  };
+}
+/** The elements of the last held list, anchor first, for the log. */
+let heldEls: Element[] = [];
+/** The event being handled, for the decision reader-spot reports about it. */
+let currentEvent: Record<string, unknown> = {};
+/** Bumped at each touchend, so that runs are folded only within one side of a lift. */
+let liftEpoch = 0;
+/** Whether `below()` picked the element of the last pickAnchor. */
+let usedBelow = false;
+
 let tracker: MotionTracker | null = null;
 let watchers = 0;
 
@@ -79,8 +140,10 @@ function holds(root: HTMLElement, element: Element | null): element is Element {
  */
 function holdsOf(root: Element, anchor: Element): Held[] {
   const places: Held[] = [];
+  heldEls = [];
   for (let element: Element | null = anchor; element && element !== root; element = element.parentElement) {
     const target = element;
+    heldEls.push(target);
     places.push({
       was: target.getBoundingClientRect().top,
       // Gone from the page, or shown with no box (display: none), it holds nothing.
@@ -114,7 +177,10 @@ export function below(container: Element, y: number): Element | null {
 /** What the reader is on: what the pointer is over (a finger down, a mouse in the page) until a key is pressed, then the focused element; else the first thing in view. */
 function pickAnchor(root: HTMLElement, pointer: Spot | null): Element | null {
   const at = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
-  const under = pointer && at && root.contains(at) && at.querySelector("[data-no-anchor]") ? below(at, pointer.y) : at;
+  const useBelow = Boolean(pointer && at && root.contains(at) && at.querySelector("[data-no-anchor]"));
+  usedBelow = useBelow;
+  const under = useBelow && pointer && at ? below(at, pointer.y) : at;
+  holdLog({ what: "pick", from: describe(at), under: describe(under), usedBelow: useBelow, holds: holds(root, under) });
   if (holds(root, under)) return under;
   const focused = document.activeElement;
   if (holds(root, focused)) return focused;
@@ -147,7 +213,20 @@ function pickAnchor(root: HTMLElement, pointer: Spot | null): Element | null {
 export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T): { shown: T; hurry: () => void } {
   // What the reader was on when the update was accepted, and where it was in the window.
   const anchor = useRef<Held[] | null>(null);
-  const [input] = useState(() => createReaderSpot(() => performance.now(), TOUCH_MEMORY_MS));
+  const [input] = useState(() =>
+    createReaderSpot(
+      () => performance.now(),
+      TOUCH_MEMORY_MS,
+      (decision, state) =>
+        holdLog({
+          what: "spot",
+          key: `${String(currentEvent.type)}/${String(currentEvent.pt)}/${decision}`,
+          ...currentEvent,
+          decision,
+          ...state,
+        }),
+    ),
+  );
   const hurriedUntil = useRef(Number.NEGATIVE_INFINITY);
   const [shown, setShown] = useState(latest);
   const [, again] = useReducer((count: number) => count + 1, 0);
@@ -158,6 +237,17 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
     const element = root.current;
     const picked = element ? pickAnchor(element, input.spot()) : null;
     anchor.current = element && picked ? holdsOf(element, picked) : null;
+    holdLog({
+      what: "accept",
+      branch: performance.now() < hurriedUntil.current ? "hurried" : "still",
+      latest: input.peek(),
+      used: input.spot(),
+      usedBelow,
+      anchor: describe(picked),
+      rootTop: round(element?.getBoundingClientRect().top),
+      places: anchor.current?.length ?? 0,
+      scrollY: window.scrollY,
+    });
     setShown(latest);
   }
 
@@ -187,20 +277,43 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
   // browser takes the gesture for a scroll and ends them. A pen's pointer events go with the mouse's; on a touch
   // screen its touch events tell of it as a finger.
   useEffect(() => {
+    const note = (event: Event, x?: number, y?: number) => {
+      if (event.type === "touchend" || event.type === "touchcancel") liftEpoch++;
+      currentEvent = {
+        type: event.type,
+        pt: "pointerType" in event ? (event as PointerEvent).pointerType : "touch-ev",
+        x: round(x),
+        y: round(y),
+        ts: round(event.timeStamp),
+        trusted: event.isTrusted,
+      };
+    };
     const touch = (event: TouchEvent) => {
       // A finger that lifts is heard of too, so its memory runs from the lift, not from the touch of a long press.
       const first = event.touches[0] ?? event.changedTouches[0];
+      note(event, first?.clientX, first?.clientY);
       if (first) input.touched(first.clientX, first.clientY);
+      else holdLog({ what: "spot", ...currentEvent, decision: "no touch point" });
     };
     const track = (event: PointerEvent) => {
+      note(event, event.clientX, event.clientY);
       if (event.pointerType === "touch") input.touched(event.clientX, event.clientY);
       else input.pointed(event.clientX, event.clientY, event.type === "pointerdown");
     };
     const release = (event: Event) => {
+      note(event, (event as PointerEvent).clientX, (event as PointerEvent).clientY);
       if (event.type === "keydown") return input.keyed();
       // A mouse that is lifted is still over the page, and a finger that is lifted is remembered for a while.
       const type = "pointerType" in event ? event.pointerType : "";
-      if (type === "touch" || (type === "mouse" && event.type === "pointerup")) return;
+      if (type === "touch" || (type === "mouse" && event.type === "pointerup")) {
+        holdLog({
+          what: "spot",
+          key: `${event.type}/${type}/ignored-release`,
+          ...currentEvent,
+          decision: "release ignored",
+        });
+        return;
+      }
       input.left();
     };
     document.addEventListener("keydown", release, { passive: true });
@@ -231,15 +344,58 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
   useLayoutEffect(() => {
     const held = anchor.current;
     anchor.current = null;
-    if (!held || window.scrollY <= 0) return;
+    const moving = motion().moving();
+    const entry: Record<string, unknown> = {
+      what: "layout",
+      held: held === null ? null : held.length,
+      scrollY: window.scrollY,
+      moving,
+    };
+    if (held) {
+      const measured = held.map((place, index) => ({
+        i: index,
+        was: round(place.was),
+        now: round(place.now()),
+        el: describe(heldEls[index])?.tag,
+      }));
+      entry.measured = measured.slice(0, 4);
+    }
+    if (!held || window.scrollY <= 0) {
+      holdLog({ ...entry, exit: "no held or scrollY<=0" });
+      return;
+    }
     // A programmatic scroll would stop a flick on iOS, and a shift of the feed's size mid-flick goes unseen. The
     // update waits for the page to be still, so this only meets a page in motion when it was hurried.
-    if (motion().moving()) return;
+    if (moving) {
+      holdLog({ ...entry, exit: "moving" });
+      return;
+    }
     // Measured now, after the commit has been laid out, so it includes anything the browser has already scrolled
     // by; not a row or two of the feed when it is a reorder of the board, which the reader is not owed a ride with.
     const left = heldResidual(held, { scrollY: window.scrollY, viewport: window.innerHeight });
-    if (!left) return;
+    entry.residual = left;
+    if (!left) {
+      holdLog({ ...entry, exit: "no residual" });
+      return;
+    }
+    const watched = heldEls.find((element) => element.isConnected) ?? null;
+    const topBefore = round(watched?.getBoundingClientRect().top);
     quietScroll(() => window.scrollBy({ top: left, behavior: "instant" }));
+    const slot: Record<string, unknown> = {
+      ...entry,
+      exit: "scrolled",
+      ranQuietScroll: true,
+      topBefore,
+      topAfter: round(watched?.getBoundingClientRect().top),
+      scrollYAfter: window.scrollY,
+    };
+    holdLog(slot);
+    requestAnimationFrame(() => {
+      holdLog({ what: "next-frame", top: round(watched?.getBoundingClientRect().top), scrollY: window.scrollY });
+      requestAnimationFrame(() =>
+        holdLog({ what: "frame+2", top: round(watched?.getBoundingClientRect().top), scrollY: window.scrollY }),
+      );
+    });
   }, [shown]);
 
   return {
