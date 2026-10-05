@@ -94,9 +94,26 @@ function holdsOf(root: Element, anchor: Element): Held[] {
   return places;
 }
 
+/**
+ * What a finger in a gap between cards is on: the element that holds the feed is under it, and it stays where it is
+ * when a row comes in, so it holds nothing. The first thing below the finger is what the reader is about to read.
+ */
+function below(container: Element, y: number): Element | null {
+  for (const child of container.children) {
+    if (child.matches("[data-no-anchor]") || child.querySelector("[data-no-anchor]")) continue;
+    const { top, height } = child.getBoundingClientRect();
+    if (height <= 0 || top < y) continue;
+    const style = getComputedStyle(child);
+    if (style.position === "fixed" || style.position === "sticky") continue;
+    return child;
+  }
+  return null;
+}
+
 /** What the reader is on: what the pointer is over (a finger down, a mouse in the page) until a key is pressed, then the focused element; else the first thing in view. */
 function pickAnchor(root: HTMLElement, pointer: Spot | null): Element | null {
-  const under = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
+  const at = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
+  const under = pointer && at && root.contains(at) && at.querySelector("[data-no-anchor]") ? below(at, pointer.y) : at;
   if (holds(root, under)) return under;
   const focused = document.activeElement;
   if (holds(root, focused)) return focused;
