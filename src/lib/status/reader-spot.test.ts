@@ -162,9 +162,9 @@ describe("createReaderSpot", () => {
       expect(spot.spot()).toEqual({ x: 417, y: 778 });
     });
 
-    it("compares with the last report of the mouse, taken or not", () => {
+    it("compares with the last report of the mouse, taken or not, for a browser that gives no movement", () => {
       const { spot } = reader();
-      spot.pointed(790, 48, { screen: { x: 1290, y: 400 }, movement: { x: 1, y: 1 } });
+      spot.pointed(790, 48, { screen: { x: 1290, y: 400 } });
       spot.touched(417, 778);
       // A report that says nothing, at the screen place of the one before: not taken, and the screen place is kept.
       spot.pointed(792, 62, at(1290, 400));
@@ -176,6 +176,33 @@ describe("createReaderSpot", () => {
       spot.touched(417, 778);
       spot.pointed(805, 75, at(1300, 410));
       expect(spot.spot()).toEqual({ x: 417, y: 778 });
+    });
+
+    it("judges by movement alone once the browser has reported a movement, whatever the screen place does", () => {
+      // iPadOS gives a place in the page, which follows a scroll under a mouse that has not moved.
+      const { spot } = reader();
+      spot.pointed(790, 48, { screen: { x: 1290, y: 400 }, movement: { x: 1, y: 1 } });
+      spot.touched(417, 778);
+      spot.pointed(792, 62, at(1290, 460));
+      expect(spot.spot()).toEqual({ x: 417, y: 778 });
+      spot.pointed(795, 70, at(1290, 520));
+      expect(spot.spot()).toEqual({ x: 417, y: 778 });
+      // And a move it says is taken, wherever the screen place is.
+      spot.pointed(800, 70, { screen: { x: 1290, y: 520 }, movement: { x: 5, y: 0 } });
+      expect(spot.spot()).toEqual({ x: 800, y: 70 });
+    });
+
+    it("does not take a report that says it did not move and gives no place on the screen", () => {
+      const { spot } = reader();
+      spot.pointed(790, 48, { movement: { x: 2, y: 2 } });
+      spot.touched(417, 778);
+      spot.pointed(792, 62, { movement: still });
+      expect(spot.spot()).toEqual({ x: 417, y: 778 });
+      // Nor the first report of a mouse on a page, which has no place to be compared with.
+      const fresh = reader().spot;
+      fresh.touched(417, 778);
+      fresh.pointed(792, 62, { movement: still });
+      expect(fresh.spot()).toEqual({ x: 417, y: 778 });
     });
 
     it("does not take the first report of the mouse on the page if it says nothing, and takes the one after that moves", () => {
@@ -210,7 +237,7 @@ describe("createReaderSpot", () => {
       spot.keyed();
       spot.pointed(300, 200, at(800, 300));
       expect(spot.spot()).toBeNull();
-      spot.pointed(320, 200, at(820, 300));
+      spot.pointed(320, 200, { screen: { x: 820, y: 300 }, movement: { x: 20, y: 0 } });
       expect(spot.spot()).toEqual({ x: 320, y: 200 });
     });
   });
