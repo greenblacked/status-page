@@ -670,6 +670,16 @@
   data-theme: the system's). The edge is --color-subtle by day and the accent by night, 5:1 or better against the
   page and the glass; the knob is the inverse of the page, so it reads against the track.
 */
+/*
+  The focus ring sits 2px off the button, not on its edge (the board's ring is at offset 0). The button is
+  exactly as wide as the track, so at offset 0 the ring lay on the track's own edge on both sides, and at night,
+  when that edge is the accent too, it read as a thicker border, not as focus. Two clear pixels between them keep
+  the ring a separate line in day and night. It grows outward only, so the 44px target and the hero row stay.
+*/
+.theme-switch:focus-visible {
+  outline-offset: 2px;
+}
+
 .theme-track {
   box-sizing: border-box;
   display: flex;

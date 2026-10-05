@@ -341,10 +341,27 @@ test.describe("the switch", () => {
       return color;
     });
     expect(await toggle.evaluate((element) => getComputedStyle(element).outlineColor)).toBe(accent);
+    // The ring is clear of the track on every side, so at night, when the track's edge is the accent too, it is not
+    // read as a thicker border. Measured from the ring's inner edge (the button's box moved out by the offset).
+    const gaps = () =>
+      toggle.evaluate((element) => {
+        const offset = Number.parseFloat(getComputedStyle(element).outlineOffset);
+        const outer = element.getBoundingClientRect();
+        const track = (element.querySelector(".theme-track") as HTMLElement).getBoundingClientRect();
+        return {
+          offset,
+          left: track.left - (outer.left - offset),
+          right: outer.right + offset - track.right,
+          top: track.top - (outer.top - offset),
+          bottom: outer.bottom + offset - track.bottom,
+        };
+      });
+    for (const side of Object.values(await gaps())) expect(side).toBeGreaterThanOrEqual(2);
 
     await page.keyboard.press("Space");
     await expect.poll(() => themeOf(page)).toBe("night");
     await expect(toggle).toHaveAttribute("aria-checked", "true");
+    for (const side of Object.values(await gaps())) expect(side, "the ring at night").toBeGreaterThanOrEqual(2);
     await page.keyboard.press("Enter");
     await expect.poll(() => themeOf(page)).toBe("day");
     await expect(toggle).toHaveAttribute("aria-checked", "false");
