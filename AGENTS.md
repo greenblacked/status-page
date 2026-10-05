@@ -27,7 +27,7 @@ The **catalog** (`src/lib/status/catalog.ts`) lists every service: id, name, cat
 | --- | --- |
 | `src/lib/status/` | Catalog, types, collectors, health model, verdict, diff, alerts, cache, schedule, bounds, URL checks; unit tests sit beside the code |
 | `src/lib/status/__fixtures__/` | Trimmed vendor payloads for collector tests ([how](src/lib/status/__fixtures__/README.md)) |
-| `src/lib/theme.ts`, `src/lib/theme-store.ts` | Day and night: the rule (a stored choice in `localStorage` `theme`, else the visitor's clock, night 20:00 to 06:00), the boot script that sets `<html data-theme>` and the `theme-color` before the first paint, and the store that keeps them equal to the rule. `src/components/status/use-theme.ts` is how a component reads it; `theme-switch.tsx` is the header switch |
+| `src/lib/theme.ts`, `src/lib/theme-store.ts` | Day and night: the rule (a stored choice in `localStorage` `theme`, else the visitor's clock, night 20:00 to 06:00), the boot script that sets `<html data-theme>` and the `theme-color` before the first paint, and the store that keeps them equal to the rule. `src/components/status/use-theme.ts` is how a component reads it; `theme-switch.tsx` is the header switch, with a small script after each copy (`THEME_SWITCH_SCRIPT`) that sets its `aria-checked` from `data-theme` before hydration, and its hero copy leaves the Tab order only where the bar draws its own (from 640px) |
 | `src/lib/security-headers.ts`, `src/start.ts` | Response headers (CSP, HSTS, nosniff and more) added to every response by middleware |
 | `src/components/status/`, `src/components/ui/` | Board UI and small primitives (`button`, `switch`, `tag`, ...) |
 | `src/routes/` | TanStack Start file routes; `src/routeTree.gen.ts` is generated, do not edit it |
