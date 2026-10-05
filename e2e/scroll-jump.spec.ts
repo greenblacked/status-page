@@ -18,6 +18,8 @@ async function hydrated(page: Page): Promise<void> {
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
+const round1 = (value: number | undefined) => (value === undefined ? value : Math.round(value * 10) / 10);
+
 type Frame = { t: number; tops: Record<string, number>; y: number; rows: number; by: number; reader: number };
 
 /**
@@ -483,11 +485,40 @@ async function acrossTheTurn(
   await expect.poll(() => feedRows(page).count(), { timeout: 5_000 }).toBeGreaterThan(rows0);
   await page.waitForTimeout(400);
   const frames = await stopLogging(page);
+  const holdLog = await page.evaluate(() => (window as Window & { __holdLog?: unknown[] }).__holdLog ?? []);
 
   const moves = jumps(frames, card, reader.accounted);
   const worst = Math.max(...moves.map(Math.abs));
   const landed = frames.find((frame) => frame.rows > rows0);
   const before = landed ? frames[frames.indexOf(landed) - 1] : undefined;
+  // DIAGNOSTIC (throwaway): the hold's own log and the frames around the landing or the jump, for a failing assertion's message.
+  const diag = () => {
+    const jumpAt = worst > 1 ? moves.findIndex((move) => Math.abs(move) === worst) + 1 : -1;
+    const around = (index: number) =>
+      frames
+        .slice(Math.max(0, index - 3), index + 3)
+        .map((frame) => [
+          Math.round(frame.t - liftedAt),
+          round1(frame.y),
+          round1(frame.tops[card]),
+          frame.rows,
+          round1(frame.by),
+        ]);
+    const since = (landed?.t ?? frames.at(-1)?.t ?? 0) - 1_500;
+    const recent = holdLog.filter((entry, index) => {
+      const at = (entry as { at?: number; what?: string }).at;
+      return (
+        (entry as { what?: string }).what === "env" || (at !== undefined ? at >= since : index >= holdLog.length - 12)
+      );
+    });
+    const compact = JSON.stringify({
+      hold: recent,
+      cols: "t-lift,y,cardTop,rows,by",
+      jump: jumpAt >= 0 ? around(jumpAt) : undefined,
+      landing: landed ? around(frames.indexOf(landed)) : undefined,
+    });
+    return ` || DIAG ${compact.length > 3300 ? `${compact.slice(0, 3300)}...` : compact}`;
+  };
   const topOf = (frame: Frame | undefined) => frame?.tops[card] ?? Number.NaN;
   const gaps = reader.swept
     ? `; ${reader.swept.events} scroll events, longest gap between them ${reader.swept.longestGap.toFixed(0)} ms (the board waits ${SETTLE_MS})`
@@ -543,23 +574,33 @@ async function acrossTheTurn(
     ).toBeLessThan(SETTLE_MS);
   }
   // Nothing came in under the finger, across the turn of the slot.
-  expect(rowsWhileTouching, "Recent changes did not change while the finger was down").toBe(rows0);
+  expect(
+    rowsWhileTouching,
+    `Recent changes did not change while the finger was down${rowsWhileTouching === rows0 ? "" : diag()}`,
+  ).toBe(rows0);
   // Nor while the page was being scrolled: every frame up to the end of the gesture shows the rows it began with.
   expect(
     frames.filter((frame) => frame.t < liftedAt).every((frame) => frame.rows === rows0),
-    "no row came in during the gesture",
+    `no row came in during the gesture${frames.filter((frame) => frame.t < liftedAt).every((frame) => frame.rows === rows0) ? "" : diag()}`,
   ).toBe(true);
   // And the card never moved on screen beyond the finger, a frame at a time.
-  expect(worst, `the card jumped ${worst.toFixed(1)} px in a frame`).toBeLessThanOrEqual(1);
+  expect(worst, `the card jumped ${worst.toFixed(1)} px in a frame${worst > 1 ? diag() : ""}`).toBeLessThanOrEqual(1);
   // The update lands after the gesture, a moment after the page is still, with the card still where it was.
-  expect(landed, "the check landed").toBeDefined();
+  expect(landed, `the check landed${landed ? "" : diag()}`).toBeDefined();
   if (landed && before) {
-    expect(landed.t, "the check lands after the lift").toBeGreaterThanOrEqual(liftedAt);
+    expect(landed.t, `the check lands after the lift${landed.t >= liftedAt ? "" : diag()}`).toBeGreaterThanOrEqual(
+      liftedAt,
+    );
     // With no finger to wait for, it waits out the page's own stillness: 150 ms after the last scroll event.
-    if (!touching) expect(landed.t - liftedAt, "the check waits for the page to be still").toBeGreaterThanOrEqual(100);
+    if (!touching) {
+      expect(
+        landed.t - liftedAt,
+        `the check waits for the page to be still${landed.t - liftedAt >= 100 ? "" : diag()}`,
+      ).toBeGreaterThanOrEqual(100);
+    }
     expect(
       Math.abs(topOf(landed) - topOf(before)),
-      "the card is where it was when the check landed",
+      `the card is where it was when the check landed${Math.abs(topOf(landed) - topOf(before)) <= 1 ? "" : diag()}`,
     ).toBeLessThanOrEqual(1);
   }
 }

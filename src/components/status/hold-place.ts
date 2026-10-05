@@ -12,6 +12,45 @@ const RECHECK_MS = 100;
 /** How long a press of Refresh keeps the board's update from waiting for the page to be still. */
 const HURRY_MS = 1_000;
 
+// DIAGNOSTIC (throwaway): every decision of the held board is recorded in window.__holdLog.
+type HoldLogWindow = Window & { __holdLog?: unknown[]; __holdLogEnv?: boolean };
+const round = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value) ? Math.round(value * 100) / 100 : value;
+function holdLog(entry: Record<string, unknown>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const w = window as HoldLogWindow;
+    if (!w.__holdLog) w.__holdLog = [];
+    const log = w.__holdLog;
+    if (!w.__holdLogEnv) {
+      w.__holdLogEnv = true;
+      log.push({
+        what: "env",
+        overflowAnchor: getComputedStyle(document.documentElement).overflowAnchor,
+        supports: typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto"),
+        scrollBehavior: document.scrollingElement ? getComputedStyle(document.scrollingElement).scrollBehavior : null,
+      });
+    }
+    if (log.length < 200) log.push({ at: round(performance.now()), ...entry });
+  } catch {}
+}
+function describe(element: Element | null | undefined) {
+  if (!element) return null;
+  const data = Array.from(element.attributes)
+    .filter((attribute) => attribute.name.startsWith("data-"))
+    .map((attribute) => `${attribute.name}=${attribute.value.slice(0, 20)}`);
+  return {
+    tag: element.tagName,
+    cls: (element.getAttribute("class") ?? "").split(/\s+/)[0] ?? "",
+    id: element.id,
+    data,
+    text: (element.textContent ?? "").trim().slice(0, 30),
+    top: round(element.getBoundingClientRect().top),
+  };
+}
+/** The elements of the last held list, anchor first, for the log. */
+let heldEls: Element[] = [];
+
 let tracker: MotionTracker | null = null;
 let watchers = 0;
 
@@ -78,8 +117,10 @@ function holds(root: HTMLElement, element: Element | null): element is Element {
  */
 function holdsOf(root: Element, anchor: Element): Held[] {
   const places: Held[] = [];
+  heldEls = [];
   for (let element: Element | null = anchor; element && element !== root; element = element.parentElement) {
     const target = element;
+    heldEls.push(target);
     places.push({
       was: target.getBoundingClientRect().top,
       // Gone from the page, or shown with no box (display: none), it holds nothing.
@@ -142,6 +183,17 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
     const at = pointer.current ?? (finger && performance.now() - finger.at < TOUCH_MEMORY_MS ? finger : null);
     const picked = element ? pickAnchor(element, at) : null;
     anchor.current = element && picked ? holdsOf(element, picked) : null;
+    holdLog({
+      what: "accept",
+      branch: performance.now() < hurriedUntil.current ? "hurried" : "still",
+      pointer: pointer.current,
+      lastTouch: finger ? { x: finger.x, y: finger.y, ago: round(performance.now() - finger.at) } : null,
+      used: at,
+      anchor: describe(picked),
+      rootTop: round(element?.getBoundingClientRect().top),
+      places: anchor.current?.length ?? 0,
+      scrollY: window.scrollY,
+    });
     setShown(latest);
   }
 
@@ -205,15 +257,58 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
   useLayoutEffect(() => {
     const held = anchor.current;
     anchor.current = null;
-    if (!held || window.scrollY <= 0) return;
+    const moving = motion().moving();
+    const entry: Record<string, unknown> = {
+      what: "layout",
+      held: held === null ? null : held.length,
+      scrollY: window.scrollY,
+      moving,
+    };
+    if (held) {
+      const measured = held.map((place, index) => ({
+        i: index,
+        was: round(place.was),
+        now: round(place.now()),
+        el: describe(heldEls[index])?.tag,
+      }));
+      entry.measured = measured.slice(0, 4);
+    }
+    if (!held || window.scrollY <= 0) {
+      holdLog({ ...entry, exit: "no held or scrollY<=0" });
+      return;
+    }
     // A programmatic scroll would stop a flick on iOS, and a shift of the feed's size mid-flick goes unseen. The
     // update waits for the page to be still, so this only meets a page in motion when it was hurried.
-    if (motion().moving()) return;
+    if (moving) {
+      holdLog({ ...entry, exit: "moving" });
+      return;
+    }
     // Measured now, after the commit has been laid out, so it includes anything the browser has already scrolled
     // by; not a row or two of the feed when it is a reorder of the board, which the reader is not owed a ride with.
     const left = heldResidual(held, { scrollY: window.scrollY, viewport: window.innerHeight });
-    if (!left) return;
+    entry.residual = left;
+    if (!left) {
+      holdLog({ ...entry, exit: "no residual" });
+      return;
+    }
+    const watched = heldEls.find((element) => element.isConnected) ?? null;
+    const topBefore = round(watched?.getBoundingClientRect().top);
     quietScroll(() => window.scrollBy({ top: left, behavior: "instant" }));
+    const slot: Record<string, unknown> = {
+      ...entry,
+      exit: "scrolled",
+      ranQuietScroll: true,
+      topBefore,
+      topAfter: round(watched?.getBoundingClientRect().top),
+      scrollYAfter: window.scrollY,
+    };
+    holdLog(slot);
+    requestAnimationFrame(() => {
+      holdLog({ what: "next-frame", top: round(watched?.getBoundingClientRect().top), scrollY: window.scrollY });
+      requestAnimationFrame(() =>
+        holdLog({ what: "frame+2", top: round(watched?.getBoundingClientRect().top), scrollY: window.scrollY }),
+      );
+    });
   }, [shown]);
 
   return {
