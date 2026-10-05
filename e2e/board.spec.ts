@@ -3314,13 +3314,11 @@ for (const anchoring of ["none", "default"] as const) {
     expect((await height()) - heightBefore).toBeGreaterThan(0);
     // The reader's side: the button is where it was.
     expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
-    // A few frames on, in case a second correction follows the first: it neither moves the button nor scrolls again.
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-        ),
-    );
+    // A second correction can come from a timer of the hook (its look again after RECHECK_MS) as well as from the next
+    // frame: run the page clock past all of them, then a frame to lay out what they did. Neither the button moves
+    // nor the page scrolls again.
+    await page.clock.runFor(1000);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
     const scrolled = await page.evaluate(
       () => (window as Window & { __scrolledBy?: { by: number; offset: number | null }[] }).__scrolledBy ?? [],
