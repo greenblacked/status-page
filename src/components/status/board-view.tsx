@@ -385,9 +385,10 @@ export function BoardView({
           controls={
             // With the bar up, its copies are the ones in reach: Tab goes from them to the search field.
             <WhileBarUp store={dock}>
-              {(barUp) => (
+              {(barUp, barHasSwitch) => (
                 <>
-                  <ThemeSwitch skipTab={barUp} />
+                  {/* Only when the bar draws its own: on a phone it has none, and the hero's must stay reachable. */}
+                  <ThemeSwitch skipTab={barHasSwitch} />
                   <AlertsButton skipTab={barUp} state={alerts.state} onToggle={alerts.toggle} />
                   <RefreshButton skipTab={barUp} fetching={fetching} onRefresh={() => void handleRefresh()} />
                 </>

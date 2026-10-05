@@ -658,6 +658,32 @@ test.describe("on any screen", () => {
     }
   }
 
+  test("is reachable by Tab on a phone with the bar up, and the bar's copy takes over from 640px", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await open(page, at(10));
+    await page.evaluate(() => window.scrollTo(0, 1500));
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+    // The bar draws no switch below 640px, so the hero's must stay in the Tab order.
+    await expect(heroSwitch(page)).not.toHaveAttribute("tabindex", "-1");
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    let reached = false;
+    for (let press = 0; press < 40 && !reached; press++) {
+      await page.keyboard.press("Tab");
+      reached = await page.evaluate(() => document.activeElement?.hasAttribute("data-theme-switch") === true);
+    }
+    expect(reached, "Tab reaches a day/night switch").toBe(true);
+    await expect(page.locator(":focus")).toBeVisible();
+    await page.keyboard.press("Space");
+    await expect.poll(() => themeOf(page)).toBe("night");
+
+    await page.setViewportSize({ width: 800, height: 900 });
+    await page.evaluate(() => window.scrollTo(0, 1500));
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+    await expect(heroSwitch(page)).toHaveAttribute("tabindex", "-1");
+    await expect(barSwitch(page)).not.toHaveAttribute("tabindex", "-1");
+    await expect(barSwitch(page)).toBeVisible();
+  });
+
   test("leaves the verdict where it was at 320px", async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 568 });
     await open(page, at(10));
