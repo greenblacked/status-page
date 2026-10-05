@@ -198,6 +198,31 @@ test.describe("before the first paint", () => {
     });
   }
 
+  for (const [name, hour, stored, expected] of [
+    ["the clock at night", 22, undefined, "true"],
+    ["the clock by day", 11, undefined, "false"],
+    ["a stored night by day", 11, "night", "true"],
+    ["a stored day at night", 22, "day", "false"],
+  ] as const) {
+    test(`says ${name} in aria-checked on both switches before any script bundle has run`, async ({ page }) => {
+      await page.route(/\.js(\?.*)?$/, (route) => route.abort());
+      await page.clock.install({ time: at(hour) });
+      if (stored !== undefined) await seed(page, stored);
+      const problems = watchConsole(page);
+      await page.goto("/", { waitUntil: "domcontentloaded" });
+      // Nothing hydrated: the server drew every switch as off, and the small script after each has set the real one.
+      await expect(page.locator("html")).not.toHaveAttribute("data-hydrated", "");
+      const states = await page.evaluate(() =>
+        [...document.querySelectorAll("[data-theme-switch]")].map((element) => element.getAttribute("aria-checked")),
+      );
+      expect(states).toEqual([expected, expected]);
+      expect(
+        problems.filter((problem) => /content security policy|refused to execute/i.test(problem)),
+        "the script runs under the page's nonce",
+      ).toEqual([]);
+    });
+  }
+
   test("changes data-theme once, never from the other theme to this one while the page loads", async ({ page }) => {
     await page.addInitScript(() => {
       const seen: string[] = [];

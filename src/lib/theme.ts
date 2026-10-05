@@ -104,3 +104,12 @@ export function applyTheme(doc: ThemeDocument, theme: Theme): void {
  * run under the page's Content-Security-Policy by the response's nonce (src/lib/security-headers.ts).
  */
 export const THEME_BOOT_SCRIPT = `(function(){var s=null;try{s=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)})}catch(e){}var h=new Date().getHours();var t=s==="night"||(s!=="day"&&(h>=${NIGHT_FROM_HOUR}||h<${NIGHT_UNTIL_HOUR}))?"night":"day";var d=document;d.documentElement.setAttribute(${JSON.stringify(THEME_ATTRIBUTE)},t);var m=d.querySelector("meta[${THEME_COLOR_ATTRIBUTE}]");if(!m){m=d.createElement("meta");m.setAttribute("name","theme-color");m.setAttribute(${JSON.stringify(THEME_COLOR_ATTRIBUTE)},"");var f=d.querySelector('meta[name="theme-color"]');if(f&&f.parentNode)f.parentNode.insertBefore(m,f);else d.head.appendChild(m)}m.setAttribute("content",t==="night"?${JSON.stringify(THEME_COLORS.night)}:${JSON.stringify(THEME_COLORS.day)})})();`;
+
+/**
+ * Sits in the server's markup right after each day/night switch and sets its aria-checked from <html data-theme>, which
+ * the boot script in <head> has already written. The server cannot know the visitor's choice or clock, so it draws
+ * every switch as off; without this a screen reader would be told "off" at night from the first paint until React has
+ * hydrated and corrected it. It reads the element before it (the switch), like the feed's reserve script, and does
+ * nothing if there is none or the page has no theme. Run under the page's nonce like the boot script.
+ */
+export const THEME_SWITCH_SCRIPT = `(function(){var s=document.currentScript,b=s&&s.previousElementSibling,t=document.documentElement.getAttribute(${JSON.stringify(THEME_ATTRIBUTE)});if(b&&(t==="night"||t==="day"))b.setAttribute("aria-checked",t==="night"?"true":"false")})();`;

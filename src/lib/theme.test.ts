@@ -10,6 +10,7 @@ import {
   THEME_BOOT_SCRIPT,
   THEME_COLORS,
   THEME_STORAGE_KEY,
+  THEME_SWITCH_SCRIPT,
   type ThemeStorage,
   themeFor,
   themeStorageEventMatters,
@@ -200,5 +201,34 @@ describe("THEME_BOOT_SCRIPT", () => {
   it("is one line with no raw newline, so it sits in a script tag whole", () => {
     expect(THEME_BOOT_SCRIPT).not.toContain("\n");
     expect(THEME_BOOT_SCRIPT).not.toContain("</script");
+  });
+});
+
+describe("THEME_SWITCH_SCRIPT", () => {
+  const run = (theme: string | null, previous: boolean = true) => {
+    const attributes = new Map<string, string>();
+    const button = { setAttribute: (name: string, value: string) => void attributes.set(name, value) };
+    const doc = {
+      currentScript: { previousElementSibling: previous ? button : null },
+      documentElement: { getAttribute: (name: string) => (name === THEME_ATTRIBUTE ? theme : null) },
+    };
+    new Function("document", THEME_SWITCH_SCRIPT)(doc);
+    return attributes.get("aria-checked") ?? null;
+  };
+
+  it("sets aria-checked on the switch before it from the theme in effect", () => {
+    expect(run("night")).toBe("true");
+    expect(run("day")).toBe("false");
+  });
+
+  it("leaves the switch alone with no theme on the page, or no element before it", () => {
+    expect(run(null)).toBeNull();
+    expect(run("dusk")).toBeNull();
+    expect(run("night", false)).toBeNull();
+  });
+
+  it("is one line with no raw newline, so it sits in a script tag whole", () => {
+    expect(THEME_SWITCH_SCRIPT).not.toContain("\n");
+    expect(THEME_SWITCH_SCRIPT).not.toContain("</script");
   });
 });
