@@ -194,7 +194,18 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
     };
     const track = (event: PointerEvent) => {
       if (event.pointerType === "touch") input.touched(event.clientX, event.clientY);
-      else input.pointed(event.clientX, event.clientY, event.type === "pointerdown");
+      else {
+        // What the event says of the mouse, for the reader-spot to tell a move from a report made as the page scrolls.
+        // Each is left out where the browser has none to give (an old Safari has no movement on a pointer event).
+        input.pointed(event.clientX, event.clientY, {
+          pressed: event.type === "pointerdown",
+          screen: Number.isFinite(event.screenX + event.screenY) ? { x: event.screenX, y: event.screenY } : undefined,
+          movement:
+            typeof event.movementX === "number" && typeof event.movementY === "number"
+              ? { x: event.movementX, y: event.movementY }
+              : undefined,
+        });
+      }
     };
     const release = (event: Event) => {
       if (event.type === "keydown") return input.keyed();
