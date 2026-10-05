@@ -106,9 +106,12 @@ type Sweep = {
  * back to back, and the gap shows in the scroll events). `finger` makes a touchmove (with `__pad`, see
  * SyntheticFinger) before each step, the page following the finger as the browser would.
  */
-async function sweep(page: Page, { ms, finger, y }: { ms: number; finger: boolean; y: number }): Promise<Sweep> {
+async function sweep(
+  page: Page,
+  { ms, finger, y, lift = false }: { ms: number; finger: boolean; y: number; lift?: boolean },
+): Promise<Sweep> {
   return page.evaluate(
-    ({ ms, finger, y }) =>
+    ({ ms, finger, y, lift }) =>
       new Promise<Sweep>((resolve) => {
         const STEP = 3;
         const RUN = 30;
@@ -116,6 +119,8 @@ async function sweep(page: Page, { ms, finger, y }: { ms: number; finger: boolea
           __reader?: number;
           __pad?: { fire: (type: string, y: number, live: boolean) => string };
         };
+        // The finger lifts as the sweep begins, with the page still moving, as in a flick: no rest for the board to take.
+        if (lift) tracked.__pad?.fire("touchend", y, false);
         const seen: number[] = [];
         const onScroll = () => seen.push(performance.now());
         window.addEventListener("scroll", onScroll, { passive: true });
@@ -172,7 +177,7 @@ async function sweep(page: Page, { ms, finger, y }: { ms: number; finger: boolea
         };
         requestAnimationFrame(frame);
       }),
-    { ms, finger, y },
+    { ms, finger, y, lift },
   );
 }
 
@@ -315,6 +320,10 @@ class SyntheticFinger implements Reader {
   async up() {
     await this.fire("touchend", this.y);
   }
+  /** The finger lifts and the page glides on for `ms` without it, all inside the page, with no rest between. */
+  async lift(ms: number) {
+    this.swept = await sweep(this.page, { ms, finger: false, y: this.y, lift: true });
+  }
 }
 
 /**
@@ -434,7 +443,8 @@ async function acrossTheTurn(
     touching,
     anchoring = "off",
     strayMouse = false,
-  }: { touching: boolean; anchoring?: "off" | "claimed" | "native"; strayMouse?: boolean },
+    glide = 0,
+  }: { touching: boolean; anchoring?: "off" | "claimed" | "native"; strayMouse?: boolean; glide?: number },
 ): Promise<void> {
   test.setTimeout(90_000);
   await page.addInitScript(() => {
@@ -511,7 +521,8 @@ async function acrossTheTurn(
   let rowsWhileTouching = rows0;
   if (touching) {
     // The finger rests a moment, still down, before it lifts: no scroll events, and still not the time to update.
-    await pause(400);
+    // A flick has no rest: the finger lifts as the page is still moving.
+    if (!glide) await pause(400);
     rowsWhileTouching = await feedRows(page).count();
   }
   // Where the gesture ends, in the page's clock: the lift of a finger, else the last scroll step.
@@ -523,7 +534,10 @@ async function acrossTheTurn(
   );
   expect(card, "the reader is on a card").not.toBe("");
   const upAt = await page.evaluate(() => Date.now());
-  await reader.up();
+  // A flick: the finger lifts and the page glides on, without it, for `glide` ms. A mouse left over the board is
+  // reported again as it scrolls, now that the finger's own events are over, and must not be taken for the reader.
+  if (glide > 0 && reader instanceof SyntheticFinger) await reader.lift(glide);
+  else await reader.up();
   // The turn of the slot fell inside the gesture: without it the test would hold nothing back.
   const turnAt = (Math.floor(downAt / SLOT_MS) + 1) * SLOT_MS;
   expect(upAt, "the reader was still moving the page at the turn of the slot").toBeGreaterThanOrEqual(turnAt);
@@ -659,6 +673,21 @@ test("floating bar: holds the card under the finger, not a mouse that was left o
   await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
     touching: true,
     strayMouse: true,
+  });
+});
+
+test("floating bar: holds the card of a flick, although a mouse left over the board is reported again as the page glides", async ({
+  page,
+  hasTouch,
+}, testInfo) => {
+  test.skip(!hasTouch, "a finger is a touch project's");
+  // The finger has lifted (its touchend is the last the page hears of it) and the page glides on, as after a flick,
+  // while the engine reports the old mouse place at every scroll. Only the place being the same as the one the mouse
+  // was last seen at tells the page that it is not the mouse moving; the card must stay put as the row comes in.
+  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+    touching: true,
+    strayMouse: true,
+    glide: 400,
   });
 });
 
