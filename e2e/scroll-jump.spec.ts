@@ -467,9 +467,11 @@ async function findMousePlace(page: Page): Promise<MousePlace> {
  * emulation) gets the same move made in the page.
  *
  * `fake` goes on to what WebKit also does a moment after a page has scrolled, to update what is hovered: a pointermove
- * and a mousemove 100 ms after the last scroll event, trusted, at a window place that the page did not see the mouse
- * at (over another piece of the board that a new row does not move), though the cursor has not moved on the screen:
- * no movement, and the same place on the screen as the last report.
+ * and a mousemove 100 ms after the last scroll event, at a window place that the page did not see the mouse at (over
+ * another piece of the board that a new row does not move), though the cursor has not moved on the screen: no
+ * movement, and the same place on the screen as the last report. The page makes them itself (a script cannot send a
+ * trusted event), so what the product tells them by must be what they say, not that they are trusted. The times they
+ * were made at are kept in `__fakedAt`, to know they came before the update landed.
  */
 async function leaveMouse(page: Page, place: MousePlace, { fake }: { fake: boolean }): Promise<void> {
   await page.evaluate(() => {
@@ -488,7 +490,7 @@ async function leaveMouse(page: Page, place: MousePlace, { fake }: { fake: boole
   await page.mouse.move(place.x, place.y);
   await page.evaluate(
     ([x, y, fake]) => {
-      const tracked = window as Window & { __cursor?: Record<string, number> | null };
+      const tracked = window as Window & { __cursor?: Record<string, number> | null; __fakedAt?: number[] };
       const piece = document.querySelector("[data-mouse-piece]") ?? document.body;
       const fire = (target: Element, at: { x: number; y: number }, screen: { x: number; y: number }, moved: number) => {
         const init = {
@@ -548,6 +550,7 @@ async function leaveMouse(page: Page, place: MousePlace, { fake }: { fake: boole
           timer = window.setTimeout(() => {
             const { target, at } = elsewhere();
             fire(target, at, { x: cursor().screenX, y: cursor().screenY }, 0);
+            tracked.__fakedAt = [...(tracked.__fakedAt ?? []), performance.now()];
           }, 100);
         },
         { passive: true },
@@ -834,6 +837,14 @@ async function acrossTheTurn(
   }
   // The update lands after the gesture, a moment after the page is still, with the card still where it was.
   expect(landed, "the check landed").toBeDefined();
+  if (fakeMove && landed) {
+    // The report with no move came after the lift and before the update landed, or the test holds nothing back.
+    const fakedAt = await page.evaluate(() => (window as Window & { __fakedAt?: number[] }).__fakedAt ?? []);
+    expect(
+      fakedAt.some((at) => at >= liftedAt && at < landed.t),
+      `a report with no move came between the lift (${Math.round(liftedAt)}) and the landing (${Math.round(landed.t)}): ${JSON.stringify(fakedAt.map(Math.round))}`,
+    ).toBe(true);
+  }
   if (landed && before) {
     expect(landed.t, "the check lands after the lift").toBeGreaterThanOrEqual(liftedAt);
     // With no finger to wait for, it waits out the page's own stillness: 150 ms after the last scroll event.
@@ -917,8 +928,8 @@ test("floating bar: holds the card of a flick, although the browser reports a mo
   hasTouch,
 }, testInfo) => {
   test.skip(!hasTouch, "a finger is a touch project's");
-  // As WebKit does once a page has scrolled, to update what is hovered: a trusted pointermove and mousemove 100 ms
-  // after the last scroll, at the place its cursor really is, which the page had not seen the mouse at. The cursor
+  // As WebKit does once a page has scrolled, to update what is hovered: a pointermove and mousemove 100 ms
+  // after the last scroll (made by the page here, standing for the engine's own), at the place its cursor really is, which the page had not seen the mouse at. The cursor
   // did not move on the screen, which the event says (no movement, the same screen place), so it is not the reader.
   await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
     touching: true,
