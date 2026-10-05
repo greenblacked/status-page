@@ -616,6 +616,48 @@ test.describe("on any screen", () => {
     });
   }
 
+  // The dateline is the server's real date, so the layout must hold for the longest it can be, not the day the suite runs.
+  for (const [width, height] of [
+    [320, 568],
+    [360, 640],
+  ] as const) {
+    for (const text of ["Wednesday 30 September", "Saturday 13 December", "Thursday 24 September"]) {
+      test(`keeps the hero's row and the verdict where they were with "${text}" at ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        await open(page, at(10));
+        await page.evaluate((value) => {
+          const time = document.querySelector("header time");
+          if (time) time.textContent = value;
+        }, text);
+        const measure = () =>
+          page.evaluate(() => {
+            const top = (selector: string) =>
+              document.querySelector(selector)?.getBoundingClientRect().top ?? Number.NaN;
+            const time = document.querySelector("header time")?.getBoundingClientRect();
+            const refresh = document
+              .querySelector('header button[aria-label="Refresh status now"]')
+              ?.getBoundingClientRect();
+            return {
+              verdictTop: top("#board-headline"),
+              refreshTop: refresh?.top ?? Number.NaN,
+              refreshRight: refresh?.right ?? Number.NaN,
+              // The dateline and the controls are one row when the dateline's box reaches into the buttons' height.
+              sharesRow: !!time && !!refresh && time.top < refresh.bottom && time.bottom > refresh.top,
+              scrollWidth: document.documentElement.scrollWidth,
+            };
+          });
+        const withSwitch = await measure();
+        await page.addStyleTag({ content: "[data-theme-switch] { display: none !important; }" });
+        const without = await measure();
+        expect(withSwitch.sharesRow, "the dateline and the controls are on one row").toBe(true);
+        expect(withSwitch.refreshTop, "the controls did not wrap to a second row").toBe(without.refreshTop);
+        expect(withSwitch.verdictTop, "the switch did not move the verdict").toBe(without.verdictTop);
+        expect(withSwitch.refreshRight).toBeLessThanOrEqual(width);
+        expect(withSwitch.scrollWidth).toBeLessThanOrEqual(width);
+      });
+    }
+  }
+
   test("leaves the verdict where it was at 320px", async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 568 });
     await open(page, at(10));

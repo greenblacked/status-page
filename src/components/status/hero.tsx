@@ -42,14 +42,15 @@ export function Hero({
   return (
     <header className="page-gutter mx-auto max-w-[62rem] pt-6 pb-4 md:pt-10 md:pb-6">
       {/* Three equal-ended columns from md up: the wordmark is the middle one, so it sits on the header's own centre whatever the dateline or the controls weigh. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-x-8">
-        <p className="text-caption text-muted">
+      {/* One row at every width: the controls keep their size and the dateline gives, breaking into two short lines when the date is long ("Wednesday 30 / September"), so the verdict never moves with the date. */}
+      <div className="flex items-center justify-between gap-x-4 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-x-8">
+        <p className="min-w-0 text-caption text-muted">
           <Dateline generatedAt={generatedAt} />
         </p>
         <p data-testid="wordmark" className="hidden text-row md:block">
           {WORDMARK}
         </p>
-        <div className="-mr-3 flex items-center md:justify-self-end">{controls}</div>
+        <div className="-mr-3 flex shrink-0 items-center md:justify-self-end">{controls}</div>
       </div>
 
       <div className="mt-6 md:mt-8 md:grid md:grid-cols-[var(--margin-col)_minmax(0,1fr)] md:gap-x-8">
