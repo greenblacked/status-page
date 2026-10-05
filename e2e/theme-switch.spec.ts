@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Locator, Page } from "@playwright/test";
 import { THEME_BOOT_SCRIPT, THEME_COLORS } from "../src/lib/theme.ts";
-import { BACKGROUNDS, cards, controlBar, hydrated, SERVICES } from "./support/layout";
+import { BACKGROUNDS, cards, controlBar, hydrated, SERVICES, TARGET_FLOOR } from "./support/layout";
 import { expect, test } from "./test";
 
 // The day/night switch (src/components/status/theme-switch.tsx) and the rule behind it (src/lib/theme.ts): a stored
@@ -387,8 +387,8 @@ test.describe("the switch", () => {
         };
       });
     const day = await boxes();
-    expect(day.button.width).toBeGreaterThanOrEqual(44);
-    expect(day.button.height).toBeGreaterThanOrEqual(44);
+    expect(day.button.width).toBeGreaterThanOrEqual(TARGET_FLOOR);
+    expect(day.button.height).toBeGreaterThanOrEqual(TARGET_FLOOR);
     expect(day.track).toMatchObject({ width: 52, height: 32 });
     expect(day.knob).toMatchObject({ width: 24, height: 24 });
     expect([day.sun, day.moon]).toEqual(["block", "none"]);
@@ -650,8 +650,8 @@ test.describe("on any screen", () => {
         expect(found.scrollWidth, `${theme}: sideways scroll`).toBeLessThanOrEqual(width);
         expect(found.left, `${theme}: left edge`).toBeGreaterThanOrEqual(0);
         expect(found.right, `${theme}: right edge`).toBeLessThanOrEqual(width);
-        expect(found.width).toBeGreaterThanOrEqual(44);
-        expect(found.height).toBeGreaterThanOrEqual(44);
+        expect(found.width).toBeGreaterThanOrEqual(TARGET_FLOOR);
+        expect(found.height).toBeGreaterThanOrEqual(TARGET_FLOOR);
         expect(found.insideHeader).toBe(true);
         expect(found.overlaps, `${theme}: overlaps`).toEqual([]);
       }
