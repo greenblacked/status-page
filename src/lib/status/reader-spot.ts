@@ -22,7 +22,8 @@ export function createReaderSpot(now: () => number, memoryMs: number) {
   return {
     /** The mouse (or a pen above the glass) moved or pressed to here. */
     pointed(x: number, y: number, pressed = false) {
-      if (!pressed && seen && seen.x === x && seen.y === y) return;
+      // Within a pixel, for a browser that reports the same place with a fraction of difference.
+      if (!pressed && seen && Math.abs(seen.x - x) < 1 && Math.abs(seen.y - y) < 1) return;
       seen = { x, y };
       mouse = { x, y };
     },

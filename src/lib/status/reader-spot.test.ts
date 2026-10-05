@@ -61,6 +61,16 @@ describe("createReaderSpot", () => {
     expect(spot.spot()).toEqual({ x: 417, y: 778 });
   });
 
+  it("takes a report of the old mouse place that differs by a fraction of a pixel for the same place", () => {
+    const { spot } = reader();
+    spot.pointed(792, 62);
+    spot.touched(417, 778);
+    spot.pointed(792.4, 61.6);
+    expect(spot.spot()).toEqual({ x: 417, y: 778 });
+    spot.pointed(794, 62);
+    expect(spot.spot()).toEqual({ x: 794, y: 62 });
+  });
+
   it("takes the mouse back when it moves after the finger", () => {
     const { spot, advance } = reader();
     spot.touched(417, 778);
