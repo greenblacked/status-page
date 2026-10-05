@@ -86,9 +86,12 @@ type Sweep = {
   lastStepAt: number;
   /** The scroll events the page sent during the gesture. */
   events: number;
-  /** The longest time, in ms, between two of them, and how long into the gesture the second one came. */
+  /** The longest time, in ms, between two of them, and when (in the page's clock) it began and ended. */
   longestGap: number;
+  gapStartedAt: number;
   gapEndedAt: number;
+  /** When the gesture began. */
+  startedAt: number;
   /** What the last touch event was made of ("TouchEvent" or "Event"), for a finger. */
   shape: string;
 };
@@ -98,8 +101,10 @@ type Sweep = {
  * `RUN` steps one way and `RUN` the other, for `ms`. Steps driven from the test process (a round trip and a pause
  * for each) are as far apart as the runner lets them be, and a page that has not scrolled for `SETTLE_MS` is at
  * rest as far as the board is concerned, so on a loaded machine the update lands in the middle of the gesture. A
- * loop in the page keeps the steps a frame apart whatever the test process is doing. `finger` makes a touchmove
- * (with `__pad`, see SyntheticFinger) before each step, the page following the finger as the browser would.
+ * loop in the page takes the test process out of the steps: they are a frame apart for as long as the page's own
+ * main thread keeps up (the page clock is Playwright's, so after a stall of the page the steps that came due run
+ * back to back, and the gap shows in the scroll events). `finger` makes a touchmove (with `__pad`, see
+ * SyntheticFinger) before each step, the page following the finger as the browser would.
  */
 async function sweep(page: Page, { ms, finger, y }: { ms: number; finger: boolean; y: number }): Promise<Sweep> {
   return page.evaluate(
@@ -125,14 +130,25 @@ async function sweep(page: Page, { ms, finger, y }: { ms: number; finger: boolea
             requestAnimationFrame(() => {
               window.removeEventListener("scroll", onScroll);
               let longestGap = 0;
-              let gapEndedAt = 0;
+              let gapStartedAt = start;
+              let gapEndedAt = start;
               for (let i = 1; i < seen.length; i++) {
                 if (seen[i] - seen[i - 1] > longestGap) {
                   longestGap = seen[i] - seen[i - 1];
-                  gapEndedAt = seen[i] - start;
+                  gapStartedAt = seen[i - 1];
+                  gapEndedAt = seen[i];
                 }
               }
-              resolve({ y: at, lastStepAt, events: seen.length, longestGap, gapEndedAt, shape });
+              resolve({
+                y: at,
+                lastStepAt,
+                events: seen.length,
+                longestGap,
+                gapStartedAt,
+                gapEndedAt,
+                startedAt: start,
+                shape,
+              });
             });
             return;
           }
@@ -159,6 +175,9 @@ async function sweep(page: Page, { ms, finger, y }: { ms: number; finger: boolea
     { ms, finger, y },
   );
 }
+
+/** The time, in ms, a frame that saw something may be later than the thing it saw. */
+const FRAME_SLACK_MS = 50;
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -505,13 +524,22 @@ async function acrossTheTurn(
     }
   }
 
-  // With no finger, a row that came in during the gesture is the board's fault only if the page was never left still: a gap between
-  // two scroll events as long as the board's wait is the machine stalling, and is reported as that.
-  const early = frames.some((frame) => frame.rows > rows0 && frame.t < liftedAt);
-  if (early && !touching && reader.swept) {
+  // With no finger, a row that came in during the gesture is the board's fault only if the page was left still: a gap between two
+  // scroll events as long as the board's wait, with the row coming in once that wait was up and before the gap ended (a frame of
+  // slack for the frame that saw it), is the machine stalling, and is reported as that. Any other early row is a failure as it is.
+  const early = frames.find((frame) => frame.rows > rows0 && frame.t < liftedAt);
+  const stall = reader.swept;
+  if (
+    early &&
+    !touching &&
+    stall &&
+    stall.longestGap >= SETTLE_MS &&
+    early.t >= stall.gapStartedAt + SETTLE_MS &&
+    early.t <= stall.gapEndedAt + FRAME_SLACK_MS
+  ) {
     expect(
-      reader.swept.longestGap,
-      `the machine stalled: ${reader.swept.longestGap.toFixed(0)} ms between two scroll events ${reader.swept.gapEndedAt.toFixed(0)} ms into the gesture, longer than the ${SETTLE_MS} ms the board waits for a page to be still, so a row came in while the page was scrolled`,
+      stall.longestGap,
+      `the machine stalled: ${stall.longestGap.toFixed(0)} ms between two scroll events, ending ${(stall.gapEndedAt - stall.startedAt).toFixed(0)} ms into the gesture, longer than the ${SETTLE_MS} ms the board waits for a page to be still, and a row came in ${(early.t - stall.startedAt).toFixed(0)} ms into it`,
     ).toBeLessThan(SETTLE_MS);
   }
   // Nothing came in under the finger, across the turn of the slot.
