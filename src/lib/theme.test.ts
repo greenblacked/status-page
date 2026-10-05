@@ -138,14 +138,15 @@ describe("the theme-color of each theme", () => {
 function boot(options: { storage: "refuse" | Record<string, string>; hour: number; metas?: number }) {
   const attributes = new Map<string, string>();
   const metas = Array.from({ length: options.metas ?? 2 }, () => new Map<string, string>());
+  const stored = options.storage;
   const localStorage =
-    options.storage === "refuse"
+    stored === "refuse"
       ? {
           getItem: () => {
             throw new DOMException("denied", "SecurityError");
           },
         }
-      : { getItem: (key: string) => options.storage[key as keyof typeof options.storage] ?? null };
+      : { getItem: (key: string) => stored[key] ?? null };
   const document = {
     documentElement: { setAttribute: (name: string, value: string) => void attributes.set(name, value) },
     querySelectorAll: () =>
