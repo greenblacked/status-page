@@ -700,6 +700,43 @@ test.describe("on any screen", () => {
     }
   }
 
+  // Larger text makes the dateline the squeezed part of the row: it must never be cut below its longest word (the base
+  // `overflow-wrap: break-word` would then split words letter by letter, a column of single letters); the controls wrap
+  // under it instead. Each word has one client rect when it sits whole on a line.
+  for (const rootPx of [24, 32]) {
+    for (const width of [320, 360]) {
+      for (const text of ["Wednesday 30 September", "Monday 1 May"]) {
+        test(`never breaks a dateline word at ${rootPx}px root text: "${text}" at ${width}px`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 800 });
+          await open(page, at(10));
+          await page.addStyleTag({ content: `html { font-size: ${rootPx}px !important; }` });
+          await page.evaluate((value) => {
+            const time = document.querySelector("header time");
+            if (time) time.textContent = value;
+          }, text);
+          const found = await page.evaluate(() => {
+            const time = document.querySelector("header time") as HTMLElement;
+            const node = time.firstChild as Text;
+            const words: { word: string; pieces: number }[] = [];
+            for (const match of (node.textContent ?? "").matchAll(/\S+/g)) {
+              const range = document.createRange();
+              range.setStart(node, match.index ?? 0);
+              range.setEnd(node, (match.index ?? 0) + match[0].length);
+              // A word split across lines has a client rect on each.
+              words.push({ word: match[0], pieces: range.getClientRects().length });
+            }
+            return {
+              words,
+              scrollWidth: document.documentElement.scrollWidth,
+            };
+          });
+          for (const { word, pieces } of found.words) expect(pieces, `"${word}" is on one line`).toBe(1);
+          expect(found.scrollWidth, "sideways scroll").toBeLessThanOrEqual(width);
+        });
+      }
+    }
+  }
+
   test("is reachable by Tab on a phone with the bar up, and the bar's copy takes over from 640px", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await open(page, at(10));
