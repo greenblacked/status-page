@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * The day/night switch: a Material 3 switch (52 by 32 track, 24px knob that carries a sun by day and a moon by
- * night and slides 1.25rem), drawn in the board's tokens. A real <button> with role="switch"; aria-checked is true
+ * night and slides 20px), drawn in the board's tokens. A real <button> with role="switch"; aria-checked is true
  * at night. Everything the eye sees follows <html data-theme> in the style sheet (.theme-switch), which the boot
  * script sets before the first paint, so the knob is already where it belongs and never slides on load; only
  * aria-checked waits for React. It renders in the hero and in the floating bar like the other controls, each
@@ -22,7 +22,7 @@ export function ThemeSwitch({ skipTab, className }: { skipTab?: boolean; classNa
       onClick={toggle}
       data-theme-switch
       className={cn(
-        "theme-switch focus-ring pressable inline-flex h-11 min-w-13 shrink-0 items-center justify-center rounded-md",
+        "theme-switch focus-ring pressable inline-flex h-[44px] min-w-[52px] shrink-0 items-center justify-center rounded-md",
         className,
       )}
     >

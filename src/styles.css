@@ -641,7 +641,8 @@
 /*
   The day/night switch (src/components/status/theme-switch.tsx), a Material 3 switch in the board's tokens: a 52 by 32
   track with a 2px edge, a 24px knob that carries a sun by day and a moon by night. The button around it is 44px tall
-  and 52px wide, the hit target. Colours are tokens in a day and a night value (light-dark(), so they follow the
+  and 52px wide, the hit target. Sizes are px, as Material gives them, and do not grow with the text size: at 200% text the
+  hero's row is already as full as it fits (the wordmark test holds it to that), and a bigger switch would not. Colours are tokens in a day and a night value (light-dark(), so they follow the
   same <html> the rest of the page does, with or without data-theme); only what cannot be a colour, the knob's
   place and which icon shows, is keyed on data-theme, with the same rule for a page whose scripts did not run (no
   data-theme: the system's). The edge is --color-subtle by day and the accent by night, 5:1 or better against the
@@ -651,9 +652,9 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  width: 3.25rem;
-  height: 2rem;
-  padding: 0.125rem;
+  width: 52px;
+  height: 32px;
+  padding: 2px;
   border: 2px solid light-dark(var(--color-subtle), var(--color-accent));
   border-radius: 999px;
   background-color: light-dark(var(--color-inset), var(--color-accent));
@@ -663,16 +664,16 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 24px;
+  height: 24px;
   border-radius: 999px;
   background-color: light-dark(var(--color-fg), var(--color-bg));
   color: light-dark(var(--color-bg), var(--color-fg));
 }
 
 .theme-knob svg {
-  width: 0.875rem;
-  height: 0.875rem;
+  width: 14px;
+  height: 14px;
 }
 
 .theme-moon {
@@ -680,7 +681,7 @@
 }
 
 :root[data-theme="night"] .theme-knob {
-  transform: translateX(1.25rem);
+  transform: translateX(20px);
 }
 
 :root[data-theme="night"] .theme-sun {
@@ -693,7 +694,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) .theme-knob {
-    transform: translateX(1.25rem);
+    transform: translateX(20px);
   }
 
   :root:not([data-theme]) .theme-sun {
