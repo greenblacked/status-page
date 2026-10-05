@@ -571,13 +571,24 @@ async function leaveMouse(page: Page, place: MousePlace, { fake }: { fake: boole
  * what the page scrolled itself by, which counts the page's `scrollBy` only: the run of it has no scroll anchoring.
  */
 function jumps(frames: Frame[], card: string, accounted: boolean): number[] {
-  const out: number[] = [];
+  return jumpsBetween(frames, card, accounted).map((jump) => jump.move);
+}
+
+/** A frame's move of the card (see `jumps`), with the two frames it was measured between. */
+type Jump = { move: number; from: Frame; to: Frame };
+
+function jumpsBetween(frames: Frame[], card: string, accounted: boolean): Jump[] {
+  const out: Jump[] = [];
   for (let i = 1; i < frames.length; i++) {
     const a = frames[i - 1];
     const b = frames[i];
     const [from, to] = [a.tops[card], b.tops[card]];
     if (from === undefined || to === undefined) continue;
-    out.push(accounted ? to - from + (b.reader - a.reader) : to + b.y - (from + a.y) - (b.by - a.by));
+    out.push({
+      move: accounted ? to - from + (b.reader - a.reader) : to + b.y - (from + a.y) - (b.by - a.by),
+      from: a,
+      to: b,
+    });
   }
   return out;
 }
@@ -789,9 +800,10 @@ async function acrossTheTurn(
   }
 
   if (worst > 1) {
-    // Which frame, and what it was doing, when it was not at the landing.
-    const at = moves.findIndex((move) => Math.abs(move) === worst) + 1;
-    for (const frame of frames.slice(Math.max(0, at - 1), at + 1)) {
+    // Which frames, and what they were doing, when it was not at the landing. The frames the jump was measured between,
+    // not the ones at its place in the list: a card that is not on every frame (the probe) has no jump for the others.
+    const jump = jumpsBetween(frames, card, reader.accounted).find((one) => Math.abs(one.move) === worst);
+    for (const frame of jump ? [jump.from, jump.to] : []) {
       console.log(
         `worst jump, ${JSON.stringify({ ...frame, tops: frame.tops[card], t: Math.round(frame.t - liftedAt) })}`,
       );
