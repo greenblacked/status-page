@@ -3240,22 +3240,38 @@ test("opens a long component list with Show all and closes it with Show fewer", 
 });
 
 // The check at the turn of a slot adds a row to Recent changes and clears the "Changed" tags of the one before,
-// above the lists. Chrome and Firefox keep the reader's place when that happens (scroll anchoring); Safari has
-// none, so the page has to scroll by the distance itself, or the button under the reader's finger moves away
-// from it. The "none" pass switches the browser's anchoring off to be Safari, which is the only way to see it
-// here. What is asserted is the reader's side: the Show all button stays where it is on screen, on every layout.
-// Whether the page scrolled itself follows from whether this browser anchors.
+// above the lists. Chrome and Firefox try to keep the reader's place when that happens (scroll anchoring), but hold
+// their own pick of the page, which is not always the button under the pointer; Safari has no anchoring at all. So
+// the page does not ask the browser: right after the commit it measures where the button is against where it was
+// and scrolls by what is left (src/components/status/hold-place.ts). The "none" pass switches the browser's
+// anchoring off to be Safari, which is the only way to see that here; the "default" pass leaves the browser's own
+// anchoring on, with whatever it does on this engine and layout.
+//
+// What is asserted is the reader's side, the same in both passes and on every layout: the Show all button is
+// within 1px of where it was once the update has landed, and stays there. And what the design promises of the
+// scrolling: the page scrolls at most once, by exactly what the button had moved by at that moment (the part of the
+// change the browser did not hold itself), and never when nothing was left. With anchoring off, all of it is left,
+// so the page must have scrolled.
 for (const anchoring of ["none", "default"] as const) {
-  test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({
-    page,
-  }, testInfo) => {
+  test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({ page }) => {
+    // Every scrollBy of the page, with where the Show all button was in the window at the moment of the call (after
+    // the update has been laid out, before the scroll): that is how far the browser left it from its place.
     await page.addInitScript(() => {
-      const scrolled: number[] = [];
-      (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
+      const scrolled: { by: number; offset: number | null }[] = [];
+      (window as Window & { __scrolledBy?: typeof scrolled }).__scrolledBy = scrolled;
+      (window as Window & { __watched?: { top: number } }).__watched = { top: Number.NaN };
       const original = window.scrollBy;
       window.scrollBy = ((...args: unknown[]) => {
         const first = args[0] as ScrollToOptions | number | undefined;
-        scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
+        const by = typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0);
+        const button = [...document.querySelectorAll("article#service-spotify button")].find((element) =>
+          /^Show all 32/.test(element.textContent ?? ""),
+        );
+        const watched = (window as Window & { __watched?: { top: number } }).__watched;
+        scrolled.push({
+          by,
+          offset: button && watched ? button.getBoundingClientRect().top - watched.top : null,
+        });
         return (original as (...values: unknown[]) => void).apply(window, args);
       }) as typeof window.scrollBy;
     });
@@ -3269,11 +3285,6 @@ for (const anchoring of ["none", "default"] as const) {
         document.documentElement.style.overflowAnchor = value;
       }, anchoring);
     }
-    // What this browser does with the request: Safari ignores "auto" when it has no scroll anchoring.
-    const anchors = await page.evaluate(
-      () =>
-        CSS.supports("overflow-anchor", "auto") && getComputedStyle(document.documentElement).overflowAnchor !== "none",
-    );
     const card = page.locator("article#service-spotify");
     await card.locator("summary").click();
     await expect(card.locator("details")).toHaveAttribute("open", "");
@@ -3285,26 +3296,45 @@ for (const anchoring of ["none", "default"] as const) {
     await toggle.hover();
     // Let the hook see where the reader is.
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    await page.evaluate(() => {
-      (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.splice(0);
-    });
     const feed = page.locator('section[aria-labelledby="recent-heading"]');
     const height = () => feed.evaluate((element) => element.getBoundingClientRect().height);
     const topOf = () => toggle.evaluate((element) => element.getBoundingClientRect().top);
     const rows = await feed.locator("li").count();
     const heightBefore = await height();
     const topBefore = await topOf();
+    // Where the button was, for the scrolls to measure against, and none of the setup's own scrolls counted.
+    await page.evaluate((top) => {
+      const w = window as Window & { __scrolledBy?: unknown[]; __watched?: { top: number } };
+      w.__scrolledBy?.splice(0);
+      if (w.__watched) w.__watched.top = top;
+    }, topBefore);
     await page.clock.fastForward("03:00");
     await expect(feed.locator("li")).not.toHaveCount(rows);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     expect((await height()) - heightBefore).toBeGreaterThan(0);
-    const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy);
-    if (anchors) expect(scrolled).toEqual([]);
-    else expect(scrolled?.length).toBeGreaterThan(0);
-    // Where the browser anchors, it holds its own pick of the page, which on a phone's layout is not always the
-    // button under the pointer (a "Changed" tag going out between the two moves it); the wide layout is held.
-    if (!anchors || testInfo.project.name === "desktop") {
-      expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+    // The reader's side: the button is where it was.
+    expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+    // A few frames on, in case a second correction follows the first: it neither moves the button nor scrolls again.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+        ),
+    );
+    expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+    const scrolled = await page.evaluate(
+      () => (window as Window & { __scrolledBy?: { by: number; offset: number | null }[] }).__scrolledBy ?? [],
+    );
+    // Never twice, whatever the browser left.
+    expect(scrolled.length).toBeLessThanOrEqual(1);
+    // With the browser's anchoring off nothing of the change is held for the page: it has to scroll.
+    if (anchoring === "none") expect(scrolled).toHaveLength(1);
+    // Where it did scroll, it was by what the browser left the button away from its place, as far as the button
+    // is concerned, and not by more.
+    for (const { by, offset } of scrolled) {
+      expect(offset).not.toBeNull();
+      expect(Math.abs(by - (offset ?? Number.NaN))).toBeLessThanOrEqual(1);
+      expect(Math.abs(by)).toBeGreaterThan(0.5);
     }
   });
 }
