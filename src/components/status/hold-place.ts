@@ -97,15 +97,16 @@ function holdsOf(root: Element, anchor: Element): Held[] {
 /**
  * What a finger in a gap between cards is on: the element that holds the feed is under it, and it stays where it is
  * when a row comes in, so it holds nothing. The first thing below the finger is what the reader is about to read.
+ * When that is the feed itself (the gap above Recent changes), there is no card to hold: the container is returned
+ * and holds nothing, as it did before, and the section after the feed, which is further down, is not taken for it.
  */
-function below(container: Element, y: number): Element | null {
+export function below(container: Element, y: number): Element | null {
   for (const child of container.children) {
-    if (child.matches("[data-no-anchor]") || child.querySelector("[data-no-anchor]")) continue;
     const { top, height } = child.getBoundingClientRect();
     if (height <= 0 || top < y) continue;
     const style = getComputedStyle(child);
     if (style.position === "fixed" || style.position === "sticky") continue;
-    return child;
+    return child.matches("[data-no-anchor]") || child.querySelector("[data-no-anchor]") ? container : child;
   }
   return null;
 }
