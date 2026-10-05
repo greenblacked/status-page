@@ -1,9 +1,10 @@
 import { type RefObject, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { quietScroll } from "@/lib/status/dock";
 import { createMotionTracker, type MotionTracker } from "@/lib/status/page-motion";
+import { createReaderSpot, type Spot } from "@/lib/status/reader-spot";
 import { type Held, heldResidual } from "@/lib/status/scroll-residual";
 
-/** How long after a finger lifts the place it last touched still says what the reader is on. */
+/** How long after a finger lifts the place it last touched still says what the reader is on (see `createReaderSpot`). */
 const TOUCH_MEMORY_MS = 4_000;
 
 /** How soon the wait looks again after it has asked for the update, in case the page moved before it rendered. */
@@ -94,7 +95,7 @@ function holdsOf(root: Element, anchor: Element): Held[] {
 }
 
 /** What the reader is on: what the pointer is over (a finger down, a mouse in the page) until a key is pressed, then the focused element; else the first thing in view. */
-function pickAnchor(root: HTMLElement, pointer: { x: number; y: number } | null): Element | null {
+function pickAnchor(root: HTMLElement, pointer: Spot | null): Element | null {
   const under = pointer ? document.elementFromPoint(pointer.x, pointer.y) : null;
   if (holds(root, under)) return under;
   const focused = document.activeElement;
@@ -128,8 +129,7 @@ function pickAnchor(root: HTMLElement, pointer: { x: number; y: number } | null)
 export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T): { shown: T; hurry: () => void } {
   // What the reader was on when the update was accepted, and where it was in the window.
   const anchor = useRef<Held[] | null>(null);
-  const pointer = useRef<{ x: number; y: number } | null>(null);
-  const lastTouch = useRef<{ x: number; y: number; at: number } | null>(null);
+  const [input] = useState(() => createReaderSpot(() => performance.now(), TOUCH_MEMORY_MS));
   const hurriedUntil = useRef(Number.NEGATIVE_INFINITY);
   const [shown, setShown] = useState(latest);
   const [, again] = useReducer((count: number) => count + 1, 0);
@@ -138,9 +138,7 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
   const waiting = latest !== shown;
   if (waiting && (performance.now() < hurriedUntil.current || !motion().moving())) {
     const element = root.current;
-    const finger = lastTouch.current;
-    const at = pointer.current ?? (finger && performance.now() - finger.at < TOUCH_MEMORY_MS ? finger : null);
-    const picked = element ? pickAnchor(element, at) : null;
+    const picked = element ? pickAnchor(element, input.spot()) : null;
     anchor.current = element && picked ? holdsOf(element, picked) : null;
     setShown(latest);
   }
@@ -165,21 +163,26 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
     return () => clearTimeout(timer);
   }, [waiting]);
 
-  // Where the reader's attention is, kept for the moment the update lands: the pointer while it is in the page, the
-  // last place a finger touched for a few seconds after it lifted (a touch's pointer events end as soon as the
-  // browser takes the gesture for a scroll), and else the focused element or the first thing in view.
+  // Where the reader's attention is, kept for the moment the update lands: whichever of the mouse and the finger was
+  // the last to act (see `createReaderSpot`), and else the focused element or the first thing in view. A finger is
+  // heard from its touch events, and from the pointer events of a touch or a pen on the glass, which describe the same
+  // finger, until the browser takes the gesture for a scroll and ends them.
   useEffect(() => {
     const touch = (event: TouchEvent) => {
-      const first = event.touches[0];
-      if (first) lastTouch.current = { x: first.clientX, y: first.clientY, at: performance.now() };
+      // A finger that lifts is heard of too, so its memory runs from the lift, not from the touch of a long press.
+      const first = event.touches[0] ?? event.changedTouches[0];
+      if (first) input.touched(first.clientX, first.clientY);
     };
     const track = (event: PointerEvent) => {
-      pointer.current = { x: event.clientX, y: event.clientY };
+      if (event.pointerType === "touch") input.touched(event.clientX, event.clientY);
+      else input.pointed(event.clientX, event.clientY, event.type === "pointerdown");
     };
     const release = (event: Event) => {
-      if (event instanceof PointerEvent && event.pointerType === "mouse" && event.type === "pointerup") return;
-      pointer.current = null;
-      if (event.type === "keydown") lastTouch.current = null;
+      if (event.type === "keydown") return input.keyed();
+      // A mouse that is lifted is still over the page, and a finger that is lifted is remembered for a while.
+      const type = "pointerType" in event ? event.pointerType : "";
+      if (type === "touch" || (type === "mouse" && event.type === "pointerup")) return;
+      input.left();
     };
     document.addEventListener("keydown", release, { passive: true });
     document.addEventListener("pointerdown", track, { passive: true });
@@ -189,6 +192,8 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
     document.documentElement.addEventListener("pointerleave", release, { passive: true });
     document.addEventListener("touchstart", touch, { passive: true });
     document.addEventListener("touchmove", touch, { passive: true });
+    document.addEventListener("touchend", touch, { passive: true });
+    document.addEventListener("touchcancel", touch, { passive: true });
     return () => {
       document.removeEventListener("keydown", release);
       document.removeEventListener("pointerdown", track);
@@ -198,8 +203,10 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
       document.documentElement.removeEventListener("pointerleave", release);
       document.removeEventListener("touchstart", touch);
       document.removeEventListener("touchmove", touch);
+      document.removeEventListener("touchend", touch);
+      document.removeEventListener("touchcancel", touch);
     };
-  }, []);
+  }, [input]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs for a change of what is shown, which is what moves the board.
   useLayoutEffect(() => {
