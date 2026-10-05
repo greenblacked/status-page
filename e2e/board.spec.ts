@@ -11,6 +11,7 @@ import {
   MIKROTIK_NOTE,
   releaseLineIds,
 } from "./support/first-render";
+import { pinToSlot } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
 const SERVICES = 20;
@@ -235,31 +236,6 @@ async function awayFromRefetch(page: Page, seconds = 30): Promise<void> {
       { timeout: 90_000, intervals: [250] },
     )
     .toBeGreaterThanOrEqual(seconds);
-}
-
-/**
- * Moves the page's Date to 30 s into a two-minute slot, and lets it run on from there. The turn of a slot adds a row
- * to Recent changes, which grows the board body and makes the dock measure again (rightly); with the page 30 s in,
- * the next turn and the wall-clock refetch are 90 s or more away. Only Date moves. page.clock.install would do the
- * same, but it also replaces requestAnimationFrame with a timer that fires every 16 ms of clock time whether or not
- * the page has rendered: three of those "frames" can pass before the page has rendered once, and so before a resize
- * reaches it (the resize event is sent in a rendering update, ahead of the frame callbacks).
- */
-async function pinToSlot(page: Page): Promise<void> {
-  const offset = Math.floor(Date.now() / 120_000) * 120_000 + 30_000 - Date.now();
-  await page.addInitScript((shift) => {
-    const Native = Date;
-    let stopped: number | null = null;
-    const now = () => stopped ?? Native.now() + shift;
-    (window as Window & { __stopClock?: () => void }).__stopClock = () => {
-      stopped ??= now();
-    };
-    window.Date = new Proxy(Native, {
-      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [now()], newTarget),
-      apply: (target) => new target(now()).toString(),
-      get: (target, key) => (key === "now" ? now : Reflect.get(target, key, target)),
-    });
-  }, offset);
 }
 
 /**
@@ -4423,6 +4399,9 @@ test("keeps one Recent changes region, in place, through an empty search", async
  * turns the load's quiet check into a change row. A held request reads as a
  * slow network (the page keeps its board and shows no error), where aborting
  * it would show the error line.
+ *
+ * A test that counts the rows after a load pins the page's clock first (pinToSlot): the load's own check is the row
+ * of the slot the page is in, and a slot that turns while the page loads adds another.
  */
 async function savedChecks(page: Page): Promise<{ key: string; store: string }> {
   await page.goto("/");
@@ -4433,7 +4412,8 @@ async function savedChecks(page: Page): Promise<{ key: string; store: string }> 
     lastBoard: BoardSnapshot | null;
   };
   expect(first.lastBoard, "the page saved the board it showed").not.toBeNull();
-  const slot = Math.floor(Date.now() / 120_000) * 120_000;
+  // The slot by the page's clock, which a test can have pinned (pinToSlot) to well inside a slot.
+  const slot = await page.evaluate(() => Math.floor(Date.now() / 120_000) * 120_000);
   const counts = { operational: 10, degraded: 3, outage: 1, maintenance: 0, unknown: 0 };
   const aws = "Increased error rates and latency for API requests in US-EAST-1 affecting several services";
   const routerOs = "Elevated connection failures for some users; engineers are investigating a network issue";
@@ -4502,6 +4482,7 @@ async function holdBoardFetches(page: Page): Promise<() => Promise<void>> {
 
 test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
+  await pinToSlot(page);
   const saved = await savedChecks(page);
   await page.addInitScript((saved) => {
     localStorage.setItem(saved.key, saved.store);
@@ -4542,6 +4523,9 @@ for (const visit of [
   "a slot that turns while a finger is down",
 ] as const) {
   test(`is done moving the footer when the page says it has hydrated, on ${visit}`, async ({ page }) => {
+    // The page's clock is well inside a slot for every load of the test, so the rows come from what the test does
+    // (the visit, and the 130 s below) and never from the wall clock turning a slot while a page loads.
+    await pinToSlot(page);
     const releaseBoard = await holdBoardFetches(page);
     await page.goto("/");
     await hydrated(page);
@@ -4560,14 +4544,17 @@ for (const visit of [
     if (visit === "a first visit") {
       await page.evaluate(() => localStorage.clear());
     } else {
-      // The clock is two minutes on from the moment the feed's script ran, which saw the slot the page saved.
+      // The clock is two minutes on from the moment the feed's script ran, which saw the slot the page saved. It
+      // wraps the pinned Date (pinToSlot), whose `now` an assignment to Date.now would not replace.
       await page.addInitScript(() => {
-        const real = Date.now.bind(Date);
+        const pinned = Date;
         const ran = () =>
           document
             .querySelector<HTMLElement>('section[aria-labelledby="recent-heading"] .surface')
             ?.style.getPropertyValue("--feed-reserve");
-        Date.now = () => real() + (ran() ? 130_000 : 0);
+        window.Date = new Proxy(pinned, {
+          get: (target, key) => (key === "now" ? () => target.now() + (ran() ? 130_000 : 0) : Reflect.get(target, key)),
+        });
       });
     }
     if (visit === "a slot that turns while a finger is down") {
@@ -4629,6 +4616,7 @@ for (const fontPx of [16, 20]) {
       fontPx !== 16 && browserName !== "chromium",
       "the default font size is set over Chromium's DevTools protocol",
     );
+    await pinToSlot(page);
     const saved = await savedChecks(page);
     await page.addInitScript((saved) => localStorage.setItem(saved.key, saved.store), saved);
     if (fontPx !== 16) {

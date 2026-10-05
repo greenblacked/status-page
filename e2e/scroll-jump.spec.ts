@@ -1,6 +1,7 @@
 import type { CDPSession, Page, TestInfo } from "@playwright/test";
 import { SETTLE_MS } from "../src/lib/status/page-motion.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
+import { pinToSlot } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
 // What a reader of an iPhone sees as "the bar jumps while scrolling": the bar itself is fixed and never moves, the
@@ -796,7 +797,9 @@ test("floating bar: holds the card, once and not twice, with the browser's own s
 
 test("floating bar: Recent changes holds the height of its first row on a first visit", async ({ page }) => {
   // Nothing saved: the load's own check is the first row, and the card reserved for "Waiting for the first check."
-  // would grow by it a third of a second after hydration, pushing the whole board down.
+  // would grow by it a third of a second after hydration, pushing the whole board down. A slot that turns while the
+  // page loads would add a second row, so the page's clock is well inside a slot.
+  await pinToSlot(page);
   let release = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
