@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { expect } from "../test";
 
 /**
  * Moves the page's Date to 30 s into a two-minute slot, and lets it run on from there. The turn of a slot adds a row
@@ -29,4 +30,33 @@ export async function pinToSlot(page: Page): Promise<void> {
       get: (target, key) => (key === "now" ? now : Reflect.get(target, key, target)),
     });
   }, offset);
+}
+
+/**
+ * Stops the page's Date where it is, on a page that pinToSlot moved (timers and frames run on). Every text on the board
+ * that counts from now stands still once the page has drawn the stopped time, which it does on its next one-second
+ * tick (useNow), so this waits that tick out and two frames after it: a minute can turn between the last tick and the
+ * stop, and the tick after it would draw the new minute under whatever the caller starts watching. What stands still:
+ * the running time of an incident, the countdown, the ages. A test of the board's geometry or of its layout shifts
+ * is about what its own actions move, and a clock that crosses a minute under it moves text that has nothing to do
+ * with them. The e2e payloads make that likely and not rare: the dates of
+ * a canned payload are moved to the moment it is read, and several of its incidents began a whole number of hours
+ * before, so "since 14:05 UTC (3h)" reads "(3h 1m)", 23px wider, a minute after the board was built, wherever in a
+ * test that falls (Chromium counts it as a layout shift of 0.0004).
+ */
+export async function stopClock(page: Page): Promise<void> {
+  const stopped = await page.evaluate(() => {
+    const stop = (window as Window & { __stopClock?: () => void }).__stopClock;
+    stop?.();
+    return stop !== undefined;
+  });
+  expect(stopped, "the page's clock was pinned (pinToSlot) before it could be stopped").toBe(true);
+  // useNow redraws on a 1 s interval, whose next run is due within 1 s of now and so runs before this timer does;
+  // the frames let what it rendered be laid out and reported.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())), 1_100),
+      ),
+  );
 }
