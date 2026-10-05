@@ -968,8 +968,9 @@ test.describe("contrast", () => {
           // The most urgent card's "since" line sits at the brightest corner of a panel.
           await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
           await page.waitForTimeout(500);
-          // Stopped for the rest of the test: no turn of the slot and no refetch by the clock can land while the page
-          // is scrolled and photographed, however slow the run is. The click above is the one update it needs.
+          // Stopped for the rest of the test: the slot cannot turn, so no row is added and no "Changed" tag clears
+          // however slow the run is. A refetch by the clock can still fire, but it brings the same board into the same
+          // slot and changes nothing. The click above is the one update the test needs.
           await stopClock(page);
           // The click left the pointer on the Refresh button, and scrolling would bring other things under it:
           // hover brightens the chips and rows, which is not what is measured here.
