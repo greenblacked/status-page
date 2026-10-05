@@ -207,6 +207,13 @@ export function clampScroll(scrollY: number, maxScroll: number): number {
  * board's anchor moved by that much (`anchorMoved`), or the page's end did (`limit` against `lastLimit`: content
  * above the reader's place came or went). Travel under 1px is no move. All positions are held to the page, as
  * `revealFrame` holds its own, or an iOS overshoot would read as travel.
+ *
+ * A key typed into a search field changes the board, and so the page's height, and the browser then moves the page
+ * by part of that change (its scroll anchoring holds a card that may be one the search has just removed, which
+ * leaves `anchorMoved` nothing to read, and the content that went may lie below the reader's place as well as above
+ * it, so the travel is less than the end's). While the reader is `typing`, a move in the direction the page's end
+ * moved, by no more than it moved, is that change and not the reader's: a finger on the page at the same moment
+ * would have to scroll the same way by less than the change to be mistaken for it.
  */
 export function readerMoved({
   from,
@@ -215,6 +222,7 @@ export function readerMoved({
   lastLimit,
   anchorMoved = 0,
   quiet = false,
+  typing = false,
 }: {
   /** The position the last frame left the page at (clamped, as the memo keeps it). */
   from: number;
@@ -227,6 +235,8 @@ export function readerMoved({
   anchorMoved?: number;
   /** A scroll the page made itself is under way. */
   quiet?: boolean;
+  /** A key was typed into a search field a moment ago (`TYPING_MS`). */
+  typing?: boolean;
 }): boolean {
   const at = clampScroll(scrollY, limit);
   const travel = at - from;
@@ -234,8 +244,25 @@ export function readerMoved({
   if (from > limit + 0.5 && limit - at < 1.5) return false;
   if (Math.abs(anchorMoved) >= 1 && Math.abs(travel - anchorMoved) < 1.5) return false;
   const shift = limit - lastLimit;
-  return !(Math.abs(shift) >= 1 && Math.abs(travel - shift) < 1.5);
+  if (Math.abs(shift) >= 1 && Math.abs(travel - shift) < 1.5) return false;
+  return !(typing && Math.abs(shift) >= 1 && travel * shift > 0 && Math.abs(travel) <= Math.abs(shift));
 }
+
+/**
+ * Whether the hero's field, which the bar's field in use is about to give way to, is wholly clear of the bar: its top
+ * edge at or below the bar's bottom edge. `revealFrom` counts the hero's field as in view once only its bottom edge
+ * clears the bar, and a field handed the focus there is under the bar while it is typed in. Pure.
+ */
+export function heroFieldClear(heroTop: number, barBottom: number): boolean {
+  return heroTop >= barBottom - 0.5;
+}
+
+/**
+ * How long after a key typed into a search field the board's change from it can still be moving the page: the key's
+ * render, the layout of the next frame (where the browser moves the page) and the frame after it. Time, not frames,
+ * because no frame runs while nothing changes, and a scroll a long while after the last key is the reader's.
+ */
+export const TYPING_MS = 400;
 
 /** What `revealFrame` remembers from one frame to the next. */
 export type RevealMemo = {
