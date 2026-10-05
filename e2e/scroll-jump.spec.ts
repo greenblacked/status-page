@@ -336,6 +336,11 @@ class Scroller implements Reader {
   ) {}
   async down(y: number) {
     this.y = y;
+    // The engine's own mouse goes to the card, not only a pointermove made in the page: an engine reports the mouse
+    // again as the page scrolls (WebKit does, at wherever it last was, such as the Refresh button that was clicked
+    // to get here), so a mouse left elsewhere would be the newest thing the page heard of.
+    await this.page.mouse.move(this.x, y);
+    // And the same move made in the page, for an engine whose mouse does not reach it (touch emulation).
     await this.page.evaluate(
       ([x, y]) => {
         const target = document.elementFromPoint(x, y) ?? document.body;
@@ -351,6 +356,37 @@ class Scroller implements Reader {
     this.movedAt = this.swept.lastStepAt;
   }
   async up() {}
+}
+
+/**
+ * A mouse left near the right-hand edge of the board, as a click on Refresh leaves it, with no pointerup or
+ * pointerleave to say it went. WebKit reports it again as the page scrolls (a pointermove at the old place, after the
+ * finger's own pointer events are over), so it is made again on every scroll event here. It sits over a piece of the
+ * board that keeps its place when a row comes into Recent changes: one that comes before the row (a card above it,
+ * the "Needs a look" panel), as it did in WebKit. A page that takes the newest pointer it heard of for the reader,
+ * whatever the finger did, holds that piece and lets the card below the row drop. Returns where the mouse is.
+ */
+async function leaveMouseAtTheEdge(page: Page): Promise<string> {
+  const left = await page.evaluate(() => {
+    const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
+    const board = document.getElementById("services");
+    if (!feed || !board) return "";
+    const x = board.getBoundingClientRect().right - 12;
+    for (let y = 8; y < window.innerHeight; y += 8) {
+      const target = document.elementFromPoint(x, y);
+      if (!target || target === board || !board.contains(target) || target.contains(feed)) continue;
+      if (!(feed.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING)) continue;
+      const init = { pointerId: 1, pointerType: "mouse", isPrimary: true, clientX: x, clientY: y };
+      const move = () =>
+        target.dispatchEvent(new PointerEvent("pointermove", { ...init, bubbles: true, composed: true }));
+      move();
+      window.addEventListener("scroll", move, { passive: true });
+      return `${target.tagName} at ${Math.round(x)},${y}`;
+    }
+    return "";
+  });
+  expect(left, "a mouse can be left over a piece of the board that a new row does not move").not.toBe("");
+  return left;
 }
 
 /**
@@ -394,7 +430,11 @@ async function acrossTheTurn(
   page: Page,
   testInfo: TestInfo,
   makeReader: (viewport: { width: number; height: number }) => Promise<Reader> | Reader,
-  { touching, anchoring = "off" }: { touching: boolean; anchoring?: "off" | "claimed" | "native" },
+  {
+    touching,
+    anchoring = "off",
+    strayMouse = false,
+  }: { touching: boolean; anchoring?: "off" | "claimed" | "native"; strayMouse?: boolean },
 ): Promise<void> {
   test.setTimeout(90_000);
   await page.addInitScript(() => {
@@ -438,12 +478,19 @@ async function acrossTheTurn(
   // The reader is on a card below Recent changes.
   const viewport = page.viewportSize();
   if (!viewport) throw new Error("no viewport");
+  // With a mouse left over the board, the card is the first one after Recent changes, with the row and the board
+  // above it in view for the mouse to be over, as in WebKit's layout of the same page.
   await page.evaluate(
-    ([id, at]) => {
-      const el = document.getElementById(id as string);
-      if (el) window.scrollBy(0, el.getBoundingClientRect().top - (at as number));
+    ([id, at, first]) => {
+      const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
+      const next = first
+        ? [...document.querySelectorAll('article[id^="service-"]')].find(
+            (card) => feed && feed.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
+          )
+        : document.getElementById(id as string);
+      if (next) window.scrollBy(0, next.getBoundingClientRect().top - (at as number));
     },
-    ["service-spotify", viewport.height * 0.6],
+    ["service-spotify", viewport.height * (strayMouse ? 0.66 : 0.6), strayMouse],
   );
   const rows0 = await feedRows(page).count();
 
@@ -455,6 +502,7 @@ async function acrossTheTurn(
 
   const reader = await makeReader(viewport);
   await logFrames(page);
+  const stray = strayMouse ? await leaveMouseAtTheEdge(page) : "";
   await reader.down(viewport.height * 0.7);
   const downAt = await page.evaluate(() => Date.now());
   expect(await feedRows(page).count(), "the turn had not come when the reader started").toBe(rows0);
@@ -495,7 +543,7 @@ async function acrossTheTurn(
   const shape = reader instanceof SyntheticFinger ? `; events made as ${reader.shape}` : "";
   testInfo.annotations.push({
     type: "numbers",
-    description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows ${touching ? "while touching" : "during the scroll"} ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after ${touching ? "the lift" : "the last scroll"}${shape}${gaps}`,
+    description: `${card}: ${stray ? `mouse left on ${stray}; ` : ""}${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows ${touching ? "while touching" : "during the scroll"} ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after ${touching ? "the lift" : "the last scroll"}${shape}${gaps}`,
   });
   console.log(testInfo.annotations.at(-1)?.description);
   // The frames around the landing are printed when asked for, and whenever the card jumped, so a run that fails says where.
@@ -598,6 +646,20 @@ test("floating bar: the board does not shift under a page that scrolls across th
 }, testInfo) => {
   test.skip(!hasTouch, "the scrolling of a phone or a tablet, which a finger is not the only way to do");
   await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.width / 2), { touching: false });
+});
+
+test("floating bar: holds the card under the finger, not a mouse that was left over the board above it", async ({
+  page,
+  hasTouch,
+}, testInfo) => {
+  test.skip(!hasTouch, "a finger is a touch project's");
+  // As on an iPad or iPhone in WebKit after a click on Refresh: the mouse is still at the top right, and is reported
+  // again as the page scrolls, after the finger's last touch. The finger is where the reader is, and the card under
+  // it must stay put; a page that held what the mouse is over (the top of the board) would let it drop by a row.
+  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+    touching: true,
+    strayMouse: true,
+  });
 });
 
 test("floating bar: holds the card when the browser does not anchor scroll although it says it supports it", async ({
