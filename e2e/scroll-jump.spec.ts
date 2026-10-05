@@ -160,6 +160,12 @@ type Sweep = {
   probed?: boolean;
 };
 
+/** The px of a step of the sweep, and the steps it runs one way before it turns (see `sweep`). */
+const SWEEP_STEP = 3;
+const SWEEP_RUN = 30;
+/** How far, in px, the sweep takes the page from where it began, either way: the page is never further than this. */
+const SWEEP_REACH = SWEEP_STEP * SWEEP_RUN;
+
 /**
  * The whole gesture, driven from inside the page: one step of `STEP` px on every animation frame, alternating
  * `RUN` steps one way and `RUN` the other, for `ms`. Steps driven from the test process (a round trip and a pause
@@ -183,10 +189,8 @@ async function sweep(
   { ms, finger, y, flick }: { ms: number; finger: boolean; y: number; flick?: { glide: number; x: number } },
 ): Promise<Sweep> {
   return page.evaluate(
-    ({ ms, finger, y, flick }) =>
+    ({ ms, finger, y, flick, STEP, RUN }) =>
       new Promise<Sweep>((resolve) => {
-        const STEP = 3;
-        const RUN = 30;
         const tracked = window as Window & {
           __reader?: number;
           __pad?: { fire: (type: string, y: number, live: boolean) => string };
@@ -289,7 +293,7 @@ async function sweep(
         };
         requestAnimationFrame(frame);
       }),
-    { ms, finger, y, flick },
+    { ms, finger, y, flick, STEP: SWEEP_STEP, RUN: SWEEP_RUN },
   );
 }
 
@@ -488,31 +492,91 @@ class Scroller implements Reader {
 type MousePlace = { x: number; y: number; piece: string };
 
 /**
+ * How far down the window the floating bar can reach, in px, and a slide's worth more. Below 64rem the bar is fixed
+ * at the top of the window, and its Refresh button is the rightmost thing in it, where a mouse place is. A bar that
+ * is hidden does not take a pointer, a bar that is up does, and one that is sliding in (it rises 8 px) is where it
+ * is only part way. So the top of the window, as far down as the bar's lowest pose (from its layout, as a transform
+ * does not move it, and from where it is now) and 8 px more, is out for a place: one there is over the board only at
+ * the instant it was found, as the rounded corner of the bar and the Refresh button's leave the point uncovered by a
+ * pixel.
+ */
+async function barClearance(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+    const box = bar?.getBoundingClientRect();
+    const style = bar ? getComputedStyle(bar) : null;
+    const fixed = style?.position === "fixed" ? Number.parseFloat(style.top) + (box?.height ?? 0) : 0;
+    return Math.max(box?.bottom ?? 0, fixed) + 8;
+  });
+}
+
+/** What is left above Recent changes, past the bar and the sweep's reach, for the search to try a few places in: px. */
+const ROOM_ABOVE_FEED = 24;
+
+/**
+ * For a mouse over the board, the card the reader is on is the first one after Recent changes, with the row and a
+ * stretch of the board above it in view for the mouse to be over, as in WebKit's layout of the same page. The page
+ * is first put where the card is `at` px from the top of the window. On a short screen that leaves the row too close
+ * to the top (an iPhone 17 Pro's 681 px puts it 141 px down, with 64 px of the bar and 90 px of the sweep to fit
+ * above it), so the page then goes back by what is missing: the place is clear of the bar, which cannot move, and the
+ * room is made for it by the page. Returns the top of that card, for the finger to be put on it.
+ */
+async function showBoardAboveFeed(page: Page, cardAt: number): Promise<number> {
+  const clear = await barClearance(page);
+  return page.evaluate(
+    ([cardAt, clear, reach, margin]) => {
+      const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
+      const card = [...document.querySelectorAll('article[id^="service-"]')].find(
+        (c) => feed && feed.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+      if (!feed || !card) return Number.NaN;
+      window.scrollBy(0, card.getBoundingClientRect().top - cardAt);
+      const missing = clear + reach + margin - feed.getBoundingClientRect().top;
+      if (missing > 0) window.scrollBy(0, -missing);
+      return card.getBoundingClientRect().top;
+    },
+    [cardAt, clear, SWEEP_REACH, ROOM_ABOVE_FEED] as const,
+  );
+}
+
+/**
  * A place near the right-hand edge of the board, over a piece that keeps its place when a row comes into Recent
  * changes: one that comes before the row (a card above it, the "Needs a look" panel), as it did in WebKit. A page
  * that takes the newest pointer it heard of for the reader, whatever the finger did, holds that piece and lets the
  * card below the row drop. The piece is marked `data-mouse-piece`, for the frames to follow.
+ *
+ * The place is fixed in the window while the page is not, so it has to stay over such a piece wherever the sweep
+ * takes the page and whatever the floating bar is doing:
+ * - clear of the bar (`barClearance`).
+ * - and far enough above the row for the sweep's reach (`SWEEP_REACH`). The sweep only takes the content up from
+ *   where it began, so what is at the place later is what was further down then, up to a reach, and the row is what
+ *   must not get there. What is above the place does not matter: the board's top is not a bound.
  */
 async function findMousePlace(page: Page): Promise<MousePlace> {
-  const place = await page.evaluate(() => {
-    const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
-    const board = document.getElementById("services");
-    if (!feed || !board) return null;
-    const x = board.getBoundingClientRect().right - 12;
-    // What a mouse can be left over (kept for `watchMouseArrival`, which asks it of whatever is under the mouse then).
-    const isPiece = (target: Element | null): boolean => {
-      if (!target || target === board || !board.contains(target) || target.contains(feed)) return false;
-      return Boolean(feed.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING);
-    };
-    (window as Window & { __isPiece?: typeof isPiece }).__isPiece = isPiece;
-    for (let y = 8; y < window.innerHeight; y += 8) {
-      const target = document.elementFromPoint(x, y);
-      if (!target || !isPiece(target)) continue;
-      target.setAttribute("data-mouse-piece", "");
-      return { x, y, piece: `${target.tagName} at ${Math.round(x)},${y}` };
-    }
-    return null;
-  });
+  const clear = await barClearance(page);
+  const place = await page.evaluate(
+    ([clear, reach]) => {
+      const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
+      const board = document.getElementById("services");
+      if (!feed || !board) return null;
+      const x = board.getBoundingClientRect().right - 12;
+      // What a mouse can be left over (kept for `watchMouseArrival`, which asks it of whatever is under the mouse then).
+      const isPiece = (target: Element | null): boolean => {
+        if (!target || target === board || !board.contains(target) || target.contains(feed)) return false;
+        return Boolean(feed.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING);
+      };
+      (window as Window & { __isPiece?: typeof isPiece }).__isPiece = isPiece;
+      const to = Math.min(feed.getBoundingClientRect().top - reach, window.innerHeight);
+      for (let y = Math.ceil(clear / 8) * 8; y < to; y += 8) {
+        const target = document.elementFromPoint(x, y);
+        if (!target || !isPiece(target)) continue;
+        target.setAttribute("data-mouse-piece", "");
+        return { x, y, piece: `${target.tagName} at ${Math.round(x)},${y}` };
+      }
+      return null;
+    },
+    [clear, SWEEP_REACH] as const,
+  );
   expect(place, "a mouse can be left over a piece of the board that a new row does not move").not.toBeNull();
   return place as MousePlace;
 }
@@ -826,20 +890,23 @@ async function acrossTheTurn(
   const viewport = page.viewportSize();
   if (!viewport) throw new Error("no viewport");
   // With a mouse over the board, the card is the first one after Recent changes, with the row and the board
-  // above it in view for the mouse to be over, as in WebKit's layout of the same page.
+  // above it in view for the mouse to be over (see `showBoardAboveFeed`).
   const overBoard = strayMouse || mouseMoves;
-  await page.evaluate(
-    ([id, at, first]) => {
-      const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
-      const next = first
-        ? [...document.querySelectorAll('article[id^="service-"]')].find(
-            (card) => feed && feed.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
-          )
-        : document.getElementById(id as string);
-      if (next) window.scrollBy(0, next.getBoundingClientRect().top - (at as number));
-    },
-    ["service-spotify", viewport.height * (overBoard ? 0.66 : 0.6), overBoard],
-  );
+  let readerAt = viewport.height * 0.7;
+  if (overBoard) {
+    const cardTop = await showBoardAboveFeed(page, viewport.height * 0.66);
+    // The finger is on the card, a little way in, wherever the room above the row put it.
+    readerAt = Math.max(readerAt, cardTop + 24);
+    expect(readerAt, "the reader's card is on screen under the finger").toBeLessThan(viewport.height - 8);
+  } else {
+    await page.evaluate(
+      ([id, at]) => {
+        const next = document.getElementById(id as string);
+        if (next) window.scrollBy(0, next.getBoundingClientRect().top - (at as number));
+      },
+      ["service-spotify", viewport.height * 0.6],
+    );
+  }
   const rows0 = await feedRows(page).count();
 
   // Two and a half seconds before the board's check at the turn of a slot.
@@ -866,7 +933,7 @@ async function acrossTheTurn(
   if (place && strayMouse) await leaveMouse(page, place, { fake: fakeMove });
   if (place && mouseMoves) await watchMouseArrival(page, place, rows0);
   const stray = strayMouse && place ? place.piece : "";
-  await reader.down(viewport.height * 0.7);
+  await reader.down(readerAt);
   const downAt = await page.evaluate(() => Date.now());
   expect(await feedRows(page).count(), "the turn had not come when the reader started").toBe(rows0);
   // About four and a half seconds of dragging, up and down so the card stays on screen, across the turn.
