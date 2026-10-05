@@ -528,7 +528,7 @@ async function acrossTheTurn(
   // Where the gesture ends, in the page's clock: the lift of a finger, else the last scroll step.
   const liftedAt = touching ? await page.evaluate(() => performance.now()) : (reader.movedAt ?? Number.NaN);
   // The card the reader is on as the gesture ends: the one they are looking at.
-  const card = await page.evaluate(
+  let card = await page.evaluate(
     ([x, y]) => document.elementFromPoint(x, y)?.closest('article[id^="service-"]')?.id ?? "",
     [viewport.width / 2, reader.at],
   );
@@ -538,6 +538,19 @@ async function acrossTheTurn(
   // reported again as it scrolls, now that the finger's own events are over, and must not be taken for the reader.
   if (glide > 0 && reader instanceof SyntheticFinger) await reader.lift(glide);
   else await reader.up();
+  if (glide > 0) {
+    // The page moved under the finger as it glided, which may leave it in the space between two cards: the reader is
+    // then on the card below it, which the page holds (a finger at the same place on screen is on new ground).
+    card = await page.evaluate(
+      ([x, y]) =>
+        (
+          document.elementFromPoint(x, y)?.closest('article[id^="service-"]') ??
+          [...document.querySelectorAll('article[id^="service-"]')].find((c) => c.getBoundingClientRect().top >= y)
+        )?.id ?? "",
+      [viewport.width / 2, reader.at],
+    );
+    expect(card, "the reader is on a card after the glide").not.toBe("");
+  }
   // The turn of the slot fell inside the gesture: without it the test would hold nothing back.
   const turnAt = (Math.floor(downAt / SLOT_MS) + 1) * SLOT_MS;
   expect(upAt, "the reader was still moving the page at the turn of the slot").toBeGreaterThanOrEqual(turnAt);
