@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Outlet, Scripts, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { ThemeSync } from "@/components/status/use-theme";
 import { ALERTS_BOOT_SCRIPT } from "@/lib/status/alerts-support";
 import { APPEARANCE_BOOT_SCRIPT } from "@/lib/status/background";
 import { APP_NAME } from "@/lib/status/catalog";
 import { CANONICAL_URL, OG_IMAGE, SITE_DESCRIPTION } from "@/lib/status/site-meta";
+import { THEME_BOOT_SCRIPT, THEME_COLORS } from "@/lib/theme";
 import appleCss from "../apple.css?url";
 import appCss from "../styles.css?url";
 
@@ -23,8 +25,8 @@ function RootDocument() {
 
   return (
     // suppressHydrationWarning, <html> only: the boot scripts (below) may add
-    // data-reduce-transparency, data-background and data-alerts to this element
-    // before React hydrates it, which the server could not know about.
+    // data-theme, data-reduce-transparency, data-background and data-alerts to
+    // this element before React hydrates it, which the server could not know about.
     <html lang="en" className="antialiased" suppressHydrationWarning>
       <head>
         <HeadContent />
@@ -43,19 +45,31 @@ function RootDocument() {
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant of ours, built from no input. */}
         <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: ALERTS_BOOT_SCRIPT }} />
         {/*
-          One theme-color per appearance, matching --color-bg. Written here
-          because head() keeps a single meta per name. Safari 26 tints its
-          toolbars from the page background instead, but a Home Screen
-          app's status bar and other browsers still read these.
-          public/manifest.webmanifest has only one theme and background
-          colour, and no way to vary them by appearance, so it uses the
-          dark pair: that matches the icon, and is what a launch screen
-          built from the manifest shows before the page paints.
+          One theme-color per appearance, matching --color-bg: what a page
+          whose scripts did not run answers with, by the system's appearance.
+          Written here because head() keeps a single meta per name. They are
+          left as rendered: React matches them by their content when it
+          hydrates, so the theme boot script (below) does not rewrite them but
+          puts a meta of its own ahead of them, with the colour of the theme in
+          effect, and the day/night switch keeps that one current (applyTheme
+          in src/lib/theme.ts). Safari 26 tints its toolbars from the page
+          background instead, but a Home Screen app's status bar and other
+          browsers still read these. public/manifest.webmanifest has only one
+          theme and background colour, and no way to vary them by appearance,
+          so it uses the dark pair: that matches the icon, and is what a launch
+          screen built from the manifest shows before the page paints.
         */}
-        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1eb" />
-        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000" />
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content={THEME_COLORS.day} />
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content={THEME_COLORS.night} />
+        {/*
+          Sets data-theme on <html> and the theme-color before the first
+          paint. Stamped by hand with the nonce, like the two above.
+        */}
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant of ours, built from no input. */}
+        <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
       </head>
       <body className="bg-bg font-sans text-fg">
+        <ThemeSync />
         <QueryClientProvider client={queryClient}>
           <Outlet />
         </QueryClientProvider>

@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { ALERTS_UNSUPPORTED_ATTRIBUTE } from "../src/lib/status/alerts-support.ts";
 import { BACKGROUND_STORAGE_KEY } from "../src/lib/status/background.ts";
+import { THEME_BOOT_SCRIPT } from "../src/lib/theme.ts";
 import { expect, test } from "./test";
 
 // The Content-Security-Policy runs a script only by the nonce of its own response (src/lib/security-headers.ts),
@@ -100,16 +101,17 @@ test("content security policy: runs each boot script once and adds no script aft
   await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
   await page.waitForLoadState("networkidle");
   const copies = await page.evaluate(
-    ({ appearance, alerts }) => {
+    ({ appearance, alerts, theme }) => {
       const inline = [...document.head.querySelectorAll("script:not([src])")].map((el) => el.textContent ?? "");
       return {
         appearance: inline.filter((text) => text.includes(appearance)).length,
         alerts: inline.filter((text) => text.includes(alerts)).length,
+        theme: inline.filter((text) => text === theme).length,
       };
     },
-    { appearance: BACKGROUND_STORAGE_KEY, alerts: ALERTS_UNSUPPORTED_ATTRIBUTE },
+    { appearance: BACKGROUND_STORAGE_KEY, alerts: ALERTS_UNSUPPORTED_ATTRIBUTE, theme: THEME_BOOT_SCRIPT },
   );
-  expect(copies).toEqual({ appearance: 1, alerts: 1 });
+  expect(copies).toEqual({ appearance: 1, alerts: 1, theme: 1 });
 });
 
 test("content security policy: search, settings, Details and Refresh all work under it", async ({ page }) => {
