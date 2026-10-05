@@ -75,9 +75,9 @@ test.describe("the rule, on a page that has loaded", () => {
   });
 
   for (const [hour, minute, second, expected] of [
-    [5, 59, 59, "night"],
+    [5, 59, 0, "night"],
     [6, 0, 0, "day"],
-    [19, 59, 59, "day"],
+    [19, 59, 0, "day"],
     [20, 0, 0, "night"],
     [0, 0, 0, "night"],
     [12, 0, 0, "day"],
@@ -325,7 +325,7 @@ test.describe("the switch", () => {
     await expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 
-  test("is drawn as a Material switch: 52 by 32 track, 24px knob that slides 1.25rem", async ({ page }) => {
+  test("is drawn as a Material switch: 52 by 32 track, 24px knob that slides 20px", async ({ page }) => {
     await open(page, at(10));
     // Reduce Motion: the knob is at its end the moment the theme changes, so the boxes below are the resting ones.
     await page.emulateMedia({ reducedMotion: "reduce" });

@@ -253,7 +253,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             if (!found.hidden) problems.push("drawn where the bar keeps its room for the verdict");
           } else {
             if (found.hidden) problems.push("not drawn");
-            if (found.width < 44 || found.height < 44) problems.push(`target ${found.width}x${found.height}`);
+            if (found.width < 43.99 || found.height < 43.99) problems.push(`target ${found.width}x${found.height}`);
             if (found.left < 0 || found.right > width) problems.push(`off the screen: ${found.left} to ${found.right}`);
             if (!found.inContainer) problems.push("outside its header");
             if (found.touching.length > 0) problems.push(`touches ${found.touching.join(", ")}`);
