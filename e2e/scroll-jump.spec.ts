@@ -35,12 +35,17 @@ async function logFrames(page: Page): Promise<void> {
       if (!tracked.__logging) return;
       tracked.__frames?.push({
         t: performance.now(),
-        tops: Object.fromEntries(
-          Array.from(document.querySelectorAll('article[id^="service-"]'), (card) => [
+        tops: Object.fromEntries([
+          ...Array.from(document.querySelectorAll('article[id^="service-"]'), (card) => [
             card.id,
             card.getBoundingClientRect().top,
           ]),
-        ),
+          // What the reader is looking at, where a test marks it (see the glide in `acrossTheTurn`).
+          ...Array.from(document.querySelectorAll("[data-probe]"), (probe) => [
+            "probe",
+            probe.getBoundingClientRect().top,
+          ]),
+        ]),
         y: window.scrollY,
         rows: rows(),
         by: tracked.__by ?? 0,
@@ -539,17 +544,21 @@ async function acrossTheTurn(
   if (glide > 0 && reader instanceof SyntheticFinger) await reader.lift(glide);
   else await reader.up();
   if (glide > 0) {
-    // The page moved under the finger as it glided, which may leave it in the space between two cards: the reader is
-    // then on the card below it, which the page holds (a finger at the same place on screen is on new ground).
-    card = await page.evaluate(
-      ([x, y]) =>
-        (
-          document.elementFromPoint(x, y)?.closest('article[id^="service-"]') ??
-          [...document.querySelectorAll('article[id^="service-"]')].find((c) => c.getBoundingClientRect().top >= y)
-        )?.id ?? "",
+    // The page moved under the finger as it glided. What the reader is on now is what is under it, which the page
+    // holds, and not the card it began on: a tag cleared higher up in the same card moves the card's top, not that.
+    // Between two cards it is on the one below. The frames follow it as "probe".
+    const marked = await page.evaluate(
+      ([x, y]) => {
+        const under = document.elementFromPoint(x, y);
+        const cards = [...document.querySelectorAll('article[id^="service-"]')];
+        const probe = under?.closest("article") ? under : cards.find((c) => c.getBoundingClientRect().top >= y);
+        probe?.setAttribute("data-probe", "");
+        return Boolean(probe);
+      },
       [viewport.width / 2, reader.at],
     );
-    expect(card, "the reader is on a card after the glide").not.toBe("");
+    expect(marked, "the reader is on something after the glide").toBe(true);
+    card = "probe";
   }
   // The turn of the slot fell inside the gesture: without it the test would hold nothing back.
   const turnAt = (Math.floor(downAt / SLOT_MS) + 1) * SLOT_MS;
