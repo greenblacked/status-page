@@ -208,6 +208,82 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await expectNone(page, testInfo, "Details open", (await read()).small);
       });
 
+      test("keeps the day/night switch in reach: 44pt, on the screen and clear of the other controls, in day and night", async ({
+        page,
+      }, testInfo) => {
+        test.slow();
+        await openBoard(page, background, { steady: true });
+        const { width } = viewportOf(page);
+        const room = (selector: string) =>
+          page.evaluate((query) => {
+            const toggle = document.querySelector(query) as HTMLElement | null;
+            if (!toggle) return { missing: true as const };
+            const box = toggle.getBoundingClientRect();
+            const container = toggle.closest("header, section[aria-label='Board controls']") as HTMLElement;
+            const inside = container.getBoundingClientRect();
+            const others = [...container.querySelectorAll("button, [data-bar-lead], .bar-search, header > div > p")]
+              .filter((other) => other !== toggle && !toggle.contains(other) && !other.closest("[data-theme-switch]"))
+              .map((other) => ({
+                name: other.getAttribute("aria-label") ?? other.className,
+                box: other.getBoundingClientRect(),
+              }))
+              .filter((other) => other.box.width > 1 && other.box.height > 1);
+            return {
+              missing: false as const,
+              hidden: getComputedStyle(toggle).display === "none",
+              width: box.width,
+              height: box.height,
+              left: box.left,
+              right: box.right,
+              inContainer: box.left >= inside.left - 0.5 && box.right <= inside.right + 0.5,
+              touching: others
+                .filter(
+                  (other) =>
+                    Math.min(box.right, other.box.right) - Math.max(box.left, other.box.left) > 1 &&
+                    Math.min(box.bottom, other.box.bottom) - Math.max(box.top, other.box.top) > 1,
+                )
+                .map((other) => other.name),
+            };
+          }, selector);
+        const checked = async (where: string, selector: string, wantHidden: boolean) => {
+          const found = await room(selector);
+          const problems: string[] = [];
+          if (found.missing) problems.push("the switch is not in the page");
+          else if (wantHidden) {
+            if (!found.hidden) problems.push("drawn where the bar keeps its room for the verdict");
+          } else {
+            if (found.hidden) problems.push("not drawn");
+            if (found.width < 44 || found.height < 44) problems.push(`target ${found.width}x${found.height}`);
+            if (found.left < 0 || found.right > width) problems.push(`off the screen: ${found.left} to ${found.right}`);
+            if (!found.inContainer) problems.push("outside its header");
+            if (found.touching.length > 0) problems.push(`touches ${found.touching.join(", ")}`);
+          }
+          await expectNone(page, testInfo, `${where}: ${selector}`, problems);
+        };
+        // The bar draws its copy from 640px; below that the verdict has the room.
+        const barDrawsIt = await page.evaluate(() => matchMedia("(min-width: 40rem)").matches);
+        for (const theme of ["day", "night"] as const) {
+          if ((await page.evaluate(() => document.documentElement.getAttribute("data-theme"))) !== theme)
+            await page.locator("header [data-theme-switch]").click();
+          await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+          await scrollAndSettle(page, 0);
+          await checked(`${theme}, hero`, "header [data-theme-switch]", false);
+          const top = await auditNow(page);
+          await expectNone(page, testInfo, `${theme}, top: sideways`, top.overflow);
+          await expectNone(page, testInfo, `${theme}, top: overlap`, top.overlap);
+
+          const fieldBottom = await page
+            .locator(".search-dock")
+            .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
+          await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+          await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+          await checked(`${theme}, bar`, "section[aria-label='Board controls'] [data-theme-switch]", !barDrawsIt);
+          const down = await auditNow(page);
+          await expectNone(page, testInfo, `${theme}, bar: sideways`, down.overflow);
+          await expectNone(page, testInfo, `${theme}, bar: overlap`, down.overlap);
+        }
+      });
+
       test("shows the floating bar with the hero gone, reveals its field on a scroll up and takes it back on a scroll down", async ({
         page,
       }, testInfo) => {
