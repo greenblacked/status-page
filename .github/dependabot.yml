@@ -55,7 +55,7 @@ updates:
   # Node major is a decision made by hand with engines and .nvmrc.
   - package-ecosystem: docker
     directory: /
-    target-branch: stage
+    target-branch: dev
     schedule:
       interval: weekly
     cooldown:
