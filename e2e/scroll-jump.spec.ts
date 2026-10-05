@@ -61,7 +61,7 @@ async function stopLogging(page: Page): Promise<Frame[]> {
 }
 
 /**
- * Something that moves the page the way a reader does. `down`, `dragBy` and `up` are a finger's: the page moves with
+ * Something that moves the page the way a reader does. `down`, `gesture` and `up` are a finger's: the page moves with
  * it, so the card under it stays under it. `at` is where, on the screen, the reader's attention is.
  */
 interface Reader {
