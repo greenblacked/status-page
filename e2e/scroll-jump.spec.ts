@@ -810,6 +810,17 @@ async function acrossTheTurn(
     }
   }
 
+  // A flick's update lands once the glide is over. One that landed in the middle of it, with the page left still for
+  // as long as the board waits, is the machine stalling (the glide is a step a frame, and the card the reader is on is
+  // only marked when it is over), and is reported as that.
+  if (flicked && landed && landed.t < liftedAt + glide) {
+    const longestGap = reader.swept?.longestGap ?? 0;
+    expect(
+      longestGap,
+      `the machine stalled: the update landed ${Math.round(liftedAt + glide - landed.t)} ms before the glide was over, after ${longestGap.toFixed(0)} ms between two scroll events, longer than the ${SETTLE_MS} ms the board waits for a page to be still`,
+    ).toBeLessThan(SETTLE_MS);
+  }
+
   // With no finger, a row that came in during the gesture is the board's fault only if the page was left still: a gap between two
   // scroll events as long as the board's wait, with the row coming in once that wait was up and before the gap ended (a frame of
   // slack for the frame that saw it), is the machine stalling, and is reported as that. Any other early row is a failure as it is.
