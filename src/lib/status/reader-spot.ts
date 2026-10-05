@@ -1,14 +1,38 @@
 /** A place in the window, in px from its top left. */
 export type Spot = { x: number; y: number };
 
+/** Whether two places are a pixel or more apart, either way (less is a browser's fraction of difference). */
+const apart = (a: Spot, b: Spot) => Math.abs(a.x - b.x) >= 1 || Math.abs(a.y - b.y) >= 1;
+
+/** What a mouse report says about the mouse itself, besides where in the window it is (all read off the event). */
+export type MouseReport = {
+  /** A press: the reader did something, wherever the mouse is. */
+  pressed?: boolean;
+  /** Where the mouse is on the screen (`screenX`, `screenY`). Scrolling the page under a mouse does not change it. */
+  screen?: Spot;
+  /** How far the mouse moved since the last report of it (`movementX`, `movementY`): 0 for a report with no move. */
+  movement?: Spot;
+};
+
 /**
  * Where the reader is on the page, from the last thing they did with a finger or a mouse. The two are told apart by
  * which came last: a finger down or moving takes the place of a mouse that was left somewhere (a touch screen with a
  * trackpad, or a browser that never says its mouse has gone), and a mouse that moves afterwards takes it back.
  *
- * A browser may also report a mouse again with no move of it: WebKit sends a pointermove at the mouse's old place
- * each time the page scrolls. That says nothing new, so a move to the place the mouse was last seen at is not taken
- * for the reader doing something, or a mouse left in a corner would win over the finger on every scroll.
+ * A browser may also report a mouse again with no move of it: WebKit sends a pointermove and a mousemove at the
+ * mouse's place each time the page scrolls or lays out again, to update what is hovered (a finger's scroll is no
+ * move of a trackpad's cursor). That says nothing new, so it is not taken for the reader doing something, or a mouse
+ * left in a corner would win over the finger on every scroll. Two things tell a move, and either one is enough: the
+ * event says it moved (`movement` is not 0), or the mouse is at another place on the screen than at its last
+ * report. The window place alone is not told by: a repeat is a guess at "the same place as before, give or take a
+ * fraction of a pixel" (kept for a browser that tells neither of the two above), and it is wrong whenever the page
+ * did not see the place the mouse is really at (a mouse clicked before the page listened, or one left from an
+ * earlier page): the browser reports the cursor where it is, not where the page last saw it.
+ *
+ * The first report of a mouse on a page has no earlier place to compare with, so it counts only if it says it moved
+ * or is a press. A real mouse that comes in sends another report a few ms later, which does count; a lone report
+ * that says nothing is the browser's own, and taking it would let a cursor that never moved win over the finger the
+ * first time the page scrolls.
  *
  * `memoryMs` is how long a finger that has lifted still says where the reader is (its pointer events end as soon as
  * the browser takes the gesture for a scroll, and the update comes a moment after); a mouse is where it was until it
@@ -18,12 +42,24 @@ export function createReaderSpot(now: () => number, memoryMs: number) {
   let mouse: Spot | null = null;
   // Where the mouse was last seen, kept when `mouse` is cleared by a finger or a key, to know a repeat of it.
   let seen: Spot | null = null;
+  // Where the mouse was last on the screen, from the last report of it, whatever became of that report.
+  let lastScreen: Spot | null = null;
   let finger: (Spot & { at: number }) | null = null;
   return {
-    /** The mouse (or a pen above the glass) moved or pressed to here. */
-    pointed(x: number, y: number, pressed = false) {
-      // Within a pixel, for a browser that reports the same place with a fraction of difference.
-      if (!pressed && seen && Math.abs(seen.x - x) < 1 && Math.abs(seen.y - y) < 1) return;
+    /** The mouse (or a pen above the glass) moved or pressed to here, with what the event says of it (see above). */
+    pointed(x: number, y: number, { pressed = false, screen, movement }: MouseReport = {}) {
+      // The screen place is kept for every report, those that are not taken too: it is what the next is compared with.
+      const before = lastScreen;
+      if (screen) lastScreen = screen;
+      if (!pressed) {
+        // Within a pixel, for a browser that reports the same place with a fraction of difference.
+        if (seen && !apart(seen, { x, y })) return;
+        if (screen || movement) {
+          const said = movement !== undefined && (movement.x !== 0 || movement.y !== 0);
+          const went = screen !== undefined && before !== null && apart(before, screen);
+          if (!said && !went) return;
+        }
+      }
       seen = { x, y };
       mouse = { x, y };
     },
