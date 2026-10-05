@@ -66,4 +66,11 @@ describe("a push to dev runs the checks a pull request into stage runs", () => {
     expect(read(".github/workflows/pr-title.yml")).not.toMatch(/^ {2}push:/m);
     expect(read(".github/workflows/ci-triage.yml")).toMatch(/if: github\.event\.workflow_run\.event == 'pull_request'/);
   });
+
+  it("documents the PR-only title and branch name checks consistently in CONTRIBUTING.md", () => {
+    const contributing = read("CONTRIBUTING.md");
+    expect(contributing).not.toMatch(/Only the pull request title check has no push form/);
+    expect(contributing).toMatch(/all of CI except the branch name check/);
+    expect(contributing).toMatch(/title and branch name checks have no push form/);
+  });
 });
