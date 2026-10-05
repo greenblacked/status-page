@@ -160,6 +160,12 @@ type Sweep = {
   probed?: boolean;
 };
 
+/** The px of a step of the sweep, and the steps it runs one way before it turns (see `sweep`). */
+const SWEEP_STEP = 3;
+const SWEEP_RUN = 30;
+/** How far, in px, the sweep takes the page from where it began, either way: the page is never further than this. */
+const SWEEP_REACH = SWEEP_STEP * SWEEP_RUN;
+
 /**
  * The whole gesture, driven from inside the page: one step of `STEP` px on every animation frame, alternating
  * `RUN` steps one way and `RUN` the other, for `ms`. Steps driven from the test process (a round trip and a pause
@@ -183,10 +189,8 @@ async function sweep(
   { ms, finger, y, flick }: { ms: number; finger: boolean; y: number; flick?: { glide: number; x: number } },
 ): Promise<Sweep> {
   return page.evaluate(
-    ({ ms, finger, y, flick }) =>
+    ({ ms, finger, y, flick, STEP, RUN }) =>
       new Promise<Sweep>((resolve) => {
-        const STEP = 3;
-        const RUN = 30;
         const tracked = window as Window & {
           __reader?: number;
           __pad?: { fire: (type: string, y: number, live: boolean) => string };
@@ -289,7 +293,7 @@ async function sweep(
         };
         requestAnimationFrame(frame);
       }),
-    { ms, finger, y, flick },
+    { ms, finger, y, flick, STEP: SWEEP_STEP, RUN: SWEEP_RUN },
   );
 }
 
@@ -492,9 +496,19 @@ type MousePlace = { x: number; y: number; piece: string };
  * changes: one that comes before the row (a card above it, the "Needs a look" panel), as it did in WebKit. A page
  * that takes the newest pointer it heard of for the reader, whatever the finger did, holds that piece and lets the
  * card below the row drop. The piece is marked `data-mouse-piece`, for the frames to follow.
+ *
+ * The place is fixed in the window while the page is not, so it has to stay over such a piece wherever the sweep
+ * takes the page and whatever the floating bar is doing:
+ * - clear of the bar. Below 64rem the bar is fixed at the top of the window, and its Refresh button is the
+ *   rightmost thing in it, where this place is. A bar that is hidden does not take a pointer, a bar that is up does,
+ *   and one that is sliding in (it rises 8 px) is where it is only part way. The top of the window, as far down as
+ *   the bar's lowest pose and a slide's worth more, is out: a place there is over the board only at the instant
+ *   it was found, as the rounded corner of the bar and the Refresh button's leave the point uncovered by a pixel.
+ * - and far enough from both ends of what a piece can be for the sweep's reach either way (`SWEEP_REACH`), measured
+ *   from the board's top and the row's.
  */
 async function findMousePlace(page: Page): Promise<MousePlace> {
-  const place = await page.evaluate(() => {
+  const place = await page.evaluate((reach) => {
     const feed = document.querySelector('section[aria-labelledby="recent-heading"]');
     const board = document.getElementById("services");
     if (!feed || !board) return null;
@@ -505,14 +519,24 @@ async function findMousePlace(page: Page): Promise<MousePlace> {
       return Boolean(feed.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING);
     };
     (window as Window & { __isPiece?: typeof isPiece }).__isPiece = isPiece;
-    for (let y = 8; y < window.innerHeight; y += 8) {
+    // The floating bar's lowest pose, hidden or up, from its layout (a transform does not move it) and where it is
+    // now, and 8 px more for the slide.
+    const bar = document.querySelector<HTMLElement>('section[aria-label="Board controls"]');
+    const barBox = bar?.getBoundingClientRect();
+    const barStyle = bar ? getComputedStyle(bar) : null;
+    const barFixed = barStyle?.position === "fixed" ? Number.parseFloat(barStyle.top) + (barBox?.height ?? 0) : 0;
+    const clear = Math.max(barBox?.bottom ?? 0, barFixed) + 8;
+    // The board's content above the row is the stretch a piece is found in, with the sweep's reach to spare each way.
+    const from = Math.max(clear, board.getBoundingClientRect().top + reach);
+    const to = feed.getBoundingClientRect().top - reach;
+    for (let y = Math.ceil(from / 8) * 8; y < Math.min(to, window.innerHeight); y += 8) {
       const target = document.elementFromPoint(x, y);
       if (!target || !isPiece(target)) continue;
       target.setAttribute("data-mouse-piece", "");
       return { x, y, piece: `${target.tagName} at ${Math.round(x)},${y}` };
     }
     return null;
-  });
+  }, SWEEP_REACH);
   expect(place, "a mouse can be left over a piece of the board that a new row does not move").not.toBeNull();
   return place as MousePlace;
 }
