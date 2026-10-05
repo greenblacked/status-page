@@ -9,11 +9,15 @@ import type { Verdict } from "@/lib/status/verdict";
 import { cn } from "@/lib/utils";
 
 /**
- * The top of the page. A dateline, the wordmark in the middle and the two icon
- * buttons on the first row; below it the verdict, which is the page's <h1>, and what
- * hangs from it: the services it names (each links to its card), the
- * handwritten "all quiet" when everything is up, and the live line, which
- * sits in the margin on a wide screen and under the verdict on a phone.
+ * The top of the page. The first row is a dateline, the wordmark (from md up,
+ * in the middle) and the controls: the day/night switch and the two icon
+ * buttons, Alerts and Refresh. The row wraps: the dateline gives way down to
+ * its longest word and no further, and when the controls still do not fit
+ * beside it they drop below it. Under the row comes the verdict, which is the
+ * page's <h1>, and what hangs from it: the services it names (each links to
+ * its card), the handwritten "all quiet" when everything is up, and the live
+ * line, which sits in the margin on a wide screen and under the verdict on a
+ * phone.
  *
  * The count in the headline is underlined by hand once, when it first
  * appears. It is drawn only while something needs a look, and it keeps its
@@ -31,7 +35,7 @@ export function Hero({
   verdict: Verdict;
   /** A named service was followed; the board clears its filters first if they hide its card. */
   onReveal: (id: ServiceId, event: MouseEvent<HTMLAnchorElement>) => void;
-  /** Alerts and Refresh, icon only. */
+  /** The day/night switch, Alerts and Refresh, icon only. */
   controls: ReactNode;
   /** The live line. */
   live: ReactNode;
