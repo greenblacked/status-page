@@ -27,15 +27,17 @@ export function createReaderSpot(now: () => number, memoryMs: number) {
       seen = { x, y };
       mouse = { x, y };
     },
-    /** A finger (or a pen on the glass) is at here. It takes the place of a mouse that was left behind. */
+    /** A finger is at here (a pen on the glass sends touch events too). It takes the place of a mouse that was left behind. */
     touched(x: number, y: number) {
       finger = { x, y, at: now() };
       mouse = null;
     },
-    /** The mouse left the page, or a pen lifted. */
+    /**
+     * The mouse left the page, or a pen lifted. Where it was last seen is kept, since a browser may go on reporting
+     * that place after it has said the mouse went (see above), and that is no more the mouse coming back than before.
+     */
     left() {
       mouse = null;
-      seen = null;
     },
     /** A key was pressed: the reader is where the keyboard focus is, not where a pointer or a finger was. */
     keyed() {

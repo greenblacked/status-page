@@ -165,8 +165,9 @@ export function useHeldBoard<T>(root: RefObject<HTMLElement | null>, latest: T):
 
   // Where the reader's attention is, kept for the moment the update lands: whichever of the mouse and the finger was
   // the last to act (see `createReaderSpot`), and else the focused element or the first thing in view. A finger is
-  // heard from its touch events, and from the pointer events of a touch or a pen on the glass, which describe the same
-  // finger, until the browser takes the gesture for a scroll and ends them.
+  // heard from its touch events, and from the pointer events of a touch, which describe the same finger, until the
+  // browser takes the gesture for a scroll and ends them. A pen's pointer events go with the mouse's; on a touch
+  // screen its touch events tell of it as a finger.
   useEffect(() => {
     const touch = (event: TouchEvent) => {
       // A finger that lifts is heard of too, so its memory runs from the lift, not from the touch of a long press.

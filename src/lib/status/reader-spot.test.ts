@@ -87,12 +87,23 @@ describe("createReaderSpot", () => {
     expect(spot.spot()).toEqual({ x: 792, y: 62 });
   });
 
-  it("forgets the mouse when it leaves the page, and takes it again wherever it comes back", () => {
+  it("forgets the mouse when it leaves the page, and takes it again where it comes back", () => {
     const { spot } = reader();
     spot.pointed(792, 62);
     spot.left();
     expect(spot.spot()).toBeNull();
+    spot.pointed(300, 200);
+    expect(spot.spot()).toEqual({ x: 300, y: 200 });
+  });
+
+  it("does not take a report of the place the mouse left from, after the browser said it left, for its coming back", () => {
+    const { spot } = reader();
     spot.pointed(792, 62);
+    spot.touched(417, 778);
+    spot.left();
+    spot.pointed(792, 62);
+    expect(spot.spot()).toEqual({ x: 417, y: 778 });
+    spot.pointed(792, 62, true);
     expect(spot.spot()).toEqual({ x: 792, y: 62 });
   });
 
