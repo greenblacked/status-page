@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { fakeDocument } from "@/test/fake-document";
 import {
   applyTheme,
   isNightHour,
@@ -105,22 +106,33 @@ describe("the stored choice", () => {
 });
 
 describe("applyTheme", () => {
-  it("writes data-theme and every theme-color meta", () => {
-    const attributes = new Map<string, string>();
-    const metas = [new Map<string, string>(), new Map<string, string>()];
-    const doc = {
-      documentElement: { setAttribute: (name: string, value: string) => void attributes.set(name, value) },
-      querySelectorAll: (selector: string) => {
-        expect(selector).toBe('meta[name="theme-color"]');
-        return metas.map((meta) => ({ setAttribute: (name: string, value: string) => void meta.set(name, value) }));
-      },
-    };
-    applyTheme(doc, "night");
-    expect(attributes.get(THEME_ATTRIBUTE)).toBe("night");
-    expect(metas.map((meta) => meta.get("content"))).toEqual([THEME_COLORS.night, THEME_COLORS.night]);
-    applyTheme(doc, "day");
-    expect(attributes.get(THEME_ATTRIBUTE)).toBe("day");
-    expect(metas.map((meta) => meta.get("content"))).toEqual([THEME_COLORS.day, THEME_COLORS.day]);
+  it("writes data-theme and one theme-color meta of its own, ahead of the server's pair", () => {
+    const page = fakeDocument({ serverMetas: 2 });
+    applyTheme(page.doc as unknown as Document, "night");
+    expect(page.html.getAttribute(THEME_ATTRIBUTE)).toBe("night");
+    expect(page.written()).toHaveLength(1);
+    expect(page.head.children[0]).toBe(page.written()[0]);
+    expect(page.firstThemeColor()).toBe(THEME_COLORS.night);
+    applyTheme(page.doc as unknown as Document, "day");
+    expect(page.html.getAttribute(THEME_ATTRIBUTE)).toBe("day");
+    expect(page.written(), "the same meta again, not a second").toHaveLength(1);
+    expect(page.firstThemeColor()).toBe(THEME_COLORS.day);
+  });
+
+  it("leaves the metas the server rendered as they were", () => {
+    const page = fakeDocument({ serverMetas: 2 });
+    applyTheme(page.doc as unknown as Document, "night");
+    expect(page.head.children.slice(1).map((meta) => meta.getAttribute("content"))).toEqual([
+      "server-light",
+      "server-dark",
+    ]);
+  });
+
+  it("adds the meta to a head that has none", () => {
+    const page = fakeDocument();
+    applyTheme(page.doc as unknown as Document, "day");
+    expect(page.head.children).toHaveLength(1);
+    expect(page.firstThemeColor()).toBe(THEME_COLORS.day);
   });
 });
 
@@ -135,9 +147,8 @@ describe("the theme-color of each theme", () => {
 });
 
 /** Runs the boot script against stand-ins, as the browser would, and reports what it wrote. */
-function boot(options: { storage: "refuse" | Record<string, string>; hour: number; metas?: number }) {
-  const attributes = new Map<string, string>();
-  const metas = Array.from({ length: options.metas ?? 2 }, () => new Map<string, string>());
+function boot(options: { storage: "refuse" | Record<string, string>; hour: number; serverMetas?: number }) {
+  const page = fakeDocument({ serverMetas: options.serverMetas ?? 2 });
   const stored = options.storage;
   const localStorage =
     stored === "refuse"
@@ -147,18 +158,17 @@ function boot(options: { storage: "refuse" | Record<string, string>; hour: numbe
           },
         }
       : { getItem: (key: string) => stored[key] ?? null };
-  const document = {
-    documentElement: { setAttribute: (name: string, value: string) => void attributes.set(name, value) },
-    querySelectorAll: () =>
-      metas.map((meta) => ({ setAttribute: (name: string, value: string) => void meta.set(name, value) })),
-  };
   class FakeDate {
     getHours() {
       return options.hour;
     }
   }
-  new Function("localStorage", "document", "Date", THEME_BOOT_SCRIPT)(localStorage, document, FakeDate);
-  return { theme: attributes.get(THEME_ATTRIBUTE), colors: metas.map((meta) => meta.get("content")) };
+  new Function("localStorage", "document", "Date", THEME_BOOT_SCRIPT)(localStorage, page.doc, FakeDate);
+  return {
+    theme: page.html.getAttribute(THEME_ATTRIBUTE),
+    color: page.firstThemeColor(),
+    written: page.written().length,
+  };
 }
 
 describe("THEME_BOOT_SCRIPT", () => {
@@ -168,7 +178,8 @@ describe("THEME_BOOT_SCRIPT", () => {
         const result = boot({ storage: stored === undefined ? {} : { [THEME_STORAGE_KEY]: stored }, hour });
         const expected = themeFor(stored, hour);
         expect(result.theme, `${stored} at ${hour}`).toBe(expected);
-        expect(result.colors, `${stored} at ${hour}`).toEqual([THEME_COLORS[expected], THEME_COLORS[expected]]);
+        expect(result.color, `${stored} at ${hour}`).toBe(THEME_COLORS[expected]);
+        expect(result.written).toBe(1);
       }
     }
   });
@@ -178,8 +189,12 @@ describe("THEME_BOOT_SCRIPT", () => {
     expect(boot({ storage: "refuse", hour: 10 }).theme).toBe("day");
   });
 
-  it("still sets the attribute on a page with no theme-color meta", () => {
-    expect(boot({ storage: {}, hour: 22, metas: 0 })).toEqual({ theme: "night", colors: [] });
+  it("still sets the attribute and the theme-color on a page with no theme-color meta of the server's", () => {
+    expect(boot({ storage: {}, hour: 22, serverMetas: 0 })).toEqual({
+      theme: "night",
+      color: THEME_COLORS.night,
+      written: 1,
+    });
   });
 
   it("is one line with no raw newline, so it sits in a script tag whole", () => {

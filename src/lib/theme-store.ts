@@ -16,12 +16,11 @@ import {
 export type ThemeEnv = {
   storage: () => ThemeStorage;
   now: () => Date;
-  doc: ThemeDocument & {
-    documentElement: { getAttribute(name: string): string | null };
-    visibilityState: string;
-    addEventListener(type: "visibilitychange", listener: () => void): void;
-    removeEventListener(type: "visibilitychange", listener: () => void): void;
-  };
+  doc: ThemeDocument &
+    Pick<Document, "visibilityState"> & {
+      addEventListener(type: "visibilitychange", listener: () => void): void;
+      removeEventListener(type: "visibilitychange", listener: () => void): void;
+    };
   win: {
     addEventListener(type: "storage" | "pageshow", listener: (event: { key: string | null }) => void): void;
     removeEventListener(type: "storage" | "pageshow", listener: (event: { key: string | null }) => void): void;

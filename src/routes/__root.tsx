@@ -45,36 +45,25 @@ function RootDocument() {
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant of ours, built from no input. */}
         <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: ALERTS_BOOT_SCRIPT }} />
         {/*
-          One theme-color per appearance, matching --color-bg. Written here
-          because head() keeps a single meta per name. The media attribute is
-          the answer for a page whose scripts did not run (the system's
-          appearance); the theme boot script, right after, sets both to the
-          colour of the theme in effect (a stored choice, else the visitor's
-          clock), and the day/night switch keeps them there, so the two
-          agree whatever the system says. Safari 26 tints its toolbars from
-          the page background instead, but a Home Screen app's status bar and
-          other browsers still read these. public/manifest.webmanifest has
-          only one theme and background colour, and no way to vary them by
-          appearance, so it uses the dark pair: that matches the icon, and is
-          what a launch screen built from the manifest shows before the page
-          paints. suppressHydrationWarning: the boot script has already
-          rewritten content.
+          One theme-color per appearance, matching --color-bg: what a page
+          whose scripts did not run answers with, by the system's appearance.
+          Written here because head() keeps a single meta per name. They are
+          left as rendered: React matches them by their content when it
+          hydrates, so the theme boot script (below) does not rewrite them but
+          puts a meta of its own ahead of them, with the colour of the theme in
+          effect, and the day/night switch keeps that one current (applyTheme
+          in src/lib/theme.ts). Safari 26 tints its toolbars from the page
+          background instead, but a Home Screen app's status bar and other
+          browsers still read these. public/manifest.webmanifest has only one
+          theme and background colour, and no way to vary them by appearance,
+          so it uses the dark pair: that matches the icon, and is what a launch
+          screen built from the manifest shows before the page paints.
         */}
-        <meta
-          name="theme-color"
-          media="(prefers-color-scheme: light)"
-          content={THEME_COLORS.day}
-          suppressHydrationWarning
-        />
-        <meta
-          name="theme-color"
-          media="(prefers-color-scheme: dark)"
-          content={THEME_COLORS.night}
-          suppressHydrationWarning
-        />
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content={THEME_COLORS.day} />
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content={THEME_COLORS.night} />
         {/*
-          Sets data-theme on <html> before the first paint. After the metas,
-          so it finds them. Stamped by hand with the nonce, like the two above.
+          Sets data-theme on <html> and the theme-color before the first
+          paint. Stamped by hand with the nonce, like the two above.
         */}
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: a constant of ours, built from no input. */}
         <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
