@@ -4,10 +4,13 @@ import { fakeDocument } from "@/test/fake-document";
 import {
   applyTheme,
   isNightHour,
+  NIGHT_FROM_HOUR,
+  NIGHT_UNTIL_HOUR,
   parseTheme,
   readStoredTheme,
   THEME_ATTRIBUTE,
   THEME_BOOT_SCRIPT,
+  THEME_COLOR_ATTRIBUTE,
   THEME_COLORS,
   THEME_STORAGE_KEY,
   THEME_SWITCH_SCRIPT,
@@ -201,6 +204,31 @@ describe("THEME_BOOT_SCRIPT", () => {
   it("is one line with no raw newline, so it sits in a script tag whole", () => {
     expect(THEME_BOOT_SCRIPT).not.toContain("\n");
     expect(THEME_BOOT_SCRIPT).not.toContain("</script");
+  });
+});
+
+describe("the scripts' written-out constants", () => {
+  // Both scripts are plain strings with nothing interpolated (an interpolated value that held "</script>" would end
+  // the tag that carries them), so each constant they repeat is held to the exported one here.
+  it("writes the storage key, the attribute names and the colors the exports name", () => {
+    expect(THEME_BOOT_SCRIPT).toContain(`localStorage.getItem("${THEME_STORAGE_KEY}")`);
+    expect(THEME_BOOT_SCRIPT).toContain(`documentElement.setAttribute("${THEME_ATTRIBUTE}",t)`);
+    expect(THEME_BOOT_SCRIPT).toContain(`querySelector("meta[${THEME_COLOR_ATTRIBUTE}]")`);
+    expect(THEME_BOOT_SCRIPT).toContain(`m.setAttribute("${THEME_COLOR_ATTRIBUTE}","")`);
+    expect(THEME_BOOT_SCRIPT).toContain(`t==="night"?"${THEME_COLORS.night}":"${THEME_COLORS.day}"`);
+    expect(THEME_SWITCH_SCRIPT).toContain(`getAttribute("${THEME_ATTRIBUTE}")`);
+  });
+
+  it("writes the hours of the clock rule the exports name", () => {
+    expect(THEME_BOOT_SCRIPT).toContain(`h>=${NIGHT_FROM_HOUR}||h<${NIGHT_UNTIL_HOUR}`);
+  });
+
+  it("marks the meta it writes with THEME_COLOR_ATTRIBUTE", () => {
+    const page = fakeDocument({ serverMetas: 2 });
+    const localStorage = { getItem: () => null };
+    new Function("localStorage", "document", "Date", THEME_BOOT_SCRIPT)(localStorage, page.doc, Date);
+    expect(page.written()).toHaveLength(1);
+    expect(page.written()[0]?.attributes.has(THEME_COLOR_ATTRIBUTE)).toBe(true);
   });
 });
 
