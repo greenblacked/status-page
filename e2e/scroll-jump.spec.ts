@@ -1,4 +1,5 @@
 import type { CDPSession, Page, TestInfo } from "@playwright/test";
+import { SETTLE_MS } from "../src/lib/status/page-motion.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
 import { expect, test } from "./test";
 
@@ -69,9 +70,94 @@ interface Reader {
   readonly movedAt?: number;
   /** Whether the reader says how far it has scrolled the page (`window.__reader`), so a frame can be judged on what is on screen. */
   readonly accounted: boolean;
+  /** What the last `gesture` did, for a reader that makes the whole gesture inside the page. */
+  readonly swept?: Sweep;
   down(y: number): Promise<void>;
-  dragBy(dy: number, step: number): Promise<void>;
+  /** The gesture: about `ms` of dragging, up and down so the card stays on screen. */
+  gesture(ms: number): Promise<void>;
   up(): Promise<void>;
+}
+
+/** What a gesture made inside the page did, in the page's clock. */
+type Sweep = {
+  /** Where the finger ended, in the window (a reader with no finger leaves it where it was). */
+  y: number;
+  /** When the last step was taken. */
+  lastStepAt: number;
+  /** The scroll events the page sent during the gesture. */
+  events: number;
+  /** The longest time, in ms, between two of them, and how long into the gesture the second one came. */
+  longestGap: number;
+  gapEndedAt: number;
+  /** What the last touch event was made of ("TouchEvent" or "Event"), for a finger. */
+  shape: string;
+};
+
+/**
+ * The whole gesture, driven from inside the page: one step of `STEP` px on every animation frame, alternating
+ * `RUN` steps one way and `RUN` the other, for `ms`. Steps driven from the test process (a round trip and a pause
+ * for each) are as far apart as the runner lets them be, and a page that has not scrolled for `SETTLE_MS` is at
+ * rest as far as the board is concerned, so on a loaded machine the update lands in the middle of the gesture. A
+ * loop in the page keeps the steps a frame apart whatever the test process is doing. `finger` makes a touchmove
+ * (with `__pad`, see SyntheticFinger) before each step, the page following the finger as the browser would.
+ */
+async function sweep(page: Page, { ms, finger, y }: { ms: number; finger: boolean; y: number }): Promise<Sweep> {
+  return page.evaluate(
+    ({ ms, finger, y }) =>
+      new Promise<Sweep>((resolve) => {
+        const STEP = 3;
+        const RUN = 30;
+        const tracked = window as Window & {
+          __reader?: number;
+          __pad?: { fire: (type: string, y: number, live: boolean) => string };
+        };
+        const seen: number[] = [];
+        const onScroll = () => seen.push(performance.now());
+        window.addEventListener("scroll", onScroll, { passive: true });
+        const start = performance.now();
+        let at = y;
+        let shape = "";
+        let steps = 0;
+        let lastStepAt = start;
+        const frame = () => {
+          if (performance.now() - start >= ms) {
+            // One frame more, for the scroll event of the last step.
+            requestAnimationFrame(() => {
+              window.removeEventListener("scroll", onScroll);
+              let longestGap = 0;
+              let gapEndedAt = 0;
+              for (let i = 1; i < seen.length; i++) {
+                if (seen[i] - seen[i - 1] > longestGap) {
+                  longestGap = seen[i] - seen[i - 1];
+                  gapEndedAt = seen[i] - start;
+                }
+              }
+              resolve({ y: at, lastStepAt, events: seen.length, longestGap, gapEndedAt, shape });
+            });
+            return;
+          }
+          // A finger that moves up (negative) takes the page down with it.
+          const by = (Math.floor(steps++ / RUN) % 2 === 0 ? -1 : 1) * STEP;
+          const from = window.scrollY;
+          let to = from - by;
+          if (finger) {
+            at += by;
+            shape = tracked.__pad?.fire("touchmove", at, true) ?? shape;
+          } else {
+            // Turned back at either end of the page: a step that goes nowhere sends no scroll event, and a page that
+            // has stopped sending them is at rest.
+            const room = document.documentElement.scrollHeight - window.innerHeight;
+            if (to < 0 || to > room) to = from + by;
+          }
+          window.scrollTo({ top: to, behavior: "instant" });
+          tracked.__reader = (tracked.__reader ?? 0) + window.scrollY - from;
+          lastStepAt = performance.now();
+          requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      }),
+    { ms, finger, y },
+  );
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -98,12 +184,20 @@ class Finger implements Reader {
     this.y = y;
     await this.send("touchStart", y);
   }
-  async dragBy(dy: number, step: number) {
+  private async dragBy(dy: number, step: number) {
     const steps = Math.max(1, Math.round(Math.abs(dy) / step));
     for (let i = 0; i < steps; i++) {
       this.y += dy / steps;
       await this.send("touchMove", this.y);
       await pause(16);
+    }
+  }
+  /** Driven from here, one touch event at a time: the browser turns them into the scroll, and a finger that is down holds the board whatever the gaps. */
+  async gesture(ms: number) {
+    const start = Date.now();
+    while (Date.now() - start < ms) {
+      await this.dragBy(-90, 3);
+      await this.dragBy(90, 3);
     }
   }
   async up() {
@@ -126,6 +220,7 @@ class SyntheticFinger implements Reader {
   private y = 0;
   /** "TouchEvent" or "Event": what the last event was made of. */
   shape = "";
+  swept?: Sweep;
   get at() {
     return this.y;
   }
@@ -192,20 +287,11 @@ class SyntheticFinger implements Reader {
     );
     await this.fire("touchstart", y);
   }
-  async dragBy(dy: number, step: number) {
-    const steps = Math.max(1, Math.round(Math.abs(dy) / step));
-    for (let i = 0; i < steps; i++) {
-      this.y += dy / steps;
-      await this.fire("touchmove", this.y);
-      // The page follows the finger: a finger that moves up takes the page down with it.
-      await this.page.evaluate((by) => {
-        const tracked = window as Window & { __reader?: number };
-        const from = window.scrollY;
-        window.scrollTo({ top: from - by, behavior: "instant" });
-        tracked.__reader = (tracked.__reader ?? 0) + window.scrollY - from;
-      }, dy / steps);
-      await pause(16);
-    }
+  /** A touchmove and a step of the page on every frame, all inside the page (see `sweep`). */
+  async gesture(ms: number) {
+    this.swept = await sweep(this.page, { ms, finger: true, y: this.y });
+    this.y = this.swept.y;
+    this.shape = this.swept.shape || this.shape;
   }
   async up() {
     await this.fire("touchend", this.y);
@@ -221,6 +307,7 @@ class Scroller implements Reader {
   private y = 0;
   /** When, in the page's clock, the page was last scrolled. */
   movedAt = 0;
+  swept?: Sweep;
   get at() {
     return this.y;
   }
@@ -239,22 +326,10 @@ class Scroller implements Reader {
       [this.x, y],
     );
   }
-  async dragBy(dy: number, step: number) {
-    const steps = Math.max(1, Math.round(Math.abs(dy) / step));
-    for (let i = 0; i < steps; i++) {
-      this.movedAt = await this.page.evaluate((by) => {
-        // Turned back at either end of the page: a step that goes nowhere sends no scroll event, and a page that has
-        // stopped sending them is at rest.
-        const room = document.documentElement.scrollHeight - window.innerHeight;
-        const to = window.scrollY - by;
-        const tracked = window as Window & { __reader?: number };
-        const from = window.scrollY;
-        window.scrollTo({ top: to < 0 || to > room ? from + by : to, behavior: "instant" });
-        tracked.__reader = (tracked.__reader ?? 0) + window.scrollY - from;
-        return performance.now();
-      }, dy / steps);
-      await pause(16);
-    }
+  /** A step of the page on every frame, all inside the page (see `sweep`). */
+  async gesture(ms: number) {
+    this.swept = await sweep(this.page, { ms, finger: false, y: this.y });
+    this.movedAt = this.swept.lastStepAt;
   }
   async up() {}
 }
@@ -365,11 +440,7 @@ async function acrossTheTurn(
   const downAt = await page.evaluate(() => Date.now());
   expect(await feedRows(page).count(), "the turn had not come when the reader started").toBe(rows0);
   // About four and a half seconds of dragging, up and down so the card stays on screen, across the turn.
-  const dragStart = Date.now();
-  while (Date.now() - dragStart < 4_500) {
-    await reader.dragBy(-90, 3);
-    await reader.dragBy(90, 3);
-  }
+  await reader.gesture(4_500);
   let rowsWhileTouching = rows0;
   if (touching) {
     // The finger rests a moment, still down, before it lifts: no scroll events, and still not the time to update.
@@ -399,10 +470,13 @@ async function acrossTheTurn(
   const landed = frames.find((frame) => frame.rows > rows0);
   const before = landed ? frames[frames.indexOf(landed) - 1] : undefined;
   const topOf = (frame: Frame | undefined) => frame?.tops[card] ?? Number.NaN;
+  const gaps = reader.swept
+    ? `; ${reader.swept.events} scroll events, longest gap between them ${reader.swept.longestGap.toFixed(0)} ms (the board waits ${SETTLE_MS})`
+    : "";
   const shape = reader instanceof SyntheticFinger ? `; events made as ${reader.shape}` : "";
   testInfo.annotations.push({
     type: "numbers",
-    description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows ${touching ? "while touching" : "during the scroll"} ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after ${touching ? "the lift" : "the last scroll"}${shape}`,
+    description: `${card}: ${frames.length} frames; worst card jump ${worst.toFixed(1)} px; rows ${touching ? "while touching" : "during the scroll"} ${rowsWhileTouching} (was ${rows0}); landed ${landed ? Math.round(landed.t - liftedAt) : "never"} ms after ${touching ? "the lift" : "the last scroll"}${shape}${gaps}`,
   });
   console.log(testInfo.annotations.at(-1)?.description);
   // The frames around the landing are printed when asked for, and whenever the card jumped, so a run that fails says where.
@@ -431,6 +505,15 @@ async function acrossTheTurn(
     }
   }
 
+  // With no finger, a row that came in during the gesture is the board's fault only if the page was never left still: a gap between
+  // two scroll events as long as the board's wait is the machine stalling, and is reported as that.
+  const early = frames.some((frame) => frame.rows > rows0 && frame.t < liftedAt);
+  if (early && !touching && reader.swept) {
+    expect(
+      reader.swept.longestGap,
+      `the machine stalled: ${reader.swept.longestGap.toFixed(0)} ms between two scroll events ${reader.swept.gapEndedAt.toFixed(0)} ms into the gesture, longer than the ${SETTLE_MS} ms the board waits for a page to be still, so a row came in while the page was scrolled`,
+    ).toBeLessThan(SETTLE_MS);
+  }
   // Nothing came in under the finger, across the turn of the slot.
   expect(rowsWhileTouching, "Recent changes did not change while the finger was down").toBe(rows0);
   // Nor while the page was being scrolled: every frame up to the end of the gesture shows the rows it began with.
