@@ -1,9 +1,10 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, TestInfo } from "@playwright/test";
 import { HIDE_DOWN_PX, REVEAL_UP_PX } from "../src/lib/status/dock.ts";
 import { fixtureBoard, longHeroBoard } from "./fixture-board";
 import {
   auditNow,
   BACKGROUNDS,
+  barBack,
   barSearch,
   cards,
   controlBar,
@@ -13,10 +14,12 @@ import {
   fromSweep,
   heroSearch,
   installAudit,
+  isPhone,
   isWide,
   maxScroll,
   openBoard,
   openWithFixture,
+  pressSettled,
   refreshInto,
   SERVICES,
   scrollAndSettle,
@@ -25,6 +28,9 @@ import {
   viewportOf,
 } from "./support/layout";
 import { expect, test } from "./test";
+
+/** The phone widths the bar's status text is held to: a small Android, the iPhone SE and Pro, a large Pixel. */
+const PHONE_WIDTHS = [320, 375, 390, 412] as const;
 
 // How the page lays out on a screen. Every test here is tagged @layout, and playwright.config.ts runs only these
 // on the extra screens (a 320px phone, a short one, a large one, a foldable open and on its cover, an Android
@@ -196,6 +202,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
 
         // The floating bar's controls, with the bar up.
         await scrollAndSettle(page, await maxScroll(page));
+        await barBack(page);
         await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
         await expectNone(page, testInfo, "floating bar up", (await read()).small);
 
@@ -246,6 +253,8 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             };
           }, selector);
         const checked = async (where: string, selector: string, wantHidden: boolean) => {
+          // Wait out any press on the switch before reading its box.
+          await pressSettled(page.locator(selector));
           const found = await room(selector);
           const problems: string[] = [];
           if (found.missing) problems.push("the switch is not in the page");
@@ -276,6 +285,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             .locator(".search-dock")
             .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
           await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+          await barBack(page);
           await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
           await checked(`${theme}, bar`, "section[aria-label='Board controls'] [data-theme-switch]", !barDrawsIt);
           const down = await auditNow(page);
@@ -301,6 +311,10 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         const deep = Math.ceil(fieldBottom) + 200;
         expect(deep, "the page is long enough to scroll down in").toBeLessThan(limit - 160);
         await scrollAndSettle(page, deep);
+        // A phone's bar is out of sight after a scroll down (parked above the screen); a scroll up a little brings it
+        // back, and not yet its field (that takes REVEAL_UP_PX).
+        await expect(bar).toHaveAttribute("data-shown", (await isPhone(page)) ? "false" : "true");
+        await barBack(page);
         await expect(bar).toHaveAttribute("data-shown", "true");
         await expect(bar).not.toHaveAttribute("data-revealed");
         const settle = () =>
@@ -320,18 +334,13 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               })
               .filter((span) => span.width > 1 && span.opacity > 0.99),
           );
-        // Glass and Full draw it 0px wide on a phone (the bar's verdict collapses): held on Quiet until that is fixed.
-        // TODO(known bug, bar status text 0px wide in Glass and Full below 640px): the commit that fixes it deletes
-        // both `background === "quiet"` guards in this test, so the check runs on all three backgrounds.
-        if (background === "quiet") {
-          const hidden = await verdict();
-          await expectNone(
-            page,
-            testInfo,
-            "bar down: status text drawn",
-            hidden.length === 1 ? [] : [JSON.stringify(hidden)],
-          );
-        }
+        const hidden = await verdict();
+        await expectNone(
+          page,
+          testInfo,
+          "bar down: status text drawn",
+          hidden.length === 1 ? [] : [JSON.stringify(hidden)],
+        );
         const found = await auditNow(page);
         await expectNone(page, testInfo, "bar down: sideways", found.overflow);
         await expectNone(page, testInfo, "bar down: overlap", found.overlap);
@@ -370,25 +379,147 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
 
         await scrollAndSettle(page, deep - (REVEAL_UP_PX + 4) + (HIDE_DOWN_PX + 4));
         await expect(bar).not.toHaveAttribute("data-revealed");
+        // A phone's bar went with that scroll down: back it comes, without the field.
+        await barBack(page);
+        await expect(bar).toHaveAttribute("data-shown", "true");
         await settle();
         await page
           .locator(".bar-search")
           .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
-        // TODO(same known bug): delete this guard with the first one.
-        if (background === "quiet") {
-          const again = await verdict();
-          await expectNone(
-            page,
-            testInfo,
-            "bar down again: status text drawn",
-            again.length === 1 ? [] : [JSON.stringify(again)],
-          );
-        }
+        const again = await verdict();
+        await expectNone(
+          page,
+          testInfo,
+          "bar down again: status text drawn",
+          again.length === 1 ? [] : [JSON.stringify(again)],
+        );
 
         // Back at the top the bar goes and the hero's field is the only one.
         await scrollAndSettle(page, 0);
         await expect(bar).toHaveAttribute("data-shown", "false");
         await expect(bar).toHaveAttribute("inert", "");
+      });
+
+      // The bar's status text fills the room between its glyph and its buttons. `alerts` false is a browser that cannot
+      // show page alerts (iPhone Safari outside a Home Screen app has no Notification API): its bar draws Refresh alone,
+      // and the text has that button's room too, not the room the missing Alerts button would have had.
+      const drawsStatusText = async (page: Page, testInfo: TestInfo, alerts: boolean) => {
+        test.slow();
+        if (!alerts) {
+          await page.addInitScript(() => {
+            // @ts-expect-error: a browser with no Notification API
+            delete window.Notification;
+          });
+        }
+        await openBoard(page, background, { steady: true });
+        if (!alerts) await expect(page.locator("html")).toHaveAttribute("data-alerts", "unsupported");
+        test.skip(
+          await page.evaluate(() => matchMedia("(min-width: 40rem)").matches),
+          "the verdict is laid over the bar's field slot on a phone only; from 640px it sits in the flow",
+        );
+        const { height } = viewportOf(page);
+        for (const width of PHONE_WIDTHS) {
+          await page.setViewportSize({ width, height });
+          await scrollAndSettle(page, 0);
+          const fieldBottom = await page
+            .locator(".search-dock")
+            .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
+          await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+          await barBack(page);
+          await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+          await controlBar(page).evaluate((bar) =>
+            Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
+          );
+          const found = await controlBar(page).evaluate((bar) => {
+            const verdict = bar.querySelector<HTMLElement>("[data-bar-verdict]");
+            const glyph = bar.querySelector("svg");
+            const buttons = [...bar.querySelectorAll("button")].filter(
+              (button) => button.getBoundingClientRect().width > 1,
+            );
+            const text = verdict?.firstElementChild as HTMLElement | null;
+            const box = verdict?.getBoundingClientRect();
+            const textBox = text?.getBoundingClientRect();
+            let opacity = 1;
+            for (let node: Element | null = text ?? null; node && node !== bar; node = node.parentElement) {
+              opacity *= Number(getComputedStyle(node).opacity);
+            }
+            return {
+              width: box?.width ?? 0,
+              textWidth: textBox?.width ?? 0,
+              left: box?.left ?? 0,
+              right: box?.right ?? 0,
+              glyphRight: glyph?.getBoundingClientRect().right ?? 0,
+              buttonsLeft: Math.min(...buttons.map((button) => button.getBoundingClientRect().left)),
+              clipped: text ? text.scrollWidth > text.clientWidth + 1 : false,
+              opacity,
+            };
+          });
+          const problems: string[] = [];
+          if (found.width < 40) problems.push(`the verdict is ${found.width}px wide`);
+          if (found.textWidth < 40) problems.push(`its text is ${found.textWidth}px wide`);
+          if (found.opacity < 0.99) problems.push(`its opacity is ${found.opacity}`);
+          if (found.left < found.glyphRight - 0.5) problems.push("it runs under the glyph");
+          if (found.right > found.buttonsLeft + 0.5) problems.push("it runs under the buttons");
+          // Not short of them either: the room that is free is the text's (the gap is the bar's own, 14px, plus a little).
+          if (found.buttonsLeft - found.right > 20) {
+            problems.push(`it stops ${Math.round(found.buttonsLeft - found.right)}px short of the buttons`);
+          }
+          if (found.right > width) problems.push("it leaves the screen");
+          await expectNone(page, testInfo, `${width}px: status text drawn`, problems);
+        }
+      };
+
+      test("draws the bar's status text in the room between its glyph and its buttons, at every phone width", async ({
+        page,
+      }, testInfo) => {
+        await drawsStatusText(page, testInfo, true);
+      });
+
+      test("draws the bar's status text up to Refresh where the browser has no Alerts button", async ({
+        page,
+      }, testInfo) => {
+        await drawsStatusText(page, testInfo, false);
+      });
+
+      test("covers the strip above the bar on a phone: nothing of the page shows over or beside it", async ({
+        page,
+      }, testInfo) => {
+        test.slow();
+        await openBoard(page, background, { steady: true });
+        test.skip(
+          await page.evaluate(() => matchMedia("(min-width: 40rem)").matches),
+          "the bar is a sheet from the top edge on a phone only; from 640px it is a pill under the top",
+        );
+        const { width } = viewportOf(page);
+        const fieldBottom = await page
+          .locator(".search-dock")
+          .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
+        await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+        await barBack(page);
+        await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+        await controlBar(page).evaluate((bar) =>
+          Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
+        );
+        const found = await controlBar(page).evaluate((bar, vw) => {
+          const box = bar.getBoundingClientRect();
+          // What is on top at the screen's top edge, at its left, middle and right, and at the bar's lower corners.
+          const covered = [2, vw / 2, vw - 2].flatMap((x) =>
+            [1, box.bottom / 2, box.bottom - 12].map((y) => {
+              const top = document.elementFromPoint(x, y);
+              return top && bar.contains(top)
+                ? ""
+                : `(${Math.round(x)}, ${Math.round(y)}): ${top?.tagName ?? "nothing"}`;
+            }),
+          );
+          return { top: box.top, left: box.left, right: box.right, covered: covered.filter(Boolean) };
+        }, width);
+        const problems: string[] = [];
+        if (found.top > 0.5) problems.push(`the bar starts ${found.top}px down, leaving a strip above it`);
+        if (found.left > 0.5 || found.right < width - 0.5) {
+          problems.push(`the bar spans ${found.left} to ${found.right} of a ${width}px screen`);
+        }
+        problems.push(...found.covered.map((spot) => `something else is on top at ${spot}`));
+        await expectNone(page, testInfo, "strip above the bar", problems);
       });
 
       test("fits the Details sheet and Settings to the screen, and closes them", async ({ page }, testInfo) => {
@@ -458,7 +589,10 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
           ["last Details, bar up", page.locator("[data-release-details-trigger]").last()],
         ] as const) {
           await trigger.scrollIntoViewIfNeeded();
-          if (which.endsWith("bar up")) await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+          if (which.endsWith("bar up")) {
+            await barBack(page);
+            await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+          }
           await trigger.click();
           const dialog = page.locator("dialog[data-release-details][open]");
           await expect(dialog).toBeVisible();
@@ -534,6 +668,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         const deep = Math.ceil(fieldBottom) + 200;
         expect(deep).toBeLessThan(limit - 160);
         await scrollAndSettle(page, deep);
+        await barBack(page);
         await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
         let live: Locator = field;
         if (!wide) {
@@ -566,6 +701,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         const deep = Math.ceil(fieldBottom) + 200;
         expect(deep, "the page is long enough to scroll down in").toBeLessThan((await maxScroll(page)) - 160);
         await scrollAndSettle(page, deep);
+        await barBack(page);
         await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
         await scrollAndSettle(page, deep - (REVEAL_UP_PX + 4));
         await expect(controlBar(page)).toHaveAttribute("data-revealed", "");
@@ -709,6 +845,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             );
           const deep = (await maxScroll(page)) - 100;
           await scrollAndSettle(page, deep);
+          await barBack(page);
           await expect(bar).toHaveAttribute("data-shown", "true");
           await settle();
           await expectNone(page, testInfo, "bar up", await clipped());

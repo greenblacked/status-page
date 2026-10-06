@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { AlertsButton, FilterBar, RefreshButton, SearchField, WhileBarUp } from "@/components/status/board-controls";
 import { BoardSections } from "@/components/status/board-sections";
 import { CompactHeader, useSearchDock, WIDE } from "@/components/status/compact-header";
@@ -23,7 +24,7 @@ import { useTiltLighting } from "@/components/status/use-tilt-lighting";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
 import { APP_NAME } from "@/lib/status/catalog";
-import { createDockStore } from "@/lib/status/dock";
+import { createDockStore, quietScroll } from "@/lib/status/dock";
 import {
   type BoardFilters,
   DEFAULT_FILTERS,
@@ -235,7 +236,10 @@ export function BoardView({
     const card = document.getElementById(serviceAnchor(revealing.id));
     if (!card) return;
     setRevealing(null);
-    card.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    // The page's own scroll, whatever the reader's last direction was: it does not take the bar away or bring it back.
+    quietScroll(() => card.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "auto" : "smooth" }), {
+      glide: !prefersReducedMotion(),
+    });
     card.focus({ preventScroll: true });
   }, [revealing, filters, visible]);
   useEffect(() => {
@@ -316,7 +320,11 @@ export function BoardView({
           // Below 64rem, with the hero's field behind the bar, the bar's copy is the one to bring up. It shows
           // itself when it takes focus, and the page stays where it is.
           const barField = barSearchRef.current;
-          if (barField && !window.matchMedia(WIDE).matches && dock.get().heroAway) {
+          const state = dock.get();
+          if (barField && !window.matchMedia(WIDE).matches && state.heroAway) {
+            // A phone's bar that has gone away on a scroll down is `inert` and cannot take focus: it comes back first,
+            // and now, so that the focus lands.
+            if (state.away) flushSync(() => dock.set({ ...state, away: false, revealed: true }));
             barField.focus({ preventScroll: true });
             barField.select();
             return;

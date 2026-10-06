@@ -314,9 +314,12 @@
   /* The one translucent layer in Quiet: the floating bar, over whatever scrolls under it. */
   --bar-fill: light-dark(rgb(252 251 248 / 0.92), rgb(24 23 21 / 0.9));
   --bar-filter: blur(20px) saturate(1.3);
+  /* A phone's bar is the AI catalogue's header: the page's own ground at 90% under a 12px blur, no shadow. */
+  --bar-fill-phone: color-mix(in srgb, var(--color-bg) 90%, transparent);
+  --bar-filter-phone: blur(12px);
   /* The one shadow on the page. */
   --shadow-float: 0 10px 28px -12px light-dark(rgb(60 44 20 / 0.28), rgb(0 0 0 / 0.9));
-  /* The ground behind a glyph's cut-outs (the mark inside its shape); set inline where a glyph sits on the page or an inset. */
+  /* The ground behind a glyph's cut-outs (the mark inside its shape); set inline (StatusGlyph's `cut`) where a glyph sits on the page or an inset, or by a rule where the ground changes with the viewport (the phone bar, `.compact-header`). */
   --glyph-cut: var(--color-card);
 }
 
@@ -854,17 +857,85 @@
 }
 
 /*
-  Under 40rem the short verdict sits where the bar's field shows; it gives way while the field is revealed
+  On a phone (under 40rem) the bar is not a pill floating 0.5rem under the top: it is the AI catalogue's header, a
+  bar edge to edge from the very top of the screen. Its box runs from the top edge down: the safe area (the notch's
+  strip, which the bar covers, so no card or text shows over it), then a row 4rem tall, then a hairline in the
+  page's own line colour on its lower edge only (the other three are the screen's). Square, with no shadow: the
+  hairline is its only edge. The ground is the page's own background at 90% under a 12px blur, on Quiet, Glass and
+  Full alike, day and night (--bar-fill-phone, --bar-filter-phone: solid and unblurred under Reduce Transparency,
+  Increase Contrast and forced colours, as every material is). The row's sides are the page content's, the board's gutter, so
+  the glyph and the buttons line up with the cards.
+*/
+@media (width < 40rem) {
+  .compact-header {
+    top: 0;
+    left: 0;
+    right: 0;
+    box-sizing: content-box;
+    height: 4rem;
+    padding-top: env(safe-area-inset-top);
+    padding-left: max(var(--gutter), env(safe-area-inset-left));
+    padding-right: max(var(--gutter), env(safe-area-inset-right));
+    border-top-width: 0;
+    border-left-width: 0;
+    border-right-width: 0;
+    border-radius: 0;
+    background-color: var(--bar-fill-phone);
+    background-image: none;
+    /* The bar's status mark is cut from the ground it sits on: the page's, here; the card's, from 40rem (the root default). */
+    --glyph-cut: var(--color-bg);
+    -webkit-backdrop-filter: var(--bar-filter-phone);
+    backdrop-filter: var(--bar-filter-phone);
+    /* The AI header's `1px solid var(--line)`: a full pixel, not the board's device-pixel hairline (0.5px at 2x, which WebKit draws as is). */
+    border-bottom-width: 1px;
+    border-bottom-color: var(--color-hairline);
+    box-shadow: none;
+  }
+
+  /* The Glass and Full sheen is a corner's light: a square bar edge to edge has none. */
+  .compact-header::before {
+    display: none;
+  }
+
+  @supports not (backdrop-filter: blur(1px)) {
+    .compact-header {
+      background-color: var(--color-bg);
+    }
+  }
+}
+
+/*
+  Under 40rem the short verdict sits where the bar's field shows: laid over the slot, between the glyph and the
+  buttons (compact-header.tsx), against the bar's own box, so its edges are the glyph's right and the buttons' left
+  (1.875rem and 6.375rem in from the content's sides) and it is centred on the 4rem row, below the safe area. It
+  truncates with an ellipsis. It gives way while the field is revealed
   (data-revealed, written from the dock's state). Opacity only, over the same time as the field leaving (--t-quick),
   and the field coming in takes a little longer, so the two are never both there at full strength.
 */
 @media (width < 40rem) {
   [data-bar-verdict] {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 2rem);
+    left: calc(max(var(--gutter), env(safe-area-inset-left)) + 1.875rem);
+    right: calc(max(var(--gutter), env(safe-area-inset-right)) + 6.375rem);
+    transform: translateY(-50%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
     transition: opacity var(--t-quick) var(--ease-out);
   }
 
   .compact-header[data-revealed] [data-bar-verdict] {
     opacity: 0;
+  }
+
+  /*
+    A browser that cannot show page alerts (iPhone Safari outside a Home Screen app) draws no Alerts button, and
+    the verdict has its 1.875rem as well: it runs on to Refresh, the same 14px short of it as it is of Alerts.
+  */
+  :root[data-alerts="unsupported"] [data-bar-verdict] {
+    right: calc(max(var(--gutter), env(safe-area-inset-right)) + 3.625rem);
   }
 }
 
@@ -942,6 +1013,36 @@
 
   .compact-header[data-shown="false"] * {
     pointer-events: none;
+  }
+}
+
+/*
+  On a phone the bar also leaves when the reader scrolls down (`away` in the dock's state, data-shown false with the bar
+  up) and comes back on a scroll up, the AI catalogue's header: hidden, it is translated by -100% of its own height,
+  so the whole of it, the safe area's strip and the hairline included, is above the screen, and it slides back down
+  over 200ms (a transform only, and none under Reduce Motion, where it simply is there or not). It is the same pose
+  as the bar before the hero is gone, so it never shows over the hero. It stays fully opaque and keeps its blurred
+  layer (above), only moved off the screen.
+*/
+@media (width < 40rem) {
+  .compact-header,
+  .compact-header[data-shown="false"] {
+    opacity: 1;
+    will-change: transform;
+    transition: none;
+  }
+
+  .compact-header[data-shown="false"] {
+    transform: translateY(-100%);
+    -webkit-backdrop-filter: var(--bar-filter-phone);
+    backdrop-filter: var(--bar-filter-phone);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .compact-header,
+    .compact-header[data-shown="false"] {
+      transition: transform 200ms;
+    }
   }
 }
 
@@ -1244,6 +1345,8 @@ article[id^="service-"],
     --color-hairline: light-dark(#6a655c, #8f8a80);
     --color-subtle: light-dark(#57534b, #b9b4a9);
     --bar-fill: light-dark(#fcfbf8, #181715);
+    --bar-fill-phone: var(--color-bg);
+    --bar-filter-phone: none;
   }
 }
 
@@ -1256,17 +1359,31 @@ article[id^="service-"],
   @variant reduce-glass {
     --bar-fill: var(--color-card);
     --bar-filter: none;
+    --bar-fill-phone: var(--color-bg);
+    --bar-filter-phone: none;
   }
 }
 
 /* Forced colours drop backgrounds and shadows; a border keeps each panel drawn. */
 @media (forced-colors: active) {
+  /* The phone bar is solid and unblurred here too: the system's ground, no glass. */
+  :root {
+    --bar-fill-phone: Canvas;
+    --bar-filter-phone: none;
+  }
+
   :is(.surface),
   :is(.float),
   .sheet,
   :is(.control),
   .card-list {
     border: 1px solid CanvasText;
+  }
+
+  @media (width < 40rem) {
+    :is(.float) {
+      border-width: 0 0 1px;
+    }
   }
 }
 
@@ -1289,7 +1406,18 @@ article[id^="service-"],
   }
 
   .compact-header,
-  .compact-header[data-shown="false"],
+  .compact-header[data-shown="false"] {
+    transition: none;
+  }
+
+  /* A phone's hidden bar is out of sight by its transform (above), so only the others drop theirs. */
+  @media (min-width: 40rem) {
+    .compact-header,
+    .compact-header[data-shown="false"] {
+      transform: none;
+    }
+  }
+
   .settings-dialog[open],
   .settings-dialog[open]::backdrop,
   .details-dialog[open],
