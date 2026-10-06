@@ -1166,124 +1166,131 @@ async function acrossTheTurn(
   }
 }
 
-test("floating bar: the board does not shift under a finger that scrolls across the turn of a slot", async ({
-  page,
-  isMobile,
-  browserName,
-}, testInfo) => {
-  test.skip(
-    browserName !== "chromium",
-    "it drives a real touch drag through CDP, which only Chromium has (WebKit has the next test)",
-  );
-  test.skip(!isMobile && testInfo.project.name !== "tablet", "a finger is a touch project's");
-  await acrossTheTurn(
+test.describe("across the turn of a slot", () => {
+  // acrossTheTurn installs page.clock well inside a slot and brings the turn close, so the page is not pinned to a slot first.
+  test.use({ pinSlot: false });
+
+  test("floating bar: the board does not shift under a finger that scrolls across the turn of a slot", async ({
     page,
-    testInfo,
-    async (viewport) => new Finger(await page.context().newCDPSession(page), viewport.width / 2),
-    {
+    isMobile,
+    browserName,
+  }, testInfo) => {
+    test.skip(
+      browserName !== "chromium",
+      "it drives a real touch drag through CDP, which only Chromium has (WebKit has the next test)",
+    );
+    test.skip(!isMobile && testInfo.project.name !== "tablet", "a finger is a touch project's");
+    await acrossTheTurn(
+      page,
+      testInfo,
+      async (viewport) => new Finger(await page.context().newCDPSession(page), viewport.width / 2),
+      {
+        touching: true,
+      },
+    );
+  });
+
+  test("floating bar: the board does not shift under touch events that come with a scroll across the turn of a slot", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "a finger is a touch project's");
+    await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
       touching: true,
-    },
-  );
-});
-
-test("floating bar: the board does not shift under touch events that come with a scroll across the turn of a slot", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "a finger is a touch project's");
-  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), { touching: true });
-});
-
-test("floating bar: the board does not shift under a page that scrolls across the turn of a slot", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "the scrolling of a phone or a tablet, which a finger is not the only way to do");
-  await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.width / 2), { touching: false });
-});
-
-test("floating bar: holds the card under the finger, not a mouse that was left over the board above it", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "a finger is a touch project's");
-  // As on an iPad or iPhone in WebKit after a click on Refresh: the mouse is still at the top right, and is reported
-  // again as the page scrolls, after the finger's last touch. The finger is where the reader is, and the card under
-  // it must stay put; a page that held what the mouse is over (the top of the board) would let it drop by a row.
-  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
-    touching: true,
-    strayMouse: true,
+    });
   });
-});
 
-test("floating bar: holds the card of a flick, although a mouse left over the board is reported again as the page glides", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "a finger is a touch project's");
-  // The finger has lifted (its touchend is the last the page hears of it) and the page glides on, as after a flick,
-  // while the engine reports the old mouse place at every scroll. Only the place being the same as the one the mouse
-  // was last seen at tells the page that it is not the mouse moving; the card must stay put as the row comes in.
-  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
-    touching: true,
-    strayMouse: true,
-    glide: 400,
+  test("floating bar: the board does not shift under a page that scrolls across the turn of a slot", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "the scrolling of a phone or a tablet, which a finger is not the only way to do");
+    await acrossTheTurn(page, testInfo, (viewport) => new Scroller(page, viewport.width / 2), { touching: false });
   });
-});
 
-test("floating bar: holds the card of a flick, although the browser reports a mouse that has not moved at another place after the glide", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "a finger is a touch project's");
-  // As WebKit does once a page has scrolled, to update what is hovered: a pointermove and mousemove 100 ms
-  // after the last scroll (made by the page here, standing for the engine's own), at the place its cursor really is, which the page had not seen the mouse at. The cursor
-  // did not move on the screen, which the event says (no movement, the same screen place), so it is not the reader.
-  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
-    touching: true,
-    strayMouse: true,
-    fakeMove: true,
-    glide: 400,
+  test("floating bar: holds the card under the finger, not a mouse that was left over the board above it", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "a finger is a touch project's");
+    // As on an iPad or iPhone in WebKit after a click on Refresh: the mouse is still at the top right, and is reported
+    // again as the page scrolls, after the finger's last touch. The finger is where the reader is, and the card under
+    // it must stay put; a page that held what the mouse is over (the top of the board) would let it drop by a row.
+    await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+      touching: true,
+      strayMouse: true,
+    });
   });
-});
 
-test("floating bar: holds what a mouse is over once it moves after the finger has lifted", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "a finger is a touch project's");
-  // The other way round: a real move of the mouse (with steps, so it has movement) while the page glides on is the
-  // reader acting, so the piece of the board it is over is held and the card the finger left is let go.
-  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
-    touching: true,
-    mouseMoves: true,
-    // Long enough for the mouse to get there: its steps are a round trip each, and the update lands a moment after the glide.
-    glide: 1_500,
+  test("floating bar: holds the card of a flick, although a mouse left over the board is reported again as the page glides", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "a finger is a touch project's");
+    // The finger has lifted (its touchend is the last the page hears of it) and the page glides on, as after a flick,
+    // while the engine reports the old mouse place at every scroll. Only the place being the same as the one the mouse
+    // was last seen at tells the page that it is not the mouse moving; the card must stay put as the row comes in.
+    await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+      touching: true,
+      strayMouse: true,
+      glide: 400,
+    });
   });
-});
 
-test("floating bar: holds the card when the browser does not anchor scroll although it says it supports it", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "a finger is a touch project's");
-  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
-    touching: true,
-    anchoring: "claimed",
+  test("floating bar: holds the card of a flick, although the browser reports a mouse that has not moved at another place after the glide", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "a finger is a touch project's");
+    // As WebKit does once a page has scrolled, to update what is hovered: a pointermove and mousemove 100 ms
+    // after the last scroll (made by the page here, standing for the engine's own), at the place its cursor really is, which the page had not seen the mouse at. The cursor
+    // did not move on the screen, which the event says (no movement, the same screen place), so it is not the reader.
+    await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+      touching: true,
+      strayMouse: true,
+      fakeMove: true,
+      glide: 400,
+    });
   });
-});
 
-test("floating bar: holds the card, once and not twice, with the browser's own scroll anchoring left on", async ({
-  page,
-  hasTouch,
-}, testInfo) => {
-  test.skip(!hasTouch, "a finger is a touch project's");
-  // Nothing is switched off. Whatever the browser holds, the page scrolls by what is left, so a card that is held
-  // twice (the browser's scroll and the page's on top of it) would show here as a jump the other way. It runs on
-  // WebKit too, whose anchoring differs by version: the card must not move on screen whichever it does.
-  await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
-    touching: true,
-    anchoring: "native",
+  test("floating bar: holds what a mouse is over once it moves after the finger has lifted", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "a finger is a touch project's");
+    // The other way round: a real move of the mouse (with steps, so it has movement) while the page glides on is the
+    // reader acting, so the piece of the board it is over is held and the card the finger left is let go.
+    await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+      touching: true,
+      mouseMoves: true,
+      // Long enough for the mouse to get there: its steps are a round trip each, and the update lands a moment after the glide.
+      glide: 1_500,
+    });
+  });
+
+  test("floating bar: holds the card when the browser does not anchor scroll although it says it supports it", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "a finger is a touch project's");
+    await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+      touching: true,
+      anchoring: "claimed",
+    });
+  });
+
+  test("floating bar: holds the card, once and not twice, with the browser's own scroll anchoring left on", async ({
+    page,
+    hasTouch,
+  }, testInfo) => {
+    test.skip(!hasTouch, "a finger is a touch project's");
+    // Nothing is switched off. Whatever the browser holds, the page scrolls by what is left, so a card that is held
+    // twice (the browser's scroll and the page's on top of it) would show here as a jump the other way. It runs on
+    // WebKit too, whose anchoring differs by version: the card must not move on screen whichever it does.
+    await acrossTheTurn(page, testInfo, (viewport) => new SyntheticFinger(page, viewport.width / 2), {
+      touching: true,
+      anchoring: "native",
+    });
   });
 });
 

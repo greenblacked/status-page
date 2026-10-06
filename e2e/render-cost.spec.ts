@@ -72,6 +72,9 @@ const renders = (page: Page) =>
     return { commits: log?.commits ?? 0, cards: log?.cards ?? 0, ids: log?.ids.slice() ?? [] };
   });
 
+// Every test here sets the page's time itself (page.clock, see openSteady), so none is pinned to a slot first.
+test.use({ pinSlot: false });
+
 /** "1:52" in the live line, as seconds. */
 const liveLineSeconds = async (page: Page) => {
   const text = (await page.getByTestId("live-bar").textContent()) ?? "";

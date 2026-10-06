@@ -7,8 +7,9 @@ import { expect, test } from "./test";
 // The day/night switch (src/components/status/theme-switch.tsx) and the rule behind it (src/lib/theme.ts): a stored
 // choice wins, otherwise the visitor's clock, night from 20:00 to 06:00. These tests are about the choice and the
 // clock, so the suite's own pin (e2e/test.ts), which stores the theme of the emulated colour scheme, is off here and
-// each test says what is stored and what time it is.
-test.use({ pinTheme: false });
+// each test says what is stored and what time it is. Nor is the page pinned to a slot (pinSlot): the tests set the
+// page's time themselves.
+test.use({ pinTheme: false, pinSlot: false });
 
 const at = (hour: number, minute = 0, second = 0) => new Date(Date.UTC(2026, 9, 5, hour, minute, second));
 const THEMES = ["day", "night"] as const;
