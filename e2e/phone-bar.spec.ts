@@ -549,6 +549,64 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     }
   }
 
+  test("covers the notch's strip and rows up below it: the safe area is above a 4rem row", async ({
+    page,
+    browserName,
+  }) => {
+    test.slow();
+    test.skip(browserName !== "chromium", "only Chromium can emulate a safe-area inset");
+    const inset = 47;
+    const session = await page.context().newCDPSession(page);
+    await session.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: inset, bottom: 34 } });
+    await openBoard(page, "quiet", { steady: true });
+    test.skip(!(await isPhone(page)), "the header is a phone's bar only");
+    await bringBarUp(page);
+    const read = () =>
+      controlBar(page).evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const rootPx = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+        const middle = (node: Element | null | undefined) => {
+          const rect = node?.getBoundingClientRect();
+          return rect ? (rect.top + rect.bottom) / 2 : Number.NaN;
+        };
+        return {
+          rootPx,
+          top: box.top,
+          bottom: box.bottom,
+          height: box.height,
+          paddingTop: Number.parseFloat(style.paddingTop),
+          hair: Number.parseFloat(style.borderBottomWidth),
+          glyph: middle(element.querySelector("[data-bar-lead] svg")),
+          verdict: middle(element.querySelector("[data-bar-verdict] > span:not(:last-child)")),
+          buttons: [...element.querySelectorAll("button")]
+            .filter((button) => button.getBoundingClientRect().width > 1)
+            .map((button) => middle(button)),
+        };
+      });
+    const shown = await read();
+    expect(shown.paddingTop, "the safe area above the row").toBeCloseTo(inset, 0);
+    expect(shown.top, "from the very top of the screen").toBeCloseTo(0, 0);
+    expect(shown.height, "the safe area, a 4rem row, the hairline").toBeCloseTo(
+      inset + 4 * shown.rootPx + shown.hair,
+      0,
+    );
+    // The content sits in the row, 2rem below the strip: its middle is the strip plus half the row.
+    const centre = inset + 2 * shown.rootPx;
+    expect(shown.glyph, "the glyph is centred in the row").toBeCloseTo(centre, 0);
+    expect(shown.verdict, "the verdict is centred in the row").toBeCloseTo(centre, 0);
+    expect(shown.buttons.length, "the buttons are there").toBeGreaterThan(0);
+    for (const button of shown.buttons) expect(button, "a button is centred in the row").toBeCloseTo(centre, 0);
+
+    // Away, the strip goes with it: the whole box, safe area included, is above the screen.
+    const deep = await deepPosition(page);
+    await scrollAndSettle(page, deep + 300);
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+    await barSettled(page);
+    const away = await read();
+    expect(away.bottom, "wholly above the screen, the notch's strip too").toBeLessThanOrEqual(0.5);
+  });
+
   test("under Reduce Motion it does not slide: it is there or it is not", async ({ page }) => {
     test.slow();
     await page.emulateMedia({ reducedMotion: "reduce" });
