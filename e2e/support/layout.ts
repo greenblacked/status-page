@@ -530,13 +530,39 @@ export const sweepTo = (page: Page, ys: number[]): Promise<Sweep> =>
 export const maxScroll = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollHeight - document.documentElement.clientHeight);
 
-/** Scrolls to `y` and waits three frames, so the dock's own callback and React's update have run. */
+/**
+ * Waits until the page has had a rendering update since the last scroll, so that its dock has read where that scroll
+ * left it. The dock reads one position a frame (`useSearchDock`): a scroll event is dispatched, and then the frame's
+ * callbacks run, in the same update of the rendering. Two frames of the page's own are therefore enough, and one scroll
+ * that is not waited for (a `scrollIntoViewIfNeeded`, which scrolls and returns) and the next one made before the page
+ * has drawn are a single scroll to it: a scroll down and a few px up inside one frame is no scroll up.
+ */
+export const pageHasSeen = (page: Page) =>
+  page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  );
+
+/**
+ * Scrolls to `y` and waits until the page has handled it: its scroll event has been dispatched (the dock listens for
+ * it, ahead of anything here), and three frames after that, so the dock's own callback and React's update have run.
+ * Not by frames alone: a page whose clock is faked (page.clock) has frames that are timers, which pass without the
+ * page having drawn, and a slow draw (WebKit on a glass or a full background) is longer than two of them.
+ */
 export async function scrollAndSettle(page: Page, y: number): Promise<void> {
   await page.evaluate(
     (top) =>
       new Promise<void>((resolve) => {
+        const frames = () =>
+          requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        const before = window.scrollY;
+        const arrived = () => {
+          window.removeEventListener("scroll", arrived);
+          frames();
+        };
+        window.addEventListener("scroll", arrived, { passive: true });
         window.scrollTo(0, top);
-        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        // Nowhere to go (the page is there already): no scroll event will come.
+        if (window.scrollY === before) arrived();
       }),
     y,
   );
@@ -558,6 +584,9 @@ export const BAR_BACK_PX = 12;
  */
 export async function barBack(page: Page): Promise<void> {
   if (!(await isPhone(page))) return;
+  // The scroll that got the page here may not have been drawn yet (a locator's scrollIntoViewIfNeeded returns at
+  // once): let the page read where it is before it is scrolled up from there, or the two are one scroll.
+  await pageHasSeen(page);
   const at = await page.evaluate(() => window.scrollY);
   await scrollAndSettle(page, Math.max(0, at - BAR_BACK_PX));
   await controlBar(page).evaluate((bar) =>

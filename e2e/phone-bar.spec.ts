@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import {
   BACKGROUNDS,
+  barBack,
   barSearch,
   controlBar,
   heroSearch,
@@ -232,6 +233,63 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     await expect(bar).toHaveAttribute("data-shown", "true");
     await dragTo(page, deep + 300 - 14 + 20, 2);
     await expect(bar).toHaveAttribute("data-shown", "false");
+  });
+
+  test("reads one position a frame: a scroll down and a few px up inside one frame is no scroll up", async ({
+    page,
+  }) => {
+    test.slow();
+    await openBoard(page, "quiet", { steady: true });
+    test.skip(!(await isPhone(page)), "the bar hides on a phone only");
+    const bar = controlBar(page);
+    const deep = await deepPosition(page);
+    // Two scrolls in one task are one scroll event, and the dock reads where the page is when its frame runs: the
+    // way a locator's scrollIntoViewIfNeeded followed at once by a scroll of the test's own reaches a slow-drawing
+    // WebKit. What the page did not see is not travel, so the bar stays away.
+    await page.evaluate(
+      (top) =>
+        new Promise<void>((resolve) => {
+          window.scrollTo(0, top);
+          window.scrollTo(0, top - 30);
+          requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        }),
+      deep,
+    );
+    await expect(bar).toHaveAttribute("data-shown", "false");
+    // The same two scrolls a frame apart are a scroll up, which is what the helper's waits are for.
+    await scrollAndSettle(page, 0);
+    await scrollAndSettle(page, deep);
+    await scrollAndSettle(page, deep - 30);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+  });
+
+  test("is brought back by barBack after a scroll the page has not drawn yet", async ({ page }) => {
+    test.slow();
+    // A page that draws slowly (WebKit on a glass or a full background): its frame callbacks come 60 ms after they
+    // are asked for, on the next frame after that.
+    await page.addInitScript(() => {
+      const native = window.requestAnimationFrame.bind(window);
+      const live = new Set<number>();
+      let last = 0;
+      window.requestAnimationFrame = (callback) => {
+        const id = ++last;
+        live.add(id);
+        setTimeout(() => native((time) => live.delete(id) && callback(time)), 60);
+        return id;
+      };
+      window.cancelAnimationFrame = (id) => {
+        live.delete(id);
+      };
+    });
+    await openBoard(page, "quiet", { steady: true });
+    test.skip(!(await isPhone(page)), "the bar hides on a phone only");
+    const deep = await deepPosition(page);
+    // What a locator's scrollIntoViewIfNeeded leaves: the page is scrolled and returns at once, and the next thing the
+    // test does comes before a frame of the page has read the scroll. Without the wait in barBack, the scroll up of 12px
+    // and the scroll down are one scroll to the page.
+    await page.evaluate((top) => window.scrollTo(0, top), deep);
+    await barBack(page);
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   });
 
   test("keeps its blurred layer while it is away, and takes no room: the page does not move with it", async ({
