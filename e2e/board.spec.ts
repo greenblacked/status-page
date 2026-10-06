@@ -2726,7 +2726,8 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
         bottom: barBox.bottom - Number.parseFloat(style.borderBottomWidth) - Number.parseFloat(style.paddingBottom),
       },
       field: rect(document.querySelector(".bar-search .search-field")),
-      dot: rect(bar?.querySelector("p") ?? null),
+      // The glyph itself: on a phone the lead <p> is `display: contents` and has no box of its own (all zeros).
+      dot: rect(bar?.querySelector("[data-bar-lead] svg") ?? null),
       // The first button the bar draws: below 640px the day/night switch is not (display: none), and has no box.
       firstButton: rect(
         [...(bar?.querySelectorAll("button") ?? [])].find((button) => button.getBoundingClientRect().width > 0) ?? null,
@@ -2739,6 +2740,7 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.bar.right + near);
   expect(boxes.field.top).toBeGreaterThanOrEqual(boxes.bar.top - near);
   expect(boxes.field.bottom).toBeLessThanOrEqual(boxes.bar.bottom + near);
+  expect(boxes.dot.right, "the glyph has a box: a zero one would let any field pass").toBeGreaterThan(0);
   expect(boxes.field.left).toBeGreaterThanOrEqual(boxes.dot.right - near);
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.firstButton.left + near);
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.refresh.left + near);
