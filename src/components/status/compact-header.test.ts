@@ -106,9 +106,10 @@ describe("CompactHeader", () => {
 
   it("reads the server snapshot on the server: a store that says the bar is up and the field revealed renders neither", () => {
     const store = createDockStore();
-    store.set({ barShown: true, docked: true, heroAway: true, revealed: true });
+    store.set({ barShown: true, away: false, docked: true, heroAway: true, revealed: true });
     const html = render({ store });
     expect(html).toContain('data-shown="false"');
     expect(html).not.toContain("data-revealed");
+    expect(html).not.toContain("data-away");
   });
 });

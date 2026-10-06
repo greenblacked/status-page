@@ -11,6 +11,7 @@ import {
   MIKROTIK_NOTE,
   releaseLineIds,
 } from "./support/first-render";
+import { barBack, isPhone } from "./support/layout";
 import { pinToSlot, stopClock } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
@@ -473,6 +474,7 @@ test("Quiet, the default background, blurs no panel and no control, only the flo
   if (wide) expect(hidden).toEqual([]);
   else expect(hidden.some((value) => value.includes("blur("))).toBe(true);
   await page.locator("footer").scrollIntoViewIfNeeded();
+  await barBack(page);
   await expect(bar).toHaveAttribute("data-shown", "true");
   expect((await backdropFilters(page, BARS)).some((value) => value.includes("blur("))).toBe(true);
 });
@@ -513,6 +515,7 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   const header = page.getByRole("region", { name: "Board controls" });
   await expect(header).toBeHidden();
   await page.locator("footer").scrollIntoViewIfNeeded();
+  await barBack(page);
   await expect(header).toBeVisible();
   await expect(header.getByRole("button", { name: "Refresh status now" })).toBeVisible();
   // Its Refresh and Alerts are second copies: no id may appear twice.
@@ -530,6 +533,7 @@ test("floats a compact header with the controls once the hero scrolls away", asy
   // Playwright's click first scrolls its target into view, and WebKit
   // scrolls a stuck sticky bar to its place in the page, back over the hero.
   await page.locator("footer").scrollIntoViewIfNeeded();
+  await barBack(page);
   const refresh = header.getByRole("button", { name: "Refresh status now" });
   await expect(refresh).toBeInViewport();
   // The bar's own transitions only: the live ring inside it never finishes.
@@ -547,6 +551,29 @@ test("floats a compact header with the controls once the hero scrolls away", asy
 
 /** The floating bar, found by its markup: Playwright's role queries skip it while it is `inert`. */
 const controlBar = (page: Page) => page.locator('section[aria-label="Board controls"]');
+
+/**
+ * Whether the bar is up for the page, past the hero's last line: in sight (data-shown), or, on a phone, parked above
+ * the screen by a scroll down (data-away). `data-shown` alone is whether it is in sight, which on a phone also depends
+ * on the direction of the scroll.
+ */
+const barIsUp = (page: Page) =>
+  controlBar(page).evaluate((bar) => bar.getAttribute("data-shown") === "true" || bar.hasAttribute("data-away"));
+
+/**
+ * Scrolls to `y` having come from further down, so that on a phone the bar, which comes back on a scroll up, is in
+ * sight there, and has settled. From 640px it is the same as scrolling to `y`.
+ */
+async function scrollUpTo(page: Page, y: number): Promise<void> {
+  if (await isPhone(page)) await scrollAndSettle(page, y + 30);
+  await scrollAndSettle(page, y);
+  await barSettled(page);
+}
+
+/** Waits until the page says the bar is (or is not) up for the page (see `barIsUp`). */
+async function expectBarUp(page: Page, up: boolean): Promise<void> {
+  await expect.poll(() => barIsUp(page)).toBe(up);
+}
 
 /**
  * The search dock, in the hero. From 64rem it carries --dock (0 to 1), the field's progress into the bar, which
@@ -621,6 +648,8 @@ type DockStop = {
   /** Wide: the dock's reading, --dock. Below 64rem it is never written, and this is 0. */
   dock: number;
   shown: string | null;
+  /** The bar is up for the page: in sight, or (a phone) parked above the screen by a scroll down (data-away). */
+  up: boolean;
   /** Wide: the move is under way (--dock above 0). */
   docking: boolean;
   /** Below 64rem: the bar's copy of the field is revealed (data-revealed). */
@@ -767,13 +796,18 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           fellBack,
           dock: Number.parseFloat(dock?.style.getPropertyValue("--dock") || "0"),
           shown: bar?.getAttribute("data-shown") ?? null,
+          up: bar?.getAttribute("data-shown") === "true" || bar?.hasAttribute("data-away") === true,
           docking: dock?.hasAttribute("data-docking") ?? false,
           revealed: bar?.hasAttribute("data-revealed") ?? false,
           barFieldOpacity: barField ? Number.parseFloat(getComputedStyle(barField).opacity) : 0,
           liveBottom: live?.getBoundingClientRect().bottom ?? 0,
           contentBottom: (hero?.getBoundingClientRect().bottom ?? 0) - heroPad,
           barTop: bar?.getBoundingClientRect().top ?? 0,
-          barBottom: bar?.getBoundingClientRect().bottom ?? 0,
+          // Where the bar's lower edge rests: the layout's, not the transform's. A phone's bar slides its own height over
+          // 200ms, so a frame read mid-slide has it partly above the screen, which is no sign of where it will be.
+          barBottom: bar
+            ? bar.getBoundingClientRect().bottom - new DOMMatrixReadOnly(getComputedStyle(bar).transform).m42
+            : 0,
           fieldTop: fieldBox?.top ?? 0,
           fieldBottom: fieldBox?.bottom ?? 0,
           placeholder: input?.placeholder ?? "",
@@ -863,6 +897,7 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
       reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
       barTop: Number.parseFloat(getComputedStyle(bar).top),
       barHeight: bar.offsetHeight,
+      phone: !matchMedia("(min-width: 40rem)").matches,
       dockStick: Number.parseFloat(getComputedStyle(dock).top),
       fieldBottom: dock.getBoundingClientRect().bottom + window.scrollY,
       contentBottom:
@@ -886,7 +921,8 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
   // Below 64rem the bar is fixed and comes up once the hero's last line has scrolled out from under the highest
   // point the sliding bar reaches. The hero's field is in the flow: the bar's copy can show once its bottom edge
   // is level with the bar's, and the hook turns that on a few px (DOCK_HYSTERESIS) past it.
-  const barStart = Math.max(0, measured.contentBottom - (measured.barTop - BAR_RISE));
+  // On a phone the bar is a sheet from the screen's top edge: the line must be off the screen, not just above a pill.
+  const barStart = Math.max(0, measured.contentBottom - (measured.phone ? 0 : measured.barTop - BAR_RISE));
   const revealFrom = measured.fieldBottom - (measured.barTop + measured.barHeight);
   return {
     wide: false,
@@ -951,7 +987,8 @@ async function revealServedBoard(
 
 /**
  * Takes the page down past the point where the hero's field is behind the bar, with the bar's field hidden: the
- * way a reader arrives. Returns the position: 200px past it, and at least 160px short of the end of the page, so a
+ * way a reader arrives (on a phone then a little up, so that the bar is in sight: see `barBack`; the page rests 12px
+ * above the position returned). Returns the position: 200px past it, and at least 160px short of the end of the page, so a
  * test has room to scroll further down from there.
  */
 async function scrollDeep(page: Page, offsets: DockOffsets & { limit: number }): Promise<number> {
@@ -960,10 +997,20 @@ async function scrollDeep(page: Page, offsets: DockOffsets & { limit: number }):
     offsets.revealFrom + DOCK_HYSTERESIS + 2 * REVEAL_UP_PX,
   );
   await scrollAndSettle(page, y);
+  // On a phone the bar is out of sight after a scroll down: the way a reader brings it back is a scroll up, a short
+  // one that is not the 24px that reveal its field.
+  await barBack(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   expect(await isRevealed(page)).toBe(false);
   return y;
 }
+
+/**
+ * Where the hero's last line has to be above for the bar not to cover it: the bar's top edge, but never below the
+ * screen's top. A phone's bar is a sheet from the top edge that slides in from above the screen, so while it comes in
+ * its top is above 0, and the line must be off the screen, not just above that.
+ */
+const clearOfBar = (barTop: number) => Math.max(barTop, 0);
 
 test("keeps the floating bar clear of the live bar as it appears", async ({ page }) => {
   test.slow();
@@ -978,12 +1025,13 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   // bar's text must already be above it, not sliding under or beside it.
   const { up } = await dockPath(page);
   const stops = await sweepDock(page, up);
-  const first = stops.find((stop) => stop.shown === "true");
+  // Up for the page: on a phone the bar comes up out of sight on the way down, and only a scroll up shows it.
+  const first = stops.find((stop) => stop.up);
   expect(first, "the bar never showed").toBeDefined();
-  expect(first?.liveBottom ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(first?.barTop ?? 0);
+  expect(first?.liveBottom ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(clearOfBar(first?.barTop ?? 0));
   // And it stays clear of it for the rest of the way down.
-  for (const stop of stops.filter((stop) => stop.shown === "true")) {
-    expect(stop.liveBottom, `at ${stop.y}`).toBeLessThanOrEqual(stop.barTop);
+  for (const stop of stops.filter((stop) => stop.up)) {
+    expect(stop.liveBottom, `at ${stop.y}`).toBeLessThanOrEqual(clearOfBar(stop.barTop));
   }
 });
 
@@ -1016,8 +1064,15 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
         await page.evaluate((px) => {
           document.documentElement.style.fontSize = `${px}px`;
         }, rootPx);
-        // The bar is 3rem tall: once it is, the layout has taken the size, and the dock measures on the frame after.
-        await expect.poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight)).toBe(3 * rootPx);
+        // The bar is 3rem tall (a phone's, the AI catalogue's header from the top edge: a 4rem row and its hairline,
+        // 4rem plus the hairline's 0.5px or 1px, the layout's rounding of which is within a pixel): once it is, the layout
+        // has taken the size, and the dock measures on the frame after.
+        await expect
+          .poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight))
+          .toBeGreaterThanOrEqual((width < 640 ? 4 : 3) * rootPx);
+        await expect
+          .poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight))
+          .toBeLessThanOrEqual((width < 640 ? 4 : 3) * rootPx + 1);
       }
       // The page's own refetch changes the live line's height for a moment: sweep clear of it.
       await awayFromRefetch(page);
@@ -1025,16 +1080,21 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
       await scrollAndSettle(page, 0);
       const { natural, barStart, revealFrom } = await dockOffsets(page);
       // The bar is up alone for a stretch of scrolling before the hero's field is behind it: the spacing under the
-      // live line (the page's padding and the field's margin, less the bar's room) is 36px at a 16px root.
-      expect(revealFrom - barStart, `${at}: the bar alone`).toBeGreaterThanOrEqual(30 * (rootPx / 16) - 1);
+      // live line (the page's padding and the field's margin, less the bar's room) is 36px at a 16px root, 28px
+      // under a phone's 4rem bar.
+      expect(revealFrom - barStart, `${at}: the bar alone`).toBeGreaterThanOrEqual(
+        (width < 640 ? 24 : 30) * (rootPx / 16) - 1,
+      );
 
       const { up } = await dockPath(page, 2);
       const stops = await sweepDock(page, up);
-      const shown = stops.filter((stop) => stop.shown === "true");
+      // Up for the page: on a phone it comes up out of sight on the way down, and only a scroll up shows it.
+      const shown = stops.filter((stop) => stop.up);
       const first = shown[0];
       expect(first, `${at}: the bar never showed`).toBeDefined();
-      // The bar never sits over the hero's last line, from the first stop it shows at.
-      for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
+      // The bar never sits over the hero's last line, from the first stop it is up at.
+      for (const stop of shown)
+        expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(clearOfBar(stop.barTop) + 0.5);
       // Nothing in the bar to cover the line with: the field is hidden going down, at every stop.
       for (const stop of stops) {
         expect(stop.revealed, `${at}, ${stop.y}`).toBe(false);
@@ -1060,9 +1120,8 @@ test("starts to take the bar down in the frame that shows a taller hero, not a f
     await awayFromRefetch(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     const { barStart } = await dockOffsets(page);
-    await scrollAndSettle(page, Math.ceil(barStart) + 4);
+    await scrollUpTo(page, Math.ceil(barStart) + 4);
     await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
-    await barSettled(page);
     // The test's own frame callback runs ahead of the layout observers in the frame that draws the change, and
     // the one after it ahead of anything the page asked for in between: so the second callback reads the bar as
     // the page left it for the frame after the one that shows the taller hero. The bar must have started down.
@@ -1116,9 +1175,8 @@ test("takes the bar down when the hero grows under it, at every width below 64re
     // With the bar up and the page just past the point where it comes up, the answer to a Refresh names more
     // services: the hero's last line moves down, under the bar's place.
     const { barStart } = await dockOffsets(page);
-    await scrollAndSettle(page, Math.ceil(barStart) + 4);
+    await scrollUpTo(page, Math.ceil(barStart) + 4);
     await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
-    await barSettled(page);
     const heroBottom = () =>
       page.evaluate(() => {
         const hero = document.querySelector(".board-body")?.previousElementSibling as HTMLElement;
@@ -1145,7 +1203,7 @@ test("takes the bar down when the hero grows under it, at every width below 64re
         barTop: bar.getBoundingClientRect().top,
       };
     });
-    if (shown === "true") expect(contentBottom, at).toBeLessThanOrEqual(barTop + 0.5);
+    if (shown === "true") expect(contentBottom, at).toBeLessThanOrEqual(clearOfBar(barTop) + 0.5);
   }
   expect(Math.max(...grew), "the longer hero never made the page taller").toBeGreaterThan(8);
 });
@@ -1157,19 +1215,18 @@ test("keeps the bar up while the page hovers just above where it appears", async
   await fontsSettled(page);
   const { wide, barStart } = await dockOffsets(page);
   test.skip(wide, "the bar is part of the field's one move from 64rem");
-  const bar = controlBar(page);
 
   await scrollAndSettle(page, Math.ceil(barStart) + 20);
-  await expect(bar).toHaveAttribute("data-shown", "true");
+  await expectBarUp(page, true);
   // Up to 8px above the offset it came up at, it stays up; further, it goes; and it does not return before the offset.
   await scrollAndSettle(page, Math.ceil(barStart) - 4);
-  await expect(bar).toHaveAttribute("data-shown", "true");
+  await expectBarUp(page, true);
   await scrollAndSettle(page, Math.floor(barStart) - 12);
-  await expect(bar).toHaveAttribute("data-shown", "false");
+  await expectBarUp(page, false);
   await scrollAndSettle(page, Math.ceil(barStart) - 4);
-  await expect(bar).toHaveAttribute("data-shown", "false");
+  await expectBarUp(page, false);
   await scrollAndSettle(page, Math.ceil(barStart) + 1);
-  await expect(bar).toHaveAttribute("data-shown", "true");
+  await expectBarUp(page, true);
 });
 
 /**
@@ -1242,7 +1299,11 @@ test("search reveal: a rubber band below the end of the page, and its recoil, re
   const { wide } = await dockOffsets(page);
   const limit = await maxScroll(page);
   await scrollAndSettle(page, limit);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  await expectBarUp(page, true);
+  // On a phone the page went down, so the bar is parked above the screen; it stays there through the bounce, which
+  // must not bring it back: iOS reads the way back from past the end as a scroll up.
+  const phone = await isPhone(page);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", phone ? "false" : "true");
   // Wide: the field is in the bar. Below 64rem: the page went down, so the bar's field is hidden.
   expect(await dockValue(page)).toBe(wide ? 1 : 0);
   expect(await isRevealed(page)).toBe(false);
@@ -1251,7 +1312,7 @@ test("search reveal: a rubber band below the end of the page, and its recoil, re
   const seen = await overscroll(page, [limit + 6, limit + 120, limit + 2, limit + 600, limit, limit + 60, limit - 1]);
   for (const stop of seen) {
     expect(stop.dock, `at ${stop.y}`).toBe(wide ? 1 : 0);
-    expect(stop.shown, `at ${stop.y}`).toBe("true");
+    expect(stop.shown, `at ${stop.y}`).toBe(phone ? "false" : "true");
     expect(stop.revealed, `at ${stop.y}`).toBe(false);
     expect(stop.fieldTop, `at ${stop.y}`).toBeCloseTo(at.fieldTop, 0);
   }
@@ -1413,8 +1474,11 @@ test("search reveal: a fast scroll down and back up reveals the bar's field once
     expect(stop.fieldTop, `up, at ${stop.scrollY}`).toBeGreaterThanOrEqual(previous.fieldTop - 0.5);
     expect(stop.dock, `up, at ${stop.scrollY}`).toBeLessThanOrEqual(previous.dock);
   }
-  expect(flips(downward).length, "the bar came up more than once on the way down").toBeLessThanOrEqual(1);
-  expect(flips(upward).length, "the bar went more than once on the way up").toBeLessThanOrEqual(1);
+  // On a phone the bar is not in sight on the way down at all (it comes up for the page out of sight), and on the way
+  // up it comes into sight once, at the first stride up, and goes once, where the hero's last line comes back.
+  const phone = await isPhone(page);
+  expect(flips(downward).length, "the bar came up more than once on the way down").toBeLessThanOrEqual(phone ? 0 : 1);
+  expect(flips(upward).length, "the bar went more than once on the way up").toBeLessThanOrEqual(phone ? 2 : 1);
   // Above its pin the field is the page's own: it is where the page puts it, at every stop, not a frame behind.
   // Below 64rem it has no pin.
   const pin = wide ? natural - moveEnd : Number.NEGATIVE_INFINITY;
@@ -1538,10 +1602,13 @@ test("search reveal: scrolling down keeps one field in the page and none in the 
     expect(stop.barFieldOpacity, `at ${stop.y}`).toBe(0);
   }
   expect(
-    stops.some((stop) => stop.shown === "true"),
+    stops.some((stop) => stop.up),
     "the bar came up on the way",
   ).toBe(true);
-  // Nothing in the bar takes a tap: at the middle of its slot the bar answers, not an input.
+  // Nothing in the bar takes a tap: at the middle of its slot the bar answers, not an input. (A phone's bar went away
+  // on that scroll down: a scroll up that is short of revealing its field brings it back to be tapped.)
+  await barBack(page);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   const hit = await page.evaluate(() => {
     const slot = (document.querySelector(".bar-search") as HTMLElement).parentElement as HTMLElement;
     const box = slot.getBoundingClientRect();
@@ -1795,7 +1862,11 @@ test("search reveal: opens a page that is already scrolled past the field with t
   await hydrated(page);
   await leadSteady(page);
   await fontsSettled(page);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  // A phone's bar opens out of sight: nobody has scrolled up yet, and a restored position is no direction.
+  if (await isPhone(page)) {
+    await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+    await expect(controlBar(page)).toHaveAttribute("data-away", "");
+  } else await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   // The reader is where the restored page is now.
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
@@ -1846,10 +1917,15 @@ test("search reveal: takes the pose a scroll gives it before the page has loaded
   test.skip(offsets.wide, "from 64rem there is no field in the bar");
   const deep = Math.ceil(offsets.revealFrom) + 400;
   await page.evaluate((to) => window.scrollTo(0, to), deep);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
-  // Before the load has finished a scroll is a restored position, not a direction: even a scroll up reveals nothing.
+  // A phone's bar is up for the page but out of sight: it comes back on a scroll up the reader makes.
+  const inSight = (await isPhone(page)) ? "false" : "true";
+  await expectBarUp(page, true);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", inSight);
+  // Before the load has finished a scroll is a restored position, not a direction: even a scroll up reveals nothing,
+  // nor brings a phone's bar back.
   await page.evaluate((to) => window.scrollTo(0, to), deep - 3 * REVEAL_UP_PX);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  await expectBarUp(page, true);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", inSight);
   expect(await isRevealed(page)).toBe(false);
   const played = () => page.evaluate(() => (window as Window & { __runs?: string[] }).__runs ?? []);
   expect(await played(), "the field's move played before the load").toEqual([]);
@@ -1991,6 +2067,7 @@ test("search reveal: a reorder above the reader that keeps the board's height do
   await expect.poll(() => maxScroll(page)).toBeGreaterThan(offsets.limit + 2000);
   const y0 = offsets.revealFrom + 1000;
   await scrollAndSettle(page, y0);
+  await barBack(page);
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   expect(await isRevealed(page)).toBe(false);
   await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
@@ -2651,10 +2728,17 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
       return { left, right, top, bottom };
     };
     const bar = document.querySelector('section[aria-label="Board controls"]');
+    const barBox = rect(bar);
+    const style = getComputedStyle(bar as Element);
     return {
-      bar: rect(bar),
+      bar: barBox,
+      content: {
+        top: barBox.top + Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.paddingTop),
+        bottom: barBox.bottom - Number.parseFloat(style.borderBottomWidth) - Number.parseFloat(style.paddingBottom),
+      },
       field: rect(document.querySelector(".bar-search .search-field")),
-      dot: rect(bar?.querySelector("p") ?? null),
+      // The glyph itself: on a phone the lead <p> is `display: contents` and has no box of its own (all zeros).
+      dot: rect(bar?.querySelector("[data-bar-lead] svg") ?? null),
       // The first button the bar draws: below 640px the day/night switch is not (display: none), and has no box.
       firstButton: rect(
         [...(bar?.querySelectorAll("button") ?? [])].find((button) => button.getBoundingClientRect().width > 0) ?? null,
@@ -2667,11 +2751,13 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.bar.right + near);
   expect(boxes.field.top).toBeGreaterThanOrEqual(boxes.bar.top - near);
   expect(boxes.field.bottom).toBeLessThanOrEqual(boxes.bar.bottom + near);
+  expect(boxes.dot.right, "the glyph has a box: a zero one would let any field pass").toBeGreaterThan(0);
   expect(boxes.field.left).toBeGreaterThanOrEqual(boxes.dot.right - near);
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.firstButton.left + near);
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.refresh.left + near);
-  // Centred in the bar's height, not just inside it.
-  const off = (boxes.field.top + boxes.field.bottom) / 2 - (boxes.bar.top + boxes.bar.bottom) / 2;
+  // Centred in the bar's content, not just inside it: on a phone the bar is a sheet from the top edge of the screen,
+  // and the content is the 3rem below its padding (the safe area and 0.5rem), not the whole box.
+  const off = (boxes.field.top + boxes.field.bottom) / 2 - (boxes.content.top + boxes.content.bottom) / 2;
   expect(Math.abs(off)).toBeLessThanOrEqual(near);
   // The hero's field was below the bar, where the page puts it.
   expect(before).not.toBeNull();
@@ -2709,7 +2795,9 @@ test("search reveal: Shift+Tab reaches the field from the bar's buttons without 
 }) => {
   test.slow();
   const offsets = await revealBoard(page);
-  const y0 = await scrollDeep(page, offsets);
+  await scrollDeep(page, offsets);
+  // Where the page rests (on a phone a little above the position scrollDeep returns, which is where it turned).
+  const y0 = await page.evaluate(() => window.scrollY);
   await barSettled(page);
   const bar = controlBar(page);
   const refresh = bar.getByRole("button", { name: "Refresh status now" });
@@ -2738,7 +2826,9 @@ test("search reveal: Shift+Tab reaches the field from the bar's buttons without 
 test("search reveal: Tab reaches the field without moving the page", async ({ page }) => {
   test.slow();
   const offsets = await revealBoard(page);
-  const y0 = await scrollDeep(page, offsets);
+  await scrollDeep(page, offsets);
+  // Where the page rests (on a phone a little above the position scrollDeep returns, which is where it turned).
+  const y0 = await page.evaluate(() => window.scrollY);
   await barSettled(page);
   // The stop before the bar's field in the tab order, whatever it is (the hero's controls, left of the bar in the markup).
   const found = await page.evaluate(() => {
@@ -2767,7 +2857,9 @@ test("search reveal: Tab reaches the field without moving the page", async ({ pa
 test("search reveal: / brings the bar's field up and focuses it without moving the page", async ({ page }) => {
   test.slow();
   const offsets = await revealBoard(page);
-  const y0 = await scrollDeep(page, offsets);
+  await scrollDeep(page, offsets);
+  // Where the page rests (on a phone a little above the position scrollDeep returns, which is where it turned).
+  const y0 = await page.evaluate(() => window.scrollY);
   await page.keyboard.press("/");
   await expect(barSearch(page)).toBeFocused();
   await expectRevealed(page, true);
@@ -5219,6 +5311,7 @@ test("puts the floating bar's verdict, check time and countdown beside the docke
   await openFixture(page, () => fixtureBoard(Date.now()));
   const bar = controlBar(page);
   await page.locator("footer").scrollIntoViewIfNeeded();
+  await barBack(page);
   await expect(bar).toHaveAttribute("data-shown", "true");
   const lead = bar.locator("p[data-bar-lead]");
   await expect(lead).toContainText("1 down · 1 degraded · 1 in maintenance");
@@ -5235,6 +5328,7 @@ for (const [name, makeBoard] of [
     await openFixture(page, () => makeBoard(Date.now()));
     const bar = controlBar(page);
     await page.locator("footer").scrollIntoViewIfNeeded();
+    await barBack(page);
     await expect(bar).toHaveAttribute("data-shown", "true");
     // The drawn form: the compact one below 1024px, the short one from there up. Its text must fit its box.
     const drawn = await bar

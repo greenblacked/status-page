@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Locator, Page } from "@playwright/test";
 import { THEME_BOOT_SCRIPT, THEME_COLORS } from "../src/lib/theme.ts";
-import { BACKGROUNDS, cards, controlBar, hydrated, SERVICES, TARGET_FLOOR } from "./support/layout";
+import { BACKGROUNDS, cards, controlBar, hydrated, SERVICES, scrollAndSettle, TARGET_FLOOR } from "./support/layout";
 import { expect, test } from "./test";
 
 // The day/night switch (src/components/status/theme-switch.tsx) and the rule behind it (src/lib/theme.ts): a stored
@@ -41,6 +41,19 @@ async function seed(page: Page, value: string): Promise<void> {
       }
     } catch {}
   }, value);
+}
+
+/**
+ * Scrolls down to `down`, lets the page see it, and then up to `up`: a phone's bar is out of sight after a scroll down
+ * and comes back on a scroll up of more than 8px. The page must have handled the first scroll before the second is
+ * made (`scrollAndSettle` waits for its scroll event, not for frames: the page's clock is faked here, so a frame is a
+ * 16 ms timer that passes without the page having drawn, and WebKit draws later than two of them), and must be armed,
+ * or the dock takes both for a restored position.
+ */
+async function scrollDownThenUp(page: Page, down: number, up: number): Promise<void> {
+  await expect(page.locator(".search-dock")).toHaveAttribute("data-armed", "");
+  await scrollAndSettle(page, down);
+  await scrollAndSettle(page, up);
 }
 
 /** Opens the board at a time of day (UTC, the suite's zone), with the theme stored or not. */
@@ -741,7 +754,8 @@ test.describe("on any screen", () => {
   test("is reachable by Tab on a phone with the bar up, and the bar's copy takes over from 640px", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await open(page, at(10));
-    await page.evaluate(() => window.scrollTo(0, 1500));
+    // Down, then a little up: a phone's bar comes back on a scroll up.
+    await scrollDownThenUp(page, 1500, 1480);
     await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
     // The bar draws no switch below 640px, so the hero's must stay in the Tab order.
     await expect(heroSwitch(page)).not.toHaveAttribute("tabindex", "-1");
@@ -773,7 +787,7 @@ test.describe("on any screen", () => {
     const after = await verdict.boundingBox();
     expect(after).toEqual(before);
     // The bar keeps its whole width for the verdict on a phone: the switch is not in it.
-    await page.evaluate(() => window.scrollTo(0, 1200));
+    await scrollDownThenUp(page, 1200, 1180);
     await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
     await expect(barSwitch(page)).toBeHidden();
   });
