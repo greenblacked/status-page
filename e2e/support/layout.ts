@@ -542,6 +542,35 @@ export async function scrollAndSettle(page: Page, y: number): Promise<void> {
   );
 }
 
+/** A phone's screen: under 40rem, where the floating bar goes away on a scroll down and comes back on a scroll up. */
+export const isPhone = (page: Page) => page.evaluate(() => !matchMedia("(min-width: 40rem)").matches);
+
+/**
+ * How far up a phone's page is scrolled to bring its bar back: more than AWAY_PX (8) so the bar returns, and less
+ * than REVEAL_UP_PX (24) so that its search field does not (that is the next 12px up).
+ */
+export const BAR_BACK_PX = 12;
+
+/**
+ * After a scroll down, on a phone, the bar is out of sight: scrolls up BAR_BACK_PX, which brings it back (and no
+ * more, so its field stays hidden). Nothing to do elsewhere: from 640px the bar stays up once it is up. Waits for the
+ * bar's slide to finish, so that it is where it will stay.
+ */
+export async function barBack(page: Page): Promise<void> {
+  if (!(await isPhone(page))) return;
+  const at = await page.evaluate(() => window.scrollY);
+  await scrollAndSettle(page, Math.max(0, at - BAR_BACK_PX));
+  await controlBar(page).evaluate((bar) =>
+    Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
+  );
+}
+
+/** Scrolls to `y`, and on a phone then up BAR_BACK_PX, so that the bar is in sight there (see `barBack`). */
+export async function scrollToWithBar(page: Page, y: number): Promise<void> {
+  await scrollAndSettle(page, y);
+  await barBack(page);
+}
+
 /** Stops from the top to the end of the page, a little under a screen apart, then the end itself. */
 export async function downThePage(page: Page): Promise<number[]> {
   const limit = await maxScroll(page);

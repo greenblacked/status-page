@@ -41,7 +41,8 @@ export function WhileBarUp({
   store: DockStore;
   children: (barUp: boolean, barHasSwitch: boolean) => ReactNode;
 }) {
-  const barUp = useDockSelect(store, (state) => state.barShown);
+  // Up and in sight: a phone's bar that has gone away on a scroll down leaves the hero's copies in the Tab order.
+  const barUp = useDockSelect(store, (state) => state.barShown && !state.away);
   const wide = useBarWide();
   return children(barUp, barUp && wide);
 }
@@ -188,7 +189,8 @@ function HeroSearchInput({
   ...props
 }: { store: DockStore; dockRef?: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
   const short = useDockSelect(store, (state) => state.docked);
-  const heroAway = useDockSelect(store, (state) => state.heroAway);
+  // Out of the Tab order only while the bar's copy is the one in reach (the bar is up and in sight).
+  const heroAway = useDockSelect(store, (state) => state.heroAway && !state.away);
   const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
   return (
     <Input
@@ -207,7 +209,7 @@ function BarSearchInput({ store, ...props }: { store: DockStore } & ComponentPro
       data-search-input="bar"
       onFocus={() => {
         const state = store.get();
-        if (state.heroAway) store.set({ ...state, revealed: true });
+        if (state.heroAway) store.set({ ...state, away: false, revealed: true });
       }}
       {...props}
     />

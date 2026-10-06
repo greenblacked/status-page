@@ -3,6 +3,9 @@ import { firstInView } from "@/components/status/hold-place";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
+  AWAY_REST,
+  type AwayMemo,
+  awayFrame,
   clampScroll,
   crossingTarget,
   DOCK_REST,
@@ -13,6 +16,7 @@ import {
   dockGeometry,
   focusReveal,
   heroFieldClear,
+  quietScroll,
   quietScrolling,
   REVEAL_REST,
   type RevealMemo,
@@ -112,6 +116,12 @@ export const FROM_SM = "(min-width: 40rem)";
  *     the text and the caret go to the field that is there (`crossingTarget`): the docked one from 64rem, below it
  *     the hero's while in view and otherwise the bar's copy, revealed. A crossing with no field in use moves no focus.
  *
+ * On a phone (under 40rem) the bar itself is out of sight while the reader scrolls down and comes back on a scroll up
+ * (`awayFrame`, AWAY_PX): once it exists (above), it is parked above the screen, and only a scroll up brings it down.
+ * It has its own baseline, moved by every rebase, so everything that moves the page without the reader is no direction
+ * for it either, and it is held in sight while a field of the bar has focus or a search is written and the bar's
+ * field shows (`hold`), and while a field in use has the rule latched. Tablets and desktops never hide it.
+ *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
  * (a card moving to another section) has no resize to say so. While the bar's field can show, the first thing of
@@ -188,6 +198,9 @@ export function useSearchDock({
     // When a key was last typed into a search field: the board it changes moves the page (see `readerMoved`).
     let typedAt = Number.NEGATIVE_INFINITY;
     let memo: RevealMemo = REVEAL_REST;
+    // A phone's bar going away on a scroll down and coming back on a scroll up (`awayFrame`), with its own baseline,
+    // which every rebase moves along with the reveal's: what the layout or the page does is no direction for either.
+    let awayMemo: AwayMemo = AWAY_REST;
     // The search field that had focus when the screen crossed 64rem, until its focus has been handed to the field
     // that is there (below 64rem that waits for the bar's copy to be reachable: a render or two) or given up on.
     let crossing: { from: HTMLInputElement; frames: number; orphan: boolean } | null = null;
@@ -222,8 +235,9 @@ export function useSearchDock({
       // The next frame still has to tell whether the reader scrolled: keep what it would have compared against,
       // before the anchor is dropped and the baseline moved.
       travelFrom ??= memo.lastY;
-      if (memo.heroAway) anchorShift += anchorMoved();
+      anchorShift += anchorMoved();
       memo = { ...memo, lastY: y, pivot: y };
+      awayMemo = { ...awayMemo, lastY: y, pivot: y };
       // The layout may have changed with whatever called this: the anchor's place is read again at the frame's end.
       anchor = null;
     };
@@ -389,7 +403,10 @@ export function useSearchDock({
         }
         memo = REVEAL_REST;
         anchor = null;
-        store.set({ barShown: next.barShown, docked: next.docked, heroAway: false, revealed: false });
+        // From 40rem nothing hides the bar, and the baseline follows, so a bar that is up when the screen narrows to a
+        // phone's stays up until the reader scrolls down.
+        awayMemo = { away: false, pivot: y, lastY: y };
+        store.set({ barShown: next.barShown, away: false, docked: next.docked, heroAway: false, revealed: false });
         settleCrossing(false);
         return;
       }
@@ -398,7 +415,7 @@ export function useSearchDock({
       // when the card it was holding moved up. That is no direction, whatever the resize observer says next.
       const limit = scrollLimit();
       // The anchor is read before a rebase drops it: how far the layout moved it is part of what it did to the page.
-      if (memo.heroAway) shift += anchorMoved();
+      shift += anchorMoved();
       if (Math.abs(limit - maxScroll) >= 1) {
         maxScroll = limit;
         rebase(y);
@@ -414,7 +431,7 @@ export function useSearchDock({
       if (prev.revealed && !memo.revealed) memo = focusReveal(memo, clampScroll(y, maxScroll));
       // A scroll that is exactly the distance the board's anchor moved is the browser's scroll anchoring holding
       // the reader's place, not the reader: no direction (a scroll the reader makes moves the page, not the anchor).
-      if (memo.heroAway && Math.abs(shift) >= 1 && Math.abs(clampScroll(y, maxScroll) - from - shift) < 1.5) rebase(y);
+      if (Math.abs(shift) >= 1 && Math.abs(clampScroll(y, maxScroll) - from - shift) < 1.5) rebase(y);
       const focused = document.activeElement;
       // A field in use holds the rule where it is, except across the 64rem line: the reset that leaves is no state to
       // hold, and the field is about to be handed to the one that is there.
@@ -467,13 +484,30 @@ export function useSearchDock({
           handFocus(focused, hero);
         }
       }
-      // The anchor is read while the bar's field can show, so that the next frame can tell how far it moved.
-      if (!memo.heroAway) anchor = null;
+      // On a phone the bar goes away on a scroll down and comes back on a scroll up, once it is up at all. It is held
+      // in sight while a field of its own has focus, and while a search is written and its field shows.
+      const phone = !fromSm.matches;
+      const inBar = document.activeElement;
+      awayMemo = awayFrame(y, maxScroll, awayMemo, {
+        phone,
+        barShown: next.barShown,
+        hold: (inBar instanceof HTMLInputElement && inBar.dataset.searchInput === "bar") || (keep && memo.heroAway),
+        latched,
+      });
+      // The anchor is read while the bar's field can show, and on a phone while the bar is up at all (it comes and
+      // goes by the direction), so that the next frame can tell how far it moved.
+      if (!(memo.heroAway || (phone && next.barShown))) anchor = null;
       else if (!anchor && board) {
         const element = firstInView(board);
         if (element) anchor = { element, offset: element.getBoundingClientRect().top + window.scrollY };
       }
-      store.set({ barShown: next.barShown, docked: false, heroAway: memo.heroAway, revealed: memo.revealed });
+      store.set({
+        barShown: next.barShown,
+        away: phone && awayMemo.away,
+        docked: false,
+        heroAway: memo.heroAway,
+        revealed: memo.revealed,
+      });
       settleCrossing(memo.heroAway);
     };
     const schedule = () => {
@@ -530,6 +564,10 @@ export function useSearchDock({
       rebase(window.scrollY);
       schedule();
     };
+    // A link to somewhere on this page (the hero's service links, the skip link) scrolls the page by itself: no direction.
+    const onLinkClick = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest('a[href^="#"]')) quietScroll(() => {});
+    };
     const onInput = (event: Event) => {
       const { target } = event;
       if (target instanceof HTMLInputElement && target.hasAttribute("data-search-input")) typedAt = performance.now();
@@ -544,6 +582,7 @@ export function useSearchDock({
     document.addEventListener("focusout", onFocusOut);
     // Capturing, before the field's own handler renders the board that the key changes.
     document.addEventListener("input", onInput, true);
+    document.addEventListener("click", onLinkClick, true);
     wide.addEventListener("change", remeasure);
     fromSm.addEventListener("change", remeasure);
     reduce.addEventListener("change", remeasure);
@@ -569,6 +608,7 @@ export function useSearchDock({
       window.removeEventListener("resize", onResize);
       document.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("input", onInput, true);
+      document.removeEventListener("click", onLinkClick, true);
       wide.removeEventListener("change", remeasure);
       fromSm.removeEventListener("change", remeasure);
       reduce.removeEventListener("change", remeasure);
@@ -590,6 +630,9 @@ export function useSearchDock({
  * field docks into it.
  * A turn across 64rem with a field in use moves the focus to the field that is
  * there (see useSearchDock), since the copy is not drawn from 64rem up.
+ *
+ * On a phone it is hidden by a scroll down as well (`away`: data-away on the bar, data-shown false), and parked above
+ * the screen; a scroll up brings it back. A tablet's and a desktop's stays once it is up.
  *
  * Hidden, it is `inert` and `aria-hidden`, so Tab never lands on a control
  * nobody can see, a tap goes through to the page and the skip link stays the
@@ -632,15 +675,17 @@ export function CompactHeader({
   children: ReactNode;
 }) {
   const barShown = useDockSelect(store, (state) => state.barShown);
+  const away = useDockSelect(store, (state) => state.away);
   const revealed = useDockSelect(store, (state) => state.revealed);
   const [heldByKeyboard, setKeyboardFocus] = useState(false);
-  const visible = barShown || heldByKeyboard;
+  const visible = (barShown && !away) || heldByKeyboard;
   const when = checkedAt === null ? null : <LocalTime at={checkedAt} />;
   return (
     <section
       ref={barRef}
       aria-label="Board controls"
       data-shown={visible}
+      data-away={barShown && away ? "" : undefined}
       data-revealed={revealed ? "" : undefined}
       inert={!visible}
       aria-hidden={visible ? undefined : true}

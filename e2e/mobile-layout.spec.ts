@@ -4,6 +4,7 @@ import { fixtureBoard, longHeroBoard } from "./fixture-board";
 import {
   auditNow,
   BACKGROUNDS,
+  barBack,
   barSearch,
   cards,
   controlBar,
@@ -13,6 +14,7 @@ import {
   fromSweep,
   heroSearch,
   installAudit,
+  isPhone,
   isWide,
   maxScroll,
   openBoard,
@@ -199,6 +201,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
 
         // The floating bar's controls, with the bar up.
         await scrollAndSettle(page, await maxScroll(page));
+        await barBack(page);
         await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
         await expectNone(page, testInfo, "floating bar up", (await read()).small);
 
@@ -279,6 +282,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             .locator(".search-dock")
             .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
           await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+          await barBack(page);
           await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
           await checked(`${theme}, bar`, "section[aria-label='Board controls'] [data-theme-switch]", !barDrawsIt);
           const down = await auditNow(page);
@@ -304,6 +308,10 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         const deep = Math.ceil(fieldBottom) + 200;
         expect(deep, "the page is long enough to scroll down in").toBeLessThan(limit - 160);
         await scrollAndSettle(page, deep);
+        // A phone's bar is out of sight after a scroll down (parked above the screen); a scroll up a little brings it
+        // back, and not yet its field (that takes REVEAL_UP_PX).
+        await expect(bar).toHaveAttribute("data-shown", (await isPhone(page)) ? "false" : "true");
+        await barBack(page);
         await expect(bar).toHaveAttribute("data-shown", "true");
         await expect(bar).not.toHaveAttribute("data-revealed");
         const settle = () =>
@@ -368,6 +376,9 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
 
         await scrollAndSettle(page, deep - (REVEAL_UP_PX + 4) + (HIDE_DOWN_PX + 4));
         await expect(bar).not.toHaveAttribute("data-revealed");
+        // A phone's bar went with that scroll down: back it comes, without the field.
+        await barBack(page);
+        await expect(bar).toHaveAttribute("data-shown", "true");
         await settle();
         await page
           .locator(".bar-search")
@@ -403,6 +414,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             .locator(".search-dock")
             .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
           await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+          await barBack(page);
           await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
           await controlBar(page).evaluate((bar) =>
             Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
@@ -456,6 +468,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
           .locator(".search-dock")
           .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
         await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+        await barBack(page);
         await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
         await controlBar(page).evaluate((bar) =>
           Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
@@ -549,7 +562,10 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
           ["last Details, bar up", page.locator("[data-release-details-trigger]").last()],
         ] as const) {
           await trigger.scrollIntoViewIfNeeded();
-          if (which.endsWith("bar up")) await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+          if (which.endsWith("bar up")) {
+            await barBack(page);
+            await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+          }
           await trigger.click();
           const dialog = page.locator("dialog[data-release-details][open]");
           await expect(dialog).toBeVisible();
@@ -625,6 +641,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         const deep = Math.ceil(fieldBottom) + 200;
         expect(deep).toBeLessThan(limit - 160);
         await scrollAndSettle(page, deep);
+        await barBack(page);
         await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
         let live: Locator = field;
         if (!wide) {
@@ -657,6 +674,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         const deep = Math.ceil(fieldBottom) + 200;
         expect(deep, "the page is long enough to scroll down in").toBeLessThan((await maxScroll(page)) - 160);
         await scrollAndSettle(page, deep);
+        await barBack(page);
         await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
         await scrollAndSettle(page, deep - (REVEAL_UP_PX + 4));
         await expect(controlBar(page)).toHaveAttribute("data-revealed", "");
@@ -800,6 +818,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             );
           const deep = (await maxScroll(page)) - 100;
           await scrollAndSettle(page, deep);
+          await barBack(page);
           await expect(bar).toHaveAttribute("data-shown", "true");
           await settle();
           await expectNone(page, testInfo, "bar up", await clipped());

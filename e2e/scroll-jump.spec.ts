@@ -1,6 +1,7 @@
 import type { CDPSession, Page, TestInfo } from "@playwright/test";
 import { SETTLE_MS } from "../src/lib/status/page-motion.ts";
 import { fixtureBoard, serveBoard } from "./fixture-board";
+import { barBack, isPhone } from "./support/layout";
 import { pinToSlot } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
@@ -1397,8 +1398,20 @@ test("floating bar: hidden below 64rem it keeps its blur layer, and can be neith
     requestAnimationFrame(frame);
   });
   await page.locator("footer").scrollIntoViewIfNeeded();
+  await barBack(page);
   await expect(bar).toHaveAttribute("data-shown", "true");
   await expect.poll(async () => (await look()).opacity).toBe("1");
+  if (await isPhone(page)) {
+    // A phone's bar also leaves on a scroll down, parked above the screen, and keeps the same layer doing it.
+    await page.evaluate(() => window.scrollBy(0, -60));
+    await page.evaluate(() => window.scrollBy(0, 120));
+    await expect(bar).toHaveAttribute("data-shown", "false");
+    await expect.poll(async () => (await look()).opacity).toBe("0");
+    expect((await look()).blur, "the parked bar keeps its blur").toContain("blur(");
+    await page.evaluate(() => window.scrollBy(0, -40));
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    await expect.poll(async () => (await look()).opacity).toBe("1");
+  }
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(bar).toHaveAttribute("data-shown", "false");
   await expect.poll(async () => (await look()).opacity).toBe("0");

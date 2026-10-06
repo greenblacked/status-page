@@ -43,6 +43,24 @@ async function seed(page: Page, value: string): Promise<void> {
 }
 
 /** Opens the board at a time of day (UTC, the suite's zone), with the theme stored or not. */
+/**
+ * Scrolls down to `down`, lets the page see it (two frames: the bar reads one position a frame), and then up to `up`:
+ * a phone's bar is out of sight after a scroll down and comes back on a scroll up of more than 8px.
+ */
+async function scrollDownThenUp(page: Page, down: number, up: number): Promise<void> {
+  const settle = (to: number) =>
+    page.evaluate(
+      (top) =>
+        new Promise<void>((resolve) => {
+          window.scrollTo(0, top);
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+      to,
+    );
+  await settle(down);
+  await settle(up);
+}
+
 async function open(page: Page, when: Date, stored?: string): Promise<void> {
   await page.clock.install({ time: when });
   if (stored !== undefined) await seed(page, stored);
@@ -740,7 +758,8 @@ test.describe("on any screen", () => {
   test("is reachable by Tab on a phone with the bar up, and the bar's copy takes over from 640px", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await open(page, at(10));
-    await page.evaluate(() => window.scrollTo(0, 1500));
+    // Down, then a little up: a phone's bar comes back on a scroll up.
+    await scrollDownThenUp(page, 1500, 1480);
     await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
     // The bar draws no switch below 640px, so the hero's must stay in the Tab order.
     await expect(heroSwitch(page)).not.toHaveAttribute("tabindex", "-1");
@@ -772,7 +791,7 @@ test.describe("on any screen", () => {
     const after = await verdict.boundingBox();
     expect(after).toEqual(before);
     // The bar keeps its whole width for the verdict on a phone: the switch is not in it.
-    await page.evaluate(() => window.scrollTo(0, 1200));
+    await scrollDownThenUp(page, 1200, 1180);
     await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
     await expect(barSwitch(page)).toBeHidden();
   });

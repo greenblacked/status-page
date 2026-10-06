@@ -983,6 +983,18 @@
 }
 
 /*
+  On a phone the bar also leaves when the reader scrolls down (`away` in the dock's state, data-shown false with the bar
+  up) and comes back on a scroll up: hidden, it is parked above the screen, its whole height and the shadow's reach
+  above the top edge, and slides down to its place. It is the same pose as the bar before the hero is gone, so the bar
+  never shows over the hero, and it keeps its blurred layer (above), only slid out of the screen.
+*/
+@media (width < 40rem) {
+  .compact-header[data-shown="false"] {
+    transform: translateY(calc(-100% - 2rem));
+  }
+}
+
+/*
   The board body holds the bar, the search field, the filter chips and the
   cards. It is at least one screen tall, so a search with few or no results
   cannot shorten the page under the bar's field and scroll it out of use. Below 64rem the bar's field can
