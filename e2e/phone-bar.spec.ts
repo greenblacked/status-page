@@ -265,7 +265,7 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
 
   test("is brought back by barBack after a scroll the page has not drawn yet", async ({ page }) => {
     test.slow();
-    // A page that draws slowly (WebKit on a glass or a full background): its frame callbacks come 60 ms after they
+    // A page that draws slowly (WebKit on a glass or a full background): its frame callbacks come 600 ms after they
     // are asked for, on the next frame after that.
     await page.addInitScript(() => {
       const native = window.requestAnimationFrame.bind(window);
@@ -274,7 +274,7 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
       window.requestAnimationFrame = (callback) => {
         const id = ++last;
         live.add(id);
-        setTimeout(() => native((time) => live.delete(id) && callback(time)), 60);
+        setTimeout(() => native((time) => live.delete(id) && callback(time)), 600);
         return id;
       };
       window.cancelAnimationFrame = (id) => {
