@@ -1345,6 +1345,8 @@ test("floating bar: hidden below 64rem it keeps its blur layer, and can be neith
       return {
         blur: style.backdropFilter,
         opacity: style.opacity,
+        top: element.getBoundingClientRect().top,
+        bottom: element.getBoundingClientRect().bottom,
         visibility: style.visibility,
         pointerEvents: style.pointerEvents,
         willChange: style.willChange,
@@ -1354,10 +1356,20 @@ test("floating bar: hidden below 64rem it keeps its blur layer, and can be neith
     });
   const hidden = await look();
   expect(hidden.blur, "the hidden bar keeps its blur").toContain("blur(");
-  expect(hidden.opacity).toBe("0");
-  expect(hidden.visibility, "it is hidden by opacity, not visibility").toBe("visible");
+  // A phone's bar is off the screen by its transform and fully opaque; a tablet's fades out and slides 8px.
+  const phone = (page.viewportSize()?.width ?? 0) < 640;
+  const gone = async () => {
+    const now = await look();
+    return phone ? now.bottom <= 0.5 : now.opacity === "0";
+  };
+  const here = async () => {
+    const now = await look();
+    return phone ? Math.abs(now.top) <= 0.5 : now.opacity === "1";
+  };
+  expect(hidden.opacity).toBe(phone ? "1" : "0");
+  expect(hidden.visibility, "it is hidden by opacity or by the screen's edge, not visibility").toBe("visible");
   expect(hidden.pointerEvents).toBe("none");
-  expect(hidden.willChange).toContain("opacity");
+  if (!phone) expect(hidden.willChange).toContain("opacity");
   expect(hidden.willChange).toContain("transform");
   expect(hidden.inert).toBe(true);
   expect(hidden.ariaHidden).toBe("true");
@@ -1400,21 +1412,21 @@ test("floating bar: hidden below 64rem it keeps its blur layer, and can be neith
   await page.locator("footer").scrollIntoViewIfNeeded();
   await barBack(page);
   await expect(bar).toHaveAttribute("data-shown", "true");
-  await expect.poll(async () => (await look()).opacity).toBe("1");
+  await expect.poll(here).toBe(true);
   if (await isPhone(page)) {
     // A phone's bar also leaves on a scroll down, parked above the screen, and keeps the same layer doing it.
     await page.evaluate(() => window.scrollBy(0, -60));
     await page.evaluate(() => window.scrollBy(0, 120));
     await expect(bar).toHaveAttribute("data-shown", "false");
-    await expect.poll(async () => (await look()).opacity).toBe("0");
+    await expect.poll(gone).toBe(true);
     expect((await look()).blur, "the parked bar keeps its blur").toContain("blur(");
     await page.evaluate(() => window.scrollBy(0, -40));
     await expect(bar).toHaveAttribute("data-shown", "true");
-    await expect.poll(async () => (await look()).opacity).toBe("1");
+    await expect.poll(here).toBe(true);
   }
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect(bar).toHaveAttribute("data-shown", "false");
-  await expect.poll(async () => (await look()).opacity).toBe("0");
+  await expect.poll(gone).toBe(true);
   const blurless = await page.evaluate(() => {
     const tracked = window as Window & { __blurless?: number; __watching?: boolean };
     tracked.__watching = false;

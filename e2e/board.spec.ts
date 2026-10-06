@@ -803,7 +803,11 @@ async function sweepDock(page: Page, ys: number[]): Promise<DockStop[]> {
           liveBottom: live?.getBoundingClientRect().bottom ?? 0,
           contentBottom: (hero?.getBoundingClientRect().bottom ?? 0) - heroPad,
           barTop: bar?.getBoundingClientRect().top ?? 0,
-          barBottom: bar?.getBoundingClientRect().bottom ?? 0,
+          // Where the bar's lower edge rests: the layout's, not the transform's. A phone's bar slides its own height over
+          // 200ms, so a frame read mid-slide has it partly above the screen, which is no sign of where it will be.
+          barBottom: bar
+            ? bar.getBoundingClientRect().bottom - new DOMMatrixReadOnly(getComputedStyle(bar).transform).m42
+            : 0,
           fieldTop: fieldBox?.top ?? 0,
           fieldBottom: fieldBox?.bottom ?? 0,
           placeholder: input?.placeholder ?? "",
@@ -1060,11 +1064,15 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
         await page.evaluate((px) => {
           document.documentElement.style.fontSize = `${px}px`;
         }, rootPx);
-        // The bar is 3rem tall (a phone's, a sheet from the top edge, 3.5rem): once it is, the layout has taken the
-        // size, and the dock measures on the frame after.
+        // The bar is 3rem tall (a phone's, the AI catalogue's header from the top edge: a 4rem row and its hairline,
+        // 4rem plus the hairline's 0.5px or 1px, the layout's rounding of which is within a pixel): once it is, the layout
+        // has taken the size, and the dock measures on the frame after.
         await expect
           .poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight))
-          .toBe((width < 640 ? 3.5 : 3) * rootPx);
+          .toBeGreaterThanOrEqual((width < 640 ? 4 : 3) * rootPx);
+        await expect
+          .poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight))
+          .toBeLessThanOrEqual((width < 640 ? 4 : 3) * rootPx + 1);
       }
       // The page's own refetch changes the live line's height for a moment: sweep clear of it.
       await awayFromRefetch(page);
@@ -1072,8 +1080,11 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
       await scrollAndSettle(page, 0);
       const { natural, barStart, revealFrom } = await dockOffsets(page);
       // The bar is up alone for a stretch of scrolling before the hero's field is behind it: the spacing under the
-      // live line (the page's padding and the field's margin, less the bar's room) is 36px at a 16px root.
-      expect(revealFrom - barStart, `${at}: the bar alone`).toBeGreaterThanOrEqual(30 * (rootPx / 16) - 1);
+      // live line (the page's padding and the field's margin, less the bar's room) is 36px at a 16px root, 28px
+      // under a phone's 4rem bar.
+      expect(revealFrom - barStart, `${at}: the bar alone`).toBeGreaterThanOrEqual(
+        (width < 640 ? 24 : 30) * (rootPx / 16) - 1,
+      );
 
       const { up } = await dockPath(page, 2);
       const stops = await sweepDock(page, up);

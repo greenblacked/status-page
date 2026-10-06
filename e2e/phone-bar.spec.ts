@@ -1,5 +1,14 @@
 import type { Page } from "@playwright/test";
-import { barSearch, controlBar, heroSearch, maxScroll, openBoard, scrollAndSettle, viewportOf } from "./support/layout";
+import {
+  BACKGROUNDS,
+  barSearch,
+  controlBar,
+  heroSearch,
+  maxScroll,
+  openBoard,
+  scrollAndSettle,
+  viewportOf,
+} from "./support/layout";
 import { expect, test } from "./test";
 
 // The floating bar on a phone (under 640px): it is out of sight while the reader scrolls down past the hero and
@@ -81,8 +90,10 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     const hidden = await poseOf(page);
     expect(hidden.inert).toBe(true);
     expect(hidden.ariaHidden).toBe("true");
-    expect(hidden.bottom, "above the top edge of the screen").toBeLessThanOrEqual(0);
-    expect(hidden.opacity).toBe(0);
+    expect(hidden.bottom, "wholly above the top edge of the screen, the safe area's strip too").toBeLessThanOrEqual(
+      0.5,
+    );
+    expect(hidden.opacity, "off the screen, not faded").toBe(1);
 
     // A little further down changes nothing; a scroll up of 8px or less does not bring it back.
     await scrollAndSettle(page, deep + 200);
@@ -358,6 +369,142 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     await expect(bar).toHaveAttribute("data-away", "");
   });
 
+  test("is the AI catalogue's header: edge to edge from the top, square, a hairline under it, 90% of the page's ground", async ({
+    page,
+  }) => {
+    test.slow();
+    await openBoard(page, "quiet", { steady: true });
+    test.skip(!(await isPhone(page)), "the header is a phone's bar only");
+    const bar = controlBar(page);
+    const deep = await deepPosition(page);
+    await scrollAndSettle(page, deep + 100);
+    await scrollAndSettle(page, deep + 100 - 30);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    await barSettled(page);
+    const look = await bar.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const hair = Number.parseFloat(style.borderBottomWidth);
+      // The row the content sits in: the bar's box less the safe area above and the hairline below.
+      const safe = Number.parseFloat(style.paddingTop);
+      const rootPx = Number.parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const probe = document.createElement("span");
+      probe.style.color = "color-mix(in srgb, var(--color-bg) 90%, transparent)";
+      document.body.appendChild(probe);
+      const fill = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        height: box.height,
+        row: box.height - safe - hair,
+        rootPx,
+        hair,
+        width: window.innerWidth,
+        position: style.position,
+        radii: [
+          style.borderTopLeftRadius,
+          style.borderTopRightRadius,
+          style.borderBottomRightRadius,
+          style.borderBottomLeftRadius,
+        ],
+        edges: [style.borderTopWidth, style.borderRightWidth, style.borderLeftWidth],
+        lineColour: style.borderBottomColor,
+        shadow: style.boxShadow,
+        fill: style.backgroundColor,
+        wanted: fill,
+        filter: style.backdropFilter,
+      };
+    });
+    expect(look.position).toBe("fixed");
+    expect(look.left, "edge to edge: from the left edge").toBeCloseTo(0, 0);
+    expect(look.right, "edge to edge: to the right edge").toBeCloseTo(look.width, 0);
+    expect(look.top, "from the very top of the screen").toBeCloseTo(0, 0);
+    expect(look.row, "a 4rem row below the safe area").toBeCloseTo(4 * look.rootPx, 0);
+    expect(look.radii, "square corners").toEqual(["0px", "0px", "0px", "0px"]);
+    expect(look.edges, "a hairline on the lower edge only").toEqual(["0px", "0px", "0px"]);
+    expect(look.hair, "the hairline is one device pixel").toBeGreaterThan(0);
+    expect(look.shadow, "no shadow beyond the hairline").toBe("none");
+    expect(look.fill, "the page's own ground at 90%").toBe(look.wanted);
+    expect(look.filter, "a 12px blur").toBe("blur(12px)");
+    const line = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--color-hairline)";
+      document.body.appendChild(probe);
+      const colour = getComputedStyle(probe).color;
+      probe.remove();
+      return colour;
+    });
+    expect(look.lineColour, "the board's own line colour").toBe(line);
+  });
+
+  test("goes away by its own height: translated by -100%, over 200ms, with the safe area's strip", async ({ page }) => {
+    test.slow();
+    await openBoard(page, "quiet", { steady: true });
+    test.skip(!(await isPhone(page)), "the bar hides on a phone only");
+    const bar = controlBar(page);
+    const deep = await deepPosition(page);
+    await scrollAndSettle(page, deep + 100);
+    await barSettled(page);
+    const away = await bar.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return {
+        transform: new DOMMatrixReadOnly(style.transform).m42,
+        height: element.getBoundingClientRect().height,
+        bottom: box.bottom,
+        property: style.transitionProperty,
+        duration: style.transitionDuration,
+      };
+    });
+    expect(away.transform, "-100% of its own height").toBeCloseTo(-away.height, 0);
+    expect(away.bottom).toBeLessThanOrEqual(0.5);
+    expect(away.property).toBe("transform");
+    expect(away.duration).toBe("0.2s");
+  });
+
+  for (const scheme of ["light", "dark"] as const) {
+    for (const background of BACKGROUNDS) {
+      test(`is the page's ground at 90% under a 12px blur, square and unshadowed on ${background}, ${scheme === "light" ? "day" : "night"}`, async ({
+        page,
+      }) => {
+        test.slow();
+        await page.emulateMedia({ colorScheme: scheme });
+        await openBoard(page, background, { steady: true });
+        test.skip(!(await isPhone(page)), "the header is a phone's bar only");
+        const deep = await deepPosition(page);
+        await scrollAndSettle(page, deep + 100);
+        await scrollAndSettle(page, deep + 100 - 30);
+        await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+        await barSettled(page);
+        const look = await controlBar(page).evaluate((element) => {
+          const style = getComputedStyle(element);
+          const probe = document.createElement("span");
+          probe.style.color = "color-mix(in srgb, var(--color-bg) 90%, transparent)";
+          document.body.appendChild(probe);
+          const wanted = getComputedStyle(probe).color;
+          probe.remove();
+          return {
+            fill: style.backgroundColor,
+            wanted,
+            image: style.backgroundImage,
+            filter: style.backdropFilter,
+            shadow: style.boxShadow,
+            radius: style.borderBottomLeftRadius,
+            sheen: getComputedStyle(element, "::before").display,
+          };
+        });
+        expect(look.fill, "the page's own ground at 90%").toBe(look.wanted);
+        expect(look.image, "no tint").toBe("none");
+        expect(look.filter, "a 12px blur").toBe("blur(12px)");
+        expect(look.shadow, "no shadow").toBe("none");
+        expect(look.radius, "square").toBe("0px");
+        expect(look.sheen, "no sheen").toBe("none");
+      });
+    }
+  }
+
   test("under Reduce Motion it does not slide: it is there or it is not", async ({ page }) => {
     test.slow();
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -368,10 +515,10 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     await scrollAndSettle(page, deep + 200);
     await expect(bar).toHaveAttribute("data-shown", "false");
     const away = await poseOf(page);
-    expect(away.opacity).toBe(0);
     expect(away.inert).toBe(true);
-    // No slide: it stays in its place, only unseen and out of use.
-    expect(away.top).toBeGreaterThanOrEqual(-0.5);
+    // No slide: it is off the screen at once (no transition), and out of use.
+    expect(away.bottom).toBeLessThanOrEqual(0.5);
+    expect(await bar.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe("0s");
     await scrollAndSettle(page, deep + 200 - 20);
     await expect(bar).toHaveAttribute("data-shown", "true");
     // No transition to wait out: it is already there.
