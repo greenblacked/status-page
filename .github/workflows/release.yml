@@ -4,9 +4,11 @@ name: Release
 # version's CHANGELOG.md section; the sign job attaches the signed source
 # archive and only then publishes the release. If a check fails nothing is
 # committed, tagged or published; if signing fails the tag exists and the
-# release stays a draft. Only main is released: pull requests
-# merge into dev, which never releases, the owner promotes dev to stage (a
-# preview) and stage to main, each in a merge commit
+# release stays a draft. Two more jobs publish the Docker image for the tag,
+# once the release is signed and public (ghcr.io/<owner>/status-page, amd64
+# and arm64, with provenance and an SBOM), and sign it with cosign. Only main
+# is released: work is committed to dev, which never releases, the owner
+# promotes dev to stage (a preview) and stage to main, each in a merge commit
 # (CONTRIBUTING.md#releases). Ways in:
 #   - Merging a pull request into main. The Conventional Commits merged since
 #     the last release pick the next version (scripts/release/next.sh): a
@@ -27,7 +29,7 @@ name: Release
 #   - Pushing a vX.Y.Z tag by hand.
 # The release has to be on main, have a changelog section and pass the same
 # checks as CI. After every run for main, released or not, main is merged back
-# into stage and then dev (not while dev is paused: scripts/ci/dev-paused), so
+# into stage and then dev (dev is skipped only while paused: scripts/ci/dev-paused), so
 # both carry the release commit and any fix merged into main directly. A push
 # to main, stage or dev that fails fails the run, naming the cause, unless the
 # branch really moved meanwhile (scripts/release/push.sh); a ruleset that
@@ -252,8 +254,10 @@ jobs:
     needs: [plan, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # The only job with write access. It installs no dependencies and runs
-    # no project code: only the release scripts and gh.
+    # The only job that pushes to the repository (the bump commit and the tag).
+    # It installs no dependencies and runs no project code: only the release
+    # scripts and gh. The sign, image and sign-image jobs have write scopes of
+    # their own, listed on each.
     permissions:
       contents: write # push the bump commit and the tag, create the draft GitHub Release
     outputs:
@@ -387,9 +391,9 @@ jobs:
     if: needs.publish.outputs.published == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # The only job in this workflow with id-token: write, and it runs no
-    # project code: git, cosign and gh. contents: write is for uploading the
-    # two release assets and publishing the draft.
+    # With sign-image, one of the two jobs in this workflow with id-token:
+    # write, and it runs no project code: git, cosign and gh. contents: write
+    # is for uploading the two release assets and publishing the draft.
     permissions:
       contents: write # upload the source archive and its signature, publish the release
       id-token: write # keyless Sigstore signing with this run's GitHub OIDC identity
@@ -527,6 +531,162 @@ jobs:
           fi
           gh api -X PATCH "repos/$GH_REPO/releases/$id" -F draft=false -f make_latest="$latest" >/dev/null
 
+  image:
+    name: build and push image
+    # After sign: the image is not public under a version tag or :latest
+    # while the GitHub Release is still a draft because signing failed.
+    needs: [plan, publish, sign]
+    if: needs.sign.result == 'success' && needs.publish.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Builds the Dockerfile at the release tag for linux/amd64 and
+    # linux/arm64 and pushes ghcr.io/<owner>/status-page:X.Y.Z (and :latest for
+    # the newest version), with a provenance attestation and an SBOM attached
+    # by BuildKit. The build runs project code, so this job has no id-token:
+    # signing is the next job's.
+    permissions:
+      contents: read
+      packages: write # push the image to ghcr.io
+    outputs:
+      # Empty when the tag has no Dockerfile (a backfill of a release from
+      # before the image existed): nothing was pushed, nothing is signed.
+      digest: ${{ steps.push.outputs.digest }}
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+
+      - name: Name the image and its tags
+        id: meta
+        shell: bash
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
+          TARGET: ${{ needs.publish.outputs.target }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # A tag moved by hand since publish created it is not built.
+          [ "$(git rev-parse HEAD)" = "$TARGET" ] || { echo "::error::$TAG is on $(git rev-parse HEAD), not $TARGET"; exit 1; }
+          if [ ! -f Dockerfile ]; then
+            echo "::notice::$TAG has no Dockerfile, so no image is built for it"
+            echo "build=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # ghcr.io names are lower case; the repository's owner may not be.
+          image="ghcr.io/${GH_REPO,,}"
+          tags="$image:${TAG#v}"
+          # :latest is the newest published version as of now, the rule the
+          # GitHub Release's Latest badge follows (sign job), so a backfill or
+          # a late re-run never moves it back.
+          newest="$( { gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name'; echo "$TAG"; } | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' | sort -V | tail -n1)"
+          if [ "$newest" = "$TAG" ]; then
+            tags="$tags"$'\n'"$image:latest"
+          fi
+          {
+            echo "build=true"
+            echo "image=$image"
+            echo "tags<<EOF"
+            echo "$tags"
+            echo "EOF"
+          } >>"$GITHUB_OUTPUT"
+
+      # The helper images the two actions pull are pinned by tag and digest
+      # too (the actions default to mutable tags): tonistiigi/binfmt installs
+      # the arm64 emulation as a privileged container, moby/buildkit builds
+      # the image. Move each tag and digest together, by hand.
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: steps.meta.outputs.build == 'true'
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.meta.outputs.build == 'true'
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
+      # The image that would be published must start and answer before it is
+      # pushed under a version tag and :latest: built for this runner's
+      # architecture, run with the restrictions the README tells users to
+      # use, and checked with the smoke test CI and the deploy run.
+      - name: Build the image for a smoke test
+        if: steps.meta.outputs.build == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: status-page:smoke
+
+      - name: Smoke-test the image
+        if: steps.meta.outputs.build == 'true'
+        run: ./scripts/ci/image-smoke.sh status-page:smoke
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: steps.meta.outputs.build == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push the image (amd64 and arm64)
+        id: push
+        if: steps.meta.outputs.build == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.version=${{ needs.plan.outputs.tag }}
+            org.opencontainers.image.revision=${{ needs.publish.outputs.target }}
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+
+  sign-image:
+    name: sign image
+    needs: [plan, image]
+    if: needs.image.outputs.digest != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Runs no project code: cosign signs the digest the image job pushed. With
+    # the sign job, one of the two jobs in this workflow with id-token: write.
+    permissions:
+      packages: write # attach the signature to the image in ghcr.io
+      id-token: write # keyless Sigstore signing with this run's GitHub OIDC identity
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Signs the digest, which covers every tag that points at it. A bad or
+      # mismatched signature fails the run: the identity is this repository's
+      # release workflow on main, or on a version tag pushed by hand, issued
+      # by GitHub Actions (CONTRIBUTING.md#verifying-a-release).
+      - name: Sign the image and verify the signature
+        shell: bash
+        env:
+          IMAGE: ${{ needs.image.outputs.image }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          REPO: ${{ github.repository }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::not an image digest: $DIGEST"; exit 1; }
+          cosign sign --yes "$IMAGE@$DIGEST"
+          repo_re="${REPO//./\\.}"
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "^https://github\.com/${repo_re}/\.github/workflows/release\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$" \
+            "$IMAGE@$DIGEST" >/dev/null
+
   sync-branches:
     name: merge main into stage and dev
     needs: [plan, verify, publish]
@@ -580,13 +740,13 @@ jobs:
           # ending the script, and stage_pushed is written the moment stage's
           # push succeeds, before dev is touched.
           # While dev is paused (scripts/ci/dev-paused, the same switch the
-          # branch name check reads) nothing lands in it, so merging main
-          # would only conflict with its stale history on every release. Read
-          # once, while main is checked out.
+          # branch name check reads, false today) nothing lands in it, so
+          # merging main would only conflict with its stale history on every
+          # release. Read once, while main is checked out.
           dev_paused="$(./scripts/ci/dev-paused.sh)" || { dev_paused=true; failed=1; }
           for branch in stage dev; do
             if [ "$branch" = dev ] && [ "$dev_paused" = true ]; then
-              echo "::notice::dev is paused (scripts/ci/dev-paused); not merging main into it. When dev is recreated from stage, set the file to false"
+              echo "::notice::dev is paused (scripts/ci/dev-paused); not merging main into it. When dev is back, set the file to false"
               continue
             fi
             listed=0

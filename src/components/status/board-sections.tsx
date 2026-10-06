@@ -138,9 +138,11 @@ export function BoardSections({
 
       {attention.length > 0 ? (
         <Section group="attention" id="attention" title="Needs a look" count={attention.length} flush>
-          {/* A size container: the grid inside lays out by the width of the column, not the window. */}
+          {/* A size container: the grid inside lays out by the width of the column, not the window. A lone
+              card spans every column, so it is not left with an empty half; this is CSS alone, so it holds
+              before hydration and does not shift after it. */}
           <div className="@container">
-            <div className="grid gap-3 @xl:grid-cols-2">
+            <div className="grid gap-3 @xl:grid-cols-2 [&>:only-child]:col-span-full">
               {attention.map((service, index) => (
                 // One element type at every position, so a card that moves in or out of first
                 // place is moved, not remounted: keyboard focus stays on its Star button.

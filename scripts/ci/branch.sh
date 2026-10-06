@@ -90,7 +90,7 @@ case "$base" in
       echo "::error::branch  $name: a release branch goes into main, not stage (CONTRIBUTING.md#branches)" >&2
       exit 1
     else
-      echo "::error::branch  $name: pull requests into stage come from dev, not $name; open it into dev (CONTRIBUTING.md#branches)" >&2
+      echo "::error::branch  $name: pull requests into stage come from dev, not $name; commit to dev instead (CONTRIBUTING.md#branches)" >&2
       exit 1
     fi
     ;;

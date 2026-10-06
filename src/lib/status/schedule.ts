@@ -283,3 +283,11 @@ export function incidentStart(at: number, now: number, checkedAt: number): Incid
   if (now <= 0) return { upcoming: at > checkedAt, duration: null };
   return at > now ? { upcoming: true, duration: null } : { upcoming: false, duration: formatDuration(now - at) };
 }
+
+/**
+ * How long until the next multiple of `intervalMs` on the wall clock, always above 0: a whole interval when `now`
+ * is on a boundary. A clock that ticks on the boundaries (minutes, say) turns a two-minute slot over on time.
+ */
+export function msUntilBoundary(now: number, intervalMs: number): number {
+  return intervalMs - (now % intervalMs);
+}

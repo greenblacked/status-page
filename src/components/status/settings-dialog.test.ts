@@ -18,7 +18,7 @@ function render(
   const tilt = options.tilt ?? { supported: false };
   return renderToStaticMarkup(
     createElement(SettingsDialog, {
-      open: false,
+      opened: null,
       onClose: noop,
       singleKey: options.singleKey ?? true,
       onSingleKeyChange: noop,
@@ -56,8 +56,8 @@ describe("SettingsDialog", () => {
   it("checks the chosen background and says what it is", () => {
     const hints: Record<Background, string> = {
       quiet: "Flat paper. Nothing moves behind the page.",
-      glass: "Frosted panels over a still glow.",
-      full: "Adds the slow drift, glass lenses and a light that wanders across the cards.",
+      glass: "Frosted panels over a still glow, with a soft light that wanders across the cards.",
+      full: "Adds the slow drift and glass lenses to Glass.",
     };
     for (const background of ["quiet", "glass", "full"] as const) {
       const html = render({ background });

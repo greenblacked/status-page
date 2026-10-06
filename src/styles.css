@@ -1,5 +1,38 @@
-@import "tailwindcss";
+@import "tailwindcss" source(".");
 @import "./background.css";
+
+/*
+  The scan is named, not left to .gitignore: the Docker build has none, so
+  Tailwind would read dist/ in the server pass and make a second stylesheet
+  under a hash the client pass never wrote. Tests are left out so a build
+  with and without them is the same. So are the vendor payloads the tests
+  read, which no component renders.
+*/
+@source not "./**/*.test.ts";
+@source not "./test";
+@source not "./lib/status/__fixtures__";
+
+/*
+  Tailwind's dark: variant follows the effective theme, not the system's
+  setting alone. By default it compiles to a prefers-color-scheme media
+  query, which would ignore the day/night switch, so a dark: class would stay
+  light for a visitor who chose night on a light system (and the reverse).
+  Here it matches under <html data-theme="night">, and falls back to the
+  system's setting only while <html> has no data-theme (a page whose scripts
+  did not run), the same rule the switch's own styles use. :where() keeps the
+  specificity at zero, as the default variant has.
+*/
+@custom-variant dark {
+  &:where(:root[data-theme="night"], :root[data-theme="night"] *) {
+    @slot;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme]), :root:not([data-theme]) *) {
+      @slot;
+    }
+  }
+}
 
 /*
   Quiet Hand: warm paper (true black in the dark), opaque panels with a
@@ -9,10 +42,14 @@
   bg-card, rounded-lg) and never a raw colour.
 
   What ships is not light-dark() itself: the build (Lightning CSS) turns
-  each one into a pair of custom-property toggles that a
-  prefers-color-scheme media query flips on :root. The appearance follows
-  the system, for the whole page; setting color-scheme on one element does
-  not switch the tokens inside it.
+  each one into a pair of custom-property toggles that rules on :root flip:
+  a prefers-color-scheme media query for color-scheme: light dark, and the
+  toggles themselves for a plain light or dark. So the appearance is chosen
+  on <html> and applies to the whole page (setting color-scheme on one
+  element does not switch the tokens inside it): data-theme="day" or
+  "night" (the header switch, or the visitor's clock; src/lib/theme.ts),
+  and with no data-theme, which is a page whose scripts did not run, the
+  system.
 
   The glass, aurora, lenses and card light are not here. They live in
   background.css and only apply on the Glass and Full backgrounds
@@ -233,12 +270,26 @@
 }
 
 /*
-  Light and dark follow the system. This declaration is also what the
-  build keys its light-dark() toggles on (see the top of this file), and
-  it switches native scrollbars and form controls.
+  Day and night. With no data-theme on <html> the page follows the system
+  (light dark). The theme boot script in <head> sets data-theme before the
+  first paint (a stored choice, else the visitor's clock: night 20:00 to
+  06:00), and a plain light or dark here is what the build keys its
+  light-dark() toggles on, so every token below switches with it. It also
+  switches native scrollbars and form controls.
 */
 :root {
   color-scheme: light dark;
+}
+
+:root[data-theme="day"] {
+  color-scheme: light;
+}
+
+:root[data-theme="night"] {
+  color-scheme: dark;
+}
+
+:root {
 
   /*
     The card fill. Not in @theme on purpose: a --color-card there would also
@@ -532,20 +583,33 @@
   the upper one's words and takes its taps; a link that wraps is one box per
   line here, where a positioned pseudo-element would be one box spanning both.
   So the sentence gets a line pitch (hit-lines, on the paragraph) and each box
-  is about 44pt tall: the words' own height (1.3em, a little over Inter's
-  1.21em) plus padding for the rest, half above and half below. The box comes
-  out a little under 44pt (19px of text and 2 x 12.25px of padding is 43.5px at
-  15px), and the pitch is 46pt, because an engine's hit test reaches up to a
-  pixel past a padded inline box's edge: with the lines 44pt apart the box
-  under a link took the taps on its lower edge. A mouse keeps the line. The
-  sideways reach is a little past the words, taken back with an equal margin,
-  so two neighbours never overlap.
+  is 44pt tall or a little more, and under the pitch. A padded inline box is
+  the face's own content area plus the padding, and the content area is the
+  face's ascent plus descent, each rounded to a pixel by the engine: at 15px it
+  is 19px in Inter, 18px in DejaVu Sans, 17px in Liberation Sans, and it
+  differs from face to face. Inter Fallback is 19px where the engine applies
+  its ascent and descent overrides (Chromium); an engine that does not (WebKit
+  may not) draws it with Liberation's or Arial's own metrics, scaled by
+  size-adjust, which is 17 to 18px. So the face a view draws, Inter or its
+  fallback, can differ in the box, and Inter being font-display: optional, from
+  one view to the next.
+  So the padding is worked out from the least that the faces of the font stack
+  give, 17px (1.135em at 15px, 13.5px of padding each side), and the box comes
+  out 44px for that, 45px for 18px and 46px for 19px. (The padding once
+  assumed 1.3em, 19.5px, more than a face gives: the box was 43.5px for 19px
+  of content, 42.5px for 18px and 41.5px for 17px, which a tap 21.5px from its
+  middle does not reach, whichever face the page view happened to draw.) The
+  pitch is 48pt, over the tallest of those boxes by more than the pixel an
+  engine's hit test reaches past a padded inline box's edge: with the lines
+  44pt apart the box under a link took the taps on its lower edge. A mouse
+  keeps the line. The sideways reach is a little past the words, taken back
+  with an equal margin, so two neighbours never overlap.
 */
 @utility hit-extend {
   @media (pointer: coarse) {
     /* Positioned, so the padding is painted, and hit, over the headline's pen mark above it. */
     position: relative;
-    padding-block: calc((2.75rem - 1.3em) / 2);
+    padding-block: calc((2.75rem - 1.135em) / 2);
     padding-inline: 0.125rem;
     margin-inline: -0.125rem;
   }
@@ -564,13 +628,13 @@
 
 @media (pointer: coarse) {
   :root {
-    --hit-lead: calc((2.875rem - var(--text-body--line-height)) / 2);
+    --hit-lead: calc((3rem - var(--text-body--line-height)) / 2);
   }
 }
 
 @utility hit-lines {
   @media (pointer: coarse) {
-    line-height: 2.875rem;
+    line-height: 3rem;
   }
 }
 
@@ -593,6 +657,109 @@
       transform: none;
       opacity: 0.7;
     }
+  }
+}
+
+/*
+  The day/night switch (src/components/status/theme-switch.tsx), a Material 3 switch in the board's tokens: a 52 by 32
+  track with a 2px edge, a 24px knob that carries a sun by day and a moon by night. The button around it is 44px tall
+  and 52px wide, the hit target. Sizes are px, as Material gives them, and do not grow with the text size: at 200% text the
+  hero's row is already as full as it fits (the wordmark test holds it to that), and a bigger switch would not. Colours are tokens in a day and a night value (light-dark(), so they follow the
+  same <html> the rest of the page does, with or without data-theme); only what cannot be a colour, the knob's
+  place and which icon shows, is keyed on data-theme, with the same rule for a page whose scripts did not run (no
+  data-theme: the system's). The edge is --color-subtle by day and the accent by night, 5:1 or better against the
+  page and the glass; the knob is the inverse of the page, so it reads against the track.
+*/
+/*
+  The focus ring sits 2px off the button, not on its edge (the board's ring is at offset 0). The button is
+  exactly as wide as the track, so at offset 0 the ring lay on the track's own edge on both sides, and at night,
+  when that edge is the accent too, it read as a thicker border, not as focus. Two clear pixels between them keep
+  the ring a separate line in day and night. It grows outward only, so the 44px target and the hero row stay.
+*/
+.theme-switch:focus-visible {
+  outline-offset: 2px;
+}
+
+.theme-track {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 52px;
+  height: 32px;
+  padding: 2px;
+  border: 2px solid light-dark(var(--color-subtle), var(--color-accent));
+  border-radius: 999px;
+  background-color: light-dark(var(--color-inset), var(--color-accent));
+}
+
+.theme-knob {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background-color: light-dark(var(--color-fg), var(--color-bg));
+  color: light-dark(var(--color-bg), var(--color-fg));
+}
+
+.theme-knob svg {
+  width: 14px;
+  height: 14px;
+}
+
+.theme-moon {
+  display: none;
+}
+
+:root[data-theme="night"] .theme-knob {
+  transform: translateX(20px);
+}
+
+:root[data-theme="night"] .theme-sun {
+  display: none;
+}
+
+:root[data-theme="night"] .theme-moon {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .theme-knob {
+    transform: translateX(20px);
+  }
+
+  :root:not([data-theme]) .theme-sun {
+    display: none;
+  }
+
+  :root:not([data-theme]) .theme-moon {
+    display: block;
+  }
+}
+
+/* Only where motion is welcome; under Reduce Motion the knob is simply at the other end. */
+@media (prefers-reduced-motion: no-preference) {
+  .theme-track {
+    transition: background-color 300ms cubic-bezier(0.2, 0, 0, 1), border-color 300ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .theme-knob {
+    transition: transform 300ms cubic-bezier(0.2, 0, 0, 1), background-color 300ms cubic-bezier(0.2, 0, 0, 1), color 300ms cubic-bezier(0.2, 0, 0, 1);
+  }
+}
+
+/* Forced colours drop backgrounds: the edge and the knob take the system's own. */
+@media (forced-colors: active) {
+  .theme-track {
+    border-color: ButtonText;
+    background-color: ButtonFace;
+  }
+
+  .theme-knob {
+    forced-color-adjust: none;
+    background-color: ButtonText;
+    color: ButtonFace;
   }
 }
 
@@ -748,6 +915,34 @@
     opacity var(--t-reveal) var(--ease-out),
     transform var(--t-reveal) var(--ease-out),
     visibility 0s linear var(--t-reveal);
+}
+
+/*
+  Below 64rem the bar is a fixed layer that is shown and hidden in the middle of a scroll. Dropping its blur and its
+  visibility on hide and building both again on show made the compositor create and destroy the layer during the very
+  scroll that moves it, which on iOS is a flash and a one-frame offset of a fixed layer. So the layer stays: hidden,
+  the bar keeps its blur and its visibility and fades out by opacity and transform alone, and what keeps it from being
+  used is not that it is gone but that it is inert (compact-header.tsx: no focus, no click, out of the accessibility
+  tree) and takes no pointer events. The layer is promoted for good, for the two properties it animates.
+*/
+@media (width < 64rem) {
+  .compact-header {
+    will-change: opacity, transform;
+  }
+
+  .compact-header[data-shown="false"] {
+    visibility: visible;
+    pointer-events: none;
+    -webkit-backdrop-filter: var(--bar-filter);
+    backdrop-filter: var(--bar-filter);
+    transition:
+      opacity var(--t-reveal) var(--ease-out),
+      transform var(--t-reveal) var(--ease-out);
+  }
+
+  .compact-header[data-shown="false"] * {
+    pointer-events: none;
+  }
 }
 
 /*
@@ -975,6 +1170,18 @@ article[id^="service-"],
     .details-dialog[open] {
       transform: translateY(100%);
     }
+  }
+}
+
+/*
+  On a desktop (the same 64rem the header row switches at) the panel is a step
+  wider, 34rem instead of 26rem: its notes and links read in fewer, longer
+  lines. Tablets keep the narrow panel. Only the Details; the settings dialog
+  has its own width.
+*/
+@media (min-width: 64rem) {
+  .details-dialog {
+    width: min(34rem, calc(100vw - 2rem));
   }
 }
 

@@ -9,11 +9,15 @@ import type { Verdict } from "@/lib/status/verdict";
 import { cn } from "@/lib/utils";
 
 /**
- * The top of the page. A dateline, the wordmark in the middle and the two icon
- * buttons on the first row; below it the verdict, which is the page's <h1>, and what
- * hangs from it: the services it names (each links to its card), the
- * handwritten "all quiet" when everything is up, and the live line, which
- * sits in the margin on a wide screen and under the verdict on a phone.
+ * The top of the page. The first row is a dateline, the wordmark (from md up,
+ * in the middle) and the controls: the day/night switch and the two icon
+ * buttons, Alerts and Refresh. The row wraps: the dateline gives way down to
+ * its longest word and no further, and when the controls still do not fit
+ * beside it they drop below it. Under the row comes the verdict, which is the
+ * page's <h1>, and what hangs from it: the services it names (each links to
+ * its card), the handwritten "all quiet" when everything is up, and the live
+ * line, which sits in the margin on a wide screen and under the verdict on a
+ * phone.
  *
  * The count in the headline is underlined by hand once, when it first
  * appears. It is drawn only while something needs a look, and it keeps its
@@ -31,7 +35,7 @@ export function Hero({
   verdict: Verdict;
   /** A named service was followed; the board clears its filters first if they hide its card. */
   onReveal: (id: ServiceId, event: MouseEvent<HTMLAnchorElement>) => void;
-  /** Alerts and Refresh, icon only. */
+  /** The day/night switch, Alerts and Refresh, icon only. */
   controls: ReactNode;
   /** The live line. */
   live: ReactNode;
@@ -42,14 +46,15 @@ export function Hero({
   return (
     <header className="page-gutter mx-auto max-w-[62rem] pt-6 pb-4 md:pt-10 md:pb-6">
       {/* Three equal-ended columns from md up: the wordmark is the middle one, so it sits on the header's own centre whatever the dateline or the controls weigh. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-x-8">
-        <p className="text-caption text-muted">
+      {/* One row at the default text size, whatever the date: the controls keep their size and the dateline gives, down to its longest word and no further, so a long date breaks in two short lines ("Wednesday 30 / September"). With larger text, where even that does not fit beside the controls, the controls wrap under the dateline instead of the dateline splitting a word. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-x-8">
+        <p className="min-w-min flex-1 basis-0 text-caption text-muted">
           <Dateline generatedAt={generatedAt} />
         </p>
         <p data-testid="wordmark" className="hidden text-row md:block">
           {WORDMARK}
         </p>
-        <div className="-mr-3 flex items-center md:justify-self-end">{controls}</div>
+        <div className="-mr-3 ml-auto flex shrink-0 items-center md:justify-self-end">{controls}</div>
       </div>
 
       <div className="mt-6 md:mt-8 md:grid md:grid-cols-[var(--margin-col)_minmax(0,1fr)] md:gap-x-8">
@@ -71,7 +76,7 @@ export function Hero({
             <p
               className={cn(
                 "text-body text-muted",
-                // Lines 46pt apart on touch, so the links' tap areas never overlap: only where there are links.
+                // Lines 48pt apart on touch, so the links' tap areas never overlap: only where there are links.
                 verdict.subParts.some((part) => part.id)
                   ? "hit-lines mt-[calc(0.5rem-var(--hit-lead))] -mb-[var(--hit-lead)] md:mt-[calc(0.75rem-var(--hit-lead))]"
                   : "mt-2 md:mt-3",

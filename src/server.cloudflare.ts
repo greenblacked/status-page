@@ -6,7 +6,7 @@ import { withWorkerVersion } from "@/lib/worker-version";
 
 // Cloudflare's module entry receives bindings directly. TanStack's handler
 // uses the request context for robots.txt; status collection is cached in
-// each isolate by the same board.ts implementation as the Node build.
+// each isolate by the same board-cache.server.ts implementation as the Node build.
 const handleRequest = createStartHandler(defaultStreamHandler);
 
 export default {

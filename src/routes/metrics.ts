@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getStatusBoard } from "@/lib/status/board";
+import { getStatusBoard } from "@/lib/status/board-cache.server";
 import { respondWithBoard } from "@/lib/status/board-response";
 import { PUBLIC_HEADERS } from "@/lib/status/integrations";
 import { METRICS_CONTENT_TYPE, prometheusMetrics } from "@/lib/status/metrics";

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getStatusBoard } from "@/lib/status/board";
+import { getStatusBoard } from "@/lib/status/board-cache.server";
 import { respondWithBoard } from "@/lib/status/board-response";
 import { PUBLIC_HEADERS, publicStatus } from "@/lib/status/integrations";
 

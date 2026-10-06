@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { createLightSink } from "@/components/status/tilt-light-sink";
 import {
   createTiltController,
   createWritePacer,
@@ -6,9 +7,6 @@ import {
   readTiltLighting,
   screenAngle,
   TILT_ATTRIBUTE,
-  TILT_LIGHT_SELECTOR,
-  TILT_VAR_X,
-  TILT_VAR_Y,
   tiltFromStorageEvent,
   tiltSupported,
   writeTiltLighting,
@@ -18,75 +16,6 @@ const storage = () => window.localStorage;
 
 /** How long any page waits for a first reading before saying none is coming. */
 const NO_READING_MS = 3000;
-
-/**
- * Writes --light-x and --light-y inline on every glass panel (the elements
- * TILT_LIGHT_SELECTOR names); their ::before and ::after take them from the
- * panel (src/styles.css).
- *
- * Not on <html>, and not through a rule of a style sheet: a change to a rule
- * makes WebKit rebuild its rule sets and re-style the document. The
- * properties are plain, inherited custom properties, so an inline write
- * re-styles the panel and what is inside it (about 18 ms for 18 panels on a
- * loaded Chromium, and several times that on a throttled CPU). Registering
- * them as non-inherited is about 5 times cheaper per write, but WebKit then
- * draws the pseudo-elements as if they were unset; see src/styles.css. The
- * deadband and the frame cap in the controller keep the plain form affordable,
- * and the cap widens by itself while frames overrun (createWritePacer), so a
- * slow device writes less often instead of dropping frames.
- *
- * Panels come and go when a refresh re-renders the board, so a new one gets
- * the current value from a MutationObserver, before it paints. It watches
- * only while the light is on, and remove() puts everything back.
- */
-function createLightSink(): { set: (x: string, y: string) => void; remove: () => void } {
-  const written = new Set<HTMLElement>();
-  let last: { x: string; y: string } | null = null;
-  let observer: MutationObserver | null = null;
-
-  const write = (host: HTMLElement) => {
-    if (!last) return;
-    host.style.setProperty(TILT_VAR_X, last.x);
-    host.style.setProperty(TILT_VAR_Y, last.y);
-    written.add(host);
-  };
-
-  const onMutations = (records: MutationRecord[]) => {
-    const fresh = records.some((record) =>
-      Array.from(record.addedNodes).some(
-        (node) =>
-          node instanceof Element && (node.matches(TILT_LIGHT_SELECTOR) || node.querySelector(TILT_LIGHT_SELECTOR)),
-      ),
-    );
-    if (!fresh) return;
-    for (const host of Array.from(written)) if (!host.isConnected) written.delete(host);
-    for (const host of document.querySelectorAll<HTMLElement>(TILT_LIGHT_SELECTOR)) {
-      if (!written.has(host)) write(host);
-    }
-  };
-
-  return {
-    set: (x, y) => {
-      last = { x, y };
-      for (const host of Array.from(written)) if (!host.isConnected) written.delete(host);
-      for (const host of document.querySelectorAll<HTMLElement>(TILT_LIGHT_SELECTOR)) write(host);
-      if (!observer) {
-        observer = new MutationObserver(onMutations);
-        observer.observe(document.body, { childList: true, subtree: true });
-      }
-    },
-    remove: () => {
-      observer?.disconnect();
-      observer = null;
-      for (const host of written) {
-        host.style.removeProperty(TILT_VAR_X);
-        host.style.removeProperty(TILT_VAR_Y);
-      }
-      written.clear();
-      last = null;
-    },
-  };
-}
 
 export type TiltStatus =
   | "off"
@@ -101,32 +30,56 @@ export type TiltStatus =
 type Problem = "denied" | "no-sensor" | "needs-permission" | "no-readings" | "no-readings-dropped" | null;
 
 /** iOS 13+ only: motion is behind a permission that a tap has to ask for. */
-type MotionPermissionApi = { requestPermission?: () => Promise<"granted" | "denied"> };
+type MotionPermissionApi = { requestPermission?: () => Promise<MotionAnswer> };
 
-/** Reduce Motion, or the system's Reduce Transparency where a browser passes it on. */
-const REDUCED_QUERIES = ["(prefers-reduced-motion: reduce)", "(prefers-reduced-transparency: reduce)"];
+/** What requestPermission resolves with. Chromium 154 also answers "prompt" outside a tap: not decided, only a tap can ask. */
+type MotionAnswer = "granted" | "denied" | "prompt";
+
+/**
+ * Reduce Motion, or the system's Reduce Transparency where a browser passes it on. Increase
+ * Contrast and forced colours too: the stylesheet makes the sheen and the glint transparent
+ * there, so there is nothing to move and the light would only cost layers and commits.
+ */
+const REDUCED_QUERIES = [
+  "(prefers-reduced-motion: reduce)",
+  "(prefers-reduced-transparency: reduce)",
+  "(prefers-contrast: more)",
+  "(forced-colors: active)",
+];
 
 /**
  * Tilt lighting: on a touch device with motion sensors, the light on the
  * glass follows how the device is held (src/lib/status/tilt.ts has the
  * maths). It is off until switched on, because iOS asks for motion access
- * first, and it writes only --light-x and --light-y (see createLightSink),
- * plus data-tilt="on" on <html> while it really is driving them.
+ * first, and it only moves the light (see tilt-light-sink.ts), plus sets
+ * data-tilt="on" on <html> while it really is driving it.
  *
  * `supported` is worked out after hydration, so the server and the first
  * client render agree that there is nothing to show. `paused` is Reduce
  * glass, or the Quiet background (the light only draws on Glass and Full);
- * Reduce Motion is watched here. While paused nothing listens and
- * nothing is written.
+ * Reduce Motion, Reduce Transparency, Increase Contrast and forced colours
+ * are watched here.
+ * While paused nothing listens and nothing is written.
  *
  * A motion event only records the latest reading. One animation frame loop
  * turns it into the two properties, and stops as soon as the light has
  * caught up, so React never re-renders per reading. It is not free while the
  * device is held: iOS fires deviceorientation continuously (about 60 a second,
  * still or not), and sensor noise keeps moving the light a little. The
- * deadband and the frame cap keep the writes low then, but not at zero.
+ * deadband keeps the writes down then, but not at zero. On the animation path
+ * (see tilt-light-sink.ts) a write goes out on every frame the light has moved,
+ * so the glow follows the display's own rate, and only backs off while frames
+ * are dropping; on the fallback, where each write restyles the board, they are
+ * capped at about 30 a second, and back off too.
  */
-export function useTiltLighting({ paused }: { paused: boolean }): {
+export function useTiltLighting({
+  paused,
+  scope,
+}: {
+  paused: boolean;
+  /** The element the light is written on; the lit panels are inside it (see createLightSink). */
+  scope: RefObject<HTMLElement | null>;
+}): {
   supported: boolean;
   enabled: boolean;
   status: TiltStatus;
@@ -168,7 +121,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
   useEffect(() => {
     if (!active) return;
     const root = document.documentElement;
-    const light = createLightSink();
+    const light = createLightSink(() => scope.current);
     const viaTap = askedByTap.current;
     askedByTap.current = false;
 
@@ -181,26 +134,34 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
     let cancelled = false;
     let gotReading = false;
     let driving = false;
-    const pacer = createWritePacer();
+    // Two gaps are kept, for the two ways the light is written (see tilt-light-sink.ts): on every frame
+    // while it only sets animations' times, and about 30 a second where each write restyles the board.
+    // Both widen when frames overrun and narrow again when they are on time.
+    const pacerAnimated = createWritePacer(0);
+    const pacerRestyle = createWritePacer();
     let lastFrame = 0;
 
     const controller = createTiltController({
       apply: (x, y) => {
-        light.set(x.toFixed(3), y.toFixed(3));
+        // The attribute first: the glint's pseudo-element exists only once it is on, and the light needs it there.
         if (!driving) {
           driving = true;
           root.setAttribute(TILT_ATTRIBUTE, "on");
         }
+        light.set(Math.round(x * 1000) / 1000, Math.round(y * 1000) / 1000);
       },
       now: () => performance.now(),
-      minIntervalMs: () => pacer.interval(),
+      minIntervalMs: () => (light.animated() ? pacerAnimated.interval() : pacerRestyle.interval()),
     });
 
     const tick = (time: number) => {
       frame = 0;
       if (!latest) return;
       // Frames that overrun mean the writes cost more than the device can spare: write less often.
-      if (lastFrame) pacer.frame(time - lastFrame);
+      if (lastFrame) {
+        pacerAnimated.frame(time - lastFrame);
+        pacerRestyle.frame(time - lastFrame);
+      }
       lastFrame = time;
       const result = controller.sample(latest.beta, latest.gamma, latest.angle, time);
       if (result.settled) lastFrame = 0;
@@ -232,7 +193,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
      * tap can ask. So a slow first reading is no longer taken for a missing permission.
      */
     const probe = () => {
-      let request: Promise<"granted" | "denied"> | undefined;
+      let request: Promise<MotionAnswer> | undefined;
       try {
         request = (DeviceOrientationEvent as unknown as MotionPermissionApi).requestPermission?.();
       } catch {
@@ -240,7 +201,9 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       }
       request?.then(
         (answer) => {
-          if (!cancelled && answer !== "granted") forget("denied");
+          if (cancelled || answer === "granted") return;
+          // Undecided is not declined: the same note as iOS's rejection, and a tap asks.
+          forget(answer === "denied" ? "denied" : "needs-permission");
         },
         () => {
           if (!cancelled) forget("needs-permission");
@@ -303,7 +266,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       light.remove();
       root.removeAttribute(TILT_ATTRIBUTE);
     };
-  }, [active]);
+  }, [active, scope]);
 
   const setEnabled = useCallback((on: boolean) => {
     if (!on) {
@@ -313,7 +276,7 @@ export function useTiltLighting({ paused }: { paused: boolean }): {
       return;
     }
     // iOS only shows its prompt for a call made inside the tap, so nothing may come before this line.
-    let request: Promise<"granted" | "denied"> | undefined;
+    let request: Promise<MotionAnswer> | undefined;
     try {
       request = (DeviceOrientationEvent as unknown as MotionPermissionApi).requestPermission?.();
     } catch {

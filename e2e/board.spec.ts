@@ -11,6 +11,7 @@ import {
   MIKROTIK_NOTE,
   releaseLineIds,
 } from "./support/first-render";
+import { pinToSlot, stopClock } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
 const SERVICES = 20;
@@ -23,13 +24,18 @@ const upList = (page: Page, category: string) =>
   page.locator(`section[aria-labelledby="up-${category}-heading"] article[id^="service-"]`);
 
 /**
- * Waits until React has hydrated the page. The server's markup, cards
+ * Waits until React has hydrated the page and its saved checks are in
+ * (data-hydrated, set in board-view.tsx). The server's markup, cards
  * included, paints before that, and a click on it goes nowhere: on a slow
  * device (WebKit on a phone) a test that clicks as soon as the cards are
- * there can beat the handlers, and the click is lost for good.
+ * there can beat the handlers, and the click is lost for good. The saved
+ * checks add rows to Recent changes in the render after hydration, which
+ * moves what is below it, so the attribute waits for them too. That is a
+ * few renders after the first, so the wait is longer than the default 5s: on
+ * a loaded runner each one takes a while.
  */
 async function hydrated(page: Page): Promise<void> {
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
 }
 
 /**
@@ -188,8 +194,8 @@ async function openFixture(
 /**
  * openFixture, with the page's Date 30 s into a slot (pinToSlot) first, for a test that presses something on the
  * board. At the turn of a slot (every two minutes of the wall clock) the page refetches, adds a row to Recent
- * changes and clears the "Changed" tags, which moves every card under a tag by 36px to 108px, and where the browser
- * has no scroll anchoring (WebKit) useHoldPlace scrolls the page by the same distance a moment later. A press made
+ * changes and clears the "Changed" tags, which moves every card under a tag by 36px to 108px, and useHeldBoard
+ * scrolls the page by whatever distance the browser's own scroll anchoring has not held, a moment later. A press made
  * in the second or two after a turn can find the board moving under it. With the page 30 s in, the next turn is 90 s
  * away, past the end of any of these tests. Tests that install page.clock and fast-forward it pin the page already.
  */
@@ -230,27 +236,6 @@ async function awayFromRefetch(page: Page, seconds = 30): Promise<void> {
       { timeout: 90_000, intervals: [250] },
     )
     .toBeGreaterThanOrEqual(seconds);
-}
-
-/**
- * Moves the page's Date to 30 s into a two-minute slot, and lets it run on from there. The turn of a slot adds a row
- * to Recent changes, which grows the board body and makes the dock measure again (rightly); with the page 30 s in,
- * the next turn and the wall-clock refetch are 90 s or more away. Only Date moves. page.clock.install would do the
- * same, but it also replaces requestAnimationFrame with a timer that fires every 16 ms of clock time whether or not
- * the page has rendered: three of those "frames" can pass before the page has rendered once, and so before a resize
- * reaches it (the resize event is sent in a rendering update, ahead of the frame callbacks).
- */
-async function pinToSlot(page: Page): Promise<void> {
-  const offset = Math.floor(Date.now() / 120_000) * 120_000 + 30_000 - Date.now();
-  await page.addInitScript((shift) => {
-    const Native = Date;
-    const now = () => Native.now() + shift;
-    window.Date = new Proxy(Native, {
-      construct: (target, args, newTarget) => Reflect.construct(target, args.length ? args : [now()], newTarget),
-      apply: (target) => new target(now()).toString(),
-      get: (target, key) => (key === "now" ? now : Reflect.get(target, key, target)),
-    });
-  }, offset);
 }
 
 /**
@@ -330,7 +315,7 @@ test("renders every service with no console errors or hydration warnings", async
   // build late, so the global setup waits for them and asks for the page once they are in hand (e2e/support/
   // global-setup.ts). Without that, this markup would have no release line, and the hydration of those lines and of
   // the MikroTik notes in its Details would be untested. That holds while the canned feeds are younger than their
-  // 30-minute cache; a longer run (all six projects, WebKit last) may get a board built while they are read again,
+  // 30-minute cache; a longer run (all the full-suite projects, WebKit last) may get a board built while they are read again,
   // and then asks only that no line is unexpected.
   if (firstRenderCarriesReleaseLines()) {
     expect(releaseLineIds(html)).toEqual(EXPECTED_RELEASE_LINES);
@@ -480,9 +465,13 @@ test("Quiet, the default background, blurs no panel and no control, only the flo
   const controls = await backdropFilters(page, CONTROLS);
   expect(controls.length).toBeGreaterThan(0);
   expect(controls.filter((value) => value !== "none")).toEqual([]);
-  // The bar is the one translucent layer: hidden it holds no blur, up it blurs.
+  // The bar is the one translucent layer: up it blurs. Hidden it holds no blur from 64rem; below that it keeps its
+  // layer, and the test after this one holds it to that.
   const bar = page.locator('section[aria-label="Board controls"]');
-  expect((await backdropFilters(page, BARS)).filter((value) => value !== "none")).toEqual([]);
+  const wide = (page.viewportSize()?.width ?? 0) >= 1024;
+  const hidden = (await backdropFilters(page, BARS)).filter((value) => value !== "none");
+  if (wide) expect(hidden).toEqual([]);
+  else expect(hidden.some((value) => value.includes("blur("))).toBe(true);
   await page.locator("footer").scrollIntoViewIfNeeded();
   await expect(bar).toHaveAttribute("data-shown", "true");
   expect((await backdropFilters(page, BARS)).some((value) => value.includes("blur("))).toBe(true);
@@ -933,6 +922,7 @@ async function dockPath(page: Page, step = 8): Promise<{ up: number[]; path: num
  */
 async function revealBoard(page: Page): Promise<DockOffsets & { limit: number }> {
   await steadyBoard(page);
+  await stopClock(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
   test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
@@ -952,6 +942,7 @@ async function revealServedBoard(
   await openFixture(page, () => board(Date.now()), ready);
   await fontsSettled(page);
   await leadSteady(page);
+  await stopClock(page);
   await expect(searchDock(page)).toHaveAttribute("data-armed", "");
   const offsets = await dockOffsets(page);
   test.skip(offsets.wide, "from 64rem the field shares a row with the chips and there is no copy of it in the bar");
@@ -2664,7 +2655,10 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
       bar: rect(bar),
       field: rect(document.querySelector(".bar-search .search-field")),
       dot: rect(bar?.querySelector("p") ?? null),
-      firstButton: rect(bar?.querySelector("button") ?? null),
+      // The first button the bar draws: below 640px the day/night switch is not (display: none), and has no box.
+      firstButton: rect(
+        [...(bar?.querySelectorAll("button") ?? [])].find((button) => button.getBoundingClientRect().width > 0) ?? null,
+      ),
       refresh: rect(bar?.querySelector('button[aria-label="Refresh status now"]') ?? null),
     };
   });
@@ -2844,14 +2838,20 @@ test("search reveal: no layout shift", async ({ page, browserName }) => {
   test.slow();
   const offsets = await revealBoard(page);
   if (browserName === "chromium") {
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const tracked = window as Window & { __cls?: number };
       tracked.__cls = 0;
-      new PerformanceObserver((list) => {
+      const observer = new PerformanceObserver((list) => {
         for (const entry of list.getEntries() as unknown as { value: number; hadRecentInput: boolean }[]) {
           if (!entry.hadRecentInput) tracked.__cls = (tracked.__cls ?? 0) + entry.value;
         }
-      }).observe({ type: "layout-shift", buffered: false });
+      });
+      observer.observe({ type: "layout-shift", buffered: false });
+      // A shift is worked out when the page makes its next frame, and reported with it, which on a busy machine can
+      // be a while after what moved the page. Let a few frames come, drop what they report, and count from there.
+      for (let frame = 0; frame < 3; frame++) await new Promise((resolve) => requestAnimationFrame(resolve));
+      observer.takeRecords();
+      tracked.__cls = 0;
     });
   }
   const layout = () =>
@@ -3190,22 +3190,38 @@ test("opens a long component list with Show all and closes it with Show fewer", 
 });
 
 // The check at the turn of a slot adds a row to Recent changes and clears the "Changed" tags of the one before,
-// above the lists. Chrome and Firefox keep the reader's place when that happens (scroll anchoring); Safari has
-// none, so the page has to scroll by the distance itself, or the button under the reader's finger moves away
-// from it. The "none" pass switches the browser's anchoring off to be Safari, which is the only way to see it
-// here. What is asserted is the reader's side: the Show all button stays where it is on screen, on every layout.
-// Whether the page scrolled itself follows from whether this browser anchors.
+// above the lists. Chrome and Firefox try to keep the reader's place when that happens (scroll anchoring), but hold
+// their own pick of the page, which is not always the button under the pointer; Safari has no anchoring at all. So
+// the page does not ask the browser: right after the commit it measures where the button is against where it was
+// and scrolls by what is left (src/components/status/hold-place.ts). The "none" pass switches the browser's
+// anchoring off to be Safari, which is the only way to see that here; the "default" pass leaves the browser's own
+// anchoring on, with whatever it does on this engine and layout.
+//
+// What is asserted is the reader's side, the same in both passes and on every layout: the Show all button is
+// within 1px of where it was once the update has landed, and stays there. And what the design promises of the
+// scrolling: the page scrolls at most once, by exactly what the button had moved by at that moment (the part of the
+// change the browser did not hold itself), and never when nothing was left. With anchoring off, all of it is left,
+// so the page must have scrolled.
 for (const anchoring of ["none", "default"] as const) {
-  test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({
-    page,
-  }, testInfo) => {
+  test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({ page }) => {
+    // Every scrollBy of the page, with where the Show all button was in the window at the moment of the call (after
+    // the update has been laid out, before the scroll): that is how far the browser left it from its place.
     await page.addInitScript(() => {
-      const scrolled: number[] = [];
-      (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
+      const scrolled: { by: number; offset: number | null }[] = [];
+      (window as Window & { __scrolledBy?: typeof scrolled }).__scrolledBy = scrolled;
+      (window as Window & { __watched?: { top: number } }).__watched = { top: Number.NaN };
       const original = window.scrollBy;
       window.scrollBy = ((...args: unknown[]) => {
         const first = args[0] as ScrollToOptions | number | undefined;
-        scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
+        const by = typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0);
+        const button = [...document.querySelectorAll("article#service-spotify button")].find((element) =>
+          /^Show all 32/.test(element.textContent ?? ""),
+        );
+        const watched = (window as Window & { __watched?: { top: number } }).__watched;
+        scrolled.push({
+          by,
+          offset: button && watched ? button.getBoundingClientRect().top - watched.top : null,
+        });
         return (original as (...values: unknown[]) => void).apply(window, args);
       }) as typeof window.scrollBy;
     });
@@ -3219,11 +3235,6 @@ for (const anchoring of ["none", "default"] as const) {
         document.documentElement.style.overflowAnchor = value;
       }, anchoring);
     }
-    // What this browser does with the request: Safari ignores "auto" when it has no scroll anchoring.
-    const anchors = await page.evaluate(
-      () =>
-        CSS.supports("overflow-anchor", "auto") && getComputedStyle(document.documentElement).overflowAnchor !== "none",
-    );
     const card = page.locator("article#service-spotify");
     await card.locator("summary").click();
     await expect(card.locator("details")).toHaveAttribute("open", "");
@@ -3235,26 +3246,43 @@ for (const anchoring of ["none", "default"] as const) {
     await toggle.hover();
     // Let the hook see where the reader is.
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    await page.evaluate(() => {
-      (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.splice(0);
-    });
     const feed = page.locator('section[aria-labelledby="recent-heading"]');
     const height = () => feed.evaluate((element) => element.getBoundingClientRect().height);
     const topOf = () => toggle.evaluate((element) => element.getBoundingClientRect().top);
     const rows = await feed.locator("li").count();
     const heightBefore = await height();
     const topBefore = await topOf();
+    // Where the button was, for the scrolls to measure against, and none of the setup's own scrolls counted.
+    await page.evaluate((top) => {
+      const w = window as Window & { __scrolledBy?: unknown[]; __watched?: { top: number } };
+      w.__scrolledBy?.splice(0);
+      if (w.__watched) w.__watched.top = top;
+    }, topBefore);
     await page.clock.fastForward("03:00");
     await expect(feed.locator("li")).not.toHaveCount(rows);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     expect((await height()) - heightBefore).toBeGreaterThan(0);
-    const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy);
-    if (anchors) expect(scrolled).toEqual([]);
-    else expect(scrolled?.length).toBeGreaterThan(0);
-    // Where the browser anchors, it holds its own pick of the page, which on a phone's layout is not always the
-    // button under the pointer (a "Changed" tag going out between the two moves it); the wide layout is held.
-    if (!anchors || testInfo.project.name === "desktop") {
-      expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+    // The reader's side: the button is where it was.
+    expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+    // A second correction can come from a timer of the hook (its look again after RECHECK_MS) as well as from the next
+    // frame: run the page clock past all of them, then a frame to lay out what they did. Neither the button moves
+    // nor the page scrolls again.
+    await page.clock.runFor(1000);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+    const scrolled = await page.evaluate(
+      () => (window as Window & { __scrolledBy?: { by: number; offset: number | null }[] }).__scrolledBy ?? [],
+    );
+    // Never twice, whatever the browser left.
+    expect(scrolled.length).toBeLessThanOrEqual(1);
+    // With the browser's anchoring off nothing of the change is held for the page: it has to scroll.
+    if (anchoring === "none") expect(scrolled).toHaveLength(1);
+    // Where it did scroll, it was by what the browser left the button away from its place, as far as the button
+    // is concerned, and not by more.
+    for (const { by, offset } of scrolled) {
+      expect(offset).not.toBeNull();
+      expect(Math.abs(by - (offset ?? Number.NaN))).toBeLessThanOrEqual(1);
+      expect(Math.abs(by)).toBeGreaterThan(0.5);
     }
   });
 }
@@ -3507,6 +3535,53 @@ test("closing a long list of broken rows on an attention card keeps its button i
   const more = card.getByRole("button", { name: /^Show all 120/ });
   await expect(more).toBeFocused();
   expect(await inViewport(more)).toBe(true);
+});
+
+/** The fixture board with only the named services needing a look: every other one that is down is made healthy. */
+function boardNeedingLook(
+  now: number,
+  keep: readonly string[],
+  grok: "operational" | "degraded" = "operational",
+): BoardSnapshot {
+  const base = fixtureBoard(now, { grok });
+  const services = base.services.map((item) =>
+    keep.includes(item.id) || item.health === "operational" || item.category === "updates"
+      ? item
+      : { ...item, health: "operational" as const, summary: "All systems operational", components: [], incidents: [] },
+  );
+  const counts = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const item of services) counts[item.health] += 1;
+  return { ...base, services, counts };
+}
+
+test("gives a lone Needs a look card the whole column, and two cards a half each", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const now = Date.now();
+  let board = boardNeedingLook(now, ["gcp"]);
+  await openFixture(page, () => board, { id: "gcp", label: "Degraded" });
+
+  const attention = group(page, "attention");
+  const column = page.locator('[data-group="attention"] .\\@container').first();
+  await expect(attention).toHaveCount(1);
+  const widths = async () => ({
+    column: (await column.boundingBox())?.width ?? 0,
+    cards: await attention.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().width)),
+  });
+  let measured = await widths();
+  expect(measured.column).toBeGreaterThan(600);
+  expect(Math.abs(measured.cards[0] - measured.column)).toBeLessThanOrEqual(1);
+
+  // Two cards keep the two-column grid: each takes about half.
+  board = boardNeedingLook(now, ["gcp", "grok"], "degraded");
+  await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
+  await expect(attention).toHaveCount(2);
+  measured = await widths();
+  for (const width of measured.cards) expect(Math.abs(width - (measured.column - 12) / 2)).toBeLessThanOrEqual(1);
+
+  // A phone has one column either way: a card is as wide as the column.
+  await page.setViewportSize({ width: 390, height: 800 });
+  measured = await widths();
+  for (const width of measured.cards) expect(Math.abs(width - measured.column)).toBeLessThanOrEqual(1);
 });
 
 test("leads Needs attention with the most urgent service and follows the data", async ({ page }) => {
@@ -3936,6 +4011,36 @@ test("keeps Reduce glass across a reload", async ({ page }) => {
   expect(problems).toEqual([]);
 });
 
+test("a press between Settings shutting and the page being told still opens it", async ({ page }) => {
+  await page.goto("/");
+  await expect(cards(page)).toHaveCount(SERVICES);
+  await hydrated(page);
+  const button = page.getByRole("button", { name: "Settings", exact: true });
+  await button.click();
+  await expect(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  // A modal <dialog> that Escape shuts is closed at once, and its `close` event, which the page learns it from, is a
+  // task of its own. Here the press comes inside that gap, as one does on a busy page: the dialog is shut by `close()`
+  // and the button is pressed in the same task, so the event can only arrive after the press. Then the page is given
+  // the event and two frames to act on it.
+  const open = await page.evaluate(async () => {
+    const shut = document.querySelector<HTMLDialogElement>("dialog.settings-dialog");
+    const press = [...document.querySelectorAll<HTMLButtonElement>("footer button")].find(
+      (one) => one.textContent?.trim() === "Settings",
+    );
+    if (!shut || !press) throw new Error("no dialog or no button");
+    const told = new Promise((resolve) => shut.addEventListener("close", resolve, { once: true }));
+    shut.close();
+    press.click();
+    await told;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return shut.open;
+  });
+  expect(open, "the press opened Settings, and the late `close` of the shut one did not shut it again").toBe(true);
+  await expect(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+});
+
 for (const colorScheme of ["light", "dark"] as const) {
   test(`renders the ${colorScheme} appearance with no console errors`, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
@@ -4315,6 +4420,9 @@ test("keeps one Recent changes region, in place, through an empty search", async
  * turns the load's quiet check into a change row. A held request reads as a
  * slow network (the page keeps its board and shows no error), where aborting
  * it would show the error line.
+ *
+ * A test that counts the rows after a load pins the page's clock first (pinToSlot): the load's own check is the row
+ * of the slot the page is in, and a slot that turns while the page loads adds another.
  */
 async function savedChecks(page: Page): Promise<{ key: string; store: string }> {
   await page.goto("/");
@@ -4325,7 +4433,8 @@ async function savedChecks(page: Page): Promise<{ key: string; store: string }> 
     lastBoard: BoardSnapshot | null;
   };
   expect(first.lastBoard, "the page saved the board it showed").not.toBeNull();
-  const slot = Math.floor(Date.now() / 120_000) * 120_000;
+  // The slot by the page's clock, which a test can have pinned (pinToSlot) to well inside a slot.
+  const slot = await page.evaluate(() => Math.floor(Date.now() / 120_000) * 120_000);
   const counts = { operational: 10, degraded: 3, outage: 1, maintenance: 0, unknown: 0 };
   const aws = "Increased error rates and latency for API requests in US-EAST-1 affecting several services";
   const routerOs = "Elevated connection failures for some users; engineers are investigating a network issue";
@@ -4394,6 +4503,7 @@ async function holdBoardFetches(page: Page): Promise<() => Promise<void>> {
 
 test("shifts nothing much when saved checks fill Recent changes after hydration", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "layout-shift entries are a Chromium API");
+  await pinToSlot(page);
   const saved = await savedChecks(page);
   await page.addInitScript((saved) => {
     localStorage.setItem(saved.key, saved.store);
@@ -4420,6 +4530,99 @@ test("shifts nothing much when saved checks fill Recent changes after hydration"
   expect(shift, "cumulative layout shift").toBeLessThan(0.02);
 });
 
+// The saved checks arrive in the render after hydration. On a first visit they add the first row to Recent changes
+// (the empty state is shorter), and when a two-minute slot turns between the page being parsed and hydrating they add
+// another past what the page reserved, so everything below moves, the footer's Settings button included. A tap that
+// straddles that move (the press lands on the button, the page shifts, the release lands elsewhere) is lost, and a
+// WebKit run of tilt.spec.ts tapped Settings and found no dialog (the cause is inferred from the measured move; the
+// lost tap itself was not reproduced). So the page says it has hydrated only once the rows are in. A slot that turns
+// later, or a refetch that rewords a row, can still move the page after that, as it can for a visitor. While a finger
+// is down the board holds the new rows back, and the page must wait for them too.
+for (const visit of [
+  "a first visit",
+  "a slot that turns while the page loads",
+  "a slot that turns while a finger is down",
+] as const) {
+  test(`is done moving the footer when the page says it has hydrated, on ${visit}`, async ({ page }) => {
+    // The page's clock is well inside a slot for every load of the test, so the rows come from what the test does
+    // (the visit, and the 130 s below) and never from the wall clock turning a slot while a page loads.
+    await pinToSlot(page);
+    const releaseBoard = await holdBoardFetches(page);
+    await page.goto("/");
+    await hydrated(page);
+    await expect(feedRows(page)).toHaveCount(1);
+    await page.addInitScript(() => {
+      const seen = window as Window & { __atHydration?: { height: number; rows: number } };
+      new MutationObserver(() => {
+        if (seen.__atHydration === undefined && document.documentElement.hasAttribute("data-hydrated")) {
+          seen.__atHydration = {
+            height: document.documentElement.scrollHeight,
+            rows: document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length,
+          };
+        }
+      }).observe(document, { attributes: true, subtree: true, attributeFilter: ["data-hydrated"] });
+    });
+    if (visit === "a first visit") {
+      await page.evaluate(() => localStorage.clear());
+    } else {
+      // The clock is two minutes on from the moment the feed's script ran, which saw the slot the page saved. It
+      // wraps the pinned Date (pinToSlot), whose `now` an assignment to Date.now would not replace.
+      await page.addInitScript(() => {
+        const pinned = Date;
+        const ran = () =>
+          document
+            .querySelector<HTMLElement>('section[aria-labelledby="recent-heading"] .surface')
+            ?.style.getPropertyValue("--feed-reserve");
+        window.Date = new Proxy(pinned, {
+          get: (target, key) => (key === "now" ? () => target.now() + (ran() ? 130_000 : 0) : Reflect.get(target, key)),
+        });
+      });
+    }
+    if (visit === "a slot that turns while a finger is down") {
+      // The board holds a new row back while a finger is on the page, so the page must not say it has hydrated
+      // before the row is drawn. The finger goes down the moment the board starts to watch for touches (it is
+      // there when the saved checks come in, however long the load takes) and lifts two seconds later.
+      await page.addInitScript(() => {
+        const touch = (fingers: number) => {
+          const event = new Event(fingers > 0 ? "touchstart" : "touchend");
+          Object.defineProperty(event, "touches", { value: new Array(fingers).fill({}) });
+          window.dispatchEvent(event);
+        };
+        const add = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function (this: EventTarget, ...args: Parameters<typeof add>) {
+          add.apply(this, args);
+          if (this === window && args[0] === "touchstart" && !(window as Window & { __down?: true }).__down) {
+            (window as Window & { __down?: true }).__down = true;
+            touch(1);
+            window.setTimeout(() => touch(0), 2000);
+          }
+        };
+      });
+    }
+    await page.reload();
+    await hydrated(page);
+    await expect(feedRows(page)).toHaveCount(visit === "a first visit" ? 1 : 2);
+    await page.evaluate(
+      () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+    );
+    const { atHydration, settled } = await page.evaluate(() => ({
+      atHydration: (window as Window & { __atHydration?: { height: number; rows: number } }).__atHydration,
+      settled: {
+        height: document.documentElement.scrollHeight,
+        rows: document.querySelectorAll('section[aria-labelledby="recent-heading"] li').length,
+      },
+    }));
+    await releaseBoard();
+    // The rows are the exact claim. The height allows for the browser's own rounding only: the moves this guards
+    // against are 10px (the first row) and a whole row (63px).
+    expect(atHydration?.rows, "the rows of Recent changes when the page said it had hydrated").toBe(settled.rows);
+    expect(
+      Math.abs((atHydration?.height ?? Number.NaN) - settled.height),
+      "the page's height change after it said it had hydrated",
+    ).toBeLessThanOrEqual(2);
+  });
+}
+
 // The reserve is measured from the markup the page draws, so it holds at any
 // width and any default font size. 21px is a line of the body text: the one
 // thing a wrap that differs by a line (a web font swapped in) moves.
@@ -4434,6 +4637,7 @@ for (const fontPx of [16, 20]) {
       fontPx !== 16 && browserName !== "chromium",
       "the default font size is set over Chromium's DevTools protocol",
     );
+    await pinToSlot(page);
     const saved = await savedChecks(page);
     await page.addInitScript((saved) => localStorage.setItem(saved.key, saved.store), saved);
     if (fontPx !== 16) {
@@ -4544,38 +4748,52 @@ test("gives every control on the page a 44pt target on a touch screen", async ({
   expect(small.small).toEqual([]);
 
   // The links in the verdict's sub line sit in running text, so their reach is padding round them (hit-extend)
-  // on lines 46pt apart (hit-lines, a hair over the 44pt box so a neighbour's edge never takes the tap), not the
-  // words' own box: a tap 21px above or below the middle of the words still lands on the link. (The next test
-  // has the sentence wrap, and checks that no two of them overlap.)
+  // on lines 48pt apart (hit-lines, over the tallest box so a neighbour's edge never takes the tap), not the
+  // words' own box: a tap 21.5px above or below the middle of the words still lands on the link. (The next test
+  // has the sentence wrap, and checks that no two of them overlap.) The box is the face's content area plus the
+  // padding, and the content area is the face's own (at 15px: 19px in Inter, 18px in DejaVu Sans, 17px in
+  // Liberation Sans, and in Inter Fallback 19px where the overrides apply and its own face's 17 to 18px where they
+  // do not). Inter is font-display: optional and a page view keeps the face it was first drawn in,
+  // so which of them this view drew is up to the timing of the font, and it must not decide the result: the
+  // sentence is measured in the page's own face and then in each of the others the font stack can end in.
   const sentence = await page.evaluate(() => {
+    const paragraph = document.querySelector<HTMLElement>("header h1 + p");
     const links = [...document.querySelectorAll<HTMLAnchorElement>("header h1 + p a")];
-    const boxes = links.map((link) => {
-      link.scrollIntoView({ block: "center" });
-      const box = link.getBoundingClientRect();
-      const x = box.left + box.width / 2;
-      const y = box.top + box.height / 2;
-      return {
-        name: link.textContent?.trim() ?? "",
-        x: x + window.scrollX,
-        y: y + window.scrollY,
-        reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
-        // What answers above and below, for the failure message: the link that took the tap, or what else.
-        seen: [-21.5, 21.5].map((dy) => {
-          const hit = document.elementFromPoint(x, y + dy);
-          return hit === link
-            ? "itself"
-            : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
-        }),
-      };
+    const own = paragraph?.style.fontFamily ?? "";
+    const faces = ["", "system-ui", "sans-serif", '"Inter Fallback"', '"Liberation Sans"', '"DejaVu Sans"'];
+    const boxes = faces.flatMap((face) => {
+      if (paragraph) paragraph.style.fontFamily = face || own;
+      return links.map((link) => {
+        link.scrollIntoView({ block: "center" });
+        const box = link.getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        return {
+          name: `${link.textContent?.trim() ?? ""}${face ? ` in ${face}` : ""}`,
+          x: x + window.scrollX,
+          y: y + window.scrollY,
+          face,
+          reaches: [-21.5, 21.5].map((dy) => document.elementFromPoint(x, y + dy) === link),
+          // What answers above and below, for the failure message: the link that took the tap, or what else.
+          seen: [-21.5, 21.5].map((dy) => {
+            const hit = document.elementFromPoint(x, y + dy);
+            return hit === link
+              ? "itself"
+              : (hit?.closest("a")?.textContent?.trim() ?? hit?.tagName.toLowerCase() ?? "nothing");
+          }),
+        };
+      });
     });
+    if (paragraph) paragraph.style.fontFamily = own;
     return boxes;
   });
-  expect(sentence.length, "the sub line names services").toBeGreaterThan(1);
+  const own = sentence.filter((link) => link.face === "");
+  expect(own.length, "the sub line names services").toBeGreaterThan(1);
   for (const link of sentence)
     expect(link.reaches, `${link.name} reaches 44px tall (above and below it saw ${link.seen})`).toEqual([true, true]);
   // Neighbours on one line are well apart (WCAG 2.5.8: 24px between centres).
-  for (const [index, link] of sentence.entries()) {
-    const next = sentence[index + 1];
+  for (const [index, link] of own.entries()) {
+    const next = own[index + 1];
     if (next && Math.abs(next.y - link.y) < 4)
       expect(next.x - link.x, `${link.name} to ${next.name}`).toBeGreaterThan(24);
   }

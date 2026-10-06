@@ -200,11 +200,11 @@ describe("no npm toolchain is left to scan", () => {
     expect(command.match(/--skip-(?:dirs|files) \S+/g)).toEqual(["--skip-dirs node_modules"]);
   });
 
-  it("has Dependabot watch the one lockfile, and no tools/npm", () => {
+  it("has Dependabot watch the one lockfile, the workflows and the Dockerfile, and no tools/npm", () => {
     const dependabot = read(".github/dependabot.yml");
     expect(
       [...dependabot.matchAll(/package-ecosystem: (\S+)\n\s+directory: (\S+)/g)].map((m) => `${m[1]} ${m[2]}`),
-    ).toEqual(["npm /", "github-actions /"]);
+    ).toEqual(["npm /", "github-actions /", "docker /"]);
   });
 });
 

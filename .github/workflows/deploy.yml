@@ -4,20 +4,23 @@ name: Deploy
 # Worker, status-page: main deploys it to production (wrangler deploy), stage
 # creates or updates a Worker Preview of it named "stage" (wrangler preview),
 # served at https://stage.status.szolotov.com and never on production
-# traffic. dev, the branch pull requests merge into, deploys nothing: it is
+# traffic. dev, the branch work is committed to, deploys nothing: it is
 # promoted to stage, and stage to main, by the owner. Pull requests into dev,
-# stage and main build and dry-run the deploy with no credentials. A
+# stage and main, and every push to dev, build and dry-run the deploy with no
+# credentials, so a push to dev is checked as a pull request into stage is,
+# whether or not that pull request is open yet. A
 # production deploy that does not answer its smoke test is rolled back to the
 # previous version automatically; a preview that does not answer just fails
 # the job, as production is never touched. Run workflow deploys only main or
-# stage; any other ref fails at the first step. CONTRIBUTING.md#deploying has
+# stage; any other ref, dev included, fails at the first step. CONTRIBUTING.md#deploying has
 # the setup.
 #
 # This repository is public, so the Cloudflare API token is guarded in layers:
 #   - It is an environment secret. GitHub gives it only to the deploy job,
 #     only in the staging or production environment, whose branch rules
 #     admit only stage and main. Pull requests, forks included, never get
-#     it, and neither does a push to dev.
+#     it, and neither does a push to dev: the deploy job runs only when the
+#     build job picked production or staging, which a push to dev never does.
 #   - There is no pull_request_target here: pull request code never runs
 #     with secrets or a write token.
 #   - The job that holds the token installs with --ignore-scripts, checks
@@ -40,7 +43,7 @@ name: Deploy
 
 on:
   push:
-    branches: [main, stage]
+    branches: [main, stage, dev]
   pull_request:
     branches: [main, stage, dev]
   workflow_dispatch:
@@ -50,7 +53,8 @@ permissions:
 
 concurrency:
   # One deploy per branch at a time, never cancelled half way; pull request
-  # runs cancel their older runs.
+  # runs cancel their older runs. A push to dev has its own group, deploy-dev:
+  # it neither cancels nor waits for a stage or main deploy.
   group: deploy-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -85,11 +89,16 @@ jobs:
             exit 0
           fi
           # A push, or Run workflow: only the branches main and stage deploy.
-          # A tag named like one, or dev, is refused here.
+          # A push to dev is built and dry-run, never deployed. A tag named
+          # like one, or Run workflow on dev, is refused here.
           [ "$REF_TYPE" = branch ] || { echo "::error::only the branches main (production) and stage (staging) deploy, not the $REF_TYPE $REF_NAME"; exit 1; }
           case "$REF_NAME" in
             main) echo "environment=production" >>"$GITHUB_OUTPUT" ;;
             stage) echo "environment=staging" >>"$GITHUB_OUTPUT" ;;
+            dev)
+              [ "$EVENT" = push ] || { echo "::error::only a push to dev is built and dry-run (it deploys nothing), not $EVENT. Promote dev to stage (CONTRIBUTING.md#branches)"; exit 1; }
+              echo "environment=none" >>"$GITHUB_OUTPUT"
+              ;;
             *) echo "::error::only main (production) and stage (staging) deploy, not $REF_NAME. dev deploys nothing: promote it to stage (CONTRIBUTING.md#branches)"; exit 1 ;;
           esac
 
@@ -125,6 +134,11 @@ jobs:
           DEPLOY_TARGET: cloudflare
         run: pnpm run build
 
+      - name: One board cache in the built Worker
+        # The Worker is what gets deployed: a cache declared beside a server
+        # function would be built twice in it too (see ci.yml).
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/single-board-cache.ts dist/server
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: worker
@@ -156,7 +170,9 @@ jobs:
   dry-run:
     name: dry-run deploy
     needs: build
-    if: github.event_name == 'pull_request'
+    # Pull requests, and pushes to dev: the checks of a pull request into
+    # stage, with no credentials and no deploy.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -193,7 +209,9 @@ jobs:
   deploy:
     name: deploy
     needs: build
-    if: github.event_name != 'pull_request'
+    # Explicitly on what the build job picked, so no event or ref that the
+    # build job maps to "none" (a pull request, a push to dev) can deploy.
+    if: needs.build.outputs.environment == 'production' || needs.build.outputs.environment == 'staging'
     runs-on: ubuntu-latest
     # Install and deploy (or preview) take a few minutes; the smoke test's
     # version wait (up to 2), its retries (under 1), its readiness wait (up

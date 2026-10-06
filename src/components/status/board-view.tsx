@@ -5,12 +5,13 @@ import { BoardSections } from "@/components/status/board-sections";
 import { CompactHeader, useSearchDock, WIDE } from "@/components/status/compact-header";
 import { prefersReducedMotion, useWanderLight, withCardMotion } from "@/components/status/effects";
 import { Hero } from "@/components/status/hero";
-import { useHoldPlace } from "@/components/status/hold-place";
+import { useHeldBoard } from "@/components/status/hold-place";
 import { LensField } from "@/components/status/lens-field";
-import { LiveBar, nextInText, useFreshness } from "@/components/status/live-bar";
-import { PeriodDial } from "@/components/status/period-dial";
+import { ClockedLiveBar, NextIn, useFreshness } from "@/components/status/live-bar";
+import { ClockedPeriodDial } from "@/components/status/period-dial";
 import { SettingsDialog } from "@/components/status/settings-dialog";
 import { SiteFooter } from "@/components/status/site-footer";
+import { ThemeSwitch } from "@/components/status/theme-switch";
 import { UpdateFeed } from "@/components/status/update-feed";
 import { useBoardAlerts } from "@/components/status/use-alerts";
 import { useBackground } from "@/components/status/use-background";
@@ -55,7 +56,11 @@ export function BoardView({
   onFiltersChange: (filters: BoardFilters) => void;
 }) {
   const queryClient = useQueryClient();
-  const now = useNow();
+  // A minute, on the minute: what the board's cards say (how long an incident has run, in minutes) and the turn of
+  // the two-minute slot, which is also a minute's. The seconds are shown by the parts that show them (the live
+  // line, the bar's countdown, the period dial), each with a clock of its own; a clock of seconds here made every
+  // card render again every second (13 ms, and 73 ms at a quarter of a phone's speed) for text that moves once a minute.
+  const now = useNow(60_000, true);
   // Local state drives the board; the URL follows it. Reading the filters
   // back from the URL would make every keystroke wait on a router update.
   const [filters, setFilters] = useState(initialFilters);
@@ -75,12 +80,14 @@ export function BoardView({
   // The dock's two discrete states live outside this component: the board must not render mid-move.
   const [dock] = useState(createDockStore);
   useSearchDock({ hostRef: bodyRef, dockRef, barRef, slotRef, chipsRef, store: dock, keepRevealed: query !== "" });
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Which press opened Settings, or null while it is shut (see SettingsDialog).
+  const [settingsPress, setSettingsPress] = useState<number | null>(null);
+  const openSettings = () => setSettingsPress((current) => (current ?? 0) + 1);
   const singleKey = useSingleKeyShortcuts();
   const reduceGlass = useReduceGlass();
   const background = useBackground();
   // The light only draws on Glass and Full, and Reduce glass takes it away everywhere.
-  const tilt = useTiltLighting({ paused: reduceGlass.enabled || background.value === "quiet" });
+  const tilt = useTiltLighting({ paused: reduceGlass.enabled || background.value === "quiet", scope: mainRef });
   useWanderLight(mainRef);
   // Chosen once per page load: the tab keeps its own spot in every slot.
   const [refetchJitter] = useState(() => pickRefetchJitter());
@@ -112,14 +119,21 @@ export function BoardView({
     staleTime: CACHE_TTL_MS,
   });
 
-  const board = boardQuery.data ?? initial;
+  const latestBoard = boardQuery.data ?? initial;
+  // What is on screen follows the newest snapshot and saved checks, but not while the reader is scrolling: a
+  // check at the turn of a slot adds a row to Recent changes above the reader and clears the "Changed" tags, which
+  // moves the card under their finger. The change waits until the page is still, then lands in one commit with
+  // the scroll position corrected for it (see useHeldBoard).
+  const latest = useMemo(() => ({ board: latestBoard, store }), [latestBoard, store]);
+  const { shown, hurry } = useHeldBoard(mainRef, latest);
+  const board = shown.board;
   const verdict = useMemo(() => verdictOf(board), [board]);
   const checkedAt = parseTimestamp(board.generatedAt);
-  const alerts = useBoardAlerts(board);
+  // Not held: a notification is about the newest snapshot.
+  const alerts = useBoardAlerts(latestBoard);
   const { starred, ready: starsReady, toggle: toggleStar } = useStarred();
-  const pulseStore = store ?? emptyPulseStore();
+  const pulseStore = shown.store ?? emptyPulseStore();
   // Recent changes follows Needs a look (or leads the board when nothing needs a look).
-  useHoldPlace(mainRef, store?.pulses);
   const feed = <UpdateFeed pulses={pulseStore.pulses} />;
   const latestChanges = pulseStore.pulses[0]?.opening ? [] : (pulseStore.pulses[0]?.changes ?? []);
   const changedIds = new Set(latestChanges.map((change) => change.id));
@@ -127,20 +141,30 @@ export function BoardView({
 
   const slot = now > 0 ? lastPulseAt(now) : null;
 
-  // Says the board's handlers are attached. The server's markup paints, and
-  // takes clicks that go nowhere, before React hydrates it; the end-to-end
-  // tests wait for this attribute (e2e/board.spec.ts) instead of guessing.
+  // Says the board's handlers are attached and its saved checks are drawn. The
+  // server's markup paints, and takes clicks that go nowhere, before React
+  // hydrates it; the end-to-end tests wait for this attribute
+  // (e2e/board.spec.ts) instead of guessing. It waits for the saved checks
+  // too: they arrive in the render after hydration and add or replace rows of
+  // Recent changes (a first visit, or a slot that turned since the page was
+  // parsed), which moves everything below, the footer's Settings button
+  // included, and a tap that straddles the move is lost. Later changes (the
+  // next slot, a refetch) can still move the page; this only closes the one
+  // that every load goes through. It follows what is drawn (`shown.store`),
+  // not the newest store: a held update lands only once the page is still, and
+  // the rows would move the footer after the attribute said it was done.
+  const checksLoaded = shown.store !== null;
   useEffect(() => {
-    document.documentElement.dataset.hydrated = "";
-  }, []);
+    if (checksLoaded) document.documentElement.dataset.hydrated = "";
+  }, [checksLoaded]);
 
   useEffect(() => {
     if (slot === null) return;
     const existing = store ?? loadPulseStore();
-    const next = syncPulse(board, slot, existing);
+    const next = syncPulse(latestBoard, slot, existing);
     if (next !== existing) savePulseStore(next);
     if (store === null || next !== existing) setStore(next);
-  }, [board, slot, store]);
+  }, [latestBoard, slot, store]);
 
   const firstFilters = useRef(filters);
   useEffect(() => {
@@ -152,8 +176,8 @@ export function BoardView({
   // The tab shows the attention count, so a background tab still says
   // something broke. The server-rendered <title> stays the plain name.
   useEffect(() => {
-    document.title = documentTitle(board, APP_NAME);
-  }, [board]);
+    document.title = documentTitle(latestBoard, APP_NAME);
+  }, [latestBoard]);
 
   const visible = useMemo(
     () =>
@@ -252,6 +276,8 @@ export function BoardView({
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
       const next = await refreshStatusBoard();
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
+      // The person asked for this one, so it does not wait for the page to be still.
+      hurry();
       withCardMotion(() => queryClient.setQueryData(["status-board"], next));
     } catch {
       await boardQuery.refetch();
@@ -281,7 +307,7 @@ export function BoardView({
       // Not a live region: the results announcement already says this.
       <p className="surface px-5 py-10 text-center text-body text-muted">{emptyMessage}</p>
     ) : null;
-  const freshness = useFreshness(board.generatedAt, fetching, now);
+  const freshness = useFreshness(latestBoard.generatedAt, fetching, now);
 
   useShortcuts(
     (action) => {
@@ -324,7 +350,7 @@ export function BoardView({
           setFilters(DEFAULT_FILTERS);
           return;
         case "help":
-          setSettingsOpen(true);
+          openSettings();
           return;
       }
     },
@@ -359,8 +385,10 @@ export function BoardView({
           controls={
             // With the bar up, its copies are the ones in reach: Tab goes from them to the search field.
             <WhileBarUp store={dock}>
-              {(barUp) => (
+              {(barUp, barHasSwitch) => (
                 <>
+                  {/* Only when the bar draws its own: on a phone it has none, and the hero's must stay reachable. */}
+                  <ThemeSwitch skipTab={barHasSwitch} />
                   <AlertsButton skipTab={barUp} state={alerts.state} onToggle={alerts.toggle} />
                   <RefreshButton skipTab={barUp} fetching={fetching} onRefresh={() => void handleRefresh()} />
                 </>
@@ -368,15 +396,14 @@ export function BoardView({
             </WhileBarUp>
           }
           live={
-            <LiveBar
+            <ClockedLiveBar
               freshness={freshness}
-              now={now}
               refetchJitterMs={refetchJitter}
               checkedAt={checkedAt}
               // The dial is a Full-background flourish; the words say the same.
               dial={
                 background.value === "full" ? (
-                  <PeriodDial now={now} jitterMs={refetchJitter} tone={verdict.tone} className="size-6 shrink-0" />
+                  <ClockedPeriodDial jitterMs={refetchJitter} tone={verdict.tone} className="size-6 shrink-0" />
                 ) : null
               }
             />
@@ -401,7 +428,7 @@ export function BoardView({
             verdict={verdict}
             live={freshness.state}
             checkedAt={checkedAt}
-            nextIn={nextInText(now, refetchJitter)}
+            nextIn={<NextIn refetchJitterMs={refetchJitter} />}
             search={
               <SearchField
                 placement="bar"
@@ -413,6 +440,7 @@ export function BoardView({
               />
             }
           >
+            <ThemeSwitch className="max-sm:hidden" />
             <AlertsButton state={alerts.state} onToggle={alerts.toggle} />
             <RefreshButton fetching={fetching} onRefresh={() => void handleRefresh()} />
           </CompactHeader>
@@ -469,12 +497,12 @@ export function BoardView({
           {/* Clear of the home indicator and Safari's bottom toolbar on an iPhone. */}
           <SiteFooter
             className="mt-14 basis-full pb-[calc(5rem+env(safe-area-inset-bottom))]"
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={openSettings}
             singleKey={singleKey.enabled}
           />
           <SettingsDialog
-            open={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
+            opened={settingsPress}
+            onClose={() => setSettingsPress(null)}
             singleKey={singleKey.enabled}
             onSingleKeyChange={singleKey.setEnabled}
             reduceGlass={reduceGlass.enabled}

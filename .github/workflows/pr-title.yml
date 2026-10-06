@@ -1,6 +1,6 @@
 name: PR title
 
-# A squash merge makes the pull request title the commit on dev, and once
+# A squash merge makes the pull request title the commit on its base, and once
 # that reaches main (through stage) release.yml reads its type to pick the
 # next version: feat is a minor release, fix a patch, a `!` a major, anything else
 # no release. A title that is not a Conventional Commit would silently release

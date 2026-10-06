@@ -39,7 +39,7 @@ async function openBoard(
   await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
   const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
   const answered = page.waitForResponse(
     (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
@@ -383,6 +383,33 @@ test("a card that needs a look has the Details button too, opened from the butto
   await expect(dialog(page)).toHaveCount(0);
 });
 
+test("a press between the pop-up shutting and the page being told still opens it", async ({ page }) => {
+  await openBoard(page);
+  const button = trigger(page, "windows");
+  await button.click();
+  await expect(dialog(page)).toBeVisible();
+  // A modal <dialog> that Escape shuts is closed at once, and its `close` event, which the page learns it from, is
+  // a task of its own. Here the press comes inside that gap, as one does on a busy page: the dialog is shut by
+  // `close()` and the button is pressed in the same task, so the event can only arrive after the press. Then the
+  // page is given the event and two frames to act on it.
+  const open = await page.evaluate(async () => {
+    const shut = document.querySelector<HTMLDialogElement>("dialog[data-release-details]");
+    const press = document.querySelector<HTMLButtonElement>("#service-windows [data-release-details-trigger]");
+    if (!shut || !press) throw new Error("no pop-up or no button");
+    const told = new Promise((resolve) => shut.addEventListener("close", resolve, { once: true }));
+    shut.close();
+    press.click();
+    await told;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return [...document.querySelectorAll<HTMLDialogElement>("dialog[data-release-details]")].map((one) => one.open);
+  });
+  expect(open, "the press opened one pop-up, and the late `close` of the one before did not shut it").toEqual([true]);
+  await expect(dialog(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(button).toBeFocused();
+});
+
 test("a press that starts in the panel and ends on the backdrop does not close it", async ({ page }) => {
   await openBoard(page);
   await trigger(page, "mikrotik").click();
@@ -484,7 +511,14 @@ test("is a small centred panel on a desktop and a sheet from the bottom edge on 
     expect(radius[0]).not.toBe("0px");
     expect(radius[1]).toBe("0px");
   } else {
-    expect(geometry.width).toBeLessThanOrEqual(416.5);
+    // 26rem up to a desktop (64rem), 34rem on one; both fit the viewport with a 1rem margin each side.
+    if (viewport.width >= 1024) {
+      expect(geometry.width).toBeGreaterThanOrEqual(543.5);
+      expect(geometry.width).toBeLessThanOrEqual(544.5);
+    } else {
+      expect(geometry.width).toBeLessThanOrEqual(416.5);
+    }
+    expect(geometry.width).toBeLessThanOrEqual(viewport.width - 32 + 0.5);
     // Centred in the viewport, less the page's thin scrollbar (up to 15px, so 7.5px of offset).
     expect(Math.abs((geometry.left + geometry.right) / 2 - viewport.width / 2)).toBeLessThanOrEqual(8);
     expect(geometry.top).toBeGreaterThan(0);

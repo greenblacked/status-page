@@ -35,6 +35,9 @@ importers:
       react-dom:
         specifier: 19.3.0
         version: 19.3.0(react@19.3.0)
+      seroval:
+        specifier: 1.6.7
+        version: 1.6.7
       tailwind-merge:
         specifier: 3.7.0
         version: 3.7.0
@@ -75,9 +78,6 @@ importers:
       fast-check:
         specifier: 4.10.2
         version: 4.10.2
-      seroval:
-        specifier: 1.6.7
-        version: 1.6.7
       tailwindcss:
         specifier: 4.3.3
         version: 4.3.3

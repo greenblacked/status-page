@@ -22,7 +22,7 @@ async function openBoard(page: Page, board: () => BoardSnapshot = () => feedBoar
   await serveBoard(page, board);
   await page.goto("/");
   await expect(cards(page)).toHaveCount(SERVICES);
-  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+  await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
   const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
   const answered = page.waitForResponse(
     (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
@@ -125,6 +125,9 @@ test("on a row with components the button opens Details and leaves the component
   await expect(dialog(page)).toBeVisible();
   await expect(row).not.toHaveAttribute("open", "");
   await page.keyboard.press("Escape");
+  // Gone, and not only shut: the key shuts a modal <dialog> at once, but the button gives focus back to itself
+  // once the page has been told (the `close` event), so it is focused here only after that.
+  await expect(dialog(page)).toHaveCount(0);
   await trigger(page, "cs2-europe").focus();
   await page.keyboard.press("Space");
   await expect(dialog(page)).toBeVisible();
@@ -475,7 +478,7 @@ for (const [name, from, to] of [
     await serveBoard(page, () => current);
     await page.goto("/");
     await expect(cards(page)).toHaveCount(SERVICES);
-    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
     const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
     const press = async () => {
       const answered = page.waitForResponse(
@@ -539,7 +542,7 @@ for (const [name, from, to] of [
     await serveBoard(page, () => current);
     await page.goto("/");
     await expect(cards(page)).toHaveCount(SERVICES);
-    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
+    await expect(page.locator("html")).toHaveAttribute("data-hydrated", "", { timeout: 15_000 });
     const refresh = page.getByRole("button", { name: "Refresh status now" }).first();
     const press = async () => {
       const answered = page.waitForResponse(

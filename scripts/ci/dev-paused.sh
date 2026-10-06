@@ -4,8 +4,8 @@
 # takes feature pull requests) and release.yml (whether main is merged into
 # dev) both ask here, and the switch itself is the dev-paused file next to
 # this script. DEV_PAUSED in the environment overrides the file, which the
-# tests use to check both modes. A missing file means paused, the state the
-# repository is in; anything but true or false fails rather than guess.
+# tests use to check both modes. A missing file means paused, the safe choice
+# (it does not touch dev); anything but true or false fails rather than guess.
 set -euo pipefail
 
 file="$(dirname "${BASH_SOURCE[0]}")/dev-paused"

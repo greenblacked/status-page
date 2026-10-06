@@ -1,5 +1,6 @@
 # Is the dev branch paused? One word, true or false, read by
 # scripts/ci/dev-paused.sh. While it is true, pull requests go into stage and
-# release.yml does not merge main into dev. To bring dev back, recreate it
-# from stage and set this to false (CONTRIBUTING.md#branches).
-true
+# release.yml does not merge main into dev. It is false: work is committed
+# straight to dev, and stage takes pull requests only from dev
+# (CONTRIBUTING.md#branches).
+false

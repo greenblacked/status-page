@@ -12,6 +12,7 @@ import {
   dockGeometry,
   focusReveal,
   HIDE_DOWN_PX,
+  heroFieldClear,
   quietScroll,
   quietScrolling,
   REVEAL_REST,
@@ -699,11 +700,44 @@ describe("readerMoved", () => {
     expect(readerMoved({ ...base, scrollY: 100, quiet: true })).toBe(false);
   });
 
+  it("reads a move in the direction the end of the page moved, by no more than it moved, as a typed key's", () => {
+    // A key filtered the board: 888px came off the page, 264 of them above the reader's place, and the browser moved
+    // the page up by that much; the card it held was one the search removed, so the anchor has nothing to read.
+    const typed = { from: 591, scrollY: 327, limit: 3147, lastLimit: 4035, anchorMoved: 0 };
+    expect(readerMoved(typed)).toBe(true);
+    expect(readerMoved({ ...typed, typing: true })).toBe(false);
+    // Held to the new end from a position near the old one.
+    expect(readerMoved({ from: 4000, scrollY: 3147, limit: 3147, lastLimit: 4035, typing: true })).toBe(false);
+    // A page that got longer takes the same.
+    expect(readerMoved({ from: 300, scrollY: 400, limit: 1000, lastLimit: 700, typing: true })).toBe(false);
+  });
+
+  it("does not let a typed key hide a scroll that the page's change cannot account for", () => {
+    const typed = { from: 591, limit: 3147, lastLimit: 4035, typing: true };
+    // Against the way the end moved, or by more than it moved.
+    expect(readerMoved({ ...typed, scrollY: 700 })).toBe(true);
+    expect(readerMoved({ ...typed, from: 3500, scrollY: 100 })).toBe(true);
+    // The page's end did not move at all: nothing changed the page, so the scroll is the reader's.
+    expect(readerMoved({ from: 591, scrollY: 327, limit: 3147, lastLimit: 3147, typing: true })).toBe(true);
+  });
+
   it("holds the position to the page, so an overshoot is no travel", () => {
     // iOS reports 40px past the end that the last frame was clamped to.
     expect(readerMoved({ from: 800, scrollY: 840, limit: 800, lastLimit: 800 })).toBe(false);
     expect(readerMoved({ from: 0, scrollY: -30, limit: 800, lastLimit: 800 })).toBe(false);
     // And one past a nearer end is the layout's clamp.
     expect(readerMoved({ from: 600, scrollY: 640, limit: 560, lastLimit: 800 })).toBe(false);
+  });
+});
+
+describe("heroFieldClear", () => {
+  it("is true only once the hero's field is wholly below the bar", () => {
+    // The tablet's bar ends at 56: the field at [27,71] is half under it, [56,100] is clear.
+    expect(heroFieldClear(27, 56)).toBe(false);
+    expect(heroFieldClear(55, 56)).toBe(false);
+    expect(heroFieldClear(56, 56)).toBe(true);
+    expect(heroFieldClear(80, 56)).toBe(true);
+    // Sub-pixel rounding of the two edges does not hold a field that is clear.
+    expect(heroFieldClear(55.6, 56)).toBe(true);
   });
 });

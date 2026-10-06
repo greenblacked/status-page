@@ -14,6 +14,7 @@ import {
   isStale,
   lastPulseAt,
   liveState,
+  msUntilBoundary,
   nextPulseAt,
   nextRefetchAt,
   noteSnapshot,
@@ -298,5 +299,27 @@ describe("footer cadence copy", () => {
   it("reads today's constants as the copy the footer used to hard-code", () => {
     assert.equal(everyInterval(PULSE_INTERVAL_MS), "every two minutes");
     assert.equal(spokenDuration(CACHE_TTL_MS), "45 seconds");
+  });
+});
+
+describe("msUntilBoundary", () => {
+  const MINUTE = 60_000;
+  const NOON = Date.parse("2026-09-27T12:00:00.000Z");
+
+  it("counts to the next multiple of the interval on the wall clock", () => {
+    assert.equal(msUntilBoundary(NOON + 1_000, MINUTE), 59_000);
+    assert.equal(msUntilBoundary(NOON + 59_999, MINUTE), 1);
+  });
+
+  it("is a whole interval on a boundary, never 0, so a tick always has a next one", () => {
+    assert.equal(msUntilBoundary(NOON, MINUTE), MINUTE);
+  });
+
+  it("lands a minute clock on every two-minute slot turn", () => {
+    const start = NOON + 30_000;
+    const first = start + msUntilBoundary(start, MINUTE);
+    const second = first + msUntilBoundary(first, MINUTE);
+    assert.deepEqual([first, second], [NOON + MINUTE, NOON + 2 * MINUTE]);
+    assert.equal(lastPulseAt(second), NOON + 2 * MINUTE);
   });
 });
