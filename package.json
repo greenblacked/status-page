@@ -41,7 +41,7 @@
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@biomejs/biome": "2.5.14",
-    "@cloudflare/vite-plugin": "1.62.1",
+    "@cloudflare/vite-plugin": "1.62.2",
     "@cloudflare/workers-types": "5.20260929.1",
     "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
@@ -55,6 +55,6 @@
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "8.3.1",
     "vitest": "5.0.2",
-    "wrangler": "4.143.1"
+    "wrangler": "4.144.0"
   }
 }
