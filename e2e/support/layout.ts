@@ -620,10 +620,21 @@ export const fromSweep = (sweep: Sweep, kind: "overflow" | "overlap") =>
  * that clicks a control and then measures its box (what a finger can hit, so the box and not offsetHeight) waits here
  * first. Reads through evaluateAll, so that a control that is not in the page reads as settled, not as a wait.
  */
-export async function settled(control: Locator): Promise<void> {
+export async function pressSettled(control: Locator): Promise<void> {
   await expect
-    .poll(() =>
-      control.evaluateAll((elements) => elements.reduce((n, element) => n + element.getAnimations().length, 0)),
+    .poll(
+      () =>
+        control.evaluateAll((elements) =>
+          elements.reduce(
+            (n, element) =>
+              // One that repeats for ever never finishes: it is not something to wait for.
+              n +
+              element.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY)
+                .length,
+            0,
+          ),
+        ),
+      { message: "the control's press eased back" },
     )
     .toBe(0);
 }

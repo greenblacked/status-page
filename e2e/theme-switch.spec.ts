@@ -6,9 +6,9 @@ import {
   cards,
   controlBar,
   hydrated,
+  pressSettled,
   SERVICES,
   scrollAndSettle,
-  settled,
   TARGET_FLOOR,
 } from "./support/layout";
 import { expect, test } from "./test";
@@ -669,8 +669,9 @@ test.describe("on any screen", () => {
         });
       for (const theme of THEMES) {
         if ((await themeOf(page)) !== theme) await heroSwitch(page).click();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
         // The press's scale is still easing back to 1: the box read now is the pressed one.
-        await settled(heroSwitch(page));
+        await pressSettled(heroSwitch(page));
         const found = await read();
         expect(found.scrollWidth, `${theme}: sideways scroll`).toBeLessThanOrEqual(width);
         expect(found.left, `${theme}: left edge`).toBeGreaterThanOrEqual(0);
