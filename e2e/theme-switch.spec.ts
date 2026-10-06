@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Locator, Page } from "@playwright/test";
 import { THEME_BOOT_SCRIPT, THEME_COLORS } from "../src/lib/theme.ts";
-import { BACKGROUNDS, cards, controlBar, hydrated, SERVICES, TARGET_FLOOR } from "./support/layout";
+import { BACKGROUNDS, cards, controlBar, hydrated, SERVICES, scrollAndSettle, TARGET_FLOOR } from "./support/layout";
 import { expect, test } from "./test";
 
 // The day/night switch (src/components/status/theme-switch.tsx) and the rule behind it (src/lib/theme.ts): a stored
@@ -42,25 +42,20 @@ async function seed(page: Page, value: string): Promise<void> {
   }, value);
 }
 
-/** Opens the board at a time of day (UTC, the suite's zone), with the theme stored or not. */
 /**
- * Scrolls down to `down`, lets the page see it (two frames: the bar reads one position a frame), and then up to `up`:
- * a phone's bar is out of sight after a scroll down and comes back on a scroll up of more than 8px.
+ * Scrolls down to `down`, lets the page see it, and then up to `up`: a phone's bar is out of sight after a scroll down
+ * and comes back on a scroll up of more than 8px. The page must have handled the first scroll before the second is
+ * made (`scrollAndSettle` waits for its scroll event, not for frames: the page's clock is faked here, so a frame is a
+ * 16 ms timer that passes without the page having drawn, and WebKit draws later than two of them), and must be armed,
+ * or the dock takes both for a restored position.
  */
 async function scrollDownThenUp(page: Page, down: number, up: number): Promise<void> {
-  const settle = (to: number) =>
-    page.evaluate(
-      (top) =>
-        new Promise<void>((resolve) => {
-          window.scrollTo(0, top);
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-        }),
-      to,
-    );
-  await settle(down);
-  await settle(up);
+  await expect(page.locator(".search-dock")).toHaveAttribute("data-armed", "");
+  await scrollAndSettle(page, down);
+  await scrollAndSettle(page, up);
 }
 
+/** Opens the board at a time of day (UTC, the suite's zone), with the theme stored or not. */
 async function open(page: Page, when: Date, stored?: string): Promise<void> {
   await page.clock.install({ time: when });
   if (stored !== undefined) await seed(page, stored);
