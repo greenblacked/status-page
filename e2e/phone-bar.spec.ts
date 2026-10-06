@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { fixtureBoard } from "./fixture-board";
 import {
   BACKGROUNDS,
   barBack,
@@ -7,6 +8,7 @@ import {
   heroSearch,
   maxScroll,
   openBoard,
+  openWithFixture,
   scrollAndSettle,
   viewportOf,
 } from "./support/layout";
@@ -78,6 +80,35 @@ const alphaOf = (colour: string): number => {
   const comma = colour.match(/^rgba\(\s*[\d.]+,\s*[\d.]+,\s*[\d.]+,\s*([\d.]+)\s*\)$/);
   return comma ? Number(comma[1]) : 1;
 };
+
+/**
+ * The colour of the bar's status mark where it is cut out (the outage cross, the degraded "!"), beside the colours
+ * of the grounds it could be cut from, all resolved by the browser: the cut-out's own stroke, the page's background
+ * and the card's.
+ */
+const cutOf = (page: Page) =>
+  controlBar(page).evaluate((bar) => {
+    const glyph = bar.querySelector<SVGElement>("[data-bar-lead] svg");
+    if (!glyph) throw new Error("the bar has no status glyph");
+    const cut = glyph.querySelector("[stroke='var(--glyph-cut)'], [fill='var(--glyph-cut)']");
+    if (!cut) throw new Error("the glyph draws no cut-out");
+    const style = getComputedStyle(cut);
+    const resolve = (token: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${token})`;
+      document.body.appendChild(probe);
+      const colour = getComputedStyle(probe).color;
+      probe.remove();
+      return colour;
+    };
+    return {
+      health: glyph.getAttribute("data-health"),
+      inline: glyph.style.getPropertyValue("--glyph-cut"),
+      cut: cut.getAttribute("stroke") === "var(--glyph-cut)" ? style.stroke : style.fill,
+      bg: resolve("--color-bg"),
+      card: resolve("--color-card"),
+    };
+  });
 
 /** Brings the bar up with a scroll up of 30px from `deep + 100`, and waits out its slide. */
 async function bringBarUp(page: Page): Promise<void> {
@@ -580,6 +611,36 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     }
   }
 
+  for (const scheme of ["light", "dark"] as const) {
+    test(`cuts the status mark from the page's ground, as the bar is drawn on it, ${scheme === "light" ? "day" : "night"}`, async ({
+      page,
+    }) => {
+      test.slow();
+      await page.emulateMedia({ colorScheme: scheme });
+      await openWithFixture(page, "quiet", fixtureBoard, { steady: true });
+      test.skip(!(await isPhone(page)), "the header is a phone's bar only");
+      await bringBarUp(page);
+      const look = await cutOf(page);
+      expect(["degraded", "outage"], "a glyph that has cut-outs").toContain(look.health);
+      expect(look.cut, "the page's ground, not the card's").toBe(look.bg);
+      expect(look.inline, "no inline cut: the stylesheet picks it").toBe("");
+      expect(look.bg, "the two grounds differ, or this proves nothing").not.toBe(look.card);
+    });
+  }
+
+  test("keeps the status mark cut from the page's ground under Increase Contrast, where the bar is solid", async ({
+    page,
+  }) => {
+    test.slow();
+    await page.emulateMedia({ contrast: "more" });
+    await openWithFixture(page, "quiet", fixtureBoard, { steady: true });
+    test.skip(!(await isPhone(page)), "the header is a phone's bar only");
+    await bringBarUp(page);
+    const look = await cutOf(page);
+    expect(look.cut, "the page's ground, which the solid bar is").toBe(look.bg);
+    expect(look.inline, "no inline cut: the stylesheet picks it").toBe("");
+  });
+
   for (const [name, media] of [
     ["Increase Contrast", { contrast: "more" }],
     ["forced colours", { forcedColors: "active" }],
@@ -715,4 +776,26 @@ test.describe("the floating bar from 640px", { tag: "@layout" }, () => {
     await scrollAndSettle(page, 0);
     await expect(bar).toHaveAttribute("data-shown", "false");
   });
+  for (const scheme of ["light", "dark"] as const) {
+    test(`cuts the status mark from the card's colour, as the bar is a card-coloured pill, ${scheme === "light" ? "day" : "night"}`, async ({
+      page,
+    }) => {
+      test.slow();
+      await page.emulateMedia({ colorScheme: scheme });
+      await openWithFixture(page, "quiet", fixtureBoard, { steady: true });
+      test.skip(await isPhone(page), "a phone's bar is drawn on the page: the tests above");
+      const wide = viewportOf(page).width >= 1024;
+      const deep = wide
+        ? Math.ceil(await fieldBottom(page)) + 100
+        : Math.min(Math.ceil(await fieldBottom(page)) + 200, (await maxScroll(page)) - 400);
+      await scrollAndSettle(page, deep);
+      await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+      await barSettled(page);
+      const look = await cutOf(page);
+      expect(["degraded", "outage"], "a glyph that has cut-outs").toContain(look.health);
+      expect(look.inline, "no inline cut: the stylesheet picks it").toBe("");
+      expect(look.cut, "the card's colour").toBe(look.card);
+      expect(look.bg, "the two grounds differ, or this proves nothing").not.toBe(look.card);
+    });
+  }
 });

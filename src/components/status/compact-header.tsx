@@ -711,7 +711,6 @@ export function CompactHeader({
           health={verdict.tone}
           size={20}
           className={cn(STATUS_TEXT[verdict.tone], "max-sm:relative max-sm:z-[1]")}
-          cut="card"
         />
         {/*
           From 640px the verdict and the check time sit in the flow, before the field's slot. On a phone the

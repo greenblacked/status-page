@@ -882,6 +882,8 @@
     border-radius: 0;
     background-color: var(--bar-fill-phone);
     background-image: none;
+    /* The bar's status mark is cut from the ground it sits on: the page's, here; the card's, from 40rem (the root default). */
+    --glyph-cut: var(--color-bg);
     -webkit-backdrop-filter: var(--bar-filter-phone);
     backdrop-filter: var(--bar-filter-phone);
     /* The AI header's `1px solid var(--line)`: a full pixel, not the board's device-pixel hairline (0.5px at 2x, which WebKit draws as is). */
