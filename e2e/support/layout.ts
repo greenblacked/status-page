@@ -613,6 +613,21 @@ export async function downThePage(page: Page): Promise<number[]> {
 export const fromSweep = (sweep: Sweep, kind: "overflow" | "overlap") =>
   sweep.flatMap((stop) => stop[kind].map((problem) => `at ${stop.scrollY}px: ${problem}`));
 
+/**
+ * Waits until a control has no animation or transition running on it. A press leaves `pressable`'s scale(0.97)
+ * (src/styles.css) when the pointer is released, over 150ms, and getBoundingClientRect reads the box with the
+ * transform in it: a 44px control reads 42.7 at the start of that and 43.47 near its end, under TARGET_FLOOR. A test
+ * that clicks a control and then measures its box (what a finger can hit, so the box and not offsetHeight) waits here
+ * first. Reads through evaluateAll, so that a control that is not in the page reads as settled, not as a wait.
+ */
+export async function settled(control: Locator): Promise<void> {
+  await expect
+    .poll(() =>
+      control.evaluateAll((elements) => elements.reduce((n, element) => n + element.getAnimations().length, 0)),
+    )
+    .toBe(0);
+}
+
 /** Waits out the dialog's rise, so its box is where it will stay. */
 export async function dialogSettled(dialog: Locator): Promise<void> {
   await dialog.evaluate((element) =>

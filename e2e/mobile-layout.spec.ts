@@ -22,6 +22,7 @@ import {
   refreshInto,
   SERVICES,
   scrollAndSettle,
+  settled,
   sweepTo,
   typeSlowly,
   viewportOf,
@@ -252,6 +253,8 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             };
           }, selector);
         const checked = async (where: string, selector: string, wantHidden: boolean) => {
+          // The hero's switch was pressed to get here: read its box once the press has eased back.
+          await settled(page.locator(selector));
           const found = await room(selector);
           const problems: string[] = [];
           if (found.missing) problems.push("the switch is not in the page");

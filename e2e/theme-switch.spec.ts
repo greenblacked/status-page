@@ -1,7 +1,16 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Locator, Page } from "@playwright/test";
 import { THEME_BOOT_SCRIPT, THEME_COLORS } from "../src/lib/theme.ts";
-import { BACKGROUNDS, cards, controlBar, hydrated, SERVICES, scrollAndSettle, TARGET_FLOOR } from "./support/layout";
+import {
+  BACKGROUNDS,
+  cards,
+  controlBar,
+  hydrated,
+  SERVICES,
+  scrollAndSettle,
+  settled,
+  TARGET_FLOOR,
+} from "./support/layout";
 import { expect, test } from "./test";
 
 // The day/night switch (src/components/status/theme-switch.tsx) and the rule behind it (src/lib/theme.ts): a stored
@@ -660,6 +669,8 @@ test.describe("on any screen", () => {
         });
       for (const theme of THEMES) {
         if ((await themeOf(page)) !== theme) await heroSwitch(page).click();
+        // The press's scale is still easing back to 1: the box read now is the pressed one.
+        await settled(heroSwitch(page));
         const found = await read();
         expect(found.scrollWidth, `${theme}: sideways scroll`).toBeLessThanOrEqual(width);
         expect(found.left, `${theme}: left edge`).toBeGreaterThanOrEqual(0);
