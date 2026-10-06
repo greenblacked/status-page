@@ -70,6 +70,23 @@ const poseOf = (page: Page) =>
     };
   });
 
+/** The alpha of a computed colour: `rgb(...)` and `color(... / a)` and `rgba(..., a)` alike; no alpha written is 1. */
+const alphaOf = (colour: string): number => {
+  const slash = colour.match(/\/\s*([\d.]+)(%?)\s*\)$/);
+  if (slash) return Number(slash[1]) / (slash[2] ? 100 : 1);
+  const comma = colour.match(/^rgba\(\s*[\d.]+,\s*[\d.]+,\s*[\d.]+,\s*([\d.]+)\s*\)$/);
+  return comma ? Number(comma[1]) : 1;
+};
+
+/** Brings the bar up with a scroll up of 30px from `deep + 100`, and waits out its slide. */
+async function bringBarUp(page: Page): Promise<void> {
+  const deep = await deepPosition(page);
+  await scrollAndSettle(page, deep + 100);
+  await scrollAndSettle(page, deep + 100 - 30);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  await barSettled(page);
+}
+
 test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
   test("goes away on a scroll down past the hero and comes back on a scroll up of more than 8px", async ({ page }) => {
     test.slow();
@@ -501,6 +518,33 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
         expect(look.shadow, "no shadow").toBe("none");
         expect(look.radius, "square").toBe("0px");
         expect(look.sheen, "no sheen").toBe("none");
+      });
+    }
+  }
+
+  for (const [name, media] of [
+    ["Increase Contrast", { contrast: "more" }],
+    ["forced colours", { forcedColors: "active" }],
+  ] as const) {
+    for (const background of BACKGROUNDS) {
+      test(`is solid and unblurred under ${name} on ${background}`, async ({ page }) => {
+        test.slow();
+        await page.emulateMedia(media);
+        await openBoard(page, background, { steady: true });
+        test.skip(!(await isPhone(page)), "the header is a phone's bar only");
+        await bringBarUp(page);
+        const shown = await controlBar(page).evaluate((element) => {
+          const style = getComputedStyle(element);
+          return { filter: style.backdropFilter, fill: style.backgroundColor };
+        });
+        expect(shown.filter, "nothing blurred").toBe("none");
+        expect(alphaOf(shown.fill), "a solid fill").toBe(1);
+        // Away, it keeps no blurred layer either.
+        const deep = await deepPosition(page);
+        await scrollAndSettle(page, deep + 300);
+        await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
+        await barSettled(page);
+        expect((await poseOf(page)).filter, "nothing blurred while it is away").toBe("none");
       });
     }
   }

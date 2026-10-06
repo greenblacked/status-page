@@ -862,8 +862,8 @@
   strip, which the bar covers, so no card or text shows over it), then a row 4rem tall, then a hairline in the
   page's own line colour on its lower edge only (the other three are the screen's). Square, with no shadow: the
   hairline is its only edge. The ground is the page's own background at 90% under a 12px blur, on Quiet, Glass and
-  Full alike, day and night (--bar-fill-phone, --bar-filter-phone: solid and unblurred under Reduce Transparency
-  and Increase Contrast, as every material is). The row's sides are the page content's, the board's gutter, so
+  Full alike, day and night (--bar-fill-phone, --bar-filter-phone: solid and unblurred under Reduce Transparency,
+  Increase Contrast and forced colours, as every material is). The row's sides are the page content's, the board's gutter, so
   the glyph and the buttons line up with the cards.
 */
 @media (width < 40rem) {
@@ -1342,6 +1342,7 @@ article[id^="service-"],
     --color-subtle: light-dark(#57534b, #b9b4a9);
     --bar-fill: light-dark(#fcfbf8, #181715);
     --bar-fill-phone: var(--color-bg);
+    --bar-filter-phone: none;
   }
 }
 
@@ -1361,6 +1362,12 @@ article[id^="service-"],
 
 /* Forced colours drop backgrounds and shadows; a border keeps each panel drawn. */
 @media (forced-colors: active) {
+  /* The phone bar is solid and unblurred here too: the system's ground, no glass. */
+  :root {
+    --bar-fill-phone: Canvas;
+    --bar-filter-phone: none;
+  }
+
   :is(.surface),
   :is(.float),
   .sheet,
