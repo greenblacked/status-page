@@ -11,11 +11,15 @@
 // re-run again, so a real outage ends in a red run rather than a loop.
 const FIRST_ATTEMPT = 1;
 const RUN_CONCLUSIONS = new Set(["failure", "cancelled"]);
+// Runs of a branch head, where an older commit must never replace a newer one.
+const BRANCH_EVENTS = new Set(["push", "workflow_dispatch"]);
 const BAD_JOB = new Set(["failure", "cancelled", "timed_out", "startup_failure"]);
 
 // Only says the job's own verdict, so it is never the cause of anything: it
-// fails whenever another job did. Matched by job name.
-const AGGREGATORS = new Set(["CI OK"]);
+// fails whenever another job did. Matched by job name, and only once the step
+// that sums the others up has run: an aggregator the runner starved is a lost
+// job like any other, and it is the one required check.
+const AGGREGATORS = new Map([["CI OK", "Check every job passed"]]);
 
 // The runner, not our code, ended the job. These messages come from GitHub's
 // annotations on the job, whatever step the runner was in.
@@ -24,8 +28,11 @@ const RUNNER_LOST = [
   /lost communication with the server/i,
   /the runner has received a shutdown signal/i,
 ];
-// "The operation was canceled." alone also reads on a job somebody cancelled,
-// so it counts only where no step of ours ever ran (see classify).
+// "The operation was canceled." is the runner's own wording when it drops a
+// job before it starts. Any other annotation on a job with no step of ours
+// (cancelled by a person, replaced by a higher priority request, refused by an
+// environment protection rule or a spending limit) says something else
+// ended it, so it is not a runner fault (see classify).
 const CANCELED = /^the operation was canceled\.?$/i;
 // A step that failed by its own exit code ran our code.
 const OWN_EXIT = /process completed with exit code/i;
@@ -33,16 +40,24 @@ const OWN_EXIT = /process completed with exit code/i;
 // Steps the runner adds around the workflow's own.
 const RUNNER_STEP = /^(set up job|initialize containers|complete job|stop containers|post .*)$/i;
 
+// True for the aggregate job once its own verdict step ran.
+function isAggregate(job) {
+  const step = AGGREGATORS.get(job.name);
+  if (!step) return false;
+  return (job.steps || []).some((s) => s.name === step && ["success", "failure"].includes(s.conclusion));
+}
+
 /**
  * Sorts one job of a failed run. Returns { kind, why }:
  *   ignore      the job did not fail or was cancelled
  *   aggregator  the job only sums up the others
  *   infra       the runner failed it before or apart from our code
  *   real        a step of ours failed, or the job was ended some other way
+ *               (a person, a newer run, a protection rule, a spending limit)
  */
 function classify(job, annotations = []) {
   if (!BAD_JOB.has(job.conclusion)) return { kind: "ignore", why: `${job.conclusion}` };
-  if (AGGREGATORS.has(job.name)) return { kind: "aggregator", why: "only sums up the other jobs" };
+  if (isAggregate(job)) return { kind: "aggregator", why: "only sums up the other jobs" };
 
   const messages = annotations.map((a) => String(a.message || "")).filter(Boolean);
   const steps = job.steps || [];
@@ -56,8 +71,10 @@ function classify(job, annotations = []) {
   if (lost) return { kind: "infra", why: lost.split("\n")[0].slice(0, 160) };
   if (failed) return { kind: "real", why: `step "${failed.name}" failed` };
   if (ran.length === 0) {
-    const canceled = messages.some((m) => CANCELED.test(m.trim()));
-    return { kind: "infra", why: canceled ? "cancelled before any step ran" : "no step beyond setup ran" };
+    // Positive evidence only: nothing but the runner's own wording, or nothing.
+    const other = messages.find((m) => !CANCELED.test(m.trim()));
+    if (other) return { kind: "real", why: `ended before any step: ${other.split("\n")[0].slice(0, 160)}` };
+    return { kind: "infra", why: messages.length > 0 ? "cancelled before any step ran" : "no step beyond setup ran" };
   }
   return { kind: "real", why: `ended after step "${ran[ran.length - 1].name}" without a runner fault` };
 }
@@ -88,19 +105,30 @@ function decide({ run, jobs, annotations = {} }) {
   return { rerun: true, reason: `${causes.length} job(s) lost to the runner`, jobs: sorted };
 }
 
-// A run that a newer push replaced (a pull request run is cancelled for it, a
+// A run that a newer one replaced (a pull request run is cancelled for it, a
 // queued deploy is dropped for it) looks just like a starved one. Re-running it
-// would fight the newer run, or deploy an older commit over a newer one.
+// would fight the newer run, or deploy an older commit over a newer one. Any
+// newer run of the same workflow on the same branch counts, whatever started it:
+// release.yml dispatches Deploy by hand over a queued push run. A push or
+// dispatched run is also left alone once its commit is no longer the branch head.
 async function isSuperseded(github, owner, repo, run) {
   const { data } = await github.rest.actions.listWorkflowRuns({
     owner,
     repo,
     workflow_id: run.workflow_id,
     branch: run.head_branch,
-    event: run.event,
     per_page: 20,
   });
-  return data.workflow_runs.some((other) => other.run_number > run.run_number);
+  if (data.workflow_runs.some((other) => other.run_number > run.run_number)) return "a newer run exists";
+  if (!BRANCH_EVENTS.has(run.event)) return undefined;
+  try {
+    const { data: branch } = await github.rest.repos.getBranch({ owner, repo, branch: run.head_branch });
+    if (branch.commit.sha !== run.head_sha) return "its commit is no longer the branch head";
+  } catch (error) {
+    if (error.status === 404) return "its branch is gone";
+    throw error;
+  }
+  return undefined;
 }
 
 async function rerunInfra({ github, context, core }) {
@@ -112,7 +140,8 @@ async function rerunInfra({ github, context, core }) {
   const skip = notEligible(run);
   if (skip) return core.info(`${label}: ${skip}.`);
 
-  if (await isSuperseded(github, owner, repo, run)) return core.info(`${label}: a newer run exists; leaving it.`);
+  const superseded = await isSuperseded(github, owner, repo, run);
+  if (superseded) return core.info(`${label}: ${superseded}; leaving it.`);
 
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
     owner,
@@ -123,7 +152,7 @@ async function rerunInfra({ github, context, core }) {
   });
   const annotations = {};
   for (const job of jobs) {
-    if (!BAD_JOB.has(job.conclusion) || AGGREGATORS.has(job.name)) continue;
+    if (!BAD_JOB.has(job.conclusion) || isAggregate(job)) continue;
     annotations[job.id] = await github.paginate(github.rest.checks.listAnnotations, {
       owner,
       repo,

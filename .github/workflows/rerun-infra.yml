@@ -4,7 +4,8 @@ name: Re-run infrastructure failures
 # cancelled died for an infrastructure reason before it ran our code: the
 # runner was never acquired ("The job was not acquired by Runner of type hosted
 # even after multiple attempts"), lost contact or was shut down, or the job
-# was cancelled before any step beyond setup. A job that failed in a test,
+# had no step beyond setup and no annotation saying something else ended it
+# (a person, a newer request, a protection rule). A job that failed in a test,
 # build or lint step means no re-run: a real failure stays red.
 # scripts/ci/rerun-infra.cjs makes the decision and has the details.
 #
@@ -15,7 +16,8 @@ name: Re-run infrastructure failures
 # to re-run the failed jobs of the run.
 #
 # The re-run is attempt 2, and a run on attempt 2 is never re-run again, so a
-# run that keeps failing ends red. A run that a newer push replaced is left
+# run that keeps failing ends red. A run that a newer run of the same workflow
+# and branch replaced, or a push run that is no longer the branch head, is left
 # alone. workflow_run fires only for workflow files on the default branch, so
 # this starts working once it is merged to main.
 

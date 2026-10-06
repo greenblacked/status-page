@@ -12,6 +12,7 @@ type Run = {
   conclusion: string;
   workflow_id: number;
   head_branch: string;
+  head_sha: string;
   event: string;
 };
 type Verdict = { rerun: boolean; reason: string; jobs: { name: string; kind: string; why: string }[] };
@@ -54,6 +55,7 @@ const run: Run = {
   conclusion: "failure",
   workflow_id: 1,
   head_branch: "dev",
+  head_sha: "aaa",
   event: "push",
 };
 const said = (message: string): Annotation[] => [{ message }];
@@ -86,6 +88,16 @@ describe("classify", () => {
     expect(classify(midway, said(CANCELED)).kind).toBe("real");
   });
 
+  it("keeps a job somebody ended, or a rule refused, real even with no step beyond setup", () => {
+    const manual = said("The run was canceled by @greenblacked.");
+    const concurrency = said("Canceling since a higher priority waiting request for deploy-stage exists");
+    const protection = said('Branch "x" is not allowed to deploy to production due to environment protection rules.');
+    expect(classify(cancelled(1), manual).kind).toBe("real");
+    expect(classify(cancelled(2), concurrency).kind).toBe("real");
+    expect(classify({ ...starved(3, "deploy"), steps: [] }, protection).kind).toBe("real");
+    expect(classify(cancelled(4), [...said(CANCELED), ...manual]).kind).toBe("real");
+  });
+
   it("keeps a failed test step real", () => {
     expect(classify(tested(1), said("Process completed with exit code 1.")).kind).toBe("real");
     expect(classify(tested(1)).kind).toBe("real");
@@ -109,6 +121,13 @@ describe("classify", () => {
     expect(classify({ ...starved(1), conclusion: "success" }).kind).toBe("ignore");
     expect(classify({ ...starved(1), conclusion: "skipped" }).kind).toBe("ignore");
     expect(classify(verdict).kind).toBe("aggregator");
+  });
+
+  it("classifies the aggregate job like any other when its own step never ran", () => {
+    const aggregate: Job = { ...verdict, steps: [] };
+    expect(classify(aggregate, said(NOT_ACQUIRED)).kind).toBe("infra");
+    expect(classify({ ...aggregate, steps: setup }).kind).toBe("infra");
+    expect(classify(aggregate, said("The run was canceled by @greenblacked.")).kind).toBe("real");
   });
 });
 
@@ -144,8 +163,29 @@ describe("decide", () => {
     expect(decide({ run: { ...run, conclusion: "action_required" }, jobs: [] }).rerun).toBe(false);
   });
 
-  it("does not re-run when only the aggregate job failed", () => {
+  it("does not re-run when only the aggregate job failed in its own step", () => {
     expect(decide({ run, jobs: [verdict] }).rerun).toBe(false);
+  });
+
+  it("re-runs when only the aggregate job was starved", () => {
+    const jobs = [
+      { ...starved(1), conclusion: "success" },
+      { ...verdict, steps: [] },
+    ];
+    const result = decide({ run, jobs, annotations: { 99: said(NOT_ACQUIRED) } });
+    expect(result.rerun).toBe(true);
+  });
+
+  it("does not re-run a manual cancel, a concurrency cancel or an environment rejection", () => {
+    const cases = [
+      said("The run was canceled by @greenblacked."),
+      said("Canceling since a higher priority waiting request for deploy-stage exists"),
+      said("Branch is not allowed to deploy to production due to environment protection rules."),
+    ];
+    for (const annotations of cases) {
+      const result = decide({ run, jobs: [cancelled(1)], annotations: { 1: annotations } });
+      expect(result.rerun).toBe(false);
+    }
   });
 });
 
@@ -155,6 +195,7 @@ let annotations: Record<number, Annotation[]>;
 let runs: Run[];
 let reruns: number[];
 let asked: number[];
+let head: string | undefined;
 
 function fakeGithub() {
   return {
@@ -169,6 +210,12 @@ function fakeGithub() {
         reRunWorkflowFailedJobs: async ({ run_id }: { run_id: number }) => {
           reruns.push(run_id);
           return { data: {} };
+        },
+      },
+      repos: {
+        getBranch: async () => {
+          if (head === undefined) throw Object.assign(new Error("Not Found"), { status: 404 });
+          return { data: { commit: { sha: head } } };
         },
       },
       checks: {
@@ -195,6 +242,7 @@ describe("rerunInfra", () => {
     runs = [run];
     reruns = [];
     asked = [];
+    head = run.head_sha;
   });
 
   it("re-runs the failed jobs once when every one was lost to the runner", async () => {
@@ -220,5 +268,40 @@ describe("rerunInfra", () => {
     runs = [run, { ...run, id: 501, run_number: 8 }];
     await call(run);
     expect(reruns).toEqual([]);
+  });
+
+  it("leaves an older push run when a newer dispatched run exists", async () => {
+    runs = [run, { ...run, id: 501, run_number: 8, event: "workflow_dispatch" }];
+    await call(run);
+    expect(reruns).toEqual([]);
+  });
+
+  it("leaves a push run whose commit is no longer the branch head", async () => {
+    head = "bbb";
+    await call(run);
+    expect(reruns).toEqual([]);
+  });
+
+  it("leaves a push run whose branch is gone", async () => {
+    head = undefined;
+    await call(run);
+    expect(reruns).toEqual([]);
+  });
+
+  it("does not look at the branch head for a pull request run", async () => {
+    head = "bbb";
+    await call({ ...run, event: "pull_request" });
+    expect(reruns).toEqual([500]);
+  });
+
+  it("asks the aggregate job why when it never ran its own step", async () => {
+    jobs = [
+      { ...starved(1), conclusion: "success" },
+      { ...verdict, steps: [] },
+    ];
+    annotations = { 99: said(NOT_ACQUIRED) };
+    await call(run);
+    expect(asked).toEqual([99]);
+    expect(reruns).toEqual([500]);
   });
 });
