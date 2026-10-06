@@ -32,10 +32,10 @@
     "@tanstack/react-start": "1.168.59",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "lucide-react": "1.48.0",
+    "lucide-react": "1.49.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "seroval": "1.6.7",
+    "seroval": "1.6.8",
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
