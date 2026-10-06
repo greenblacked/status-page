@@ -441,7 +441,7 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     expect(look.row, "a 4rem row below the safe area").toBeCloseTo(4 * look.rootPx, 0);
     expect(look.radii, "square corners").toEqual(["0px", "0px", "0px", "0px"]);
     expect(look.edges, "a hairline on the lower edge only").toEqual(["0px", "0px", "0px"]);
-    expect(look.hair, "the hairline is one device pixel").toBeGreaterThan(0);
+    expect(look.hair, "the AI header's 1px hairline, not a device-pixel 0.5px").toBe(1);
     expect(look.shadow, "no shadow beyond the hairline").toBe("none");
     expect(look.fill, "the page's own ground at 90%").toBe(look.wanted);
     expect(look.filter, "a 12px blur").toBe("blur(12px)");

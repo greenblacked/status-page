@@ -884,6 +884,8 @@
     background-image: none;
     -webkit-backdrop-filter: var(--bar-filter-phone);
     backdrop-filter: var(--bar-filter-phone);
+    /* The AI header's `1px solid var(--line)`: a full pixel, not the board's device-pixel hairline (0.5px at 2x, which WebKit draws as is). */
+    border-bottom-width: 1px;
     border-bottom-color: var(--color-hairline);
     box-shadow: none;
   }
