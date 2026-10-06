@@ -1,5 +1,4 @@
 import type { Page } from "@playwright/test";
-import { fixtureBoard } from "./fixture-board";
 import {
   BACKGROUNDS,
   barBack,
@@ -8,7 +7,6 @@ import {
   heroSearch,
   maxScroll,
   openBoard,
-  openWithFixture,
   scrollAndSettle,
   viewportOf,
 } from "./support/layout";
@@ -612,20 +610,22 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
   }
 
   for (const scheme of ["light", "dark"] as const) {
-    test(`cuts the status mark from the page's ground, as the bar is drawn on it, ${scheme === "light" ? "day" : "night"}`, async ({
-      page,
-    }) => {
-      test.slow();
-      await page.emulateMedia({ colorScheme: scheme });
-      await openWithFixture(page, "quiet", fixtureBoard, { steady: true });
-      test.skip(!(await isPhone(page)), "the header is a phone's bar only");
-      await bringBarUp(page);
-      const look = await cutOf(page);
-      expect(["degraded", "outage"], "a glyph that has cut-outs").toContain(look.health);
-      expect(look.cut, "the page's ground, not the card's").toBe(look.bg);
-      expect(look.inline, "no inline cut: the stylesheet picks it").toBe("");
-      expect(look.bg, "the two grounds differ, or this proves nothing").not.toBe(look.card);
-    });
+    for (const background of BACKGROUNDS) {
+      test(`cuts the status mark from the page's ground, as the bar is drawn on it, on ${background}, ${scheme === "light" ? "day" : "night"}`, async ({
+        page,
+      }) => {
+        test.slow();
+        await page.emulateMedia({ colorScheme: scheme });
+        await openBoard(page, background, { steady: true });
+        test.skip(!(await isPhone(page)), "the header is a phone's bar only");
+        await bringBarUp(page);
+        const look = await cutOf(page);
+        expect(["degraded", "outage"], "a glyph that has cut-outs").toContain(look.health);
+        expect(look.cut, "the page's ground, not the card's").toBe(look.bg);
+        expect(look.inline, "no inline cut: the stylesheet picks it").toBe("");
+        expect(look.bg, "the two grounds differ, or this proves nothing").not.toBe(look.card);
+      });
+    }
   }
 
   test("keeps the status mark cut from the page's ground under Increase Contrast, where the bar is solid", async ({
@@ -633,7 +633,7 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
   }) => {
     test.slow();
     await page.emulateMedia({ contrast: "more" });
-    await openWithFixture(page, "quiet", fixtureBoard, { steady: true });
+    await openBoard(page, "quiet", { steady: true });
     test.skip(!(await isPhone(page)), "the header is a phone's bar only");
     await bringBarUp(page);
     const look = await cutOf(page);
@@ -776,13 +776,14 @@ test.describe("the floating bar from 640px", { tag: "@layout" }, () => {
     await scrollAndSettle(page, 0);
     await expect(bar).toHaveAttribute("data-shown", "false");
   });
+
   for (const scheme of ["light", "dark"] as const) {
     test(`cuts the status mark from the card's colour, as the bar is a card-coloured pill, ${scheme === "light" ? "day" : "night"}`, async ({
       page,
     }) => {
       test.slow();
       await page.emulateMedia({ colorScheme: scheme });
-      await openWithFixture(page, "quiet", fixtureBoard, { steady: true });
+      await openBoard(page, "quiet", { steady: true });
       test.skip(await isPhone(page), "a phone's bar is drawn on the page: the tests above");
       const wide = viewportOf(page).width >= 1024;
       const deep = wide

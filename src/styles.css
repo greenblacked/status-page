@@ -319,7 +319,7 @@
   --bar-filter-phone: blur(12px);
   /* The one shadow on the page. */
   --shadow-float: 0 10px 28px -12px light-dark(rgb(60 44 20 / 0.28), rgb(0 0 0 / 0.9));
-  /* The ground behind a glyph's cut-outs (the mark inside its shape); set inline where a glyph sits on the page or an inset. */
+  /* The ground behind a glyph's cut-outs (the mark inside its shape); set inline (StatusGlyph's `cut`) where a glyph sits on the page or an inset, or by a rule where the ground changes with the viewport (the phone bar, `.compact-header`). */
   --glyph-cut: var(--color-card);
 }
 
