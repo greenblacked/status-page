@@ -26,6 +26,9 @@ import {
 } from "./support/layout";
 import { expect, test } from "./test";
 
+/** The phone widths the bar's status text is held to: a small Android, the iPhone SE and Pro, a large Pixel. */
+const PHONE_WIDTHS = [320, 375, 390, 412] as const;
+
 // How the page lays out on a screen. Every test here is tagged @layout, and playwright.config.ts runs only these
 // on the extra screens (a 320px phone, a short one, a large one, a foldable open and on its cover, an Android
 // tablet, phones on their side) besides the projects that run the whole suite. Each test runs on all three
@@ -320,18 +323,13 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               })
               .filter((span) => span.width > 1 && span.opacity > 0.99),
           );
-        // Glass and Full draw it 0px wide on a phone (the bar's verdict collapses): held on Quiet until that is fixed.
-        // TODO(known bug, bar status text 0px wide in Glass and Full below 640px): the commit that fixes it deletes
-        // both `background === "quiet"` guards in this test, so the check runs on all three backgrounds.
-        if (background === "quiet") {
-          const hidden = await verdict();
-          await expectNone(
-            page,
-            testInfo,
-            "bar down: status text drawn",
-            hidden.length === 1 ? [] : [JSON.stringify(hidden)],
-          );
-        }
+        const hidden = await verdict();
+        await expectNone(
+          page,
+          testInfo,
+          "bar down: status text drawn",
+          hidden.length === 1 ? [] : [JSON.stringify(hidden)],
+        );
         const found = await auditNow(page);
         await expectNone(page, testInfo, "bar down: sideways", found.overflow);
         await expectNone(page, testInfo, "bar down: overlap", found.overlap);
@@ -374,21 +372,74 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await page
           .locator(".bar-search")
           .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
-        // TODO(same known bug): delete this guard with the first one.
-        if (background === "quiet") {
-          const again = await verdict();
-          await expectNone(
-            page,
-            testInfo,
-            "bar down again: status text drawn",
-            again.length === 1 ? [] : [JSON.stringify(again)],
-          );
-        }
+        const again = await verdict();
+        await expectNone(
+          page,
+          testInfo,
+          "bar down again: status text drawn",
+          again.length === 1 ? [] : [JSON.stringify(again)],
+        );
 
         // Back at the top the bar goes and the hero's field is the only one.
         await scrollAndSettle(page, 0);
         await expect(bar).toHaveAttribute("data-shown", "false");
         await expect(bar).toHaveAttribute("inert", "");
+      });
+
+      test("draws the bar's status text in the room between its glyph and its buttons, at every phone width", async ({
+        page,
+      }, testInfo) => {
+        test.slow();
+        await openBoard(page, background, { steady: true });
+        test.skip(
+          await page.evaluate(() => matchMedia("(min-width: 40rem)").matches),
+          "the verdict is laid over the bar's field slot on a phone only; from 640px it sits in the flow",
+        );
+        const { height } = viewportOf(page);
+        for (const width of PHONE_WIDTHS) {
+          await page.setViewportSize({ width, height });
+          await scrollAndSettle(page, 0);
+          const fieldBottom = await page
+            .locator(".search-dock")
+            .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
+          await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+          await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+          await controlBar(page).evaluate((bar) =>
+            Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
+          );
+          const found = await controlBar(page).evaluate((bar) => {
+            const verdict = bar.querySelector<HTMLElement>("[data-bar-verdict]");
+            const glyph = bar.querySelector("svg");
+            const buttons = [...bar.querySelectorAll("button")].filter(
+              (button) => button.getBoundingClientRect().width > 1,
+            );
+            const text = verdict?.firstElementChild as HTMLElement | null;
+            const box = verdict?.getBoundingClientRect();
+            const textBox = text?.getBoundingClientRect();
+            let opacity = 1;
+            for (let node: Element | null = text ?? null; node && node !== bar; node = node.parentElement) {
+              opacity *= Number(getComputedStyle(node).opacity);
+            }
+            return {
+              width: box?.width ?? 0,
+              textWidth: textBox?.width ?? 0,
+              left: box?.left ?? 0,
+              right: box?.right ?? 0,
+              glyphRight: glyph?.getBoundingClientRect().right ?? 0,
+              buttonsLeft: Math.min(...buttons.map((button) => button.getBoundingClientRect().left)),
+              clipped: text ? text.scrollWidth > text.clientWidth + 1 : false,
+              opacity,
+            };
+          });
+          const problems: string[] = [];
+          if (found.width < 40) problems.push(`the verdict is ${found.width}px wide`);
+          if (found.textWidth < 40) problems.push(`its text is ${found.textWidth}px wide`);
+          if (found.opacity < 0.99) problems.push(`its opacity is ${found.opacity}`);
+          if (found.left < found.glyphRight - 0.5) problems.push("it runs under the glyph");
+          if (found.right > found.buttonsLeft + 0.5) problems.push("it runs under the buttons");
+          if (found.right > width) problems.push("it leaves the screen");
+          await expectNone(page, testInfo, `${width}px: status text drawn`, problems);
+        }
       });
 
       test("fits the Details sheet and Settings to the screen, and closes them", async ({ page }, testInfo) => {

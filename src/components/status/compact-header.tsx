@@ -23,6 +23,7 @@ import {
 import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
+import { cn } from "@/lib/utils";
 
 /**
  * A length in px for a custom property, to 1/64 px (the layout unit): the slot's real, fractional box, so a
@@ -637,13 +638,25 @@ export function CompactHeader({
         field in it) when the text swaps between "Checking…", "Stale · checked 14:05 UTC" and "Checked 14:05 UTC ·
         next in 1:52". 15rem holds the widest of them, so a revealed field keeps still (236px at a 16px root).
       */}
-      <p data-bar-lead data-state={live} className="flex shrink-0 items-center gap-2.5 sm:max-lg:min-w-60">
-        <StatusGlyph health={verdict.tone} size={20} className={STATUS_TEXT[verdict.tone]} cut="card" />
+      <p
+        data-bar-lead
+        data-state={live}
+        className="flex shrink-0 items-center gap-2.5 max-sm:contents sm:max-lg:min-w-60"
+      >
+        <StatusGlyph
+          health={verdict.tone}
+          size={20}
+          className={cn(STATUS_TEXT[verdict.tone], "max-sm:relative max-sm:z-[1]")}
+          cut="card"
+        />
         {/*
           From 640px the verdict and the check time sit in the flow, before the field's slot. On a phone the
           slot needs the room, so the short verdict is laid over it, between the glyph and the buttons, and
           fades out while the bar's field is revealed (data-revealed); "checked" stays for
-          screen readers only.
+          screen readers only. It is positioned against the bar, so the lead has no box of its own there
+          (max-sm:contents): the Glass and Full materials make every direct child of the bar `position:
+          relative`, and a lead that is one would be the box the verdict's edges are measured from (a
+          20px box, which left the verdict none).
         */}
         <span
           data-bar-verdict
