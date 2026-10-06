@@ -119,6 +119,73 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     await expect(page.getByRole("button", { name: "Refresh status now" }).first()).toBeInViewport();
   });
 
+  test("is never empty in the middle: the verdict after a short scroll up, the search field after a swipe", async ({
+    page,
+  }) => {
+    test.slow();
+    await openBoard(page, "quiet", { steady: true });
+    test.skip(!(await isPhone(page)), "the bar hides on a phone only");
+    const bar = controlBar(page);
+    const deep = await deepPosition(page);
+    // What the bar draws between its glyph and its buttons, as boxes and opacities (the verdict is laid over the slot).
+    const middle = () =>
+      bar.evaluate((element) => {
+        const opacityOf = (node: Element | null) => {
+          let opacity = 1;
+          for (let at = node; at && at !== element.parentElement; at = at.parentElement) {
+            opacity *= Number(getComputedStyle(at).opacity);
+          }
+          return opacity;
+        };
+        const glyph = element.querySelector("[data-bar-lead] svg")?.getBoundingClientRect();
+        const buttons = [...element.querySelectorAll("button")].filter(
+          (button) => button.getBoundingClientRect().width > 1,
+        );
+        const verdictText = element.querySelector("[data-bar-verdict] > span:not(:last-child)");
+        const verdict = verdictText?.getBoundingClientRect();
+        const field = element.querySelector(".bar-search .search-field")?.getBoundingClientRect();
+        return {
+          glyphRight: glyph?.right ?? 0,
+          buttonsLeft: Math.min(...buttons.map((button) => button.getBoundingClientRect().left)),
+          verdict: { width: verdict?.width ?? 0, opacity: opacityOf(verdictText ?? null) },
+          field: {
+            left: field?.left ?? 0,
+            right: field?.right ?? 0,
+            opacity: opacityOf(element.querySelector(".bar-search")),
+          },
+        };
+      });
+
+    // A short scroll up brings the bar back with its verdict, and the field stays in.
+    await scrollAndSettle(page, deep + 300);
+    await scrollAndSettle(page, deep + 300 - 12);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    await expect(bar).not.toHaveAttribute("data-revealed");
+    await barSettled(page);
+    const short = await middle();
+    expect(short.verdict.width, "the verdict has room").toBeGreaterThan(40);
+    expect(short.verdict.opacity, "the verdict shows").toBe(1);
+    expect(short.field.opacity, "the field waits").toBe(0);
+
+    // A swipe, which is far more than that: the field takes the verdict's place, between the glyph and the buttons,
+    // and the middle is not empty.
+    await scrollAndSettle(page, deep + 300);
+    await barSettled(page);
+    await scrollAndSettle(page, deep + 300 - 150);
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    await expect(bar).toHaveAttribute("data-revealed", "");
+    await barSettled(page);
+    await page
+      .locator(".bar-search")
+      .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+    const swipe = await middle();
+    expect(swipe.field.opacity, "the field shows").toBe(1);
+    expect(swipe.field.right - swipe.field.left, "the field has room").toBeGreaterThan(40);
+    expect(swipe.field.left).toBeGreaterThanOrEqual(swipe.glyphRight - 0.5);
+    expect(swipe.field.right).toBeLessThanOrEqual(swipe.buttonsLeft + 0.5);
+    expect(swipe.verdict.opacity, "the verdict gives way to the field").toBe(0);
+  });
+
   test("adds up a slow drag: a scroll up of 2px at a time brings the bar back, and one down takes it away", async ({
     page,
   }) => {
