@@ -3202,227 +3202,242 @@ test("opens a long component list with Show all and closes it with Show fewer", 
 // scrolling: the page scrolls at most once, by exactly what the button had moved by at that moment (the part of the
 // change the browser did not hold itself), and never when nothing was left. With anchoring off, all of it is left,
 // so the page must have scrolled.
-for (const anchoring of ["none", "default"] as const) {
-  test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({ page }) => {
-    // Every scrollBy of the page, with where the Show all button was in the window at the moment of the call (after
-    // the update has been laid out, before the scroll): that is how far the browser left it from its place.
-    await page.addInitScript(() => {
-      const scrolled: { by: number; offset: number | null }[] = [];
-      (window as Window & { __scrolledBy?: typeof scrolled }).__scrolledBy = scrolled;
-      (window as Window & { __watched?: { top: number } }).__watched = { top: Number.NaN };
-      const original = window.scrollBy;
-      window.scrollBy = ((...args: unknown[]) => {
-        const first = args[0] as ScrollToOptions | number | undefined;
-        const by = typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0);
-        const button = [...document.querySelectorAll("article#service-spotify button")].find((element) =>
-          /^Show all 32/.test(element.textContent ?? ""),
-        );
-        const watched = (window as Window & { __watched?: { top: number } }).__watched;
-        scrolled.push({
-          by,
-          offset: button && watched ? button.getBoundingClientRect().top - watched.top : null,
-        });
-        return (original as (...values: unknown[]) => void).apply(window, args);
-      }) as typeof window.scrollBy;
+test.describe("Show all across the turn of a slot", () => {
+  // it installs page.clock well inside a slot itself and fast-forwards across the turn, so the page is not pinned first.
+  test.use({ pinSlot: false });
+
+  for (const anchoring of ["none", "default"] as const) {
+    test(`keeps Show all in place across the turn of a slot (scroll anchoring ${anchoring})`, async ({ page }) => {
+      // Every scrollBy of the page, with where the Show all button was in the window at the moment of the call (after
+      // the update has been laid out, before the scroll): that is how far the browser left it from its place.
+      await page.addInitScript(() => {
+        const scrolled: { by: number; offset: number | null }[] = [];
+        (window as Window & { __scrolledBy?: typeof scrolled }).__scrolledBy = scrolled;
+        (window as Window & { __watched?: { top: number } }).__watched = { top: Number.NaN };
+        const original = window.scrollBy;
+        window.scrollBy = ((...args: unknown[]) => {
+          const first = args[0] as ScrollToOptions | number | undefined;
+          const by = typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0);
+          const button = [...document.querySelectorAll("article#service-spotify button")].find((element) =>
+            /^Show all 32/.test(element.textContent ?? ""),
+          );
+          const watched = (window as Window & { __watched?: { top: number } }).__watched;
+          scrolled.push({
+            by,
+            offset: button && watched ? button.getBoundingClientRect().top - watched.top : null,
+          });
+          return (original as (...values: unknown[]) => void).apply(window, args);
+        }) as typeof window.scrollBy;
+      });
+      // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row early, and
+      // the 3:00 jump would then cross a boundary that changes no row count.
+      await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
+      const board = fixtureBoard(Date.now());
+      await openFixture(page, () => board);
+      if (anchoring !== "default") {
+        await page.evaluate((value) => {
+          document.documentElement.style.overflowAnchor = value;
+        }, anchoring);
+      }
+      const card = page.locator("article#service-spotify");
+      await card.locator("summary").click();
+      await expect(card.locator("details")).toHaveAttribute("open", "");
+      const toggle = card.getByRole("button", { name: /^Show all 32/ });
+      await toggle.scrollIntoViewIfNeeded();
+      // The feed is above the top of the window.
+      await page.evaluate(() => window.scrollBy(0, 200));
+      // The reader is about to press it.
+      await toggle.hover();
+      // Let the hook see where the reader is.
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      const feed = page.locator('section[aria-labelledby="recent-heading"]');
+      const height = () => feed.evaluate((element) => element.getBoundingClientRect().height);
+      const topOf = () => toggle.evaluate((element) => element.getBoundingClientRect().top);
+      const rows = await feed.locator("li").count();
+      const heightBefore = await height();
+      const topBefore = await topOf();
+      // Where the button was, for the scrolls to measure against, and none of the setup's own scrolls counted.
+      await page.evaluate((top) => {
+        const w = window as Window & { __scrolledBy?: unknown[]; __watched?: { top: number } };
+        w.__scrolledBy?.splice(0);
+        if (w.__watched) w.__watched.top = top;
+      }, topBefore);
+      await page.clock.fastForward("03:00");
+      await expect(feed.locator("li")).not.toHaveCount(rows);
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      expect((await height()) - heightBefore).toBeGreaterThan(0);
+      // The reader's side: the button is where it was.
+      expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+      // A second correction can come from a timer of the hook (its look again after RECHECK_MS) as well as from the next
+      // frame: run the page clock past all of them, then a frame to lay out what they did. Neither the button moves
+      // nor the page scrolls again.
+      await page.clock.runFor(1000);
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
+      const scrolled = await page.evaluate(
+        () => (window as Window & { __scrolledBy?: { by: number; offset: number | null }[] }).__scrolledBy ?? [],
+      );
+      // Never twice, whatever the browser left.
+      expect(scrolled.length).toBeLessThanOrEqual(1);
+      // With the browser's anchoring off nothing of the change is held for the page: it has to scroll.
+      if (anchoring === "none") expect(scrolled).toHaveLength(1);
+      // Where it did scroll, it was by what the browser left the button away from its place, as far as the button
+      // is concerned, and not by more.
+      for (const { by, offset } of scrolled) {
+        expect(offset).not.toBeNull();
+        expect(Math.abs(by - (offset ?? Number.NaN))).toBeLessThanOrEqual(1);
+        expect(Math.abs(by)).toBeGreaterThan(0.5);
+      }
     });
-    // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row early, and
-    // the 3:00 jump would then cross a boundary that changes no row count.
-    await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
-    const board = fixtureBoard(Date.now());
-    await openFixture(page, () => board);
-    if (anchoring !== "default") {
-      await page.evaluate((value) => {
-        document.documentElement.style.overflowAnchor = value;
-      }, anchoring);
-    }
-    const card = page.locator("article#service-spotify");
-    await card.locator("summary").click();
-    await expect(card.locator("details")).toHaveAttribute("open", "");
-    const toggle = card.getByRole("button", { name: /^Show all 32/ });
-    await toggle.scrollIntoViewIfNeeded();
-    // The feed is above the top of the window.
-    await page.evaluate(() => window.scrollBy(0, 200));
-    // The reader is about to press it.
-    await toggle.hover();
-    // Let the hook see where the reader is.
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    const feed = page.locator('section[aria-labelledby="recent-heading"]');
-    const height = () => feed.evaluate((element) => element.getBoundingClientRect().height);
-    const topOf = () => toggle.evaluate((element) => element.getBoundingClientRect().top);
-    const rows = await feed.locator("li").count();
-    const heightBefore = await height();
-    const topBefore = await topOf();
-    // Where the button was, for the scrolls to measure against, and none of the setup's own scrolls counted.
-    await page.evaluate((top) => {
-      const w = window as Window & { __scrolledBy?: unknown[]; __watched?: { top: number } };
-      w.__scrolledBy?.splice(0);
-      if (w.__watched) w.__watched.top = top;
-    }, topBefore);
-    await page.clock.fastForward("03:00");
-    await expect(feed.locator("li")).not.toHaveCount(rows);
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    expect((await height()) - heightBefore).toBeGreaterThan(0);
-    // The reader's side: the button is where it was.
-    expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
-    // A second correction can come from a timer of the hook (its look again after RECHECK_MS) as well as from the next
-    // frame: run the page clock past all of them, then a frame to lay out what they did. Neither the button moves
-    // nor the page scrolls again.
-    await page.clock.runFor(1000);
-    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
-    const scrolled = await page.evaluate(
-      () => (window as Window & { __scrolledBy?: { by: number; offset: number | null }[] }).__scrolledBy ?? [],
-    );
-    // Never twice, whatever the browser left.
-    expect(scrolled.length).toBeLessThanOrEqual(1);
-    // With the browser's anchoring off nothing of the change is held for the page: it has to scroll.
-    if (anchoring === "none") expect(scrolled).toHaveLength(1);
-    // Where it did scroll, it was by what the browser left the button away from its place, as far as the button
-    // is concerned, and not by more.
-    for (const { by, offset } of scrolled) {
-      expect(offset).not.toBeNull();
-      expect(Math.abs(by - (offset ?? Number.NaN))).toBeLessThanOrEqual(1);
-      expect(Math.abs(by)).toBeGreaterThan(0.5);
-    }
-  });
-}
+  }
+});
 
 // With the browser's anchoring off (Safari), a check on a board the reader is not working must not move it: with
 // the hero or the search field in view, the page stays where it is, and the dock keeps its pose.
-for (const scrollY of [40, 190]) {
-  test(`leaves a calm board alone when a check lands at scroll ${scrollY} (anchoring off)`, async ({ page }) => {
+test.describe("a calm board across the turn of a slot", () => {
+  // it installs page.clock well inside a slot itself and fast-forwards across the turn, so the page is not pinned first.
+  test.use({ pinSlot: false });
+
+  for (const scrollY of [40, 190]) {
+    test(`leaves a calm board alone when a check lands at scroll ${scrollY} (anchoring off)`, async ({ page }) => {
+      await page.addInitScript(() => {
+        const scrolled: number[] = [];
+        (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
+        const original = window.scrollBy;
+        window.scrollBy = ((...args: unknown[]) => {
+          scrolled.push(1);
+          return (original as (...values: unknown[]) => void).apply(window, args);
+        }) as typeof window.scrollBy;
+      });
+      // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row early, and
+      // the 3:00 jump would then change nothing, so the test would pass without checking anything.
+      await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
+      await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
+      await page.evaluate(() => {
+        document.documentElement.style.overflowAnchor = "none";
+      });
+      const dock = page.locator(".search-dock");
+      await page.evaluate((y) => window.scrollTo(0, y), scrollY);
+      // Let the page be still, and the hook see it.
+      await page.clock.fastForward(1000);
+      await page.evaluate(
+        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+      );
+      const state = () =>
+        page.evaluate(() => ({
+          y: window.scrollY,
+          revealed:
+            document.querySelector('section[aria-label="Board controls"]')?.hasAttribute("data-revealed") ?? false,
+          calls: (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.length ?? 0,
+        }));
+      const before = await state();
+      await page.clock.fastForward("03:00");
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      const after = await state();
+      expect(after.y).toBe(before.y);
+      expect(after.revealed).toBe(before.revealed);
+      expect(after.calls).toBe(before.calls);
+      await expect(dock).toHaveCount(1);
+    });
+  }
+});
+
+// A tap leaves no pointer and no focus on the board, so the hook holds the first thing in view: the cards under
+// the feed, never the feed itself.
+test.describe("scrolls to hold the cards after a tap", () => {
+  // it installs page.clock well inside a slot itself, so the page is not pinned to one first.
+  test.use({ pinSlot: false });
+
+  test("scrolls to hold the cards after a tap with anchoring off", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "mobile", "a finger is the phone project's");
     await page.addInitScript(() => {
       const scrolled: number[] = [];
       (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
       const original = window.scrollBy;
       window.scrollBy = ((...args: unknown[]) => {
-        scrolled.push(1);
+        const first = args[0] as ScrollToOptions | number | undefined;
+        scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
         return (original as (...values: unknown[]) => void).apply(window, args);
       }) as typeof window.scrollBy;
+      // The scroll events delivered so far: an event comes a frame after the scroll that makes it.
+      const events = { count: 0 };
+      (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents = events;
+      window.addEventListener(
+        "scroll",
+        () => {
+          events.count += 1;
+        },
+        true,
+      );
     });
-    // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row early, and
-    // the 3:00 jump would then change nothing, so the test would pass without checking anything.
+    // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row and clear the
+    // tags early, and the 3:00 jump would then cross a boundary that changes no row count.
     await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
-    await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
+    await openFixture(page, () => fixtureBoard(Date.now()));
     await page.evaluate(() => {
       document.documentElement.style.overflowAnchor = "none";
     });
-    const dock = page.locator(".search-dock");
-    await page.evaluate((y) => window.scrollTo(0, y), scrollY);
-    // Let the page be still, and the hook see it.
+    const card = page.locator("article#service-spotify");
+    await card.locator("summary").click();
+    await expect(card.locator("details")).toHaveAttribute("open", "");
+    const toggle = card.getByRole("button", { name: /^Show all 32/ });
+    await toggle.scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, 200));
+    const box = await toggle.boundingBox();
+    if (!box) throw new Error("no box");
+    await page.touchscreen.tap(box.x + 4, box.y + box.height / 2);
+    // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    const fewer = card.getByRole("button", { name: /^Show fewer/ });
+    const scrollEvents = () =>
+      page.evaluate(() => (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents?.count ?? 0);
+    const eventsBefore = await scrollEvents();
+    const yBefore = await page.evaluate(() => window.scrollY);
+    await fewer.scrollIntoViewIfNeeded();
+    // The hook starts its wait for the page to be still when the scroll event arrives, a frame after the scroll, and
+    // a clock jump made before that would find the wait not started and the anchor the one from before the scroll.
+    if ((await page.evaluate(() => window.scrollY)) !== yBefore) {
+      await expect.poll(scrollEvents, { message: "the scroll event arrives" }).toBeGreaterThan(eventsBefore);
+    }
+    // The page is still for longer than the hook waits, and it has picked its anchor again.
     await page.clock.fastForward(1000);
     await page.evaluate(
       () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
     );
-    const state = () =>
-      page.evaluate(() => ({
-        y: window.scrollY,
-        revealed:
-          document.querySelector('section[aria-label="Board controls"]')?.hasAttribute("data-revealed") ?? false,
-        calls: (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.length ?? 0,
-      }));
-    const before = await state();
+    await page.evaluate(() => {
+      (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.splice(0);
+    });
+    const feed = page.locator('section[aria-labelledby="recent-heading"]');
+    const rows = await feed.locator("li").count();
+    const topOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top);
+    // Where the button is on the page, which the scroll position does not change.
+    const placeOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top + window.scrollY);
+    const topBefore = await topOf();
+    const placeBefore = await placeOf();
     await page.clock.fastForward("03:00");
+    await expect(feed.locator("li")).not.toHaveCount(rows);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    const after = await state();
-    expect(after.y).toBe(before.y);
-    expect(after.revealed).toBe(before.revealed);
-    expect(after.calls).toBe(before.calls);
-    await expect(dock).toHaveCount(1);
+    // The check adds a row to the feed (the cards drop) and clears the "Changed" tags of the cards above them (the
+    // cards rise). Which of the two is more depends on the layout: the fixture differs from the server's board on
+    // most of its cards, so most of them wear a tag. The new row adds 63px; clearing the tags frees 36px where their
+    // text wraps one way (a headed Chromium) and 108px where it wraps the other (the headless shell CI runs), so the
+    // cards may net drop or net rise. Holding them means scrolling by exactly the distance they moved, whichever way,
+    // and never a step the other way; and the button the page was scrolled to is where it was in the window.
+    const moved = (await placeOf()) - placeBefore;
+    expect(Math.abs(moved), "the check moved the cards").toBeGreaterThan(1);
+    const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy ?? []);
+    expect(scrolled.length).toBeGreaterThan(0);
+    expect(
+      scrolled.every((by) => Math.sign(by) === Math.sign(moved)),
+      `every step of ${scrolled.join(", ")} goes the way the cards moved (${moved})`,
+    ).toBe(true);
+    const followed = scrolled.reduce((sum, by) => sum + by, 0);
+    expect(
+      Math.abs(followed - moved),
+      `the page followed the cards by ${followed}, which moved ${moved}`,
+    ).toBeLessThanOrEqual(1);
+    expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
   });
-}
-
-// A tap leaves no pointer and no focus on the board, so the hook holds the first thing in view: the cards under
-// the feed, never the feed itself.
-test("scrolls to hold the cards after a tap with anchoring off", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile", "a finger is the phone project's");
-  await page.addInitScript(() => {
-    const scrolled: number[] = [];
-    (window as Window & { __scrolledBy?: number[] }).__scrolledBy = scrolled;
-    const original = window.scrollBy;
-    window.scrollBy = ((...args: unknown[]) => {
-      const first = args[0] as ScrollToOptions | number | undefined;
-      scrolled.push(typeof first === "object" ? (first?.top ?? 0) : ((args[1] as number | undefined) ?? 0));
-      return (original as (...values: unknown[]) => void).apply(window, args);
-    }) as typeof window.scrollBy;
-    // The scroll events delivered so far: an event comes a frame after the scroll that makes it.
-    const events = { count: 0 };
-    (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents = events;
-    window.addEventListener(
-      "scroll",
-      () => {
-        events.count += 1;
-      },
-      true,
-    );
-  });
-  // Pin the page clock well inside a slot: a boundary before the baseline is read would add the row and clear the
-  // tags early, and the 3:00 jump would then cross a boundary that changes no row count.
-  await page.clock.install({ time: Math.floor(Date.now() / 120_000) * 120_000 + 30_000 });
-  await openFixture(page, () => fixtureBoard(Date.now()));
-  await page.evaluate(() => {
-    document.documentElement.style.overflowAnchor = "none";
-  });
-  const card = page.locator("article#service-spotify");
-  await card.locator("summary").click();
-  await expect(card.locator("details")).toHaveAttribute("open", "");
-  const toggle = card.getByRole("button", { name: /^Show all 32/ });
-  await toggle.scrollIntoViewIfNeeded();
-  await page.evaluate(() => window.scrollBy(0, 200));
-  const box = await toggle.boundingBox();
-  if (!box) throw new Error("no box");
-  await page.touchscreen.tap(box.x + 4, box.y + box.height / 2);
-  // The tap opened the list and left focus on a button; let go of it, so only the first thing in view is left.
-  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  const fewer = card.getByRole("button", { name: /^Show fewer/ });
-  const scrollEvents = () =>
-    page.evaluate(() => (window as Window & { __scrollEvents?: { count: number } }).__scrollEvents?.count ?? 0);
-  const eventsBefore = await scrollEvents();
-  const yBefore = await page.evaluate(() => window.scrollY);
-  await fewer.scrollIntoViewIfNeeded();
-  // The hook starts its wait for the page to be still when the scroll event arrives, a frame after the scroll, and
-  // a clock jump made before that would find the wait not started and the anchor the one from before the scroll.
-  if ((await page.evaluate(() => window.scrollY)) !== yBefore) {
-    await expect.poll(scrollEvents, { message: "the scroll event arrives" }).toBeGreaterThan(eventsBefore);
-  }
-  // The page is still for longer than the hook waits, and it has picked its anchor again.
-  await page.clock.fastForward(1000);
-  await page.evaluate(
-    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-  );
-  await page.evaluate(() => {
-    (window as Window & { __scrolledBy?: number[] }).__scrolledBy?.splice(0);
-  });
-  const feed = page.locator('section[aria-labelledby="recent-heading"]');
-  const rows = await feed.locator("li").count();
-  const topOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top);
-  // Where the button is on the page, which the scroll position does not change.
-  const placeOf = () => fewer.evaluate((element) => element.getBoundingClientRect().top + window.scrollY);
-  const topBefore = await topOf();
-  const placeBefore = await placeOf();
-  await page.clock.fastForward("03:00");
-  await expect(feed.locator("li")).not.toHaveCount(rows);
-  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-  // The check adds a row to the feed (the cards drop) and clears the "Changed" tags of the cards above them (the
-  // cards rise). Which of the two is more depends on the layout: the fixture differs from the server's board on
-  // most of its cards, so most of them wear a tag. The new row adds 63px; clearing the tags frees 36px where their
-  // text wraps one way (a headed Chromium) and 108px where it wraps the other (the headless shell CI runs), so the
-  // cards may net drop or net rise. Holding them means scrolling by exactly the distance they moved, whichever way,
-  // and never a step the other way; and the button the page was scrolled to is where it was in the window.
-  const moved = (await placeOf()) - placeBefore;
-  expect(Math.abs(moved), "the check moved the cards").toBeGreaterThan(1);
-  const scrolled = await page.evaluate(() => (window as Window & { __scrolledBy?: number[] }).__scrolledBy ?? []);
-  expect(scrolled.length).toBeGreaterThan(0);
-  expect(
-    scrolled.every((by) => Math.sign(by) === Math.sign(moved)),
-    `every step of ${scrolled.join(", ")} goes the way the cards moved (${moved})`,
-  ).toBe(true);
-  const followed = scrolled.reduce((sum, by) => sum + by, 0);
-  expect(
-    Math.abs(followed - moved),
-    `the page followed the cards by ${followed}, which moved ${moved}`,
-  ).toBeLessThanOrEqual(1);
-  expect(Math.abs((await topOf()) - topBefore)).toBeLessThanOrEqual(1);
 });
 
 test("operates Show all from the keyboard", async ({ page }, testInfo) => {
@@ -4080,41 +4095,48 @@ async function contrastFailures(page: Page): Promise<string[]> {
 // On the fixture board, so every status colour, badge, incident time and
 // the Stale state are on screen, whatever the vendors say during the run.
 // Quiet is the default; Glass makes the panels translucent, so its flat fills are the ones under test too.
-for (const background of ["quiet", "glass"] as const) {
-  for (const colorScheme of ["light", "dark"] as const) {
-    for (const contrast of ["no-preference", "more"] as const) {
-      const name = `${colorScheme}${contrast === "more" ? ", Increase Contrast" : ""}${background === "glass" ? ", Glass" : ""}`;
-      test(`keeps every text colour at AA on the flat fills alone (${name})`, async ({ page }) => {
-        await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), background);
-        await page.clock.install();
-        const board = fixtureBoard(Date.now());
-        await serveBoard(page, () => board);
-        await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
-        await page.goto("/");
-        await expect(cards(page)).toHaveCount(SERVICES);
-        await hydrated(page);
-        await page.getByRole("button", { name: "Refresh status now" }).first().click();
-        for (const label of ["Outage", "Degraded", "Maintenance", "No data", "Operational"]) {
-          await expect(page.locator("main [data-card-header]").getByText(label, { exact: true }).first()).toBeVisible();
-        }
-        // Shortly after midnight UTC the fixture's incidents began the day
-        // before, and the card adds their date: "since 27 Sep 21:52 UTC".
-        await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d\sUTC/).first()).toBeVisible();
-        expect(await contrastFailures(page)).toEqual([]);
+test.describe("contrast on the flat fills", () => {
+  // page.clock moves the page's time, so the page is not pinned to a slot first.
+  test.use({ pinSlot: false });
 
-        // Seven minutes on, the same snapshot again: the board says Stale.
-        await page.clock.fastForward("07:00");
-        await expect(page.getByText("Stale", { exact: true })).toBeVisible();
-        expect(await contrastFailures(page)).toEqual([]);
+  for (const background of ["quiet", "glass"] as const) {
+    for (const colorScheme of ["light", "dark"] as const) {
+      for (const contrast of ["no-preference", "more"] as const) {
+        const name = `${colorScheme}${contrast === "more" ? ", Increase Contrast" : ""}${background === "glass" ? ", Glass" : ""}`;
+        test(`keeps every text colour at AA on the flat fills alone (${name})`, async ({ page }) => {
+          await page.addInitScript((value) => localStorage.setItem("status-bar:background", value), background);
+          await page.clock.install();
+          const board = fixtureBoard(Date.now());
+          await serveBoard(page, () => board);
+          await page.emulateMedia({ colorScheme, contrast, reducedMotion: "reduce" });
+          await page.goto("/");
+          await expect(cards(page)).toHaveCount(SERVICES);
+          await hydrated(page);
+          await page.getByRole("button", { name: "Refresh status now" }).first().click();
+          for (const label of ["Outage", "Degraded", "Maintenance", "No data", "Operational"]) {
+            await expect(
+              page.locator("main [data-card-header]").getByText(label, { exact: true }).first(),
+            ).toBeVisible();
+          }
+          // Shortly after midnight UTC the fixture's incidents began the day
+          // before, and the card adds their date: "since 27 Sep 21:52 UTC".
+          await expect(page.getByText(/^since (\d{1,2} [A-Z][a-z]{2} (\d{4} )?)?\d\d:\d\d\sUTC/).first()).toBeVisible();
+          expect(await contrastFailures(page)).toEqual([]);
 
-        // And the settings dialog, with the single-key shortcuts dimmed.
-        await page.getByRole("button", { name: "Settings", exact: true }).click();
-        await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
-        expect(await contrastFailures(page)).toEqual([]);
-      });
+          // Seven minutes on, the same snapshot again: the board says Stale.
+          await page.clock.fastForward("07:00");
+          await expect(page.getByText("Stale", { exact: true })).toBeVisible();
+          expect(await contrastFailures(page)).toEqual([]);
+
+          // And the settings dialog, with the single-key shortcuts dimmed.
+          await page.getByRole("button", { name: "Settings", exact: true }).click();
+          await page.getByRole("switch", { name: "Single-key shortcuts" }).click();
+          expect(await contrastFailures(page)).toEqual([]);
+        });
+      }
     }
   }
-}
+});
 
 test("renders cards without requesting persistent uptime history", async ({ page }) => {
   test.skip(process.env.VITE_STATUS_HISTORY === "1", "a history build requests it");

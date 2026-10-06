@@ -1,4 +1,5 @@
 import { type BrowserContext, test as base, expect, type Request } from "@playwright/test";
+import { pinToSlot } from "./support/pin-to-slot";
 
 // Every spec imports `test` and `expect` from here, not from @playwright/test. It is the same test, plus one
 // automatic fixture: the browser may ask this machine for anything and no one else. The page's own origin is
@@ -35,6 +36,14 @@ export const PIN_THEME = `(() => {
   } catch {}
 })();`;
 
+// The board adds a row to Recent changes and clears the "Changed" tags at every turn of a two-minute slot of the wall
+// clock, and what the reader is holding scrolls by what is left. A test that happens to run (or load) across a turn
+// sees the board move by tens of pixels that its own actions did not cause, which fails it one run in a hundred and
+// no more than that, on a slow runner, in a place that has nothing to do with what it checks. So every page of every
+// test starts 30 s into a slot (pinToSlot, e2e/support/pin-to-slot.ts): the next turn is 90 s away, and the clock
+// runs on from there. Only the start is pinned, the clock is not stopped; a test that needs it still (a board's
+// geometry over a long run) stops it with stopClock. A test that moves the page's time itself (page.clock) or that
+// crosses a slot on purpose turns this off with `test.use({ pinSlot: false })`.
 const LOCAL = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 export const isStray = (href: string) => {
@@ -56,8 +65,13 @@ export function watchStrays(context: BrowserContext): () => string[] {
   return () => [...asked].map((request) => request.url());
 }
 
-export const test = base.extend<{ stayLocal: undefined; pinTheme: boolean }>({
+export const test = base.extend<{ stayLocal: undefined; pinTheme: boolean; pinSlot: boolean }>({
   pinTheme: [true, { option: true }],
+  pinSlot: [true, { option: true }],
+  page: async ({ page, pinSlot }, use) => {
+    if (pinSlot) await pinToSlot(page);
+    await use(page);
+  },
   context: async ({ context, pinTheme }, use) => {
     if (pinTheme) await context.addInitScript(PIN_THEME);
     await use(context);

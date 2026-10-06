@@ -1,5 +1,4 @@
-import type { Page } from "@playwright/test";
-import { expect } from "../test";
+import { expect, type Page } from "@playwright/test";
 
 /**
  * Moves the page's Date to 30 s into a two-minute slot, and lets it run on from there. The turn of a slot adds a row
@@ -14,8 +13,16 @@ import { expect } from "../test";
  * computes) agrees with the page about the slot, however near the turn the wall clock is when the test starts.
  * A test that moves the page's Date on from here must wrap this Date, not assign Date.now: this one answers
  * `Date.now` itself, and an assignment would never be seen.
+ *
+ * Every test's page is pinned like this before the test starts (the `pinSlot` fixture in e2e/test.ts, on unless a test
+ * says `test.use({ pinSlot: false })`), so a test needs to call this itself only on a page of its own. Calling it on a
+ * page that is pinned already does nothing: a second shift would stack on the first.
  */
+const pinned = new WeakSet<Page>();
+
 export async function pinToSlot(page: Page): Promise<void> {
+  if (pinned.has(page)) return;
+  pinned.add(page);
   const offset = Math.floor(Date.now() / 120_000) * 120_000 + 30_000 - Date.now();
   await page.addInitScript((shift) => {
     const Native = Date;
