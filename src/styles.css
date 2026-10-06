@@ -854,12 +854,49 @@
 }
 
 /*
-  Under 40rem the short verdict sits where the bar's field shows; it gives way while the field is revealed
+  On a phone (under 40rem) the bar is not a pill floating 0.5rem under the top: it is a full-width sheet from the top
+  edge of the screen, with its own corners rounded below only. The 0.5rem the pill left above it showed the page
+  through, a strip of cards and text over the bar, and a blur that starts below it cannot cover that. The sheet's
+  box runs from the top edge to the bar's old bottom edge, its content sits where it sat (below the safe area,
+  0.5rem down, 3rem tall), and its sides are the page content's, so the glyph and the buttons are where they were.
+  A hairline on its lower edge only: the other three are the screen's.
+*/
+@media (width < 40rem) {
+  .compact-header {
+    top: 0;
+    left: 0;
+    right: 0;
+    box-sizing: border-box;
+    height: calc(env(safe-area-inset-top) + 3.5rem);
+    padding-top: calc(env(safe-area-inset-top) + 0.5rem);
+    padding-left: calc(max(var(--gutter), env(safe-area-inset-left)) + 0.875rem);
+    padding-right: calc(max(var(--gutter), env(safe-area-inset-right)) + 0.375rem);
+    border-top-width: 0;
+    border-left-width: 0;
+    border-right-width: 0;
+    border-radius: 0 0 var(--radius-bar) var(--radius-bar);
+  }
+}
+
+/*
+  Under 40rem the short verdict sits where the bar's field shows: laid over the slot, between the glyph and the
+  buttons (compact-header.tsx), against the bar's own box, so its edges are the glyph's right and the buttons' left
+  (2.75rem and 6.75rem in from the content's sides) and it is centred on the 3rem the content has, below the safe
+  area and the bar's 0.5rem. It truncates with an ellipsis. It gives way while the field is revealed
   (data-revealed, written from the dock's state). Opacity only, over the same time as the field leaving (--t-quick),
   and the field coming in takes a little longer, so the two are never both there at full strength.
 */
 @media (width < 40rem) {
   [data-bar-verdict] {
+    position: absolute;
+    top: calc(env(safe-area-inset-top) + 2rem);
+    left: calc(max(var(--gutter), env(safe-area-inset-left)) + 2.75rem);
+    right: calc(max(var(--gutter), env(safe-area-inset-right)) + 6.75rem);
+    transform: translateY(-50%);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
     transition: opacity var(--t-quick) var(--ease-out);
   }
 

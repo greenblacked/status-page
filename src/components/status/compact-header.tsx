@@ -33,6 +33,12 @@ function px(value: number): string {
   return `${Math.round(value * 64) / 64}px`;
 }
 
+/** A computed length in px, or `fallback` when it is not one (`auto`): a real 0 stays 0, as the phone bar's `top` is. */
+function lengthOr(value: string, fallback: number): number {
+  const length = Number.parseFloat(value);
+  return Number.isFinite(length) ? length : fallback;
+}
+
 /**
  * One part of the dock's state. A component renders only when its own part changes, not on every change of the
  * state: the bar and the hero's buttons (barShown) are not rendered again when the bar's field is revealed, so
@@ -68,6 +74,12 @@ function searchFieldInHand(): HTMLInputElement | null {
 
 /** The width from which the search field shares a row with the filter chips (Tailwind's lg). */
 export const WIDE = "(min-width: 64rem)";
+
+/**
+ * From 40rem (Tailwind's sm): not a phone. Below it is a phone. Asked as a min-width and negated, not as a range
+ * (`width < 40rem`), which Safari reads from 16.4, and the one the CSS's `@media (width < 40rem)` is the complement of.
+ */
+export const FROM_SM = "(min-width: 40rem)";
 
 /**
  * Drives the search dock from the scroll position (window.scrollY), and writes down only what changes.
@@ -150,6 +162,7 @@ export function useSearchDock({
     if (!dock || !host || !bar) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     const wide = window.matchMedia(WIDE);
+    const fromSm = window.matchMedia(FROM_SM);
     let alive = true;
     let raf = 0;
     let lastP = -1;
@@ -252,7 +265,7 @@ export function useSearchDock({
       if (contentBottom !== undefined && lastBottom !== undefined && contentBottom > lastBottom + 0.5) grew = true;
       lastBottom = contentBottom;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
-      const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+      const barTop = lengthOr(getComputedStyle(bar).top, 8);
       insets = { pin, barTop };
       maxScroll = scrollLimit();
       const isWide = wide.matches;
@@ -265,6 +278,8 @@ export function useSearchDock({
         // The hero's field is in the flow below 64rem, so its box is its place in the page.
         fieldBottom: isWide ? undefined : dock.getBoundingClientRect().bottom + window.scrollY,
         contentBottom,
+        // A phone's bar is a sheet from the top edge of the screen, which covers the line unless it is off the screen.
+        clearTo: fromSm.matches ? undefined : 0,
       });
       if (!isWide) return;
       const slot = slotRef.current;
@@ -491,7 +506,7 @@ export function useSearchDock({
       // built from can move with the height, and those are style reads.
       if (width === document.documentElement.clientWidth) {
         const pin = Number.parseFloat(getComputedStyle(dock).top) || 10;
-        const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+        const barTop = lengthOr(getComputedStyle(bar).top, 8);
         if (pin === insets.pin && barTop === insets.barTop) {
           // How far the page can go changes with the height, and the position may move with it: no direction.
           maxScroll = scrollLimit();
@@ -530,6 +545,7 @@ export function useSearchDock({
     // Capturing, before the field's own handler renders the board that the key changes.
     document.addEventListener("input", onInput, true);
     wide.addEventListener("change", remeasure);
+    fromSm.addEventListener("change", remeasure);
     reduce.addEventListener("change", remeasure);
     void document.fonts?.ready.then(remeasure);
     const ro = new ResizeObserver(remeasure);
@@ -554,6 +570,7 @@ export function useSearchDock({
       document.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("input", onInput, true);
       wide.removeEventListener("change", remeasure);
+      fromSm.removeEventListener("change", remeasure);
       reduce.removeEventListener("change", remeasure);
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
@@ -658,10 +675,7 @@ export function CompactHeader({
           relative`, and a lead that is one would be the box the verdict's edges are measured from (a
           20px box, which left the verdict none).
         */}
-        <span
-          data-bar-verdict
-          className="max-sm:pointer-events-none max-sm:absolute max-sm:top-1/2 max-sm:right-[6.75rem] max-sm:left-11 max-sm:-translate-y-1/2 max-sm:overflow-hidden max-sm:text-ellipsis max-sm:whitespace-nowrap"
-        >
+        <span data-bar-verdict>
           {/*
             Under 1024px the lead cannot give the long form the room (a phone's slot is 134px at 320; from 640px
             the lead would squeeze the field in the slot), so the compact form is drawn and the short one is read by

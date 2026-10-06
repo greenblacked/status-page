@@ -123,6 +123,7 @@ export function dockGeometry({
   barHeight,
   fieldBottom = Number.POSITIVE_INFINITY,
   contentBottom = Number.NEGATIVE_INFINITY,
+  clearTo = barTop - BAR_RISE,
 }: {
   wide: boolean;
   reduce: boolean;
@@ -131,6 +132,12 @@ export function dockGeometry({
   barHeight: number;
   fieldBottom?: number;
   contentBottom?: number;
+  /**
+   * Below 64rem: the viewport position (px from the top) the hero's last line must have risen to before the bar comes
+   * up. The pill's is its top less the rise it slides in from (the default). A bar that is a sheet from the top edge
+   * of the screen (a phone's) covers everything down to its bottom edge, so the line must be off the screen: 0.
+   */
+  clearTo?: number;
 }): DockGeometry {
   if (wide) {
     const range = WIDE_RANGE;
@@ -145,7 +152,7 @@ export function dockGeometry({
     };
   }
   // A page with no hero line to wait for brings the bar up at the top.
-  const barStart = Math.max(0, contentBottom - (barTop - BAR_RISE));
+  const barStart = Math.max(0, contentBottom - clearTo);
   return {
     wide,
     start: barStart,

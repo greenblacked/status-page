@@ -442,6 +442,46 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         }
       });
 
+      test("covers the strip above the bar on a phone: nothing of the page shows over or beside it", async ({
+        page,
+      }, testInfo) => {
+        test.slow();
+        await openBoard(page, background, { steady: true });
+        test.skip(
+          await page.evaluate(() => matchMedia("(min-width: 40rem)").matches),
+          "the bar is a sheet from the top edge on a phone only; from 640px it is a pill under the top",
+        );
+        const { width } = viewportOf(page);
+        const fieldBottom = await page
+          .locator(".search-dock")
+          .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
+        await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
+        await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+        await controlBar(page).evaluate((bar) =>
+          Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
+        );
+        const found = await controlBar(page).evaluate((bar, vw) => {
+          const box = bar.getBoundingClientRect();
+          // What is on top at the screen's top edge, at its left, middle and right, and at the bar's lower corners.
+          const covered = [2, vw / 2, vw - 2].flatMap((x) =>
+            [1, box.bottom / 2, box.bottom - 12].map((y) => {
+              const top = document.elementFromPoint(x, y);
+              return top && bar.contains(top)
+                ? ""
+                : `(${Math.round(x)}, ${Math.round(y)}): ${top?.tagName ?? "nothing"}`;
+            }),
+          );
+          return { top: box.top, left: box.left, right: box.right, covered: covered.filter(Boolean) };
+        }, width);
+        const problems: string[] = [];
+        if (found.top > 0.5) problems.push(`the bar starts ${found.top}px down, leaving a strip above it`);
+        if (found.left > 0.5 || found.right < width - 0.5) {
+          problems.push(`the bar spans ${found.left} to ${found.right} of a ${width}px screen`);
+        }
+        problems.push(...found.covered.map((spot) => `something else is on top at ${spot}`));
+        await expectNone(page, testInfo, "strip above the bar", problems);
+      });
+
       test("fits the Details sheet and Settings to the screen, and closes them", async ({ page }, testInfo) => {
         test.slow();
         await openWithFixture(page, background, fixtureBoard);

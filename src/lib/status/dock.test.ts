@@ -159,6 +159,23 @@ describe("dockGeometry", () => {
     expect(g.revealFrom).toBeGreaterThan(g.barStart);
   });
 
+  it("below 64rem, brings a bar that is a sheet from the screen's top up once the line is off the screen", () => {
+    // The phone's bar covers everything down to its bottom edge, so its top is 0 and the line must be out of sight.
+    const g = dockGeometry({
+      ...measured,
+      barTop: 0,
+      barHeight: 56,
+      wide: false,
+      reduce: false,
+      contentBottom: 920,
+      fieldBottom: 1000,
+      clearTo: 0,
+    });
+    expect(g.barStart).toBe(920);
+    // The bar's bottom edge is the same 56 it was as a pill 8 down and 48 tall.
+    expect(g.revealFrom).toBe(944);
+  });
+
   it("below 64rem, moves both thresholds with the bar's top, as the safe area does on a notch", () => {
     const flat = dockGeometry({ ...measured, wide: false, reduce: false, contentBottom: 920, fieldBottom: 1000 });
     const notch = dockGeometry({

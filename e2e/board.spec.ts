@@ -863,6 +863,7 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
       reduced: matchMedia("(prefers-reduced-motion: reduce)").matches,
       barTop: Number.parseFloat(getComputedStyle(bar).top),
       barHeight: bar.offsetHeight,
+      phone: !matchMedia("(min-width: 40rem)").matches,
       dockStick: Number.parseFloat(getComputedStyle(dock).top),
       fieldBottom: dock.getBoundingClientRect().bottom + window.scrollY,
       contentBottom:
@@ -886,7 +887,8 @@ async function dockOffsets(page: Page): Promise<DockOffsets> {
   // Below 64rem the bar is fixed and comes up once the hero's last line has scrolled out from under the highest
   // point the sliding bar reaches. The hero's field is in the flow: the bar's copy can show once its bottom edge
   // is level with the bar's, and the hook turns that on a few px (DOCK_HYSTERESIS) past it.
-  const barStart = Math.max(0, measured.contentBottom - (measured.barTop - BAR_RISE));
+  // On a phone the bar is a sheet from the screen's top edge: the line must be off the screen, not just above a pill.
+  const barStart = Math.max(0, measured.contentBottom - (measured.phone ? 0 : measured.barTop - BAR_RISE));
   const revealFrom = measured.fieldBottom - (measured.barTop + measured.barHeight);
   return {
     wide: false,
@@ -965,6 +967,13 @@ async function scrollDeep(page: Page, offsets: DockOffsets & { limit: number }):
   return y;
 }
 
+/**
+ * Where the hero's last line has to be above for the bar not to cover it: the bar's top edge, but never below the
+ * screen's top. A phone's bar is a sheet from the top edge that slides in from above the screen, so while it comes in
+ * its top is above 0, and the line must be off the screen, not just above that.
+ */
+const clearOfBar = (barTop: number) => Math.max(barTop, 0);
+
 test("keeps the floating bar clear of the live bar as it appears", async ({ page }) => {
   test.slow();
   await page.goto("/");
@@ -980,10 +989,10 @@ test("keeps the floating bar clear of the live bar as it appears", async ({ page
   const stops = await sweepDock(page, up);
   const first = stops.find((stop) => stop.shown === "true");
   expect(first, "the bar never showed").toBeDefined();
-  expect(first?.liveBottom ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(first?.barTop ?? 0);
+  expect(first?.liveBottom ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(clearOfBar(first?.barTop ?? 0));
   // And it stays clear of it for the rest of the way down.
   for (const stop of stops.filter((stop) => stop.shown === "true")) {
-    expect(stop.liveBottom, `at ${stop.y}`).toBeLessThanOrEqual(stop.barTop);
+    expect(stop.liveBottom, `at ${stop.y}`).toBeLessThanOrEqual(clearOfBar(stop.barTop));
   }
 });
 
@@ -1016,8 +1025,11 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
         await page.evaluate((px) => {
           document.documentElement.style.fontSize = `${px}px`;
         }, rootPx);
-        // The bar is 3rem tall: once it is, the layout has taken the size, and the dock measures on the frame after.
-        await expect.poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight)).toBe(3 * rootPx);
+        // The bar is 3rem tall (a phone's, a sheet from the top edge, 3.5rem): once it is, the layout has taken the
+        // size, and the dock measures on the frame after.
+        await expect
+          .poll(() => controlBar(page).evaluate((bar) => (bar as HTMLElement).offsetHeight))
+          .toBe((width < 640 ? 3.5 : 3) * rootPx);
       }
       // The page's own refetch changes the live line's height for a moment: sweep clear of it.
       await awayFromRefetch(page);
@@ -1034,7 +1046,8 @@ test("leaves the bar room to come up on its own under the hero's last line, at e
       const first = shown[0];
       expect(first, `${at}: the bar never showed`).toBeDefined();
       // The bar never sits over the hero's last line, from the first stop it shows at.
-      for (const stop of shown) expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(stop.barTop + 0.5);
+      for (const stop of shown)
+        expect(stop.contentBottom, `${at}, ${stop.y}`).toBeLessThanOrEqual(clearOfBar(stop.barTop) + 0.5);
       // Nothing in the bar to cover the line with: the field is hidden going down, at every stop.
       for (const stop of stops) {
         expect(stop.revealed, `${at}, ${stop.y}`).toBe(false);
@@ -1145,7 +1158,7 @@ test("takes the bar down when the hero grows under it, at every width below 64re
         barTop: bar.getBoundingClientRect().top,
       };
     });
-    if (shown === "true") expect(contentBottom, at).toBeLessThanOrEqual(barTop + 0.5);
+    if (shown === "true") expect(contentBottom, at).toBeLessThanOrEqual(clearOfBar(barTop) + 0.5);
   }
   expect(Math.max(...grew), "the longer hero never made the page taller").toBeGreaterThan(8);
 });
@@ -2651,8 +2664,14 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
       return { left, right, top, bottom };
     };
     const bar = document.querySelector('section[aria-label="Board controls"]');
+    const barBox = rect(bar);
+    const style = getComputedStyle(bar as Element);
     return {
-      bar: rect(bar),
+      bar: barBox,
+      content: {
+        top: barBox.top + Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.paddingTop),
+        bottom: barBox.bottom - Number.parseFloat(style.borderBottomWidth) - Number.parseFloat(style.paddingBottom),
+      },
       field: rect(document.querySelector(".bar-search .search-field")),
       dot: rect(bar?.querySelector("p") ?? null),
       // The first button the bar draws: below 640px the day/night switch is not (display: none), and has no box.
@@ -2670,8 +2689,9 @@ test("search reveal: puts the revealed field inside the bar, between its dot and
   expect(boxes.field.left).toBeGreaterThanOrEqual(boxes.dot.right - near);
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.firstButton.left + near);
   expect(boxes.field.right).toBeLessThanOrEqual(boxes.refresh.left + near);
-  // Centred in the bar's height, not just inside it.
-  const off = (boxes.field.top + boxes.field.bottom) / 2 - (boxes.bar.top + boxes.bar.bottom) / 2;
+  // Centred in the bar's content, not just inside it: on a phone the bar is a sheet from the top edge of the screen,
+  // and the content is the 3rem below its padding (the safe area and 0.5rem), not the whole box.
+  const off = (boxes.field.top + boxes.field.bottom) / 2 - (boxes.content.top + boxes.content.bottom) / 2;
   expect(Math.abs(off)).toBeLessThanOrEqual(near);
   // The hero's field was below the bar, where the page puts it.
   expect(before).not.toBeNull();
