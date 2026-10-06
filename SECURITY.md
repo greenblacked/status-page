@@ -25,7 +25,7 @@ Only the current `main` branch is supported. There are no release branches.
 In scope:
 
 - The application: the server functions in `src/lib/status/`, the vendor collectors and their parsing of untrusted vendor payloads, and the rendered board
-- The CI and automation in `.github/workflows/` and `scripts/ci/`, including anything that could let a pull request from a fork gain write access. `ci-triage.yml` runs with a write token by design and must never execute pull request code.
+- The CI and automation in `.github/workflows/` and `scripts/ci/`, including anything that could let a pull request from a fork gain write access. `ci-triage.yml` and `rerun-infra.yml` run with a write token by design and must never execute pull request code.
 - The deployment: anything that could expose the Cloudflare API token that `deploy.yml` uses, or let code other than `stage` or `main` reach the deployed Worker
 - The response headers the board sends (`src/lib/security-headers.ts`)
 - Dependency vulnerabilities that are actually reachable from Status Page's code
