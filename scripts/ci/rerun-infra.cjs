@@ -11,6 +11,7 @@
 // re-run again, so a real outage ends in a red run rather than a loop.
 const FIRST_ATTEMPT = 1;
 const RUN_CONCLUSIONS = new Set(["failure", "cancelled"]);
+const PULL_REQUEST = "pull_request";
 // Runs of a branch head, where an older commit must never replace a newer one.
 const BRANCH_EVENTS = new Set(["push", "workflow_dispatch"]);
 const BAD_JOB = new Set(["failure", "cancelled", "timed_out", "startup_failure"]);
@@ -105,21 +106,42 @@ function decide({ run, jobs, annotations = {} }) {
   return { rerun: true, reason: `${causes.length} job(s) lost to the runner`, jobs: sorted };
 }
 
+// True when `other` is a run for the pull request that `run` ran for. GitHub
+// lists the pull requests of a run in pull_requests[], but leaves it empty for
+// a pull request from a fork. There the head repository and branch name the
+// pull request instead: the head commit cannot, because a newer push to the
+// same pull request is exactly the run that replaces this one.
+function samePullRequest(run, other) {
+  if (other.event !== PULL_REQUEST) return false;
+  const numbers = (run.pull_requests || []).map((pr) => pr.number);
+  if (numbers.length > 0) return (other.pull_requests || []).some((pr) => numbers.includes(pr.number));
+  return other.head_branch === run.head_branch && other.head_repository?.full_name === run.head_repository?.full_name;
+}
+
 // A run that a newer one replaced (a pull request run is cancelled for it, a
 // queued deploy is dropped for it) looks just like a starved one. Re-running it
-// would fight the newer run, or deploy an older commit over a newer one. Any
-// newer run of the same workflow on the same branch counts, whatever started it:
-// release.yml dispatches Deploy by hand over a queued push run. A push or
-// dispatched run is also left alone once its commit is no longer the branch head.
+// would fight the newer run, or deploy an older commit over a newer one.
+//  - A pull request run is replaced only by a newer pull request run of the same
+//    workflow for the same pull request. A dispatched or push run of the branch
+//    never shows on the pull request or satisfies its required checks, so it
+//    replaces nothing there.
+//  - A push or dispatched run is replaced by any newer run of the same workflow
+//    on the same branch, whatever started it: release.yml dispatches Deploy by
+//    hand over a queued push run. It is also left alone once its commit is no
+//    longer the branch head.
 async function isSuperseded(github, owner, repo, run) {
+  const forPullRequest = run.event === PULL_REQUEST;
   const { data } = await github.rest.actions.listWorkflowRuns({
     owner,
     repo,
     workflow_id: run.workflow_id,
     branch: run.head_branch,
+    ...(forPullRequest ? { event: PULL_REQUEST } : {}),
     per_page: 20,
   });
-  if (data.workflow_runs.some((other) => other.run_number > run.run_number)) return "a newer run exists";
+  const newer = data.workflow_runs.filter((other) => other.run_number > run.run_number);
+  if (forPullRequest) return newer.some((other) => samePullRequest(run, other)) ? "a newer run exists" : undefined;
+  if (newer.length > 0) return "a newer run exists";
   if (!BRANCH_EVENTS.has(run.event)) return undefined;
   try {
     const { data: branch } = await github.rest.repos.getBranch({ owner, repo, branch: run.head_branch });

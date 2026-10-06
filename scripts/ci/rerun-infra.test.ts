@@ -14,6 +14,8 @@ type Run = {
   head_branch: string;
   head_sha: string;
   event: string;
+  pull_requests?: { number: number }[];
+  head_repository?: { full_name: string };
 };
 type Verdict = { rerun: boolean; reason: string; jobs: { name: string; kind: string; why: string }[] };
 type Rerun = {
@@ -195,6 +197,7 @@ let annotations: Record<number, Annotation[]>;
 let runs: Run[];
 let reruns: number[];
 let asked: number[];
+let listed: object[];
 let head: string | undefined;
 
 function fakeGithub() {
@@ -205,7 +208,10 @@ function fakeGithub() {
     ) => (await fn(params)).data,
     rest: {
       actions: {
-        listWorkflowRuns: async () => ({ data: { workflow_runs: runs } }),
+        listWorkflowRuns: async (params: object) => {
+          listed.push(params);
+          return { data: { workflow_runs: runs } };
+        },
         listJobsForWorkflowRun: async () => ({ data: jobs }),
         reRunWorkflowFailedJobs: async ({ run_id }: { run_id: number }) => {
           reruns.push(run_id);
@@ -242,6 +248,7 @@ describe("rerunInfra", () => {
     runs = [run];
     reruns = [];
     asked = [];
+    listed = [];
     head = run.head_sha;
   });
 
@@ -274,6 +281,48 @@ describe("rerunInfra", () => {
     runs = [run, { ...run, id: 501, run_number: 8, event: "workflow_dispatch" }];
     await call(run);
     expect(reruns).toEqual([]);
+  });
+
+  const prRun: Run = { ...run, event: "pull_request", pull_requests: [{ number: 12 }] };
+
+  it("re-runs a pull request run when a dispatched run is newer on the same branch", async () => {
+    runs = [prRun, { ...run, id: 501, run_number: 8, event: "workflow_dispatch", pull_requests: [{ number: 12 }] }];
+    await call(prRun);
+    expect(reruns).toEqual([500]);
+  });
+
+  it("re-runs a pull request run when a push run is newer on the same branch", async () => {
+    runs = [prRun, { ...run, id: 501, run_number: 8, event: "push", pull_requests: [{ number: 12 }] }];
+    await call(prRun);
+    expect(reruns).toEqual([500]);
+  });
+
+  it("re-runs a pull request run when a newer run belongs to another pull request", async () => {
+    runs = [prRun, { ...prRun, id: 501, run_number: 8, pull_requests: [{ number: 13 }] }];
+    await call(prRun);
+    expect(reruns).toEqual([500]);
+  });
+
+  it("leaves a pull request run when a newer run of the same pull request exists", async () => {
+    runs = [prRun, { ...prRun, id: 501, run_number: 8, head_sha: "bbb" }];
+    await call(prRun);
+    expect(reruns).toEqual([]);
+  });
+
+  it("matches a fork pull request run by head repository and branch", async () => {
+    const fork: Run = { ...prRun, pull_requests: [], head_repository: { full_name: "f/r" } };
+    runs = [fork, { ...fork, id: 501, run_number: 8, head_sha: "bbb" }];
+    await call(fork);
+    expect(reruns).toEqual([]);
+
+    runs = [fork, { ...fork, id: 501, run_number: 8, head_repository: { full_name: "g/r" } }];
+    await call(fork);
+    expect(reruns).toEqual([500]);
+  });
+
+  it("asks only for pull request runs when it looks for a newer pull request run", async () => {
+    await call(prRun);
+    expect(listed).toEqual([expect.objectContaining({ event: "pull_request", branch: "dev" })]);
   });
 
   it("leaves a push run whose commit is no longer the branch head", async () => {

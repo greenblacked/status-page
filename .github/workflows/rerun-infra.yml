@@ -16,10 +16,12 @@ name: Re-run infrastructure failures
 # to re-run the failed jobs of the run.
 #
 # The re-run is attempt 2, and a run on attempt 2 is never re-run again, so a
-# run that keeps failing ends red. A run that a newer run of the same workflow
-# and branch replaced, or a push run that is no longer the branch head, is left
-# alone. workflow_run fires only for workflow files on the default branch, so
-# this starts working once it is merged to main.
+# run that keeps failing ends red. A pull request run that a newer pull request
+# run for the same pull request replaced is left alone. So is a push or
+# dispatched run that any newer run of the same workflow on its branch replaced,
+# or whose commit is no longer the branch head. workflow_run fires only for
+# workflow files on the default branch, so this starts working once it is merged
+# to main.
 
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] never checks out or runs PR code, see above
