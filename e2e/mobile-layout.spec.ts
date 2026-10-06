@@ -1,4 +1,4 @@
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, TestInfo } from "@playwright/test";
 import { HIDE_DOWN_PX, REVEAL_UP_PX } from "../src/lib/status/dock.ts";
 import { fixtureBoard, longHeroBoard } from "./fixture-board";
 import {
@@ -397,11 +397,19 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await expect(bar).toHaveAttribute("inert", "");
       });
 
-      test("draws the bar's status text in the room between its glyph and its buttons, at every phone width", async ({
-        page,
-      }, testInfo) => {
+      // The bar's status text fills the room between its glyph and its buttons. `alerts` false is a browser that cannot
+      // show page alerts (iPhone Safari outside a Home Screen app has no Notification API): its bar draws Refresh alone,
+      // and the text has that button's room too, not the room the missing Alerts button would have had.
+      const drawsStatusText = async (page: Page, testInfo: TestInfo, alerts: boolean) => {
         test.slow();
+        if (!alerts) {
+          await page.addInitScript(() => {
+            // @ts-expect-error: a browser with no Notification API
+            delete window.Notification;
+          });
+        }
         await openBoard(page, background, { steady: true });
+        if (!alerts) await expect(page.locator("html")).toHaveAttribute("data-alerts", "unsupported");
         test.skip(
           await page.evaluate(() => matchMedia("(min-width: 40rem)").matches),
           "the verdict is laid over the bar's field slot on a phone only; from 640px it sits in the flow",
@@ -449,9 +457,25 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
           if (found.opacity < 0.99) problems.push(`its opacity is ${found.opacity}`);
           if (found.left < found.glyphRight - 0.5) problems.push("it runs under the glyph");
           if (found.right > found.buttonsLeft + 0.5) problems.push("it runs under the buttons");
+          // Not short of them either: the room that is free is the text's (the gap is the bar's own, 14px, plus a little).
+          if (found.buttonsLeft - found.right > 20) {
+            problems.push(`it stops ${Math.round(found.buttonsLeft - found.right)}px short of the buttons`);
+          }
           if (found.right > width) problems.push("it leaves the screen");
           await expectNone(page, testInfo, `${width}px: status text drawn`, problems);
         }
+      };
+
+      test("draws the bar's status text in the room between its glyph and its buttons, at every phone width", async ({
+        page,
+      }, testInfo) => {
+        await drawsStatusText(page, testInfo, true);
+      });
+
+      test("draws the bar's status text up to Refresh where the browser has no Alerts button", async ({
+        page,
+      }, testInfo) => {
+        await drawsStatusText(page, testInfo, false);
       });
 
       test("covers the strip above the bar on a phone: nothing of the page shows over or beside it", async ({

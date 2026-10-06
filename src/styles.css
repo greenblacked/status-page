@@ -903,6 +903,14 @@
   .compact-header[data-revealed] [data-bar-verdict] {
     opacity: 0;
   }
+
+  /*
+    A browser that cannot show page alerts (iPhone Safari outside a Home Screen app) draws no Alerts button, and
+    the verdict has its 2.75rem as well: it runs on to Refresh, the same 14px short of it as it is of Alerts.
+  */
+  :root[data-alerts="unsupported"] [data-bar-verdict] {
+    right: calc(max(var(--gutter), env(safe-area-inset-right)) + 4rem);
+  }
 }
 
 /*
