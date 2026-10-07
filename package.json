@@ -32,16 +32,16 @@
     "@tanstack/react-start": "1.168.59",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "lucide-react": "1.48.0",
+    "lucide-react": "1.49.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "seroval": "1.6.7",
+    "seroval": "1.6.8",
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@biomejs/biome": "2.5.14",
-    "@cloudflare/vite-plugin": "1.62.1",
+    "@cloudflare/vite-plugin": "1.62.2",
     "@cloudflare/workers-types": "5.20260929.1",
     "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
@@ -55,6 +55,6 @@
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "8.3.1",
     "vitest": "5.0.2",
-    "wrangler": "4.143.1"
+    "wrangler": "4.144.0"
   }
 }
