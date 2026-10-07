@@ -55,7 +55,7 @@ describe("SettingsDialog", () => {
 
   it("checks the chosen background and says what it is", () => {
     const hints: Record<Background, string> = {
-      quiet: "Flat paper. Nothing moves behind the page.",
+      quiet: "Paper with a faint grain. Nothing moves behind the page.",
       glass: "Frosted panels over a still glow, with a soft light that wanders across the cards.",
       full: "Adds the slow drift and glass lenses to Glass.",
     };

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 /** What each background says about itself, under the choice. */
 const BACKGROUND_LABEL: Record<Background, string> = { quiet: "Quiet", glass: "Glass", full: "Full" };
 const BACKGROUND_HINT: Record<Background, string> = {
-  quiet: "Flat paper. Nothing moves behind the page.",
+  quiet: "Paper with a faint grain. Nothing moves behind the page.",
   glass: "Frosted panels over a still glow, with a soft light that wanders across the cards.",
   full: "Adds the slow drift and glass lenses to Glass.",
 };

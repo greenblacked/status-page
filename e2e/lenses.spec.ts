@@ -248,7 +248,7 @@ test.describe("Settings, Background", () => {
     await expect(group).toBeVisible();
     await expect(group.getByRole("radio")).toHaveCount(3);
     await expect(group.getByRole("radio", { name: "Quiet" })).toBeChecked();
-    await expect(group.getByRole("status")).toHaveText("Flat paper. Nothing moves behind the page.");
+    await expect(group.getByRole("status")).toHaveText("Paper with a faint grain. Nothing moves behind the page.");
     // The first thing in the dialog, above the switches.
     const order = await page
       .getByRole("dialog")
