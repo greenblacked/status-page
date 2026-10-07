@@ -41,23 +41,16 @@ describe("the paper grain on Quiet", () => {
     return source.slice(at, source.indexOf(close, at));
   };
 
-  it("is one token holding a day tile and a night tile of our own feTurbulence noise", () => {
-    const token =
-      /--paper-grain: light-dark\(url\("data:image\/svg\+xml,([^"]+)"\), url\("data:image\/svg\+xml,([^"]+)"\)\);/.exec(
-        styles,
-      );
-    expect(token, "--paper-grain: light-dark(url(day), url(night))").not.toBeNull();
-    for (const tile of [token?.[1] ?? "", token?.[2] ?? ""]) {
-      const svg = decodeURIComponent(tile);
-      expect(svg).toContain("<feTurbulence");
-      expect(svg).toContain("stitchTiles='stitch'");
-      // Our own markup only: nothing fetched, nothing scripted, nothing that moves.
-      expect(svg).not.toMatch(/<(script|image|animate|set|foreignObject)|href=|url\((?!#)/i);
-      expect(svg.replace("http://www.w3.org/2000/svg", "")).not.toContain("http");
-    }
-    // The night tile is the fainter one: a smaller alpha slope in its colour matrix.
-    const slope = (tile: string) => Number(/ ([\d.]+) 0 0 0 -[\d.]+'/.exec(decodeURIComponent(tile))?.[1]);
-    expect(slope(token?.[2] ?? "")).toBeLessThan(slope(token?.[1] ?? ""));
+  it("is one token holding a day tile of our own feTurbulence noise and no night tile", () => {
+    const token = /--paper-grain: light-dark\(url\("data:image\/svg\+xml,([^"]+)"\), none\);/.exec(styles);
+    expect(token, "--paper-grain: light-dark(url(day), none)").not.toBeNull();
+    const svg = decodeURIComponent(token?.[1] ?? "");
+    expect(svg).toContain("<feTurbulence");
+    expect(svg).toContain("stitchTiles='stitch'");
+    // Our own markup only: nothing fetched, nothing scripted, nothing that moves.
+    expect(svg).not.toMatch(/<(script|image|animate|set|foreignObject)|href=|url\((?!#)/i);
+    expect(svg.replace("http://www.w3.org/2000/svg", "")).not.toContain("http");
+    // True black in the dark: the night half is none, so no pixel of the black is lit.
   });
 
   it("is painted as a tiled background on the root and the stage, never fixed or animated", () => {

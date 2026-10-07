@@ -1,7 +1,7 @@
 import { type AttributeTarget, type PreferenceStorage, REDUCE_GLASS_BOOT_SCRIPT } from "@/lib/status/glass";
 
 /**
- * The page behind the board: Quiet (warm paper with a faint grain, the default), Glass (frosted
+ * The page behind the board: Quiet (warm paper, with a faint grain by day, the default), Glass (frosted
  * panels over a still glow, with a light that wanders across the cards) or Full
  * (adds the drift and the glass lenses). The choice is a preference kept in this
  * browser; the CSS answers to a `data-background` attribute on <html>

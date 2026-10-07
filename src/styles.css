@@ -305,17 +305,18 @@
     mode, no animation. The same feTurbulence noise as the aurora's grain
     (background.css), but its alpha is baked into the tile, since a background
     layer has no opacity of its own, so the two cannot share one string. By day
-    the specks are pure white at 15% alpha at the most: they only lighten the paper,
-    by 3 levels of 255 at the most, under dark text, so no contrast can fall (white,
-    because a coloured speck at a tiny alpha is rounded down in the browser's
-    premultiplied 8-bit and would darken a channel by one). By night they are a warm
-    grey at 0.8% alpha or less: 2 levels on the black at the most, on about two
-    pixels in five, even subtler, since the black is OLED black. The tile is 160px
-    square, set where it is used. Switched off (none) under Increase Contrast,
-    forced colours, Reduce glass and print below, and on Glass and Full
-    (background.css), where the aurora has its own.
+    the specks are pure white at 16.5% alpha at the most (the noise rarely reaches 1,
+    so less in practice): they only lighten the paper, by 3 levels of 255 at the
+    most, under dark text, so no contrast can fall (white, because a coloured
+    speck at a tiny alpha is rounded down in the browser's premultiplied 8-bit and
+    would darken a channel by one). By night there is none (the night half is
+    none): the black is true black, so an OLED panel keeps every pixel off and
+    there is nothing to crush or smear while scrolling. The tile is 160px square,
+    set where it is used. Switched off (none) under Increase Contrast, forced
+    colours, Reduce glass and print below, and on Glass and Full (background.css),
+    where the aurora has its own.
   */
-  --paper-grain: light-dark(url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.24 0 0 0 -0.075'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.95 0 0 0 0 0.93 0 0 0 0 0.88 0.016 0 0 0 -0.0064'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"));
+  --paper-grain: light-dark(url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0.24 0 0 0 -0.075'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"), none);
 
   /* Page gutter (widened by the safe area on a notched screen), the desktop margin column, row height and hit target. */
   --gutter: 1rem;
