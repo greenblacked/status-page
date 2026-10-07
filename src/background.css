@@ -1,8 +1,10 @@
 /*
   The page behind the board, in three settings (Settings, Background):
 
-    Quiet  flat paper. The default, and the only thing the base file
-           (styles.css) knows about. Nothing here applies.
+    Quiet  warm paper with a faint static grain (--paper-grain). The
+           default, and the only thing the base file (styles.css) knows
+           about. Nothing here applies except the line below that turns
+           the paper's grain off.
     Glass  frosted panels over a still glow, and the light that wanders
            across the cards.
     Full   adds the slow drift, small glass bubbles that bend the aurora's
@@ -40,6 +42,11 @@
   @media (prefers-reduced-transparency: reduce) {
     @slot;
   }
+}
+
+/* The paper's grain (styles.css) is Quiet's. Glass and Full have the aurora, with its own grain, over the paper. */
+:root:is([data-background="glass"], [data-background="full"]) {
+  --paper-grain: none;
 }
 
 :root {
