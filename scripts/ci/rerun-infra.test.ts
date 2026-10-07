@@ -32,7 +32,7 @@ const CANCELED = "The operation was canceled.";
 const setup: Step[] = [{ name: "Set up job", conclusion: "success" }];
 const starved = (id: number, name = `browser tests (${id})`): Job => ({ id, name, conclusion: "failure", steps: [] });
 const cancelled = (id: number, name = `job ${id}`): Job => ({ id, name, conclusion: "cancelled", steps: [] });
-const tested = (id: number, name = "browser tests (chromium-desktop)"): Job => ({
+const tested = (id: number, name = "browser tests (windows)"): Job => ({
   id,
   name,
   conclusion: "failure",
@@ -147,7 +147,7 @@ describe("decide", () => {
     const annotations = { 1: said(NOT_ACQUIRED), 2: said("Process completed with exit code 1.") };
     const result = decide({ run, jobs, annotations });
     expect(result.rerun).toBe(false);
-    expect(result.reason).toContain("browser tests (chromium-desktop)");
+    expect(result.reason).toContain("browser tests (windows)");
   });
 
   it("does not re-run on attempt 2", () => {
