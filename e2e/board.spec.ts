@@ -4233,7 +4233,8 @@ test.describe("contrast on the flat fills", () => {
 });
 
 /**
- * Quiet's paper grain (--paper-grain, src/styles.css): a faint static tile on the root and the stage. These read what
+ * Quiet's paper grain (--paper-grain, src/styles.css): a faint static tile on the root and the stage by day, none by
+ * night (true black stays true black). These read what
  * the browser really paints: the computed images, and then the pixels of the bare paper (the content hidden, the
  * strip that contrast tests above use not applied, since it removes background images).
  */
@@ -4329,55 +4330,58 @@ test.describe("the paper grain on Quiet", () => {
     });
   }
 
+  // By night the paper is true black: no tile, and not one lit pixel on the page.
+  test("paints no tile by night: the black stays one true black", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await open(page);
+    expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+    const { paper } = await tokens(page);
+    const seen = await paperPixels(page);
+    expect(seen, "the bare night page is one colour").toHaveLength(1);
+    expect(seen[0].rgb).toEqual(paper);
+  });
+
+  // The most the grain may move the day paper: about 3 levels of 255.
+  const MOST = 3;
+
+  test("paints a tile on the root and the stage, tiled and scrolling with the page (light)", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await open(page);
+    const seen = await roots(page);
+    expect(seen.html).toMatch(GRAIN);
+    expect(seen.stage).toMatch(GRAIN);
+    // Not fixed: a fixed background repaints on every scroll frame on a phone.
+    expect(seen.attachment).toBe("scroll");
+  });
+
+  test(`moves the ground by at most ${MOST} levels and keeps every text colour at 4.5:1 (light)`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await open(page);
+    const { paper, text } = await tokens(page);
+    const seen = await paperPixels(page);
+    // It is there: more than one colour on a bare page, and some of the paper really is moved.
+    expect(seen.length).toBeGreaterThan(2);
+    let moved = 0;
+    let total = 0;
+    for (const { rgb, count } of seen) {
+      total += count;
+      const delta = Math.max(...rgb.map((v, i) => Math.abs(v - paper[i])));
+      expect(delta, `a pixel ${rgb} against the paper ${paper}`).toBeLessThanOrEqual(MOST);
+      if (delta > 0) moved += count;
+    }
+    expect(moved / total, "the share of the paper the grain touches").toBeGreaterThan(0.05);
+    // Against the worst pixel of the real paper, not the flat colour the axe checks see.
+    for (const [name, colour] of Object.entries(text)) {
+      const flat = ratio(colour, paper);
+      const worst = Math.min(...seen.map(({ rgb }) => ratio(colour, rgb)));
+      expect(worst, `${name} on the worst grain pixel (flat paper ${flat.toFixed(2)})`).toBeGreaterThanOrEqual(4.5);
+      // By day the grain only lightens, under dark text, so it cannot lower any ratio.
+      expect(worst, `${name} against its flat ratio`).toBeGreaterThanOrEqual(flat - 0.005);
+    }
+  });
+
   for (const colorScheme of ["light", "dark"] as const) {
-    // The most the grain may move the ground: about 3 levels of 255 on the day paper, about 2 on the night black.
-    const MOST = colorScheme === "light" ? 3 : 2;
-
-    test(`paints a tile on the root and the stage, tiled and scrolling with the page (${colorScheme})`, async ({
-      page,
-    }) => {
-      await page.emulateMedia({ colorScheme });
-      await open(page);
-      const seen = await roots(page);
-      expect(seen.html).toMatch(GRAIN);
-      expect(seen.stage).toMatch(GRAIN);
-      // Not fixed: a fixed background repaints on every scroll frame on a phone.
-      expect(seen.attachment).toBe("scroll");
-    });
-
-    test(`moves the ground by at most ${MOST} levels and keeps every text colour at 4.5:1 (${colorScheme})`, async ({
-      page,
-    }) => {
-      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
-      await open(page);
-      const { paper, text } = await tokens(page);
-      const seen = await paperPixels(page);
-      // It is there: more than one colour on a bare page, and some of the paper really is moved.
-      expect(seen.length).toBeGreaterThan(2);
-      let moved = 0;
-      let total = 0;
-      for (const { rgb, count } of seen) {
-        total += count;
-        const delta = Math.max(...rgb.map((v, i) => Math.abs(v - paper[i])));
-        expect(delta, `a pixel ${rgb} against the paper ${paper}`).toBeLessThanOrEqual(MOST);
-        if (delta > 0) moved += count;
-      }
-      expect(moved / total, "the share of the paper the grain touches").toBeGreaterThan(0.05);
-      // Against the worst pixel of the real paper, not the flat colour the axe checks see.
-      for (const [name, colour] of Object.entries(text)) {
-        const flat = ratio(colour, paper);
-        const worst = Math.min(...seen.map(({ rgb }) => ratio(colour, rgb)));
-        expect(worst, `${name} on the worst grain pixel (flat paper ${flat.toFixed(2)})`).toBeGreaterThanOrEqual(4.5);
-        // By day the grain only lightens, under dark text, so it cannot lower any ratio; by night it may take a hair.
-        expect(worst, `${name} against its flat ratio`).toBeGreaterThanOrEqual(
-          colorScheme === "light" ? flat - 0.005 : flat - 0.25,
-        );
-      }
-    });
-
-    test(`is off under Increase Contrast, forced colours, print and Reduce glass (${colorScheme})`, async ({
-      page,
-    }) => {
+    test(`is off under Increase Contrast, forced colours and print (${colorScheme})`, async ({ page }) => {
       await page.emulateMedia({ colorScheme, contrast: "more" });
       await open(page);
       expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
@@ -4390,7 +4394,8 @@ test.describe("the paper grain on Quiet", () => {
       expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
 
       await page.emulateMedia({ colorScheme, media: "screen" });
-      expect((await roots(page)).stage).toMatch(GRAIN);
+      // Back on screen: the grain returns by day, and by night there never was one.
+      expect((await roots(page)).stage).toMatch(colorScheme === "light" ? GRAIN : /^none$/);
     });
 
     test(`is off with the board's own Reduce glass switch on (${colorScheme})`, async ({ page }) => {
@@ -4400,6 +4405,18 @@ test.describe("the paper grain on Quiet", () => {
       expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
     });
   }
+
+  test("is off under the system's Reduce Transparency setting (light)", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "only Chromium can emulate prefers-reduced-transparency");
+    await page.emulateMedia({ colorScheme: "light" });
+    await open(page);
+    expect((await roots(page)).stage).toMatch(GRAIN);
+    const session = await page.context().newCDPSession(page);
+    await session.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-transparency", value: "reduce" }],
+    });
+    expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+  });
 
   test("is Quiet's only: Glass keeps its own aurora grain and no paper grain", async ({ page }) => {
     await open(page, { background: "glass" });
