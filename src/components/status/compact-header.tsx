@@ -723,18 +723,20 @@ export function CompactHeader({
         */}
         <span data-bar-verdict>
           {/*
-            Under 1024px the lead cannot give the long form the room (a phone's slot is 156px at 320; from 640px
-            the lead would squeeze the field in the slot), so the compact form is drawn and the short one is read by
-            screen readers. On a phone the compact form takes a second line (the row is 4rem tall, two 18px lines
-            fit) before it takes an ellipsis: at 320px the slot is 156px, which holds the longest form in Inter but
-            not in the fallback face the first view is drawn in (Arial's "Nothing needs a look" is 177px). From
-            640px it stays on one line and ends in an ellipsis if it does not fit.
+            Under 1024px the lead cannot give the long form the room (the verdict's box is 156px at 320; the field's
+            slot under it is 134px; from 640px the lead would squeeze the field in the slot), so the compact form is
+            drawn and the short one is read by screen readers. The count stays with its word and the dot with the word
+            before it (no-break spaces), so a wrap falls after the dot, never before it or between a number and its
+            noun. On a phone the compact form takes a second line (the row is 4rem tall, two 18px lines fit) before
+            it takes an ellipsis: at 320px the box is 156px, which holds the longest form in Inter but not in the
+            fallback face the first view is drawn in (Arial's "Nothing needs a look" is 177px). From 640px it stays
+            on one line and ends in an ellipsis if it does not fit.
           */}
           <span
             aria-hidden
             className="block overflow-hidden text-ellipsis whitespace-nowrap text-row leading-[18px] lg:hidden max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:[text-wrap:balance]"
           >
-            {verdict.compact}
+            {verdict.compact.replace(/(\d) /g, "$1\u00a0").replace(/ ·/g, "\u00a0·")}
           </span>
           <span className="block overflow-hidden text-ellipsis whitespace-nowrap text-row leading-[18px] max-lg:sr-only">
             {verdict.short}

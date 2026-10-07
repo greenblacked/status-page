@@ -521,7 +521,7 @@ export function longHeroBoard(now: number): BoardSnapshot {
 }
 
 /**
- * The widest compact verdict the floating bar draws, in words: fifteen services need a look and the most of them
+ * The widest compact verdict the floating bar draws, in words: fifteen services need a look and most of them
  * are degraded, the longest state word ("10 degraded · 5 more").
  */
 export function degradedLedBoard(now: number): BoardSnapshot {

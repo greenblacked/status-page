@@ -450,7 +450,10 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               right: box?.right ?? 0,
               glyphRight: glyph?.getBoundingClientRect().right ?? 0,
               buttonsLeft: Math.min(...buttons.map((button) => button.getBoundingClientRect().left)),
-              clipped: text ? text.scrollWidth > text.clientWidth + 1 : false,
+              clipped: text
+                ? text.scrollWidth > text.clientWidth + 1 ||
+                  (getComputedStyle(text).webkitLineClamp !== "none" && text.scrollHeight > text.clientHeight + 1)
+                : false,
               opacity,
             };
           });
@@ -832,7 +835,9 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
                 const style = getComputedStyle(element);
                 const cutsOff = style.textOverflow === "ellipsis" || /hidden|clip/.test(style.overflowX);
                 if (!cutsOff || element.clientWidth === 0) continue;
-                if (element.scrollWidth <= element.clientWidth + 1) continue;
+                // A line-clamped text is cut vertically, so its width does not show it: its height does.
+                const clampedTall = style.webkitLineClamp !== "none" && element.scrollHeight > element.clientHeight + 1;
+                if (element.scrollWidth <= element.clientWidth + 1 && !clampedTall) continue;
                 const box = element.getBoundingClientRect();
                 const opacity = Number(style.opacity);
                 if (box.width <= 1 || opacity < 0.05 || style.visibility === "hidden") continue;
@@ -841,7 +846,11 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
                 // A service's name, or the words of a release, may be cut short on purpose: the Details hold them whole.
                 if (element.closest("[data-release-line]") || element.closest("h3")) continue;
                 if (status.test(text) && (inStatusPlace || element.children.length === 0)) {
-                  found.push(`"${text.slice(0, 50)}" is cut at ${element.clientWidth}px of ${element.scrollWidth}px`);
+                  found.push(
+                    clampedTall
+                      ? `"${text.slice(0, 50)}" is cut at ${element.clientHeight}px of ${element.scrollHeight}px tall`
+                      : `"${text.slice(0, 50)}" is cut at ${element.clientWidth}px of ${element.scrollWidth}px`,
+                  );
                 }
               }
               return found;
