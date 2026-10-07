@@ -6,6 +6,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-07
+
 ### Added
 
 - **Day or night, your choice.** A sun-and-moon switch next to Notifications and Refresh (and in the floating bar, from 640px wide) turns the board to warm paper or true black. Until you press it, your own clock decides, night from 20:00 to 06:00, checked every minute and when you return to the tab; once you press it your choice stays in this browser and reaches your other tabs. The board is set before it first paints, so there is no flash of the other one, and the browser's toolbar colour follows it. With scripts off the board still follows your system's light or dark setting.
@@ -243,7 +245,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/greenblacked/status-page/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/greenblacked/status-page/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/greenblacked/status-page/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/greenblacked/status-page/compare/v0.3.0...v0.4.0
