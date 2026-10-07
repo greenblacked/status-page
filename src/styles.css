@@ -907,8 +907,9 @@
 /*
   Under 40rem the short verdict sits where the bar's field shows: laid over the slot, between the glyph and the
   buttons (compact-header.tsx), against the bar's own box, so its edges are the glyph's right and the buttons' left
-  (1.875rem and 6.375rem in from the content's sides) and it is centred on the 4rem row, below the safe area. It
-  truncates with an ellipsis. It gives way while the field is revealed
+  (1.875rem and 6.375rem in from the content's sides) and it is centred on the 4rem row, below the safe area. A
+  form too wide for one line (the fallback face is wider than Inter, and a 320px screen leaves 156px) takes a
+  second line, balanced, and only a form too wide for two ends in an ellipsis. It gives way while the field is revealed
   (data-revealed, written from the dock's state). Opacity only, over the same time as the field leaving (--t-quick),
   and the field coming in takes a little longer, so the two are never both there at full strength.
 */

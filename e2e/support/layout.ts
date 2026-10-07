@@ -48,7 +48,7 @@ export async function leadSteady(page: Page): Promise<void> {
 }
 
 /** Presses Refresh and waits for the board it brings, so a served fixture replaces the server's first render. */
-export async function refreshInto(page: Page): Promise<void> {
+export async function refreshInto(page: Page, landed?: Locator): Promise<void> {
   const button = page.getByRole("button", { name: "Refresh status now" }).first();
   const answered = page.waitForResponse(
     (response) => response.url().includes("/_serverFn/") && response.request().method() === "POST",
@@ -56,7 +56,8 @@ export async function refreshInto(page: Page): Promise<void> {
   await button.click();
   await answered;
   await expect(button).toHaveAttribute("aria-busy", "false");
-  await expect(page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
+  // The fixture's own mark by default (AWS is down in it); a board with no outage says what it brings in `landed`.
+  await expect(landed ?? page.locator("#service-aws").getByText("Outage", { exact: true }).first()).toBeVisible();
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   await cardsSettled(page);
 }
@@ -105,11 +106,11 @@ export async function openWithFixture(
   page: Page,
   background: Background,
   board: (now: number) => BoardSnapshot,
-  options: { steady?: boolean } = {},
+  options: { steady?: boolean; landed?: (page: Page) => Locator } = {},
 ): Promise<() => Promise<void>> {
   await serveBoard(page, () => board(Date.now()));
-  await openBoard(page, background, options);
-  return () => refreshInto(page);
+  await openBoard(page, background, { steady: options.steady });
+  return () => refreshInto(page, options.landed?.(page));
 }
 
 export const viewportOf = (page: Page) => {

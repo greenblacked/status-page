@@ -517,10 +517,37 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
  * sits under them.
  */
 export function longHeroBoard(now: number): BoardSnapshot {
+  return needLookBoard(now, ["outage", "degraded", "maintenance"]);
+}
+
+/**
+ * The widest compact verdict the floating bar draws, in words: fifteen services need a look and the most of them
+ * are degraded, the longest state word ("10 degraded · 5 more").
+ */
+export function degradedLedBoard(now: number): BoardSnapshot {
+  return needLookBoard(now, ["degraded", "degraded", "maintenance"]);
+}
+
+/** Every service unread: the bar's verdict is "Nothing needs a look", the longest sentence it draws. */
+export function unreadBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const services = board.services.map(
+    (service): ServiceSnapshot => ({
+      ...service,
+      health: "unknown",
+      summary: "The official source did not answer in time",
+    }),
+  );
+  const counts: Record<Health, number> = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const service of services) counts[service.health] += 1;
+  return { ...board, services, counts };
+}
+
+/** The fixture with fifteen services in `states` in turn (the rest as they were, two unread). */
+function needLookBoard(now: number, states: Health[]): BoardSnapshot {
   const board = fixtureBoard(now);
   const unread = new Set<ServiceId>(["android", "grok"]);
   const calm = new Set<ServiceId>(["apple-os", "windows", "android-os"]);
-  const states: Health[] = ["outage", "degraded", "maintenance"];
   let next = 0;
   const services = board.services.map((service): ServiceSnapshot => {
     if (unread.has(service.id)) {
