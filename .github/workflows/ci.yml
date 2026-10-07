@@ -187,39 +187,43 @@ jobs:
     # projects exactly once.
     #
     # WebKit is several times slower than Chromium in CI, so the iPhone 17 Pro
-    # and the iPad Pro 11 each run in two halves (Playwright's `--shard`, which
-    # splits the tests of the project evenly and needs no merged report: every
-    # half's exit code gates its own check), and the layout-only WebKit screens
-    # sit in a shard of their own per OS. Whole, those two projects took 12.8 to
-    # 19.4 (iPhone) and 11.1 to 17.9 (iPad) minutes in the test step across ten
-    # runs, against a 25-minute step limit.
+    # runs in thirds and the iPad Pro 11 in halves (Playwright's `--shard`, which
+    # splits the tests of the project by count, not by time, and needs no merged
+    # report: every part's exit code gates its own check). The heavy files (tilt,
+    # theme-switch, phone-bar, scroll-jump) all fall in the second half of an
+    # even split, which made it about 70% of the iPhone's time, hence thirds.
+    # The layout-only WebKit screens sit in shards of their own per OS. Whole,
+    # those two projects took 12.8 to 19.4 (iPhone) and 11.1 to 17.9 (iPad)
+    # minutes in the test step across ten runs, against a 25-minute step limit.
     #
     # The checks that come out are named `browser tests (<shard>)`:
     #   windows                  desktop
     #   macos                    Desktop Safari
-    #   ios-1, ios-2             iPhone 17 Pro, first and second half
-    #   ios-layout               iPhone SE (3rd gen), iPhone 17 Pro Max,
-    #                            iPhone 17 Pro landscape
+    #   ios-1, ios-2, ios-3      iPhone 17 Pro, first, second and third third
+    #   ios-layout-1, ios-layout-2
+    #                            iPhone SE (3rd gen), iPhone 17 Pro Max,
+    #                            iPhone 17 Pro landscape, in halves
     #   ipados-1, ipados-2       iPad Pro 11, first and second half
     #   ipados-layout            iPad Mini
     #   ipados-chromium          tablet (an iPad's size in Chromium)
-    #   android-phone            mobile (Pixel 7), Pixel 10, Galaxy S9+,
-    #                            Pixel 7 landscape
-    #   android-foldable-tablet  Galaxy Z Fold 7, Galaxy Z Fold 7 Cover,
+    #   android-phone            mobile (Pixel 7)
+    #   android-layout           Galaxy S9+, Pixel 10, Pixel 7 landscape,
+    #                            Galaxy Z Fold 7, Galaxy Z Fold 7 Cover,
     #                            Galaxy Tab S9
     # Only `CI OK` is required by branch protection (CONTRIBUTING.md#ci), so a
     # shard can be split or renamed without touching the rulesets.
     name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Per shard, in minutes in the test step (estimated from ten runs of the
-    # old, coarser shards, so ranges, not promises; run to run the same shard
-    # varied by a factor of two or more): windows 5 to 8, android-phone 10 to
-    # 13, android-foldable-tablet 5 to 6, ipados-chromium 4 to 6, macos 8 to
-    # 13, ios-1 and ios-2 6 to 10 each, ios-layout 8 to 15, ipados-1 and
-    # ipados-2 6 to 9 each, ipados-layout 2.5 to 5. A Chromium project that runs
-    # the whole suite takes about 6 to 7 minutes, a layout screen 1.5 to 2 on
-    # Chromium and 2.5 to 5 on WebKit. Chromium is downloaded, with its 32 MB of
+    # Per shard, in wall-clock minutes in the test step (measured from the
+    # test times of recent runs with 2 workers, so ranges, not promises; run to
+    # run the same shard varied by a factor of two or more): windows 5 to 8,
+    # android-phone 11 to 12, android-layout about 8, ipados-chromium 4 to 6,
+    # macos 8 to 13, ios-1 about 5, ios-2 about 9, ios-3 about 8, ios-layout-1
+    # and ios-layout-2 9 to 10 each, ipados-1 about 6, ipados-2 11 to 12,
+    # ipados-layout 2.5 to 5. A Chromium project that runs the whole suite
+    # takes about 6 to 7 minutes, a layout screen 1.5 to 2 on Chromium and 2.5
+    # to 5 on WebKit. Chromium is downloaded, with its 32 MB of
     # system libraries from apt. WebKit's libraries are about 125 MB from apt,
     # and on a slow runner that fetch took over 30 minutes and failed the job,
     # so the WebKit shards run in Playwright's own image (below), which has
@@ -237,17 +241,17 @@ jobs:
       matrix:
         # `projects` is a comma-separated list of project names from
         # playwright.config.ts; `split` (optional) is a Playwright `--shard`
-        # value, "1/2" or "2/2", for a project run in halves.
+        # value, such as "1/2" or "2/3", for projects run in parts.
         include:
           - shard: windows
             browser: chromium
             projects: desktop
           - shard: android-phone
             browser: chromium
-            projects: mobile,Pixel 10,Galaxy S9+,Pixel 7 landscape
-          - shard: android-foldable-tablet
+            projects: mobile
+          - shard: android-layout
             browser: chromium
-            projects: Galaxy Z Fold 7,Galaxy Z Fold 7 Cover,Galaxy Tab S9
+            projects: Galaxy S9+,Pixel 10,Pixel 7 landscape,Galaxy Z Fold 7,Galaxy Z Fold 7 Cover,Galaxy Tab S9
           - shard: ipados-chromium
             browser: chromium
             projects: tablet
@@ -265,17 +269,29 @@ jobs:
           - shard: ios-1
             browser: webkit
             projects: iPhone 17 Pro
-            split: 1/2
+            split: 1/3
             container: *playwright-image
           - shard: ios-2
             browser: webkit
             projects: iPhone 17 Pro
-            split: 2/2
+            split: 2/3
             container: *playwright-image
-          # The iOS screens that run only the @layout tests (90 each).
-          - shard: ios-layout
+          - shard: ios-3
+            browser: webkit
+            projects: iPhone 17 Pro
+            split: 3/3
+            container: *playwright-image
+          # The iOS screens that run only the @layout tests (90 each), in
+          # halves of their combined tests.
+          - shard: ios-layout-1
             browser: webkit
             projects: iPhone SE (3rd gen),iPhone 17 Pro Max,iPhone 17 Pro landscape
+            split: 1/2
+            container: *playwright-image
+          - shard: ios-layout-2
+            browser: webkit
+            projects: iPhone SE (3rd gen),iPhone 17 Pro Max,iPhone 17 Pro landscape
+            split: 2/2
             container: *playwright-image
           - shard: ipados-1
             browser: webkit
@@ -344,15 +360,15 @@ jobs:
         # A Chromium project's full run takes 6 to 7 minutes and a WebKit one's
         # 8 to 19 in CI (Desktop Safari 8 to 13, iPhone 17 Pro 13 to 19, iPad
         # Pro 11 11 to 18); a layout screen takes 1.5 to 2 on Chromium and 2.5
-        # to 5 on WebKit. The shards are cut so the longest hold about 10 to 15
-        # minutes (the iPhone and iPad projects in two halves each), which
-        # leaves real margin under these 25 and still stops a hung suite well
+        # to 5 on WebKit. The shards are cut so the longest hold about 9 to 12
+        # minutes (the iPhone in thirds, the iPad and the iPhone layout screens
+        # in halves), which leaves real margin under these 25 and still stops a hung suite well
         # before the job limit does.
         timeout-minutes: 25
         env:
           # Comma-separated project names from playwright.config.ts.
           PROJECTS: ${{ matrix.projects }}
-          # "1/2" or "2/2" to run half of each project's tests, empty to run all.
+          # A Playwright --shard such as "1/3" to run that part of the tests, empty to run all.
           SPLIT: ${{ matrix.split }}
         run: |
           args=()

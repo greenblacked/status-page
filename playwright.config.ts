@@ -44,8 +44,10 @@ const chromiumLaunch = { executablePath, args: chromiumArgs };
 // version; Pixel 10 is the newest Pixel profile Playwright ships. Only the user agent changes: the profile's own viewport,
 // scale factor and touch stay, and no test or page code reads the user agent. The Chrome major comes from the
 // profile itself, which Playwright keeps at the Chromium it ships, because the user agent should name the engine
-// that runs (a "Chrome/155" on Chromium 153 would be a claim the engine cannot back). A profile that is not
-// Android (the iPad-sized Chromium tablet) is returned as it is.
+// that runs (a "Chrome/155" on Chromium 153 would be a claim the engine cannot back). The 153 is Playwright's
+// Chromium, which may be newer than the stable Chrome phones run today. The `Mobile` token stays on every phone
+// profile, including the unfolded Galaxy Z Fold 7 (984px wide), where real Chrome may differ; no test reads it.
+// A profile that is not Android (the iPad-sized Chromium tablet) is returned as it is.
 // https://www.chromium.org/updates/ua-reduction/
 // https://developer.android.com/about/versions/17
 // https://developer.chrome.com/docs/privacy-security/user-agent-client-hints
