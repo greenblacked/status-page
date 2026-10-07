@@ -5331,15 +5331,42 @@ for (const [name, makeBoard] of [
     await barBack(page);
     await expect(bar).toHaveAttribute("data-shown", "true");
     // The drawn form: the compact one below 1024px, the short one from there up. Its text must fit its box.
-    const drawn = await bar
-      .locator("[data-bar-verdict] > span:not(:last-child)")
-      .evaluateAll((spans) =>
-        spans
-          .filter((span) => span.getBoundingClientRect().width > 1)
-          .map((span) => ({ text: span.textContent, clipped: span.scrollWidth > span.clientWidth })),
-      );
+    const drawn = await bar.locator("[data-bar-verdict] > span:not(:last-child)").evaluateAll((spans) =>
+      spans
+        .filter((span) => span.getBoundingClientRect().width > 1)
+        .map((span) => ({
+          text: span.textContent,
+          // Cut sideways, or (a line-clamped text) cut below its last line.
+          clipped:
+            span.scrollWidth > span.clientWidth ||
+            (getComputedStyle(span).webkitLineClamp !== "none" && span.scrollHeight > span.clientHeight + 1),
+        })),
+    );
     expect(drawn).toHaveLength(1);
     expect(drawn[0].clipped, `"${drawn[0].text}" fits its slot`).toBe(false);
+    // A wrap never starts a line with the dot or ends one on a number cut from its word.
+    const lines = await bar.locator("[data-bar-verdict] > span:not(:last-child)").evaluateAll((spans) => {
+      const span = spans.find((candidate) => candidate.getBoundingClientRect().width > 1);
+      const node = span?.firstChild;
+      if (!node || node.nodeType !== Node.TEXT_NODE) return [] as string[];
+      const text = node.textContent ?? "";
+      const range = document.createRange();
+      const found: { top: number; text: string }[] = [];
+      for (let index = 0; index < text.length; index++) {
+        range.setStart(node, index);
+        range.setEnd(node, index + 1);
+        const rect = range.getClientRects()[0];
+        if (!rect || rect.width === 0) continue;
+        const last = found[found.length - 1];
+        if (last && Math.abs(last.top - rect.top) < 4) last.text += text[index];
+        else found.push({ top: rect.top, text: text[index] });
+      }
+      return found.map((line) => line.text.trim());
+    });
+    for (const line of lines) {
+      expect(line.startsWith("·"), `no line of "${drawn[0].text}" starts with the dot: "${line}"`).toBe(false);
+      expect(/(^|\s)\d+$/.test(line), `no line of "${drawn[0].text}" ends on a bare number: "${line}"`).toBe(false);
+    }
   });
 }
 

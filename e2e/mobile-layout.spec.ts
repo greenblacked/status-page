@@ -1,6 +1,6 @@
 import type { Locator, Page, TestInfo } from "@playwright/test";
 import { HIDE_DOWN_PX, REVEAL_UP_PX } from "../src/lib/status/dock.ts";
-import { fixtureBoard, longHeroBoard } from "./fixture-board";
+import { degradedLedBoard, fixtureBoard, longHeroBoard, unreadBoard } from "./fixture-board";
 import {
   auditNow,
   BACKGROUNDS,
@@ -450,7 +450,10 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               right: box?.right ?? 0,
               glyphRight: glyph?.getBoundingClientRect().right ?? 0,
               buttonsLeft: Math.min(...buttons.map((button) => button.getBoundingClientRect().left)),
-              clipped: text ? text.scrollWidth > text.clientWidth + 1 : false,
+              clipped: text
+                ? text.scrollWidth > text.clientWidth + 1 ||
+                  (getComputedStyle(text).webkitLineClamp !== "none" && text.scrollHeight > text.clientHeight + 1)
+                : false,
               opacity,
             };
           });
@@ -786,20 +789,33 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await expect(controlBar(page)).toHaveAttribute("data-shown", "false");
       });
 
-      // The bar's compact verdict on the longest hero is cut at 134px of 143px on a 320px screen today (a finding of
-      // this audit), so the bar is read with the plain fixture only. TODO(that finding): the commit that fixes the
-      // bar's verdict makes `withBar` true for the longest hero too, and drops the flag.
-      for (const [name, board, withBar] of [
-        ["the plain fixture", fixtureBoard, true],
+      // The bar's verdict is read in Inter and in the fallback face (Arial or its twins, Roboto): Inter is
+      // font-display: optional, so a first view is drawn in the fallback, which is wider, and a 320px screen leaves
+      // the verdict 156px. The widest forms the bar draws are read too: the one with the most digits, the one with the
+      // longest state word and the longest sentence.
+      for (const [name, board, fallback] of [
+        ["the plain fixture", fixtureBoard, false],
         ["the longest hero", longHeroBoard, false],
+        ["the longest hero in the fallback face", longHeroBoard, true],
+        ["the longest state word in the fallback face", degradedLedBoard, true],
+        ["the longest sentence in the fallback face", unreadBoard, true],
       ] as const) {
         test(`cuts no status word short with an ellipsis, on ${name}`, async ({ page }, testInfo) => {
           test.slow();
-          const bring = await openWithFixture(page, background, board, { steady: true });
+          // No face of Inter arrives, so the page keeps the fallback it was first drawn in.
+          if (fallback) await page.route(/\.woff2?(\?|$)/, (route) => route.abort());
+          const bring = await openWithFixture(page, background, board, {
+            steady: true,
+            // The fixture's outage is not on a board that has none: the headline is what shows it has landed.
+            landed:
+              board === unreadBoard
+                ? (at) => at.getByRole("heading", { level: 1, name: /Nothing needs a look/ })
+                : undefined,
+          });
           const clipped = () =>
             page.evaluate(() => {
               const status =
-                /\b(operational|degraded|outage|down|maintenance|no data|unknown|couldn.t read|checking|checked|stale|next in|new release|issues only|starred|releases|alerts|refresh)\b/i;
+                /\b(operational|degraded|outage|down|maintenance|needs a look|everything is up|no data|unknown|couldn.t read|checking|checked|stale|next in|new release|issues only|starred|releases|alerts|refresh)\b/i;
               const places = [
                 '[data-testid="live-bar"]',
                 'section[aria-label="Board controls"]',
@@ -819,7 +835,9 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
                 const style = getComputedStyle(element);
                 const cutsOff = style.textOverflow === "ellipsis" || /hidden|clip/.test(style.overflowX);
                 if (!cutsOff || element.clientWidth === 0) continue;
-                if (element.scrollWidth <= element.clientWidth + 1) continue;
+                // A line-clamped text is cut vertically, so its width does not show it: its height does.
+                const clampedTall = style.webkitLineClamp !== "none" && element.scrollHeight > element.clientHeight + 1;
+                if (element.scrollWidth <= element.clientWidth + 1 && !clampedTall) continue;
                 const box = element.getBoundingClientRect();
                 const opacity = Number(style.opacity);
                 if (box.width <= 1 || opacity < 0.05 || style.visibility === "hidden") continue;
@@ -828,15 +846,26 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
                 // A service's name, or the words of a release, may be cut short on purpose: the Details hold them whole.
                 if (element.closest("[data-release-line]") || element.closest("h3")) continue;
                 if (status.test(text) && (inStatusPlace || element.children.length === 0)) {
-                  found.push(`"${text.slice(0, 50)}" is cut at ${element.clientWidth}px of ${element.scrollWidth}px`);
+                  found.push(
+                    clampedTall
+                      ? `"${text.slice(0, 50)}" is cut at ${element.clientHeight}px of ${element.scrollHeight}px tall`
+                      : `"${text.slice(0, 50)}" is cut at ${element.clientWidth}px of ${element.scrollWidth}px`,
+                  );
                 }
               }
               return found;
             });
+          if (fallback) {
+            const inter = await page.evaluate(() =>
+              [...document.fonts].some(
+                (face) => face.family.replaceAll('"', "") === "Inter" && face.status === "loaded",
+              ),
+            );
+            expect(inter, "Inter did not load, so this is the fallback face").toBe(false);
+          }
           await expectNone(page, testInfo, "first render", await clipped());
           await bring();
           await expectNone(page, testInfo, "board", await clipped());
-          if (!withBar) return;
           // With the bar up, and again with its field revealed.
           const bar = controlBar(page);
           const settle = () =>
