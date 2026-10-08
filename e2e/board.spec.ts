@@ -4163,7 +4163,9 @@ for (const colorScheme of ["light", "dark"] as const) {
  * axe cannot measure text over a backdrop-filter or a gradient: it reports
  * those as incomplete rather than failing them. With every blur, gradient
  * and pseudo-element stripped, only the materials' flat fills remain behind
- * the text, so a pass proves those alone keep it at WCAG AA.
+ * the text, so a pass proves those alone keep it at WCAG AA. The same strip hides Quiet's paper grain
+ * (background-image), so the grain has its own measurement below: the real pixels of the bare paper against every
+ * text colour.
  */
 async function contrastFailures(page: Page): Promise<string[]> {
   await page.addStyleTag({
@@ -4228,6 +4230,200 @@ test.describe("contrast on the flat fills", () => {
       }
     }
   }
+});
+
+/**
+ * Quiet's paper grain (--paper-grain, src/styles.css): a faint static tile on the root and the stage by day, none by
+ * night (true black stays true black). These read what
+ * the browser really paints: the computed images, and then the pixels of the bare paper (the content hidden, the
+ * strip that contrast tests above use not applied, since it removes background images).
+ */
+test.describe("the paper grain on Quiet", () => {
+  test.use({ pinSlot: false });
+
+  const GRAIN = /^url\("data:image\/svg\+xml,/;
+  const roots = (page: Page) =>
+    page.evaluate(() => ({
+      html: getComputedStyle(document.documentElement).backgroundImage,
+      stage: getComputedStyle(document.querySelector(".liquid-stage") as Element).backgroundImage,
+      attachment: getComputedStyle(document.querySelector(".liquid-stage") as Element).backgroundAttachment,
+    }));
+
+  async function open(page: Page, options: { background?: "glass"; reduceGlass?: boolean } = {}) {
+    await page.addInitScript((o) => {
+      if (o.background) localStorage.setItem("status-bar:background", o.background);
+      if (o.reduceGlass) localStorage.setItem("status-bar:reduce-glass", "on");
+    }, options);
+    await page.goto("/");
+    await expect(cards(page)).toHaveCount(SERVICES);
+    await hydrated(page);
+  }
+
+  /** The pixels of the bare paper, hidden content and all, as every distinct colour with its count. */
+  async function paperPixels(page: Page): Promise<{ rgb: number[]; count: number }[]> {
+    await page.addStyleTag({
+      content:
+        ".liquid-content { visibility: hidden !important; } *, *::before, *::after { animation: none !important; transition: none !important; }",
+    });
+    const png = Buffer.from(await page.screenshot()).toString("base64");
+    const decoder = await page.context().newPage();
+    try {
+      return await decoder.evaluate(async (png) => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${png}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width;
+        canvas.height = image.height;
+        const context = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D;
+        context.drawImage(image, 0, 0);
+        const data = context.getImageData(0, 0, image.width, image.height).data;
+        const counts = new Map<string, number>();
+        for (let i = 0; i < data.length; i += 4) {
+          const key = `${data[i]},${data[i + 1]},${data[i + 2]}`;
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+        }
+        return [...counts].map(([key, count]) => ({ rgb: key.split(",").map(Number), count }));
+      }, png);
+    } finally {
+      await decoder.close();
+    }
+  }
+
+  /** WCAG relative luminance and contrast ratio of two sRGB colours (0-255 channels). */
+  const luminance = (rgb: number[]) => {
+    const [r, g, b] = rgb.map((v) => {
+      const c = v / 255;
+      return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const ratio = (a: number[], b: number[]) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+
+  /** Every colour the board sets text in, and the flat paper, as the browser resolves them. */
+  async function tokens(page: Page): Promise<{ paper: number[]; text: Record<string, number[]> }> {
+    return page.evaluate(() => {
+      const probe = document.createElement("div");
+      document.body.appendChild(probe);
+      const read = (name: string) => {
+        probe.style.color = `var(${name})`;
+        const [r, g, b] = getComputedStyle(probe)
+          .color.match(/[\d.]+/g)
+          ?.map(Number) ?? [0, 0, 0];
+        return [Math.round(r), Math.round(g), Math.round(b)];
+      };
+      const names = [
+        "--color-fg",
+        "--color-muted",
+        "--color-subtle",
+        "--color-accent",
+        "--color-ok",
+        "--color-warn",
+        "--color-down",
+      ];
+      const result = { paper: read("--color-bg"), text: Object.fromEntries(names.map((name) => [name, read(name)])) };
+      probe.remove();
+      return result;
+    });
+  }
+
+  // By night the paper is true black: no tile, and not one lit pixel on the page.
+  test("paints no tile by night: the black stays one true black", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    await open(page);
+    expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+    const { paper } = await tokens(page);
+    const seen = await paperPixels(page);
+    expect(seen, "the bare night page is one colour").toHaveLength(1);
+    expect(seen[0].rgb).toEqual(paper);
+  });
+
+  // The most the grain may move the day paper: about 3 levels of 255.
+  const MOST = 3;
+
+  test("paints a tile on the root and the stage, tiled and scrolling with the page (light)", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" });
+    await open(page);
+    const seen = await roots(page);
+    expect(seen.html).toMatch(GRAIN);
+    expect(seen.stage).toMatch(GRAIN);
+    // Not fixed: a fixed background repaints on every scroll frame on a phone.
+    expect(seen.attachment).toBe("scroll");
+  });
+
+  test(`moves the ground by at most ${MOST} levels and keeps every text colour at 4.5:1 (light)`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await open(page);
+    const { paper, text } = await tokens(page);
+    const seen = await paperPixels(page);
+    // It is there: more than one colour on a bare page, and some of the paper really is moved.
+    expect(seen.length).toBeGreaterThan(2);
+    let moved = 0;
+    let total = 0;
+    for (const { rgb, count } of seen) {
+      total += count;
+      const delta = Math.max(...rgb.map((v, i) => Math.abs(v - paper[i])));
+      expect(delta, `a pixel ${rgb} against the paper ${paper}`).toBeLessThanOrEqual(MOST);
+      if (delta > 0) moved += count;
+    }
+    expect(moved / total, "the share of the paper the grain touches").toBeGreaterThan(0.05);
+    // Against the worst pixel of the real paper, not the flat colour the axe checks see.
+    for (const [name, colour] of Object.entries(text)) {
+      const flat = ratio(colour, paper);
+      const worst = Math.min(...seen.map(({ rgb }) => ratio(colour, rgb)));
+      expect(worst, `${name} on the worst grain pixel (flat paper ${flat.toFixed(2)})`).toBeGreaterThanOrEqual(4.5);
+      // By day the grain only lightens, under dark text, so it cannot lower any ratio.
+      expect(worst, `${name} against its flat ratio`).toBeGreaterThanOrEqual(flat - 0.005);
+    }
+  });
+
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`is off under Increase Contrast, forced colours and print (${colorScheme})`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme, contrast: "more" });
+      await open(page);
+      expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+      expect(await paperPixels(page), "Increase Contrast paints the bare paper in one colour").toHaveLength(1);
+
+      await page.emulateMedia({ colorScheme, contrast: "no-preference", forcedColors: "active" });
+      expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+
+      await page.emulateMedia({ colorScheme, forcedColors: "none", media: "print" });
+      expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+
+      await page.emulateMedia({ colorScheme, media: "screen" });
+      // Back on screen: the grain returns by day, and by night there never was one.
+      expect((await roots(page)).stage).toMatch(colorScheme === "light" ? GRAIN : /^none$/);
+    });
+
+    test(`is off with the board's own Reduce glass switch on (${colorScheme})`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await open(page, { reduceGlass: true });
+      await expect(page.locator("html")).toHaveAttribute("data-reduce-transparency", "true");
+      expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+    });
+  }
+
+  test("is off under the system's Reduce Transparency setting (light)", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "only Chromium can emulate prefers-reduced-transparency");
+    await page.emulateMedia({ colorScheme: "light" });
+    await open(page);
+    expect((await roots(page)).stage).toMatch(GRAIN);
+    const session = await page.context().newCDPSession(page);
+    await session.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-transparency", value: "reduce" }],
+    });
+    expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+  });
+
+  test("is Quiet's only: Glass keeps its own aurora grain and no paper grain", async ({ page }) => {
+    await open(page, { background: "glass" });
+    expect(await roots(page)).toMatchObject({ html: "none", stage: "none" });
+    const aurora = await page.locator(".aurora").evaluate((node) => getComputedStyle(node, "::after").backgroundImage);
+    expect(aurora).toMatch(GRAIN);
+  });
 });
 
 test("renders cards without requesting persistent uptime history", async ({ page }) => {
