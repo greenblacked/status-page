@@ -175,7 +175,9 @@ async function sendResponse(
     const transform = /\bno-transform\b/i.test(headers.get("cache-control") ?? "");
     const length = Number(headers.get("content-length") ?? Number.POSITIVE_INFINITY);
     if (
-      !empty &&
+      !NO_BODY_STATUSES.has(status) &&
+      // HEAD describes the representation GET would send, so it negotiates the same encoding.
+      (head || body) &&
       !transform &&
       length >= MIN_COMPRESS_BYTES &&
       !headers.has("content-encoding") &&

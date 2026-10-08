@@ -8,7 +8,7 @@ import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { DEFAULT_HSTS, securityHeaders } from "../lib/security-headers.ts";
 import { createNodeServer, DEFAULT_NODE_HSTS, hstsFromEnv } from "./server.ts";
-import { IMMUTABLE_CACHE_CONTROL, indexStaticFiles, SHORT_CACHE_CONTROL } from "./static.ts";
+import { IMMUTABLE_CACHE_CONTROL, indexStaticFiles, MIN_COMPRESS_BYTES, SHORT_CACHE_CONTROL } from "./static.ts";
 
 const css = "body { color: red; }\n".repeat(200);
 const page = `<!doctype html><title>Board</title>${"<p>service</p>".repeat(200)}`;
@@ -75,6 +75,15 @@ beforeAll(async () => {
       if (pathname === "/page") {
         return new Response(page, {
           headers: { "Content-Type": "text/html; charset=utf-8", "Content-Length": String(page.length) },
+        });
+      }
+      if (pathname === "/etag") {
+        return new Response(page, {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Length": String(page.length),
+            ETag: '"v1"',
+          },
         });
       }
       return new Response("not found", { status: 404 });
@@ -280,6 +289,28 @@ describe("the app handler", () => {
     expect(head.response.status).toBe(200);
     expect(head.bytes.length).toBe(0);
     expect((await get("/gone")).response.status).toBe(204);
+  });
+
+  it.each(["gzip", "br"])("describes the same %s representation for HEAD as for GET", async (encoding) => {
+    const accept = { "Accept-Encoding": encoding };
+    const getResult = await get("/etag", accept);
+    const head = await get("/etag", accept, "HEAD");
+    expect(page.length).toBeGreaterThanOrEqual(MIN_COMPRESS_BYTES);
+    expect(getResult.response.headers.get("content-encoding")).toBe(encoding);
+    for (const name of ["content-encoding", "vary", "etag"]) {
+      expect(head.response.headers.get(name), name).toBe(getResult.response.headers.get(name));
+    }
+    expect(head.response.headers.get("etag")).toBe('W/"v1"');
+    expect(head.response.headers.has("content-length")).toBe(false);
+    expect(head.bytes.length).toBe(0);
+  });
+
+  it("keeps HEAD uncompressed when the client accepts only identity", async () => {
+    const head = await get("/etag", {}, "HEAD");
+    expect(head.response.headers.has("content-encoding")).toBe(false);
+    expect(head.response.headers.get("etag")).toBe('"v1"');
+    expect(head.response.headers.get("content-length")).toBe(String(page.length));
+    expect(head.bytes.length).toBe(0);
   });
 
   it("turns a handler that throws into a 500 with the security headers, and logs it", async () => {
