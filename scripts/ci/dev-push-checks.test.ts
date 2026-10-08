@@ -62,6 +62,12 @@ describe("a push to dev runs the checks a pull request into stage runs", () => {
     expect(review).toMatch(/fail-on-severity:\s*high\b/);
   });
 
+  it("never skips dependency review: any non-200 from the graph API fails the job", () => {
+    expect(review).not.toMatch(/available=false|Dependency review skipped|steps\.graph/);
+    expect(review).toMatch(/if \[ "\$status" != "200" \]; then[\s\S]*?exit 1\n\s+fi/);
+    expect(review).toMatch(/settings\/security_analysis/);
+  });
+
   it("leaves the PR title check and the triage comment to pull requests", () => {
     expect(read(".github/workflows/pr-title.yml")).not.toMatch(/^ {2}push:/m);
     expect(read(".github/workflows/ci-triage.yml")).toMatch(/if: github\.event\.workflow_run\.event == 'pull_request'/);
