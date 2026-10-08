@@ -1,4 +1,5 @@
 import { type BrowserContext, test as base, expect, type Request } from "@playwright/test";
+import { type AndroidClientHints, clientHintsOverride } from "./support/android-user-agent";
 import { pinToSlot } from "./support/pin-to-slot";
 
 // Every spec imports `test` and `expect` from here, not from @playwright/test. It is the same test, plus one
@@ -68,8 +69,18 @@ export function watchStrays(context: BrowserContext): () => string[] {
 export const test = base.extend<{ stayLocal: undefined; pinTheme: boolean; pinSlot: boolean }>({
   pinTheme: [true, { option: true }],
   pinSlot: [true, { option: true }],
-  page: async ({ page, pinSlot }, use) => {
+  page: async ({ page, context, pinSlot, browserName }, use, testInfo) => {
     if (pinSlot) await pinToSlot(page);
+    // The Android projects report Android 17 and their model through client hints (e2e/support/android-user-agent.ts).
+    // Playwright derives the hints from the user agent string and sends them as the page starts, so this override has
+    // to come after the page exists, and only Chromium has client hints.
+    const hints = testInfo.project.metadata.androidClientHints as AndroidClientHints | undefined;
+    const { userAgent, locale } = testInfo.project.use;
+    // The session stays attached: Chromium drops an emulation override when the session that set it detaches.
+    if (hints && userAgent && browserName === "chromium") {
+      const session = await context.newCDPSession(page);
+      await session.send("Emulation.setUserAgentOverride", clientHintsOverride(userAgent, locale ?? "en-GB", hints));
+    }
     await use(page);
   },
   context: async ({ context, pinTheme }, use) => {
