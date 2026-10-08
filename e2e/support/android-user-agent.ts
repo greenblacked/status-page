@@ -13,11 +13,15 @@
 //    reads it. A profile that is not Android (the iPad-sized Chromium tablet) is returned as it is.
 //  - androidClientHints / clientHintsOverride: the client hints. Playwright 1.63 has no context option for them: it
 //    derives them from the user agent string (the reduced "Android 10; K" would give platformVersion "10" and no
-//    model), and sends them per page with Emulation.setUserAgentOverride. So the `page` fixture in e2e/test.ts sends
-//    its own override over CDP once the page exists (Chromium only), with Android 17 and the profile's model.
-//    Workers and service workers keep Playwright's derived hints; the board has none. The profile's real model is
-//    kept even where that phone never got Android 17 (the Galaxy S9+ stopped long before it): the version is the
-//    owner's choice for every Android project, the model only tells the profiles apart.
+//    model), and sends them per page with Emulation.setUserAgentOverride. So e2e/test.ts sends its own override over
+//    CDP once a page exists (Chromium only), with Android 17 and the profile's model: to the `page` fixture's page
+//    before the test starts, and to every page the test's `context` opens later (`context.newPage()`, popups), which
+//    may lose a race with its first request. Not covered: contexts a test makes itself with `browser.newContext()`,
+//    and workers and service workers, which keep Playwright's derived hints; the board has none. The profile's real
+//    model is kept even where that phone never got Android 17 (the Galaxy S9+ stopped long before it): the version is the
+//    owner's choice for every Android project, the model only tells the profiles apart. The Galaxy Tab S9 is an 11"
+//    tablet, which real Chrome serves the desktop site by default (a desktop Linux user agent, `Sec-CH-UA-Mobile ?0`);
+//    its profile here is the Android tablet one, to cover that layout, not what Chrome sends by default.
 // https://www.chromium.org/updates/ua-reduction/
 // https://developer.android.com/about/versions/17
 // https://developer.chrome.com/docs/privacy-security/user-agent-client-hints
@@ -83,6 +87,7 @@ export function clientHintsOverride(userAgent: string, acceptLanguage: string, h
       wow64: false,
       model: hints.model,
       mobile: hints.mobile,
+      formFactors: hints.mobile ? ["Mobile"] : ["Tablet"],
     },
   };
 }

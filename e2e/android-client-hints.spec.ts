@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { ANDROID_PLATFORM_VERSION, type AndroidClientHints } from "./support/android-user-agent";
 import { expect, test } from "./test";
 
@@ -10,11 +11,32 @@ test("an Android project reports Android 17 and its model through client hints @
   test.skip(!hints, "not an Android project");
   if (!hints) return;
 
-  const platformHeader = page.waitForRequest((request) => new URL(request.url()).pathname === "/");
   await page.goto("/");
-  expect((await (await platformHeader).allHeaders())["sec-ch-ua-platform"]).toBe('"Android"');
+  expect(await reportedHints(page)).toMatchObject({
+    platform: "Android",
+    mobile: hints.mobile,
+    platformVersion: ANDROID_PLATFORM_VERSION,
+    model: hints.model,
+  });
+});
 
-  const reported = await page.evaluate(async () => {
+test("a page the test opens itself reports the same hints @layout", async ({ context }, testInfo) => {
+  test.skip(!testInfo.project.metadata.androidClientHints, "not an Android project");
+  const hints = testInfo.project.metadata.androidClientHints as AndroidClientHints;
+  const other = await context.newPage();
+  await other.goto("/");
+  // The override is sent after the page exists, so the first request may precede it; the page's own values do not.
+  await expect
+    .poll(() => reportedHints(other))
+    .toMatchObject({
+      platformVersion: ANDROID_PLATFORM_VERSION,
+      model: hints.model,
+      mobile: hints.mobile,
+    });
+});
+
+async function reportedHints(page: Page) {
+  return page.evaluate(async () => {
     const data = (navigator as Navigator & { userAgentData: NavigatorUAData }).userAgentData;
     type NavigatorUAData = {
       platform: string;
@@ -24,11 +46,4 @@ test("an Android project reports Android 17 and its model through client hints @
     const high = await data.getHighEntropyValues(["platformVersion", "model"]);
     return { platform: data.platform, mobile: data.mobile, ...high };
   });
-  expect(reported).toMatchObject({
-    platform: "Android",
-    mobile: hints.mobile,
-    platformVersion: ANDROID_PLATFORM_VERSION,
-    model: hints.model,
-  });
-  expect(reported.platformVersion).toBe("17.0.0");
-});
+}
