@@ -1,7 +1,6 @@
 import { devices } from "@playwright/test";
 import { afterAll, describe, expect, it } from "vitest";
 import { reducedAndroidUserAgent } from "../../e2e/support/android-user-agent";
-import config from "../../playwright.config";
 
 // Chrome on Android sends a reduced user agent (e2e/support/android-user-agent.ts). The Android projects of
 // playwright.config.ts rewrite Playwright's older, full profile user agents to it; this holds the result, so a
@@ -36,15 +35,16 @@ const OTHER: Record<string, string> = {
 };
 
 const profile = (name: string) => devices[name as keyof typeof devices];
-const projects = config.projects ?? [];
 const userAgentOf = (name: string) => {
   const project = projects.find((p) => p.name === name);
   if (!project) throw new Error(`no project named ${name}`);
   return project.use?.userAgent;
 };
 
-// The config sets E2E_RUN when it loads; leave the environment as it was found.
+// The config sets E2E_RUN when it loads; record the state before importing it and leave the environment as found.
 const hadRun = "E2E_RUN" in process.env;
+const { default: config } = await import("../../playwright.config");
+const projects = config.projects ?? [];
 afterAll(() => {
   if (!hadRun) delete process.env.E2E_RUN;
 });
