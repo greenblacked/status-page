@@ -151,6 +151,7 @@ describe("the Android 17 client hints", () => {
       platformVersion: "17.0.0",
       model: "SM-X710",
       mobile: false,
+      formFactors: ["Tablet"],
       fullVersion: hints.chromeVersion,
     });
     const major = hints.chromeVersion.split(".")[0];

@@ -1,4 +1,4 @@
-import { type BrowserContext, test as base, expect, type Request } from "@playwright/test";
+import { type BrowserContext, test as base, expect, type Page, type Request } from "@playwright/test";
 import { type AndroidClientHints, clientHintsOverride } from "./support/android-user-agent";
 import { pinToSlot } from "./support/pin-to-slot";
 
@@ -66,25 +66,52 @@ export function watchStrays(context: BrowserContext): () => string[] {
   return () => [...asked].map((request) => request.url());
 }
 
-export const test = base.extend<{ stayLocal: undefined; pinTheme: boolean; pinSlot: boolean }>({
+export const test = base.extend<{
+  stayLocal: undefined;
+  pinTheme: boolean;
+  pinSlot: boolean;
+  hintsFor: (context: BrowserContext, page: Page) => Promise<void>;
+}>({
   pinTheme: [true, { option: true }],
   pinSlot: [true, { option: true }],
-  page: async ({ page, context, pinSlot, browserName }, use, testInfo) => {
+  page: async ({ page, context, pinSlot, hintsFor }, use) => {
     if (pinSlot) await pinToSlot(page);
-    // The Android projects report Android 17 and their model through client hints (e2e/support/android-user-agent.ts).
-    // Playwright derives the hints from the user agent string and sends them as the page starts, so this override has
-    // to come after the page exists, and only Chromium has client hints.
-    const hints = testInfo.project.metadata.androidClientHints as AndroidClientHints | undefined;
-    const { userAgent, locale } = testInfo.project.use;
-    // The session stays attached: Chromium drops an emulation override when the session that set it detaches.
-    if (hints && userAgent && browserName === "chromium") {
-      const session = await context.newCDPSession(page);
-      await session.send("Emulation.setUserAgentOverride", clientHintsOverride(userAgent, locale ?? "en-GB", hints));
-    }
+    // The fixture's page is overridden before the test starts. Pages the test opens itself are overridden by the
+    // context's "page" listener below, which can lose a race with the page's very first request.
+    await hintsFor(context, page);
     await use(page);
   },
-  context: async ({ context, pinTheme }, use) => {
+  hintsFor: async ({ userAgent, locale, browserName }, use, testInfo) => {
+    // The Android projects report Android 17 and their model through client hints (e2e/support/android-user-agent.ts).
+    // Playwright derives the hints from the user agent string and sends them as the page starts, so this override has
+    // to come after the page exists, and only Chromium has client hints. The user agent and locale are the test's own
+    // (test.use included), not the project's.
+    const hints = testInfo.project.metadata.androidClientHints as AndroidClientHints | undefined;
+    const done = new WeakMap<Page, Promise<void>>();
+    await use(async (context, page) => {
+      if (!hints || !userAgent || browserName !== "chromium") return;
+      let sent = done.get(page);
+      if (!sent) {
+        // The session stays attached: Chromium drops an emulation override when the session that set it detaches.
+        sent = context
+          .newCDPSession(page)
+          .then((session) =>
+            session.send("Emulation.setUserAgentOverride", clientHintsOverride(userAgent, locale ?? "", hints)),
+          )
+          .then(() => undefined);
+        done.set(page, sent);
+      }
+      await sent;
+    });
+  },
+  context: async ({ context, pinTheme, hintsFor }, use) => {
     if (pinTheme) await context.addInitScript(PIN_THEME);
+    // Every page of the context reports the same hints: the ones it has and the ones the test opens later (a page
+    // that is already closed has nothing to override). Contexts a test makes itself with browser.newContext() are
+    // not covered.
+    const apply = (page: Page) => void hintsFor(context, page).catch(() => undefined);
+    context.pages().forEach(apply);
+    context.on("page", apply);
     await use(context);
   },
   stayLocal: [
