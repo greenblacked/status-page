@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { reducedAndroidUserAgent } from "./e2e/support/android-user-agent.ts";
 import { chromiumArgs } from "./e2e/support/chromium-args.ts";
 import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 
@@ -79,7 +80,7 @@ export default defineConfig({
   // desktop, an Android phone and an iPad-sized tablet. `pnpm exec playwright install chromium webkit`.
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], launchOptions: chromiumLaunch } },
-    { name: "mobile", use: { ...devices["Pixel 7"], launchOptions: chromiumLaunch } },
+    { name: "mobile", use: { ...reducedAndroidUserAgent(devices["Pixel 7"]), launchOptions: chromiumLaunch } },
     // An iPad's size in Chromium: 834px is still the narrow layout (below 64rem) but wide enough (from 40rem)
     // for the bar's lead text to sit in the flow before the field's slot, which only WebKit's iPad would
     // otherwise cover. It runs the tests of the search reveal (the bar's copy of the field), the field's fill, the
@@ -101,7 +102,10 @@ export default defineConfig({
     ...LAYOUT_DEVICES.map(({ name, browser }) => ({
       name,
       grep: LAYOUT,
-      use: browser === "chromium" ? { ...devices[name], launchOptions: chromiumLaunch } : { ...devices[name] },
+      use:
+        browser === "chromium"
+          ? { ...reducedAndroidUserAgent(devices[name]), launchOptions: chromiumLaunch }
+          : { ...devices[name] },
     })),
   ],
   webServer: {
