@@ -1,7 +1,9 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Page } from "@playwright/test";
+import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { feedBoard, fixtureBoard, serveBoard } from "./fixture-board";
+import { animationsSettled } from "./support/layout";
 import { expect, test } from "./test";
 
 // The quiet release line of a status card whose vendor publishes an official release or changelog feed, and the
@@ -31,6 +33,22 @@ async function openBoard(page: Page, board: () => BoardSnapshot = () => feedBoar
   await answered;
   await expect(refresh).toHaveAttribute("aria-busy", "false");
   await expect(page.locator("#service-mikrotik [data-card-header] p")).toContainText("Stable 7.21");
+  // The fixture reaches the cards in two commits: the board (cards regroup and remount), then the saved checks it
+  // leads to, which mark the cards that changed against the board before it and start their fades. (If the page's
+  // own poll brought the fixture first, the checks open on it and mark nothing.) A press or a probe in between
+  // lands on a node about to be replaced or moved, so wait for the checks to hold the fixture (AWS is down in it)
+  // and for the easing to end.
+  await expect
+    .poll(
+      () =>
+        page.evaluate((key) => {
+          const saved = JSON.parse(localStorage.getItem(key) ?? "null");
+          return saved?.lastBoard?.services?.find((service: { id: string }) => service.id === "aws")?.health;
+        }, PULSE_STORAGE_KEY),
+      { message: "the saved checks hold the fixture board" },
+    )
+    .toBe("outage");
+  await animationsSettled(page);
 }
 
 test("every status card whose vendor has a feed shows its latest entry and a Details button, and no other does", async ({
@@ -411,8 +429,10 @@ test("on a touch screen the Details button has a 44px target and the line keeps 
     // already in the window where it is, which can be under the bar (its 12px of target above the button are then
     // the bar's), and where that is depends on how tall the cards before it are. The box and the probes are read
     // in one page task, so nothing can move between them.
+    await trigger(page, id).evaluate((button) => button.scrollIntoView({ block: "center", behavior: "instant" }));
+    // The scroll can bring the floating bar in or out; the probes wait until it has finished moving.
+    await animationsSettled(page);
     const reached = await trigger(page, id).evaluate((button) => {
-      button.scrollIntoView({ block: "center", behavior: "instant" });
       const box = button.getBoundingClientRect();
       const x = box.left + box.width / 2;
       const y = box.top + box.height / 2;
