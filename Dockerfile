@@ -17,13 +17,13 @@
 # index, so amd64 and arm64 both resolve from it. Dependabot moves the tag and
 # the digest together (.github/dependabot.yml): keep the digest the same in
 # both FROM lines.
-FROM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS base
+FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS base
 
 # The build runs on the machine that runs `docker build`, whatever platform the
 # image is for: dist/ is JavaScript, CSS and assets, the same for every
 # platform, so an arm64 image built on amd64 does not run the bundler under
 # emulation.
-FROM --platform=$BUILDPLATFORM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS build-base
+FROM --platform=$BUILDPLATFORM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS build-base
 
 # Production dependencies only, for the image's own platform: what
 # dist/server/server.js and src/node import when they run. pnpm is the version
