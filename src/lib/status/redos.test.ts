@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
-import { mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
+import { mikrotikChangelogNote, mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
 import { PayloadError, unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
@@ -25,7 +25,7 @@ import {
   parseRssItems,
 } from "./sources.server.ts";
 import type { ServiceSnapshot } from "./types.ts";
-import { readHtmlTables, windowsReleases } from "./windows-release.ts";
+import { readHtmlCells, readHtmlTables, windowsReleases, windowsUpdateNote } from "./windows-release.ts";
 
 // Vendor bodies are untrusted input that is parsed on the Worker, so no
 // parser may take more than linear time on one. Each case below is a crafted
@@ -39,13 +39,19 @@ const BUDGET_MS = 200;
 // A parser may refuse crafted input (a PayloadError, as for a feed past the scan bound): the time it took to
 // decide is what is measured, so that refusal is not a failure here.
 function elapsed(run: () => unknown): number {
-  const started = performance.now();
-  try {
-    run();
-  } catch (error) {
-    if (!(error instanceof PayloadError)) throw error;
+  // The fastest of a few runs: a scheduler or garbage-collection pause under a loaded suite slows one run, while
+  // quadratic code is slow in every run.
+  let best = Number.POSITIVE_INFINITY;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const started = performance.now();
+    try {
+      run();
+    } catch (error) {
+      if (!(error instanceof PayloadError)) throw error;
+    }
+    best = Math.min(best, performance.now() - started);
   }
-  return performance.now() - started;
+  return best;
 }
 
 describe("parsers stay linear on crafted vendor input", () => {
@@ -189,6 +195,13 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["nested tables", `${"<table><tr><td>".repeat(SIZE / 16)}x`],
     ["a long cell of entity-like text", `<table><tr><td>${"&#".repeat(SIZE / 2)}`],
     ["a long cell of spaces and tags", `<table><tr><td>${" <b>".repeat(SIZE / 4)}`],
+    ["links with attributes that never end", `<table><tr><td>${"<a a <".repeat(SIZE / 6)}>`],
+    ["links with quotes that close in the next tag", `<table><tr><td>${"<a title='x> ".repeat(SIZE / 12)}`],
+    ["links with alternating quotes", `<table><tr><td>${`<a x='y"> `.repeat(SIZE / 10)}`],
+    ["links with a long unterminated value", `<table><tr><td>${`<a href="${"x".repeat(SIZE)}>`}`],
+    ["links with unquoted values", `<table><tr><td>${"<a href=x=>".repeat(SIZE / 10)}`],
+    ["links with the longest tag the scan reads", `<table><tr><td>${`<a ${"b ".repeat(1200)}>`.repeat(SIZE / 2403)}`],
+    ["cells with a > inside a quoted value", `<table><tr><td>${'<td t="a>b">'.repeat(SIZE / 12)}`],
   ])("readHtmlTables: %s", (_label, html) => {
     let tables: ReturnType<typeof readHtmlTables> = [];
     expect(elapsed(() => (tables = readHtmlTables(html)))).toBeLessThan(BUDGET_MS);
@@ -206,6 +219,59 @@ describe("parsers stay linear on crafted vendor input", () => {
     ["a heading marker that never ends", `What's new in ${" ".repeat(SIZE)}`],
   ])("mikrotikChangelogNotes: %s", (_label, text) => {
     expect(elapsed(() => mikrotikChangelogNotes(text))).toBeLessThan(BUDGET_MS);
+  });
+
+  it.each([
+    ["one line with no newline", `What's new in 7.2:\n*) ${"a".repeat(SIZE)}`],
+    ["a very long area before any dash", `What's new in 7.2:\n*) ${"a ".repeat(SIZE / 2)}- x`],
+    ["an area made of spaces", `What's new in 7.2:\n*) ${" ".repeat(SIZE)} - x`],
+    ["dashes and spaces", `What's new in 7.2:\n*) ${" - ".repeat(SIZE / 3)}`],
+    ["a very long run of change lines", `What's new in 7.2:\n${"*) a - b;\n".repeat(SIZE / 10)}`],
+    ["a very long run of important lines", `What's new in 7.2:\n${"!) a - b;\n".repeat(SIZE / 10)}`],
+    [
+      "many distinct areas",
+      `What's new in 7.2:\n${Array.from({ length: SIZE / 12 }, (_, at) => `*) a${at} - b;`).join("\n")}`,
+    ],
+    ["bullets with nothing in them", `What's new in 7.2:\n${"*)\n!)\n".repeat(SIZE / 6)}`],
+    ["headings and no bullets", "What's new in 7.2:\n".repeat(SIZE / 20)],
+    ["a long run of blank lines", `What's new in 7.2:\n${"\n".repeat(SIZE)}*) a - b;`],
+    ["carriage returns only", `What's new in 7.2:${"\r".repeat(SIZE)}*) a - b;`],
+  ])("mikrotikChangelogNote: %s", (_label, text) => {
+    expect(elapsed(() => mikrotikChangelogNote(text, "7.2", { whole: true }))).toBeLessThan(BUDGET_MS);
+  });
+
+  it.each([
+    ["links that never close", `<table><tr><td>${'<a href="'.repeat(SIZE / 9)}`],
+    ["an href with no end quote", `<table><tr><td><a href="${"x".repeat(SIZE)}`],
+    ["a tag of attributes", `<table><tr><td><a ${'a="b" '.repeat(SIZE / 6)}href="https://support.microsoft.com/">x`],
+    ["a tag of spaces before an equals sign", `<table><tr><td><a href${" ".repeat(SIZE)}="x">x`],
+    ["many links in one cell", `<table><tr><td>${'<a href="https://a.example/">x</a>'.repeat(SIZE / 33)}`],
+    [
+      "a cell of KB-like text",
+      `<table><tr><th>Update type</th><th>Build</th><th>KB</th></tr><tr><td>2026-09 B</td><td>26100.6725</td><td>${"KB".repeat(SIZE / 2)}</td></tr>`,
+    ],
+    [
+      "a cell of digits after KB",
+      `<table><tr><th>Update type</th><th>Build</th><th>KB</th></tr><tr><td>2026-09 B</td><td>26100.6725</td><td>KB${"1".repeat(SIZE)}</td></tr>`,
+    ],
+    [
+      "an update type of spaces",
+      `<table><tr><th>Update type</th><th>Build</th></tr><tr><td>${" ".repeat(SIZE)}B</td><td>26100.6725</td></tr>`,
+    ],
+    [
+      "a build of dots and digits",
+      `<table><tr><th>Update type</th><th>Build</th></tr><tr><td>2026-09 B</td><td>${"1.".repeat(SIZE / 2)}</td></tr>`,
+    ],
+    [
+      "the most tables, each with many rows",
+      "<table><tr><th>Update type</th><th>Build</th></tr>"
+        .concat("<tr><td>2026-09 B</td><td>1.1</td></tr>".repeat(100), "</table>")
+        .repeat(60),
+    ],
+  ])("windowsUpdateNote: %s", (_label, html) => {
+    let cells: ReturnType<typeof readHtmlCells> = [];
+    expect(elapsed(() => (cells = readHtmlCells(html)))).toBeLessThan(BUDGET_MS);
+    expect(elapsed(() => windowsUpdateNote(cells, "26100.6725"))).toBeLessThan(BUDGET_MS);
   });
 
   it("splitAppleBuild: a version made of parentheses and of spaces", () => {

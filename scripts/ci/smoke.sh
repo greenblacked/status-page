@@ -6,6 +6,7 @@
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --attempts 6
 #   ./scripts/ci/smoke.sh https://status.example.com --expect-version <id> --wait 120
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --ready-wait 300
+#   ./scripts/ci/smoke.sh http://127.0.0.1:4181 --require-asset-cache
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
 # (20 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
@@ -20,19 +21,27 @@
 #
 # --expect-version <id> first waits, within --wait, until /healthz carries
 # X-Worker-Version: <id> (src/lib/worker-version.ts), then requires it on
-# every response it checks. After a Cloudflare deploy this is the version id
-# wrangler reported, so the checks run against the new version rather than
-# the old one it is still replacing somewhere, and a new version that never
-# starts answering fails instead of passing on the old one.
+# every dynamic response it checks (not a static asset: Cloudflare serves
+# those without invoking the Worker, so they carry no version). After a
+# Cloudflare deploy this is the version id wrangler reported, so the checks
+# run against the new version rather than the old one it is still replacing
+# somewhere, and a new version that never starts answering fails instead of
+# passing on the old one.
+#
+# --require-asset-cache also fetches the page's stylesheet, takes the first
+# /assets/*.woff2 it names and requires Cache-Control: max-age=31536000 and
+# immutable on it (public/_headers). Only Cloudflare reads that file, so the
+# deploy asks for this check on the Worker (in workerd and live) and CI's Node
+# preview does not.
 #
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
 
 SERVICES=20
 TITLE='<title>Status</title>'
-FOOTER='Not affiliated with any of these vendors. I only read their public status pages.'
+FOOTER='Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.'
 usage() {
-  echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>]"
+  echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>] [--require-asset-cache]"
 }
 
 base=""
@@ -41,12 +50,14 @@ ready_wait=0
 attempts=1
 wait_s=60
 expect_version=""
+require_asset_cache=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --require-ready) require_ready=true; shift ;;
     --ready-wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; ready_wait="$2"; shift 2 ;;
     --attempts) [ $# -ge 2 ] || { usage >&2; exit 2; }; attempts="$2"; shift 2 ;;
     --wait) [ $# -ge 2 ] || { usage >&2; exit 2; }; wait_s="$2"; shift 2 ;;
+    --require-asset-cache) require_asset_cache=true; shift ;;
     --expect-version) [ $# -ge 2 ] || { usage >&2; exit 2; }; expect_version="$2"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     -*) usage >&2; exit 2 ;;
@@ -119,6 +130,36 @@ wait_for_server() {
   done
 }
 
+# check_asset_cache: the hashed font under /assets/ has to be cacheable for a
+# year, or font-display: optional never draws Inter on a return visit. It goes
+# from the page to its stylesheet to the font, so the file is the one a browser
+# would request, answered by the same asset server. The page that names the
+# stylesheet is held to --expect-version, so the font checked belongs to the
+# expected version. The font itself is not: on Cloudflare a matching static
+# asset is served without invoking the Worker, so it carries no X-Worker-Version
+# and --expect-version would fail every attempt.
+check_asset_cache() {
+  local sheets css font cache
+  get /
+  check_version /
+  [ "$status" = 200 ] || { fail "/: $status, so no stylesheet to check the font cache with"; return; }
+  sheets="$(grep -aoE '/assets/[^"'"'"' ]+\.css' "$work/body" | sort -u || true)"
+  font=""
+  for css in $sheets; do
+    get "$css"
+    [ "$status" = 200 ] || { fail "$css: $status, expected 200"; return; }
+    font="$(grep -aoE '/assets/[^")'"'"' ]+\.woff2' "$work/body" | head -n 1 || true)"
+    [ -z "$font" ] || break
+  done
+  [ -n "$font" ] || { fail "/: no stylesheet under /assets/ names a .woff2 font"; return; }
+  get "$font"
+  [ "$status" = 200 ] || { fail "$font: $status, expected 200"; return; }
+  cache="$(header Cache-Control)"
+  if [[ "$cache" != *max-age=31536000* || "$cache" != *immutable* ]]; then
+    fail "$font: Cache-Control \"$cache\", expected max-age=31536000 and immutable (public/_headers)"
+  fi
+}
+
 run_checks() {
   failed=0
 
@@ -137,7 +178,23 @@ run_checks() {
     # No -q: grep -q exits at the footer and sed, still writing the rest of the
     # page, dies of SIGPIPE; under pipefail that fails the check on a good page.
     sed 's/<!-- -->//g' "$work/body" | grep -aF "$FOOTER" >/dev/null || fail "/: no footer line \"$FOOTER\""
-    [ -n "$(header Content-Security-Policy)" ] || fail "/: no Content-Security-Policy header"
+    csp="$(header Content-Security-Policy)"
+    [ -n "$csp" ] || fail "/: no Content-Security-Policy header"
+    # Scripts run by this response's nonce, never 'unsafe-inline': the policy names a nonce and the page's scripts carry it.
+    nonce="$(printf '%s' "$csp" | sed -n "s/.*script-src [^;]*'nonce-\([^']*\)'.*/\1/p")"
+    if [ -z "$nonce" ]; then
+      fail "/: script-src names no nonce"
+    else
+      grep -aqF "nonce=\"$nonce\"" "$work/body" || fail "/: the page carries no element with the policy's nonce"
+      # Every <script> tag in any letter case (tag names are case-insensitive in HTML), not just any element: one
+      # without the nonce is blocked by the browser. The nonce itself is compared exactly.
+      if grep -aoi '<script[^>]*>' "$work/body" | grep -vqF "nonce=\"$nonce\""; then
+        fail "/: a script without the policy's nonce"
+      fi
+    fi
+    case "$(printf '%s' "$csp" | tr ';' '\n' | grep -a 'script-src')" in
+      *unsafe-inline*) fail "/: script-src allows 'unsafe-inline'" ;;
+    esac
     [ -n "$(header X-Frame-Options)" ] || fail "/: no X-Frame-Options header"
   fi
 
@@ -168,6 +225,8 @@ run_checks() {
   get /metrics
   check_version /metrics
   [ "$status" = 200 ] || fail "/metrics: $status, expected 200"
+
+  if [ "$require_asset_cache" = true ]; then check_asset_cache; fi
 
   get /readyz
   check_version /readyz
@@ -212,6 +271,7 @@ until run_checks; do
   sleep 10
 done
 echo "ok  /healthz, /, /api/status.json, /api/history.json, /feed.xml, /metrics and /readyz answer on $base"
+[ "$require_asset_cache" != true ] || echo "ok  the font under /assets/ is cached for a year on $base"
 
 if [ "$require_ready" = true ]; then
   wait_for_ready || { echo "smoke: FAILED against $base" >&2; exit 1; }

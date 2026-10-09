@@ -1,0 +1,9 @@
+# Cloudflare static-asset headers (https://developers.cloudflare.com/workers/static-assets/headers/).
+# Everything under /assets/ is built by Vite with a content hash in its name
+# (the scripts, the stylesheet and the two fonts), so a changed file gets a new
+# URL and an old one never changes: a return visit can use its copy without
+# asking the network. Without this, Cloudflare answers with
+# "max-age=0, must-revalidate", and Chromium revalidates a font on the first
+# load of a new browser session, too late for font-display: optional to use it.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

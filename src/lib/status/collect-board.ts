@@ -20,7 +20,7 @@ export function assembleBoard(services: ServiceSnapshot[], durationMs: number): 
  * Sweeps every vendor once, adds the release feeds and the MikroTik changelog
  * notes that are in hand, and assembles the result into a board snapshot.
  * Shared by Node and Cloudflare Workers through the in-memory cache
- * (board.ts), so there is exactly one place that calls
+ * (board-cache.server.ts), so there is exactly one place that calls
  * `collectAllServices()` and exactly one that starts the release feeds (the
  * JSON API, the badges and the Refresh button all reach them through this
  * function).

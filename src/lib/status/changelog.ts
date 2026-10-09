@@ -1,4 +1,5 @@
-import { clip, MAX_NOTE_CHARS } from "./bounds.ts";
+import { clip, MAX_NOTE_CHARS, MAX_NOTE_LINES, MAX_TEXT_CHARS } from "./bounds.ts";
+import type { ReleaseNote } from "./types.ts";
 
 export type ChannelRelease = {
   name: string;
@@ -67,6 +68,13 @@ export const MAX_MIKROTIK_NOTES = 4;
 // reaches a second heading within this much is not read further.
 const MAX_NOTES_SCAN_CHARS = 64_000;
 
+/** The start of a section heading, with the space after "in" so "What's new information" is not one. */
+const SECTION_HEADING = "what's new in ";
+
+function isSectionHeading(line: string): boolean {
+  return line.slice(0, SECTION_HEADING.length).toLowerCase() === SECTION_HEADING;
+}
+
 /**
  * The first few notes of a RouterOS changelog's newest section: the bullets
  * ("*) bridge - fixed ...;" and the important "!) ..." ones) between the first
@@ -88,7 +96,7 @@ export function mikrotikChangelogNotes(text: string, max: number = MAX_MIKROTIK_
     const line = text.slice(pos, lineEnd).trim();
     pos = lineEnd + 1;
     if (line.length === 0) continue;
-    if (line.slice(0, 13).toLowerCase() === "what's new in") {
+    if (isSectionHeading(line)) {
       if (inSection) break;
       inSection = true;
       continue;
@@ -98,6 +106,122 @@ export function mikrotikChangelogNotes(text: string, max: number = MAX_MIKROTIK_
     if (note) notes.push(clip(note, MAX_NOTE_CHARS));
   }
   return notes;
+}
+
+/** Areas the row names before "+N more". */
+const NOTE_ROW_AREAS = 3;
+/** Distinct areas the Details name; every area is counted, and the ones past this are left unnamed ("and 15 more"). */
+const NOTE_MAX_AREAS = 30;
+/** The longest text before " - " that still reads as an area ("dhcpv4-server", "ipv6 nd"), not a sentence. */
+const NOTE_AREA_CHARS = 24;
+
+// An area is a short run of the characters MikroTik's own area names use (no comma, which would make "bgp, ospf"
+// one area that the note then lists as two). The text it is tested on is at most
+// NOTE_AREA_CHARS long and the class is a single repeat, so the test is linear.
+const NOTE_AREA = /^[A-Za-z0-9][A-Za-z0-9 ._/()+-]*$/;
+
+/** The area of a change line ("bgp" in "bgp - fixed a leak"), or undefined when the line does not start with one. */
+function changeArea(body: string): string | undefined {
+  // Look only as far as an area could reach, so a long line is not scanned for a " - " it cannot use.
+  const dash = body.slice(0, NOTE_AREA_CHARS + 3).indexOf(" - ");
+  if (dash < 1) return undefined;
+  const area = body.slice(0, dash).trim();
+  return area.length > 0 && area.length <= NOTE_AREA_CHARS && NOTE_AREA.test(area) ? area : undefined;
+}
+
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * A short note on one RouterOS release, from that version's own changelog section ("What's new in <version>")
+ * and nothing else: how many change lines it has, the areas they name in order of first appearance (the text
+ * before " - " in "*) bridge - fixed ..."), and the lines MikroTik flags important ("!) ..."). The row gets
+ * "23 changes: bgp, wifi, container +9 more · 2 important"; the Details get every area and the important lines'
+ * text. Undefined when:
+ * - the section is not for `version` (the first heading must name it exactly), or has no change lines;
+ * - the section may have been cut: a count is made only when a later "What's new in" heading shows that this
+ *   section ended, or when `whole` says the text is certainly the entire file and the scan reached its end within
+ *   MAX_NOTES_SCAN_CHARS. Whether a read was cut is a matter of bytes and HTTP metadata, which the text cannot show
+ *   (a cut that falls among multi-byte characters still decodes to fewer characters than the byte limit), so the
+ *   caller says it; without `whole` the text is taken as possibly cut, and an unclosed section has no note.
+ *
+ * One forward pass over at most MAX_NOTES_SCAN_CHARS, line by line with indexOf; the area test sees at most
+ * NOTE_AREA_CHARS characters of a line.
+ */
+export function mikrotikChangelogNote(
+  text: string,
+  version: string,
+  { whole = false }: { whole?: boolean } = {},
+): ReleaseNote | undefined {
+  if (!mikrotikChangelogIsFor(text, version)) return undefined;
+  const end = Math.min(text.length, MAX_NOTES_SCAN_CHARS);
+  // Every distinct area is counted (lowercase, so "BGP" and "bgp" are one); only the first NOTE_MAX_AREAS are named.
+  const seenAreas = new Set<string>();
+  const areas: string[] = [];
+  const important: string[] = [];
+  let changes = 0;
+  let flagged = 0;
+  let inSection = false;
+  let ended = false;
+  let pos = 0;
+  while (pos < end) {
+    const newline = text.indexOf("\n", pos);
+    const lineEnd = newline === -1 || newline > end ? end : newline;
+    const line = text.slice(pos, lineEnd).trim();
+    pos = lineEnd + 1;
+    if (line.length === 0) continue;
+    if (isSectionHeading(line)) {
+      if (inSection) {
+        ended = true;
+        break;
+      }
+      inSection = true;
+      continue;
+    }
+    if (!inSection || line.length < 2 || line[1] !== ")" || (line[0] !== "*" && line[0] !== "!")) continue;
+    // The text of the change, as the first notes read it: a bullet with nothing after it is not a change.
+    const body = line.slice(2).trim().replace(/;$/, "").trim();
+    if (!body) continue;
+    changes += 1;
+    const area = changeArea(body);
+    if (area && !seenAreas.has(area.toLowerCase())) {
+      seenAreas.add(area.toLowerCase());
+      if (areas.length < NOTE_MAX_AREAS) areas.push(area);
+    }
+    if (line[0] === "!") {
+      flagged += 1;
+      if (important.length < MAX_NOTE_LINES) important.push(clip(body, MAX_NOTE_CHARS));
+    }
+  }
+  // A later heading closed the section, or the text is the whole file and was scanned to its end: either way the
+  // count is the section's. Anything else may have lost lines to a cut, and a count would be a guess.
+  if (changes === 0 || (!ended && !(whole && text.length <= MAX_NOTES_SCAN_CHARS))) return undefined;
+
+  const total = seenAreas.size;
+  const more = total - NOTE_ROW_AREAS;
+  const count = plural(changes, "change", "changes");
+  let row = count;
+  if (total > 0) row += `: ${areas.slice(0, NOTE_ROW_AREAS).join(", ")}${more > 0 ? ` +${more} more` : ""}`;
+  if (flagged > 0) row += ` · ${flagged} important`;
+  // The Details hold at most MAX_TEXT_CHARS, and a longer text is cut at its end, which would lose the "and N more"
+  // and the important-lines sentence. So the end is written first and the areas are named only as far as the
+  // whole fits, with "and N more" counting every area left unnamed. (The row is short by construction: three
+  // areas of at most NOTE_AREA_CHARS and three counts, far under MAX_NOTE_CHARS.)
+  // The Details list at most MAX_NOTE_LINES important lines; say so when the release has more.
+  const importantSentence =
+    flagged > important.length ? ` ${flagged} are marked important; the first ${important.length} are listed.` : "";
+  const detailWith = (named: number) => {
+    if (total === 0) return `${count}.${importantSentence}`;
+    const head = `${count} in ${plural(total, "area", "areas")}`;
+    if (named === 0) return `${head}.${importantSentence}`;
+    const left = total - named;
+    return `${head}: ${areas.slice(0, named).join(", ")}${left > 0 ? ` and ${left} more` : ""}.${importantSentence}`;
+  };
+  // The most areas named that still fit; not "stop at the first that does not", because naming the last area
+  // drops the "and N more" and can fit where the one before it did not.
+  let named = areas.length;
+  while (named > 0 && detailWith(named).length > MAX_TEXT_CHARS) named -= 1;
+  const detail = detailWith(named);
+  return { text: row, detail, ...(important.length > 0 ? { important } : {}) };
 }
 
 /**
@@ -114,9 +238,8 @@ export function mikrotikChangelogIsFor(text: string, version: string): boolean {
     const line = text.slice(pos, lineEnd).trim();
     pos = lineEnd + 1;
     if (line.length === 0) continue;
-    const prefix = "what's new in ";
-    if (line.slice(0, prefix.length).toLowerCase() !== prefix) return false;
-    const rest = line.slice(prefix.length);
+    if (!isSectionHeading(line)) return false;
+    const rest = line.slice(SECTION_HEADING.length);
     if (rest.slice(0, version.length).toLowerCase() !== version.toLowerCase()) return false;
     const next = rest[version.length];
     return next === undefined || next === " " || next === "(" || next === ":";

@@ -67,12 +67,26 @@ describe("CompactHeader", () => {
     expect(html).toMatch(/max-sm:sr-only">Checked /);
   });
 
+  it("leaves the glyph's cut-outs to the stylesheet: no inline --glyph-cut, which a phone's media query could not change", () => {
+    for (const tone of ["degraded", "outage"] as const) {
+      const html = render({ tone });
+      expect(html).toContain(`data-health="${tone}"`);
+      expect(html).not.toContain("--glyph-cut:");
+    }
+  });
+
   it("draws the compact form under 1024px, hidden from screen readers, and the short form beside it for them", () => {
     const html = render({ tone: "outage", short: "1 down · 1 degraded", compact: "1 down · 1 more" });
-    expect(html).toMatch(/aria-hidden="true" class="[^"]*lg:hidden[^"]*">1 down · 1 more<\/span>/);
+    expect(html).toMatch(/aria-hidden="true" class="[^"]*lg:hidden[^"]*">1\u00a0down\u00a0· 1\u00a0more<\/span>/);
     expect(html).toMatch(/class="[^"]*max-lg:sr-only[^"]*">1 down · 1 degraded<\/span>/);
     // The ellipsis sits on the span that holds the text, where text-overflow takes effect.
     expect(html).toMatch(/text-ellipsis[^"]*lg:hidden/);
+    // No-break spaces keep a count with its word and the dot with the word before it, so a wrap never splits them.
+    expect(
+      render({ tone: "outage", short: "x", compact: "10 degraded · 5 more" }).includes(
+        "10\u00a0degraded\u00a0· 5\u00a0more",
+      ),
+    ).toBe(true);
   });
 
   it("says when the board was checked and when the next check is, in the viewer's zone once hydrated", () => {
@@ -106,9 +120,10 @@ describe("CompactHeader", () => {
 
   it("reads the server snapshot on the server: a store that says the bar is up and the field revealed renders neither", () => {
     const store = createDockStore();
-    store.set({ barShown: true, docked: true, heroAway: true, revealed: true });
+    store.set({ barShown: true, away: false, docked: true, heroAway: true, revealed: true });
     const html = render({ store });
     expect(html).toContain('data-shown="false"');
     expect(html).not.toContain("data-revealed");
+    expect(html).not.toContain("data-away");
   });
 });

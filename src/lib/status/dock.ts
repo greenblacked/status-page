@@ -2,8 +2,16 @@ import { barShownAt, dockProgress } from "./layout.ts";
 
 /** What the search dock has reached, for the few parts of the page that change with it. */
 export type DockState = {
-  /** The floating bar is up (below 64rem once the hero's last line has scrolled clear, wide most of the way through the move). */
+  /**
+   * The floating bar is up (below 64rem once the hero's last line has scrolled clear, wide most of the way through the
+   * move). On a phone that is whether it exists, not whether it is in sight: it also hides on a scroll down (`away`).
+   */
   barShown: boolean;
+  /**
+   * On a phone (under 40rem): the bar is up (`barShown`) but out of sight, because the reader is scrolling down. It
+   * comes back on a scroll up (see `awayFrame`). Always false from 40rem, where the bar stays up once it has come up.
+   */
+  away: boolean;
   /**
    * Wide only (64rem and up): the field is fully in the bar, and part way it keeps whatever it was. Always false
    * below 64rem, where the field never moves into the bar (see `revealed`).
@@ -35,7 +43,7 @@ export type DockStore = {
 };
 
 /** The dock at the top of the page: no bar, only the field in the hero. */
-export const DOCK_REST: DockState = { barShown: false, docked: false, heroAway: false, revealed: false };
+export const DOCK_REST: DockState = { barShown: false, away: false, docked: false, heroAway: false, revealed: false };
 
 export function createDockStore(): DockStore {
   let state = DOCK_REST;
@@ -51,6 +59,7 @@ export function createDockStore(): DockStore {
     set: (next) => {
       if (
         next.barShown === state.barShown &&
+        next.away === state.away &&
         next.docked === state.docked &&
         next.heroAway === state.heroAway &&
         next.revealed === state.revealed
@@ -123,6 +132,7 @@ export function dockGeometry({
   barHeight,
   fieldBottom = Number.POSITIVE_INFINITY,
   contentBottom = Number.NEGATIVE_INFINITY,
+  clearTo = barTop - BAR_RISE,
 }: {
   wide: boolean;
   reduce: boolean;
@@ -131,6 +141,12 @@ export function dockGeometry({
   barHeight: number;
   fieldBottom?: number;
   contentBottom?: number;
+  /**
+   * Below 64rem: the viewport position (px from the top) the hero's last line must have risen to before the bar comes
+   * up. The pill's is its top less the rise it slides in from (the default). A bar that is a sheet from the top edge
+   * of the screen (a phone's) covers everything down to its bottom edge, so the line must be off the screen: 0.
+   */
+  clearTo?: number;
 }): DockGeometry {
   if (wide) {
     const range = WIDE_RANGE;
@@ -145,7 +161,7 @@ export function dockGeometry({
     };
   }
   // A page with no hero line to wait for brings the bar up at the top.
-  const barStart = Math.max(0, contentBottom - (barTop - BAR_RISE));
+  const barStart = Math.max(0, contentBottom - clearTo);
   return {
     wide,
     start: barStart,
@@ -207,6 +223,13 @@ export function clampScroll(scrollY: number, maxScroll: number): number {
  * board's anchor moved by that much (`anchorMoved`), or the page's end did (`limit` against `lastLimit`: content
  * above the reader's place came or went). Travel under 1px is no move. All positions are held to the page, as
  * `revealFrame` holds its own, or an iOS overshoot would read as travel.
+ *
+ * A key typed into a search field changes the board, and so the page's height, and the browser then moves the page
+ * by part of that change (its scroll anchoring holds a card that may be one the search has just removed, which
+ * leaves `anchorMoved` nothing to read, and the content that went may lie below the reader's place as well as above
+ * it, so the travel is less than the end's). While the reader is `typing`, a move in the direction the page's end
+ * moved, by no more than it moved, is that change and not the reader's: a finger on the page at the same moment
+ * would have to scroll the same way by less than the change to be mistaken for it.
  */
 export function readerMoved({
   from,
@@ -215,6 +238,7 @@ export function readerMoved({
   lastLimit,
   anchorMoved = 0,
   quiet = false,
+  typing = false,
 }: {
   /** The position the last frame left the page at (clamped, as the memo keeps it). */
   from: number;
@@ -227,6 +251,8 @@ export function readerMoved({
   anchorMoved?: number;
   /** A scroll the page made itself is under way. */
   quiet?: boolean;
+  /** A key was typed into a search field a moment ago (`TYPING_MS`). */
+  typing?: boolean;
 }): boolean {
   const at = clampScroll(scrollY, limit);
   const travel = at - from;
@@ -234,8 +260,25 @@ export function readerMoved({
   if (from > limit + 0.5 && limit - at < 1.5) return false;
   if (Math.abs(anchorMoved) >= 1 && Math.abs(travel - anchorMoved) < 1.5) return false;
   const shift = limit - lastLimit;
-  return !(Math.abs(shift) >= 1 && Math.abs(travel - shift) < 1.5);
+  if (Math.abs(shift) >= 1 && Math.abs(travel - shift) < 1.5) return false;
+  return !(typing && Math.abs(shift) >= 1 && travel * shift > 0 && Math.abs(travel) <= Math.abs(shift));
 }
+
+/**
+ * Whether the hero's field, which the bar's field in use is about to give way to, is wholly clear of the bar: its top
+ * edge at or below the bar's bottom edge. `revealFrom` counts the hero's field as in view once only its bottom edge
+ * clears the bar, and a field handed the focus there is under the bar while it is typed in. Pure.
+ */
+export function heroFieldClear(heroTop: number, barBottom: number): boolean {
+  return heroTop >= barBottom - 0.5;
+}
+
+/**
+ * How long after a key typed into a search field the board's change from it can still be moving the page: the key's
+ * render, the layout of the next frame (where the browser moves the page) and the frame after it. Time, not frames,
+ * because no frame runs while nothing changes, and a scroll a long while after the last key is the reader's.
+ */
+export const TYPING_MS = 400;
 
 /** What `revealFrame` remembers from one frame to the next. */
 export type RevealMemo = {
@@ -324,6 +367,71 @@ export function revealFrame(
   return { heroAway: true, revealed, dir, pivot, lastY: y };
 }
 
+/** On a phone: how many px of travel, from the lowest (or highest) point of a run, turn the bar round (`awayFrame`). */
+export const AWAY_PX = 8;
+
+/** What `awayFrame` remembers from one frame to the next. */
+export type AwayMemo = {
+  /** The bar is out of sight: the reader is going down. */
+  away: boolean;
+  /** The furthest point of the current run: the lowest scroll position going down, the highest going up. */
+  pivot: number;
+  /** The position the last frame saw. */
+  lastY: number;
+};
+
+/** A bar that has not come up, or that has just come up under a scroll down: out of sight. */
+export const AWAY_REST: AwayMemo = { away: true, pivot: 0, lastY: 0 };
+
+/**
+ * On a phone (under 40rem): whether the bar, once it exists (`barShown`: the hero's last line is clear of it), is out
+ * of sight. It goes away while the reader scrolls down and comes back on any scroll up of more than AWAY_PX, the way
+ * the AI catalogue's header does (the same 8px), but over the run, not the single scroll event: a slow drag adds up.
+ * Pure: the hook hands it the position and what it remembered, and keeps what it returns.
+ *
+ * 1. `y` is clamped to the page (0 to `maxScroll`), so an iOS rubber band, and the recoil from the bottom one, which
+ *    reads as a scroll up, move nothing.
+ * 2. Off a phone nothing hides: the bar is in sight, and the baseline follows (so that turning a tablet into a phone
+ *    does not hide a bar that is up until it is scrolled down).
+ * 3. A bar that does not exist yet is out of sight, and a scroll down from the top brings it up out of sight: it comes
+ *    only on a scroll up.
+ * 4. `hold` (a search field of the bar has focus, or a search is written while the bar's field shows) keeps it in
+ *    sight, and the run starts from there. `latched` (the page has not armed, a field has focus, a dialog is open)
+ *    keeps whatever it is and only moves the baseline: what the keyboard does to the page is no direction.
+ * 5. Otherwise the pivot follows the run (down: the lowest point, up: the highest) and AWAY_PX of travel back from it
+ *    turns the bar round. A frame at the same position is `prev` itself.
+ */
+export function awayFrame(
+  scrollY: number,
+  maxScroll: number,
+  prev: AwayMemo,
+  context: { phone: boolean; barShown: boolean; hold: boolean; latched: boolean },
+): AwayMemo {
+  const y = clampScroll(scrollY, maxScroll);
+  const rest = (away: boolean): AwayMemo =>
+    prev.away === away && prev.pivot === y && prev.lastY === y ? prev : { away, pivot: y, lastY: y };
+  if (!context.phone) return rest(false);
+  if (!context.barShown) return rest(true);
+  if (context.hold) return rest(false);
+  if (context.latched) return prev.pivot === y && prev.lastY === y ? prev : { ...prev, pivot: y, lastY: y };
+  if (y === prev.lastY) return prev;
+  let { away, pivot } = prev;
+  if (away) {
+    pivot = Math.max(pivot, y);
+    if (pivot - y > AWAY_PX) {
+      away = false;
+      pivot = y;
+    }
+  } else {
+    pivot = Math.min(pivot, y);
+    if (y - pivot > AWAY_PX) {
+      away = true;
+      pivot = y;
+    }
+  }
+  return { away, pivot, lastY: y };
+}
+
 /**
  * The state of the reveal once a field has the focus in the bar's copy, which shows it without a scroll: a run
  * going up from `y`. Unchanged when the hero's field is not behind the bar (the copy cannot be reached then) or the
@@ -345,25 +453,53 @@ export function crossingTarget({ wide, heroAway }: { wide: boolean; heroAway: bo
 
 let quiet = false;
 let quietToken = 0;
+let lastScrollAt = Number.NEGATIVE_INFINITY;
+
+/** How long the page must be still for a glide to be over, and the longest one is taken to last (ms). */
+const GLIDE_STILL_MS = 120;
+const GLIDE_MAX_MS = 1500;
 
 /**
  * Runs `scroll`, a scroll the page makes itself (to keep a card under the reader's finger after the board
  * reordered), and has the dock read it as no direction at all: until two frames from now the hook moves its
  * baseline to the position instead of counting travel (see `quietScrolling`). Left alone, a jump of a screenful
  * would look like a deliberate scroll up and bring the field in.
+ *
+ * With `glide` the scroll is an animated one (`scrollIntoView` with behavior smooth), which sends scroll events for as
+ * long as it lasts: it is quiet until the page has been still for GLIDE_STILL_MS (or GLIDE_MAX_MS, whatever happens).
  */
-export function quietScroll(scroll: () => void): void {
+export function quietScroll(scroll: () => void, { glide = false }: { glide?: boolean } = {}): void {
   quiet = true;
   const token = ++quietToken;
-  scroll();
   const clear = () => {
     if (token === quietToken) quiet = false;
   };
+  if (glide && typeof window !== "undefined" && typeof setTimeout === "function") {
+    const started = performance.now();
+    lastScrollAt = started;
+    const onScroll = () => {
+      lastScrollAt = performance.now();
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    const poll = () => {
+      const now = performance.now();
+      if (token !== quietToken || now - lastScrollAt >= GLIDE_STILL_MS || now - started >= GLIDE_MAX_MS) {
+        window.removeEventListener("scroll", onScroll);
+        clear();
+        return;
+      }
+      setTimeout(poll, GLIDE_STILL_MS / 2);
+    };
+    scroll();
+    setTimeout(poll, GLIDE_STILL_MS);
+    return;
+  }
+  scroll();
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => requestAnimationFrame(clear));
   else queueMicrotask(clear);
 }
 
-/** Whether a `quietScroll` is still within its two frames: the hook's frame rebases while this is true. */
+/** Whether a `quietScroll` is still within its two frames (or its glide): the hook's frame rebases while this is true. */
 export function quietScrolling(): boolean {
   return quiet;
 }

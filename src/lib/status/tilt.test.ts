@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   BASELINE_TAU_MS,
   createTiltController,
   createWritePacer,
   DEADBAND,
+  GLINT_QUERY,
   gravityFromOrientation,
   LIGHT_RANGE,
   LIGHT_SIGN,
@@ -429,6 +431,21 @@ describe("createWritePacer", () => {
     expect(pacer.interval()).toBe(MAX_APPLY_INTERVAL_MS);
   });
 
+  it("with a floor of 0 writes on every frame, backs off when frames overrun and comes back to 0", () => {
+    const pacer = createWritePacer(0);
+    expect(run(pacer, 16.7, 60)).toBe(0);
+    // A dropped frame widens a gap that was 0: it starts from a frame's length, not from nothing.
+    pacer.frame(50);
+    expect(pacer.interval()).toBeGreaterThanOrEqual(16);
+    expect(run(pacer, 100, 20)).toBe(MAX_APPLY_INTERVAL_MS);
+    expect(run(pacer, 16.7, 200)).toBe(0);
+  });
+
+  it("with a floor of 0 does not back off on a steady 30 Hz or 120 Hz screen", () => {
+    expect(run(createWritePacer(0), 33.3, 500)).toBe(0);
+    expect(run(createWritePacer(0), 8.33, 500)).toBe(0);
+  });
+
   it("ignores a time that is not a duration", () => {
     const pacer = createWritePacer();
     run(pacer, 16.7, 5);
@@ -449,5 +466,98 @@ describe("createWritePacer", () => {
     interval = 33;
     controller.sample(90, 0, 0, 230);
     expect(apply).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("GLINT_QUERY", () => {
+  it("is the media query that wraps the glint's rules in the style sheet", () => {
+    // The sink listens to this query to make and drop the glint's animations; the style sheet decides
+    // by the same words whether the glint is drawn, so the two must not drift apart.
+    const css = readFileSync(new URL("../../background.css", import.meta.url), "utf8");
+    const wrapped = css.split(`@media ${GLINT_QUERY} {`).slice(1);
+    expect(wrapped.length).toBeGreaterThan(0);
+    expect(wrapped.some((rules) => rules.includes(".spotlight::after"))).toBe(true);
+  });
+});
+
+describe("the wandering card light", () => {
+  const css = readFileSync(new URL("../../background.css", import.meta.url), "utf8");
+
+  /** The text of the block that opens at `css[open]` (the index of its `{`), braces matched. */
+  const blockAt = (open: number) => {
+    let depth = 0;
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}" && --depth === 0) return css.slice(open, i + 1);
+    }
+    return css.slice(open);
+  };
+
+  /** The declarations of the first rule in the style sheet that starts with this selector. */
+  const ruleOf = (selector: string) => {
+    const at = css.indexOf(`${selector} {`);
+    expect(at, `a rule for ${selector}`).toBeGreaterThan(-1);
+    return blockAt(at + selector.length + 1);
+  };
+
+  const GATE = ':root:is([data-background="glass"], [data-background="full"])';
+
+  it("runs on every device, in Glass and in Full: none of its rules sit inside a hover or pointer media query", () => {
+    const gated = [...css.matchAll(/@media[^{]*\((?:hover|pointer|any-hover|any-pointer):[^{]*\{/g)].map((match) =>
+      blockAt((match.index ?? 0) + match[0].length - 1),
+    );
+    expect(gated.length).toBeGreaterThan(0);
+    for (const block of gated) {
+      expect(block).not.toContain("--wander-");
+      expect(block).not.toContain("[data-wander");
+    }
+    expect(css).toContain(`${GATE} .spotlight[data-wander]::after {`);
+    expect(css).toContain(`${GATE} .spotlight::after {`);
+    // Not behind Full alone: Glass has the light too.
+    expect(css).not.toContain(':root[data-background="full"] .spotlight');
+  });
+
+  it("is moved by a transform of a layer of the light's own size, not by an animation of a panel-sized one", () => {
+    // A moving layer in a blurred panel makes the compositor draw the blur again on every frame it moves, and
+    // an animation moves it on every frame: the page steps the light (wander-light.ts) instead.
+    expect(css).not.toContain("light-wander");
+    const layer = ruleOf(`${GATE} .spotlight::after`);
+    expect(layer).toContain("width: 432px");
+    expect(layer).toContain("height: 432px");
+    expect(layer).not.toMatch(/\binset: 0;/);
+    expect(layer).not.toContain("animation");
+    const moving = ruleOf(`${GATE} .spotlight[data-wander]::after`);
+    expect(moving).toContain("translate3d(var(--wander-x, 0px), var(--wander-y, 0px), 0)");
+    expect(moving).toContain("will-change: transform");
+    expect(moving).not.toContain("animation");
+  });
+
+  it("does not let the places it is written to reach the rows inside a panel", () => {
+    const reset = ruleOf(`${GATE} .spotlight > *`);
+    expect(reset).toContain("--wander-x: initial;");
+    expect(reset).toContain("--wander-y: initial;");
+  });
+
+  it("is stepped aside by the glint: the glint's rule comes after every wander rule, at the same specificity", () => {
+    const glint = css.indexOf(
+      '[data-tilt="on"]:is([data-background="glass"], [data-background="full"]) .spotlight::after {',
+    );
+    expect(glint).toBeGreaterThan(-1);
+    // Every place in the file that sets or names the wander's rules: moving any of them below the glint would
+    // let its transform override the glint's.
+    const last = Math.max(css.lastIndexOf("--wander-x"), css.lastIndexOf("[data-wander"));
+    expect(last).toBeGreaterThan(-1);
+    expect(last).toBeLessThan(glint);
+    const block = css.slice(glint, glint + css.slice(glint).indexOf("}"));
+    expect(block).toContain("transform: translate3d(");
+  });
+
+  it("is hidden outright by every off-switch, in Glass as in Full", () => {
+    // The page writes no place for a layer the style sheet hides (wander-light.ts), so each switch must hide it.
+    expect(css).toContain(
+      ':root[data-reduce-transparency="true"]:is([data-background="glass"], [data-background="full"]) .spotlight::after',
+    );
+    expect(css).toContain(':root:root:is([data-background="glass"], [data-background="full"]) .spotlight::after');
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.spotlight::after \{[^}]*display: none/);
   });
 });

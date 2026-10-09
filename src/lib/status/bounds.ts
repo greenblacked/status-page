@@ -1,5 +1,5 @@
 import { fingerprint } from "./fingerprint.ts";
-import type { ReleaseFeed, ReleaseInfo, ServiceSnapshot } from "./types.ts";
+import type { ReleaseFeed, ReleaseInfo, ReleaseNote, ServiceSnapshot } from "./types.ts";
 
 /**
  * Longest text a snapshot may carry, per kind. A vendor payload is bounded
@@ -97,6 +97,27 @@ function boundSummary(snapshot: ServiceSnapshot): string {
   return clip(summary, MAX_TEXT_CHARS);
 }
 
+// A release note's strings come from vendor text too: its row text and detail are cut, its important lines are held
+// to MAX_NOTE_LINES lines of MAX_NOTE_CHARS, its reference label is cut and its link dropped when too long. A note
+// with no row text is not a note.
+function boundNote(note: ReleaseNote): ReleaseNote | undefined {
+  if (typeof note?.text !== "string" || note.text.trim() === "") return undefined;
+  const next: ReleaseNote = { text: clip(note.text, MAX_NOTE_CHARS) };
+  if (typeof note.detail === "string" && note.detail.trim() !== "") next.detail = clip(note.detail, MAX_TEXT_CHARS);
+  if (Array.isArray(note.important)) {
+    const lines = note.important
+      .filter((line): line is string => typeof line === "string" && line.trim() !== "")
+      .slice(0, MAX_NOTE_LINES)
+      .map((line) => clip(line, MAX_NOTE_CHARS));
+    if (lines.length > 0) next.important = lines;
+  }
+  if (note.reference && typeof note.reference.label === "string" && note.reference.label.trim() !== "") {
+    const url = boundUrl(note.reference.url);
+    next.reference = { label: clip(note.reference.label, MAX_RELEASE_FIELD_CHARS), ...(url ? { url } : {}) };
+  }
+  return next;
+}
+
 // A release's strings come from vendor text too. Dates and the build are cut like any field; a notes list keeps
 // its first MAX_NOTE_LINES text lines, each cut, and is dropped when none is left.
 function boundRelease(release: ReleaseInfo): ReleaseInfo {
@@ -115,6 +136,11 @@ function boundRelease(release: ReleaseInfo): ReleaseInfo {
       : [];
     if (lines.length > 0) next.notes = lines;
     else delete next.notes;
+  }
+  if (release.note !== undefined) {
+    const note = boundNote(release.note);
+    if (note) next.note = note;
+    else delete next.note;
   }
   return next;
 }

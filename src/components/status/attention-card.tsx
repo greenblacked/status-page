@@ -165,7 +165,9 @@ export function AttentionCard({
         />
       </div>
 
-      <p className="dynamic-text mt-2 ml-[34px] text-body text-fg [overflow-wrap:anywhere]">{service.summary}</p>
+      <p className="dynamic-text mt-2 ml-[34px] max-w-[72ch] text-body text-fg [overflow-wrap:anywhere]">
+        {service.summary}
+      </p>
 
       {rows.length > 0 ? (
         <div className="mt-3 ml-[34px]" data-more-rows={moreRows > 0 ? "" : undefined}>
@@ -210,7 +212,7 @@ export function AttentionCard({
         </details>
       ) : null}
 
-      <ServiceExtras service={service} hideTitle={summary} now={now} className="mt-3 ml-[34px]" />
+      <ServiceExtras service={service} hideTitle={summary} now={now} className="mt-3 ml-[34px] max-w-[72ch]" />
 
       {import.meta.env.VITE_STATUS_HISTORY === "1" && days.length > 0 && !changelog ? (
         <HistoryStrip days={days} nowMs={now} className="mt-4 ml-[34px]" />

@@ -12,8 +12,8 @@ import type {
 } from "../src/lib/status/types.ts";
 
 // A board with every state the page can show, for tests that must see
-// them all whatever the vendors say today (and offline, every vendor says
-// Unknown). Outage, degraded, maintenance that has not started, unknown,
+// them all, and every service of the board (the server's own board, from the
+// preview's canned payloads, has states on only some of them). Outage, degraded, maintenance that has not started, unknown,
 // operational services and release trackers, incidents with start times.
 // Two attention services differ in severity (AWS down, Google Cloud
 // degraded), so the most urgent one leads the board. Healthy ChatGPT and
@@ -171,11 +171,26 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             "bridge - improved MAC learning performance on CRS3xx series devices",
             "wifi - fixed station roaming between access points on the same channel",
           ],
+          // A hand-written note in the shape the collector builds from a changelog (no fixture changelog exists for
+          // 7.21): 23 changes, two of them flagged important. The collector's own output is tested against fixtures.
+          note: {
+            text: "23 changes: bgp, bridge, wifi +9 more · 2 important",
+            detail:
+              "23 changes in 12 areas: bgp, bridge, wifi, lte, ipsec, ospf, container, dhcpv4-server, console, system, ppp, routing.",
+            important: [
+              "lte - fixed a crash when a modem is removed during a firmware update",
+              "system - changed the default firewall policy",
+            ],
+          },
         }),
         release("Long-term", "operational", at(-70 * day), "7.18.2", {
           url: "https://download.mikrotik.com/routeros/7.18.2/CHANGELOG",
           linkLabel: "Release notes",
           notes: ["dhcpv4-server - fixed lease expiry reported in the wrong unit"],
+          note: {
+            text: "1 change: dhcpv4-server",
+            detail: "1 change in 1 area: dhcpv4-server.",
+          },
         }),
         release("Testing", "operational", at(-20 * day), "7.22beta3", {
           url: "https://download.mikrotik.com/routeros/7.22beta3/CHANGELOG",
@@ -210,6 +225,12 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             build: "26300.1000",
             releasedAt: at(-2 * day).slice(0, 10),
             url: WINDOWS_PAGE,
+            // The update type of its latest build from the page's history table, with the article the table links.
+            note: {
+              text: "Security update",
+              detail: "2026-09 B: the monthly security update.",
+              reference: { label: "KB5000000", url: "https://support.microsoft.com/help/5000000" },
+            },
           },
         },
         {
@@ -222,6 +243,30 @@ function overrides(now: number, grok: Health): Partial<Record<ServiceId, Overrid
             releasedAt: "2026-02-10",
             updatedAt: at(-9 * day).slice(0, 10),
             url: WINDOWS_PAGE,
+            // Its table links the article, as the page fixture does: the link is the table's own.
+            note: {
+              text: "Optional preview",
+              detail: "2026-09 D: an optional, non-security preview of the next monthly update.",
+              reference: { label: "KB5000050", url: "https://support.microsoft.com/help/5000050" },
+            },
+          },
+        },
+        {
+          name: "25H2",
+          health: "operational",
+          detail: `26200.8100 · ${formatReleaseAge(at(-26 * day).slice(0, 10))}`,
+          release: {
+            version: "25H2",
+            build: "26200.8100",
+            releasedAt: at(-26 * day).slice(0, 10),
+            url: WINDOWS_PAGE,
+            // Its table names the article in text only (as the page fixture's 25H2 table does): the number is
+            // shown, with no link and none invented.
+            note: {
+              text: "Out-of-band fix",
+              detail: "2026-09 OOB: an out-of-band fix, released outside the monthly schedule.",
+              reference: { label: "KB5000060" },
+            },
           },
         },
       ],
@@ -472,10 +517,37 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
  * sits under them.
  */
 export function longHeroBoard(now: number): BoardSnapshot {
+  return needLookBoard(now, ["outage", "degraded", "maintenance"]);
+}
+
+/**
+ * The widest compact verdict the floating bar draws, in words: fifteen services need a look and most of them
+ * are degraded, the longest state word ("10 degraded · 5 more").
+ */
+export function degradedLedBoard(now: number): BoardSnapshot {
+  return needLookBoard(now, ["degraded", "degraded", "maintenance"]);
+}
+
+/** Every service unread: the bar's verdict is "Nothing needs a look", the longest sentence it draws. */
+export function unreadBoard(now: number): BoardSnapshot {
+  const board = fixtureBoard(now);
+  const services = board.services.map(
+    (service): ServiceSnapshot => ({
+      ...service,
+      health: "unknown",
+      summary: "The official source did not answer in time",
+    }),
+  );
+  const counts: Record<Health, number> = { operational: 0, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+  for (const service of services) counts[service.health] += 1;
+  return { ...board, services, counts };
+}
+
+/** The fixture with fifteen services in `states` in turn (the rest as they were, two unread). */
+function needLookBoard(now: number, states: Health[]): BoardSnapshot {
   const board = fixtureBoard(now);
   const unread = new Set<ServiceId>(["android", "grok"]);
   const calm = new Set<ServiceId>(["apple-os", "windows", "android-os"]);
-  const states: Health[] = ["outage", "degraded", "maintenance"];
   let next = 0;
   const services = board.services.map((service): ServiceSnapshot => {
     if (unread.has(service.id)) {

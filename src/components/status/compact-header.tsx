@@ -3,6 +3,9 @@ import { firstInView } from "@/components/status/hold-place";
 import { LocalTime } from "@/components/status/local-time";
 import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import {
+  AWAY_REST,
+  type AwayMemo,
+  awayFrame,
   clampScroll,
   crossingTarget,
   DOCK_REST,
@@ -12,15 +15,19 @@ import {
   dockFrame,
   dockGeometry,
   focusReveal,
+  heroFieldClear,
+  quietScroll,
   quietScrolling,
   REVEAL_REST,
   type RevealMemo,
   readerMoved,
   revealFrame,
+  TYPING_MS,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
 import type { LiveState } from "@/lib/status/schedule";
 import type { Health } from "@/lib/status/types";
+import { cn } from "@/lib/utils";
 
 /**
  * A length in px for a custom property, to 1/64 px (the layout unit): the slot's real, fractional box, so a
@@ -28,6 +35,12 @@ import type { Health } from "@/lib/status/types";
  */
 function px(value: number): string {
   return `${Math.round(value * 64) / 64}px`;
+}
+
+/** A computed length in px, or `fallback` when it is not one (`auto`): a real 0 stays 0, as the phone bar's `top` is. */
+function lengthOr(value: string, fallback: number): number {
+  const length = Number.parseFloat(value);
+  return Number.isFinite(length) ? length : fallback;
 }
 
 /**
@@ -67,6 +80,12 @@ function searchFieldInHand(): HTMLInputElement | null {
 export const WIDE = "(min-width: 64rem)";
 
 /**
+ * From 40rem (Tailwind's sm): not a phone. Below it is a phone. Asked as a min-width and negated, not as a range
+ * (`width < 40rem`), which Safari reads from 16.4, and the one the CSS's `@media (width < 40rem)` is the complement of.
+ */
+export const FROM_SM = "(min-width: 40rem)";
+
+/**
  * Drives the search dock from the scroll position (window.scrollY), and writes down only what changes.
  *
  * Below 64rem (phones and iPad portrait) the hero's field is ordinary content, and scrolls away with the page
@@ -85,13 +104,23 @@ export const WIDE = "(min-width: 64rem)";
  *   - A search written in the field keeps it showing while `heroAway` (`keepRevealed`).
  *   - The two fields are never on screen together, and a field being typed in is not lost to the layout: when a
  *     filter shortens the board and the page ends up above `revealFrom` without the reader scrolling (`readerMoved`),
- *     the focus, the text and the caret of the bar's field move to the hero's, which is then in view. The reader's
+ *     the focus, the text and the caret of the bar's field move to the hero's, once that is wholly clear of the bar
+ *     (`heroFieldClear`; until then the bar's field stays up and in use, not under it). The reader's
  *     own scroll up past `revealFrom` lets the bar's field go (a blur) as it always did.
+ *     A key typed into a search field is such a layout change: the results shorten the page and the browser moves it by
+ *     part of that (`typing`, for `TYPING_MS` after the key), which is no scroll by the reader either, even when
+ *     the card its scroll anchoring held was one the search removed.
  *   - The same hand-over when the screen crosses 64rem (an iPad turned) with a field in use. The field that was in use
  *     is hidden (the bar's copy from 64rem up) or out of reach (the hero's, scrolled away, below it), so the reveal
  *     is read again from the scroll position as it is now, not from the reset the crossing leaves, and the focus,
  *     the text and the caret go to the field that is there (`crossingTarget`): the docked one from 64rem, below it
  *     the hero's while in view and otherwise the bar's copy, revealed. A crossing with no field in use moves no focus.
+ *
+ * On a phone (under 40rem) the bar itself is out of sight while the reader scrolls down and comes back on a scroll up
+ * (`awayFrame`, AWAY_PX): once it exists (above), it is parked above the screen, and only a scroll up brings it down.
+ * It has its own baseline, moved by every rebase, so everything that moves the page without the reader is no direction
+ * for it either, and it is held in sight while a field of the bar has focus or a search is written and the bar's
+ * field shows (`hold`), and while a field in use has the rule latched. Tablets and desktops never hide it.
  *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
@@ -143,6 +172,7 @@ export function useSearchDock({
     if (!dock || !host || !bar) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
     const wide = window.matchMedia(WIDE);
+    const fromSm = window.matchMedia(FROM_SM);
     let alive = true;
     let raf = 0;
     let lastP = -1;
@@ -165,7 +195,12 @@ export function useSearchDock({
     let lastLimit = 0;
     let travelFrom: number | null = null;
     let anchorShift = 0;
+    // When a key was last typed into a search field: the board it changes moves the page (see `readerMoved`).
+    let typedAt = Number.NEGATIVE_INFINITY;
     let memo: RevealMemo = REVEAL_REST;
+    // A phone's bar going away on a scroll down and coming back on a scroll up (`awayFrame`), with its own baseline,
+    // which every rebase moves along with the reveal's: what the layout or the page does is no direction for either.
+    let awayMemo: AwayMemo = AWAY_REST;
     // The search field that had focus when the screen crossed 64rem, until its focus has been handed to the field
     // that is there (below 64rem that waits for the bar's copy to be reachable: a render or two) or given up on.
     let crossing: { from: HTMLInputElement; frames: number; orphan: boolean } | null = null;
@@ -200,8 +235,9 @@ export function useSearchDock({
       // The next frame still has to tell whether the reader scrolled: keep what it would have compared against,
       // before the anchor is dropped and the baseline moved.
       travelFrom ??= memo.lastY;
-      if (memo.heroAway) anchorShift += anchorMoved();
+      anchorShift += anchorMoved();
       memo = { ...memo, lastY: y, pivot: y };
+      awayMemo = { ...awayMemo, lastY: y, pivot: y };
       // The layout may have changed with whatever called this: the anchor's place is read again at the frame's end.
       anchor = null;
     };
@@ -243,7 +279,7 @@ export function useSearchDock({
       if (contentBottom !== undefined && lastBottom !== undefined && contentBottom > lastBottom + 0.5) grew = true;
       lastBottom = contentBottom;
       const end = contentTop + (Number.parseFloat(dockStyle.marginTop) || 0) - pin;
-      const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+      const barTop = lengthOr(getComputedStyle(bar).top, 8);
       insets = { pin, barTop };
       maxScroll = scrollLimit();
       const isWide = wide.matches;
@@ -256,6 +292,8 @@ export function useSearchDock({
         // The hero's field is in the flow below 64rem, so its box is its place in the page.
         fieldBottom: isWide ? undefined : dock.getBoundingClientRect().bottom + window.scrollY,
         contentBottom,
+        // A phone's bar is a sheet from the top edge of the screen, which covers the line unless it is off the screen.
+        clearTo: fromSm.matches ? undefined : 0,
       });
       if (!isWide) return;
       const slot = slotRef.current;
@@ -365,7 +403,10 @@ export function useSearchDock({
         }
         memo = REVEAL_REST;
         anchor = null;
-        store.set({ barShown: next.barShown, docked: next.docked, heroAway: false, revealed: false });
+        // From 40rem nothing hides the bar, and the baseline follows, so a bar that is up when the screen narrows to a
+        // phone's stays up until the reader scrolls down.
+        awayMemo = { away: false, pivot: y, lastY: y };
+        store.set({ barShown: next.barShown, away: false, docked: next.docked, heroAway: false, revealed: false });
         settleCrossing(false);
         return;
       }
@@ -374,7 +415,7 @@ export function useSearchDock({
       // when the card it was holding moved up. That is no direction, whatever the resize observer says next.
       const limit = scrollLimit();
       // The anchor is read before a rebase drops it: how far the layout moved it is part of what it did to the page.
-      if (memo.heroAway) shift += anchorMoved();
+      shift += anchorMoved();
       if (Math.abs(limit - maxScroll) >= 1) {
         maxScroll = limit;
         rebase(y);
@@ -390,7 +431,7 @@ export function useSearchDock({
       if (prev.revealed && !memo.revealed) memo = focusReveal(memo, clampScroll(y, maxScroll));
       // A scroll that is exactly the distance the board's anchor moved is the browser's scroll anchoring holding
       // the reader's place, not the reader: no direction (a scroll the reader makes moves the page, not the anchor).
-      if (memo.heroAway && Math.abs(shift) >= 1 && Math.abs(clampScroll(y, maxScroll) - from - shift) < 1.5) rebase(y);
+      if (Math.abs(shift) >= 1 && Math.abs(clampScroll(y, maxScroll) - from - shift) < 1.5) rebase(y);
       const focused = document.activeElement;
       // A field in use holds the rule where it is, except across the 64rem line: the reset that leaves is no state to
       // hold, and the field is about to be handed to the one that is there.
@@ -411,6 +452,7 @@ export function useSearchDock({
           lastLimit,
           anchorMoved: shift,
           quiet: quietScrolling(),
+          typing: performance.now() - typedAt < TYPING_MS,
         });
       lastLimit = maxScroll;
       travelFrom = null;
@@ -427,19 +469,45 @@ export function useSearchDock({
         if (byReader || !(hero instanceof HTMLInputElement)) {
           // The reader scrolled up to the hero: let the field go; blur tells the bar's own focus tracking.
           focused.blur();
+        } else if (
+          next.barShown &&
+          !heroFieldClear(hero.getBoundingClientRect().top, insets.barTop + bar.offsetHeight)
+        ) {
+          // The layout did, but the hero's field is only just out from behind the bar and would still be under it
+          // (a tablet, a phone on its side): the bar's field stays up and in use until the board moves the field
+          // clear of the bar, or the reader scrolls.
+          const at = clampScroll(y, maxScroll);
+          memo = { heroAway: true, revealed: true, dir: "up", pivot: at, lastY: at };
         } else {
           // The layout did (a filter shortened the board): the reader is still typing, so the focus, the text and
-          // the caret go to the hero's field, which is in view.
+          // the caret go to the hero's field, which is in view and clear of the bar.
           handFocus(focused, hero);
         }
       }
-      // The anchor is read while the bar's field can show, so that the next frame can tell how far it moved.
-      if (!memo.heroAway) anchor = null;
+      // On a phone the bar goes away on a scroll down and comes back on a scroll up, once it is up at all. It is held
+      // in sight while a field of its own has focus, and while a search is written and its field shows.
+      const phone = !fromSm.matches;
+      const inBar = document.activeElement;
+      awayMemo = awayFrame(y, maxScroll, awayMemo, {
+        phone,
+        barShown: next.barShown,
+        hold: (inBar instanceof HTMLInputElement && inBar.dataset.searchInput === "bar") || (keep && memo.heroAway),
+        latched,
+      });
+      // The anchor is read while the bar's field can show, and on a phone while the bar is up at all (it comes and
+      // goes by the direction), so that the next frame can tell how far it moved.
+      if (!(memo.heroAway || (phone && next.barShown))) anchor = null;
       else if (!anchor && board) {
         const element = firstInView(board);
         if (element) anchor = { element, offset: element.getBoundingClientRect().top + window.scrollY };
       }
-      store.set({ barShown: next.barShown, docked: false, heroAway: memo.heroAway, revealed: memo.revealed });
+      store.set({
+        barShown: next.barShown,
+        away: phone && awayMemo.away,
+        docked: false,
+        heroAway: memo.heroAway,
+        revealed: memo.revealed,
+      });
       settleCrossing(memo.heroAway);
     };
     const schedule = () => {
@@ -472,7 +540,7 @@ export function useSearchDock({
       // built from can move with the height, and those are style reads.
       if (width === document.documentElement.clientWidth) {
         const pin = Number.parseFloat(getComputedStyle(dock).top) || 10;
-        const barTop = Number.parseFloat(getComputedStyle(bar).top) || 8;
+        const barTop = lengthOr(getComputedStyle(bar).top, 8);
         if (pin === insets.pin && barTop === insets.barTop) {
           // How far the page can go changes with the height, and the position may move with it: no direction.
           maxScroll = scrollLimit();
@@ -496,6 +564,14 @@ export function useSearchDock({
       rebase(window.scrollY);
       schedule();
     };
+    // A link to somewhere on this page (the hero's service links, the skip link) scrolls the page by itself: no direction.
+    const onLinkClick = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest('a[href^="#"]')) quietScroll(() => {});
+    };
+    const onInput = (event: Event) => {
+      const { target } = event;
+      if (target instanceof HTMLInputElement && target.hasAttribute("data-search-input")) typedAt = performance.now();
+    };
     measure();
     lastLimit = maxScroll;
     frame();
@@ -504,7 +580,11 @@ export function useSearchDock({
     window.addEventListener("scroll", schedule, { passive: true });
     window.addEventListener("resize", onResize);
     document.addEventListener("focusout", onFocusOut);
+    // Capturing, before the field's own handler renders the board that the key changes.
+    document.addEventListener("input", onInput, true);
+    document.addEventListener("click", onLinkClick, true);
     wide.addEventListener("change", remeasure);
+    fromSm.addEventListener("change", remeasure);
     reduce.addEventListener("change", remeasure);
     void document.fonts?.ready.then(remeasure);
     const ro = new ResizeObserver(remeasure);
@@ -527,7 +607,10 @@ export function useSearchDock({
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", onResize);
       document.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("input", onInput, true);
+      document.removeEventListener("click", onLinkClick, true);
       wide.removeEventListener("change", remeasure);
+      fromSm.removeEventListener("change", remeasure);
       reduce.removeEventListener("change", remeasure);
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
@@ -548,8 +631,16 @@ export function useSearchDock({
  * A turn across 64rem with a field in use moves the focus to the field that is
  * there (see useSearchDock), since the copy is not drawn from 64rem up.
  *
- * Hidden, it is `inert`, so Tab never lands on a control nobody can see
- * and the skip link stays the first stop. It stays put while keyboard
+ * On a phone it is the AI catalogue's header: a bar edge to edge from the top of the screen (the safe area, then a 4rem
+ * row, a hairline under it), square, on the page's own ground at 90% under a 12px blur. A scroll down hides it as well
+ * (`away`: data-away on the bar, data-shown false): it is translated off the screen by its own height, and slides back
+ * on a scroll up. A tablet's and a desktop's is the floating pill and stays once it is up.
+ *
+ * Hidden, it is `inert` and `aria-hidden`, so Tab never lands on a control
+ * nobody can see, a tap goes through to the page and the skip link stays the
+ * first stop. Below 64rem that is all that hides it from use: it keeps its
+ * blurred layer and goes by opacity and transform alone (a phone's by transform alone, styles.css), so the layer is
+ * not built and torn down in the middle of the scroll that shows it. It stays put while keyboard
  * focus is inside it, so scrolling back up never pulls focus out from
  * under a keyboard user. Focus from a click does not hold it: Chromium
  * and Firefox focus a clicked button, and the bar would then sit over the
@@ -575,25 +666,31 @@ export function CompactHeader({
   live: LiveState;
   /** When the snapshot was collected (epoch ms), if it says. */
   checkedAt: number | null;
-  /** The countdown to the next check, "1:52". */
-  nextIn: string;
+  /**
+   * The countdown to the next check, "1:52". A node, so that the part that ticks (NextIn) is a component of its own
+   * and the bar does not render for every second of it.
+   */
+  nextIn: ReactNode;
   /** The bar's copy of the search field, for the slot (below 64rem only). */
   search: ReactNode;
   /** The controls, rendered by the board so they share its state and handlers. */
   children: ReactNode;
 }) {
   const barShown = useDockSelect(store, (state) => state.barShown);
+  const away = useDockSelect(store, (state) => state.away);
   const revealed = useDockSelect(store, (state) => state.revealed);
   const [heldByKeyboard, setKeyboardFocus] = useState(false);
-  const visible = barShown || heldByKeyboard;
+  const visible = (barShown && !away) || heldByKeyboard;
   const when = checkedAt === null ? null : <LocalTime at={checkedAt} />;
   return (
     <section
       ref={barRef}
       aria-label="Board controls"
       data-shown={visible}
+      data-away={barShown && away ? "" : undefined}
       data-revealed={revealed ? "" : undefined}
       inert={!visible}
+      aria-hidden={visible ? undefined : true}
       onFocus={(event) => setKeyboardFocus(keyboardFocus(event.target))}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setKeyboardFocus(false);
@@ -605,28 +702,41 @@ export function CompactHeader({
         field in it) when the text swaps between "Checking…", "Stale · checked 14:05 UTC" and "Checked 14:05 UTC ·
         next in 1:52". 15rem holds the widest of them, so a revealed field keeps still (236px at a 16px root).
       */}
-      <p data-bar-lead data-state={live} className="flex shrink-0 items-center gap-2.5 sm:max-lg:min-w-60">
-        <StatusGlyph health={verdict.tone} size={20} className={STATUS_TEXT[verdict.tone]} cut="card" />
+      <p
+        data-bar-lead
+        data-state={live}
+        className="flex shrink-0 items-center gap-2.5 max-sm:contents sm:max-lg:min-w-60"
+      >
+        <StatusGlyph
+          health={verdict.tone}
+          size={20}
+          className={cn(STATUS_TEXT[verdict.tone], "max-sm:relative max-sm:z-[1]")}
+        />
         {/*
           From 640px the verdict and the check time sit in the flow, before the field's slot. On a phone the
           slot needs the room, so the short verdict is laid over it, between the glyph and the buttons, and
           fades out while the bar's field is revealed (data-revealed); "checked" stays for
-          screen readers only.
+          screen readers only. It is positioned against the bar, so the lead has no box of its own there
+          (max-sm:contents): the Glass and Full materials make every direct child of the bar `position:
+          relative`, and a lead that is one would be the box the verdict's edges are measured from (a
+          20px box, which left the verdict none).
         */}
-        <span
-          data-bar-verdict
-          className="max-sm:pointer-events-none max-sm:absolute max-sm:top-1/2 max-sm:right-[6.75rem] max-sm:left-11 max-sm:-translate-y-1/2 max-sm:overflow-hidden max-sm:text-ellipsis max-sm:whitespace-nowrap"
-        >
+        <span data-bar-verdict>
           {/*
-            Under 1024px the lead cannot give the long form the room (a phone's slot is 134px at 320; from 640px
-            the lead would squeeze the field in the slot), so the compact form is drawn and the short one is read by
-            screen readers. Either ends in an ellipsis if it still does not fit.
+            Under 1024px the lead cannot give the long form the room (the verdict's box is 156px at 320; the field's
+            slot under it is 134px; from 640px the lead would squeeze the field in the slot), so the compact form is
+            drawn and the short one is read by screen readers. The count stays with its word and the dot with the word
+            before it (no-break spaces), so a wrap falls after the dot, never before it or between a number and its
+            noun. On a phone the compact form takes a second line (the row is 4rem tall, two 18px lines fit) before
+            it takes an ellipsis: at 320px the box is 156px, which holds the longest form in Inter but not in the
+            fallback face the first view is drawn in (Arial's "Nothing needs a look" is 177px). From 640px it stays
+            on one line and ends in an ellipsis if it does not fit.
           */}
           <span
             aria-hidden
-            className="block overflow-hidden text-ellipsis whitespace-nowrap text-row leading-[18px] lg:hidden"
+            className="block overflow-hidden text-ellipsis whitespace-nowrap text-row leading-[18px] lg:hidden max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:[text-wrap:balance]"
           >
-            {verdict.compact}
+            {verdict.compact.replace(/(\d) /g, "$1\u00a0").replace(/ ·/g, "\u00a0·")}
           </span>
           <span className="block overflow-hidden text-ellipsis whitespace-nowrap text-row leading-[18px] max-lg:sr-only">
             {verdict.short}

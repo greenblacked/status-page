@@ -258,6 +258,33 @@ describe("boundSnapshot: a release's Details", () => {
     expect(release?.notes?.slice(1)).toEqual(["note 0", "note 1", "note 2", "note 3"]);
   });
 
+  it("holds a release note to its limits, and drops one with no text", () => {
+    const noteOf = (note: unknown) =>
+      boundSnapshot({
+        ...base,
+        components: [{ name: "n", health: "operational", release: { version: "7.2", note } as never }],
+      }).components[0].release?.note;
+    const bounded = noteOf({
+      text: long,
+      detail: long,
+      important: [long, "", 3, ...Array.from({ length: 20 }, (_, i) => `line ${i}`)],
+      reference: { label: long, url: `https://example.com/${long}` },
+    });
+    expect(bounded?.text).toHaveLength(MAX_NOTE_CHARS);
+    expect(bounded?.detail).toHaveLength(MAX_TEXT_CHARS);
+    expect(bounded?.important).toHaveLength(MAX_NOTE_LINES);
+    expect(bounded?.important?.[0]).toHaveLength(MAX_NOTE_CHARS);
+    expect(bounded?.reference?.label).toHaveLength(MAX_RELEASE_FIELD_CHARS);
+    // A link that is too long is dropped, not cut.
+    expect(bounded?.reference?.url).toBeUndefined();
+    const short = { text: "Security update", reference: { label: "KB1", url: "https://support.microsoft.com/help/1" } };
+    expect(noteOf(short)).toEqual(short);
+    for (const bad of [undefined, null, "text", { text: "" }, { text: "  " }, { text: 3 }, { detail: "no row text" }]) {
+      expect(noteOf(bad), JSON.stringify(bad)).toBeUndefined();
+    }
+    expect(noteOf({ text: "ok", detail: "", important: [], reference: { label: "" } })).toEqual({ text: "ok" });
+  });
+
   it("leaves a short release as it is, drops a notes list with no text and a notes value that is not a list", () => {
     const release = { version: "7.20.2", releasedAt: "2026-09-15T12:00:00.000Z", url: "https://example.com/n" };
     const only = (notes: unknown) =>

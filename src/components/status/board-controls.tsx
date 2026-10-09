@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { useDockSelect } from "@/components/status/compact-header";
+import { useBarWide } from "@/components/status/live-bar";
 import type { AlertsState } from "@/components/status/use-alerts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,11 +29,22 @@ const ALERT_TITLE: Record<AlertsState, string> = {
 };
 
 /**
- * Hands its children whether the floating bar is up. It is the one part of the
- * hero that renders when that changes, so the board does not.
+ * Hands its children whether the floating bar is up, and whether it carries a
+ * copy of the day/night switch (up, and 640px or wider: below that the switch is
+ * left out of the bar). It is the one part of the hero that renders when that
+ * changes, so the board does not.
  */
-export function WhileBarUp({ store, children }: { store: DockStore; children: (barUp: boolean) => ReactNode }) {
-  return children(useDockSelect(store, (state) => state.barShown));
+export function WhileBarUp({
+  store,
+  children,
+}: {
+  store: DockStore;
+  children: (barUp: boolean, barHasSwitch: boolean) => ReactNode;
+}) {
+  // Up and in sight: a phone's bar that has gone away on a scroll down leaves the hero's copies in the Tab order.
+  const barUp = useDockSelect(store, (state) => state.barShown && !state.away);
+  const wide = useBarWide();
+  return children(barUp, barUp && wide);
 }
 
 /**
@@ -177,7 +189,8 @@ function HeroSearchInput({
   ...props
 }: { store: DockStore; dockRef?: RefObject<HTMLElement | null> } & ComponentProps<typeof Input>) {
   const short = useDockSelect(store, (state) => state.docked);
-  const heroAway = useDockSelect(store, (state) => state.heroAway);
+  // Out of the Tab order only while the bar's copy is the one in reach (the bar is up and in sight).
+  const heroAway = useDockSelect(store, (state) => state.heroAway && !state.away);
   const fits = usePlaceholderFits(LONG_PLACEHOLDER, dockRef);
   return (
     <Input
@@ -196,7 +209,7 @@ function BarSearchInput({ store, ...props }: { store: DockStore } & ComponentPro
       data-search-input="bar"
       onFocus={() => {
         const state = store.get();
-        if (state.heroAway) store.set({ ...state, revealed: true });
+        if (state.heroAway) store.set({ ...state, away: false, revealed: true });
       }}
       {...props}
     />

@@ -25,6 +25,20 @@ export type ReleaseEntry = {
   linkLabel?: string;
   /** A few plain-text lines from the vendor's notes; empty when the source has none. */
   notes: string[];
+  /** The short note on the release (what the row shows after the version), in full; absent when the source gave none. */
+  note?: ReleaseEntryNote;
+};
+
+/** A release's note as the Details show it: the vendor-flagged lines first, then the full sentence, then the article. */
+export type ReleaseEntryNote = {
+  /** The row's short text. */
+  text: string;
+  /** The fuller sentence, when it says more than `text` does. */
+  detail?: string;
+  /** Lines the vendor marks important; empty when there are none. */
+  important: string[];
+  /** The vendor's article behind the note; `url` only when the source linked it (https, never the tracker's own page). */
+  reference?: { label: string; url?: string };
 };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -72,6 +86,28 @@ function noteLinesOf(release: ReleaseInfo): string[] {
     .map((line) => (line.length > MAX_NOTE_CHARS ? `${line.slice(0, MAX_NOTE_CHARS - 1).trimEnd()}…` : line));
 }
 
+const text = (value: unknown): value is string => typeof value === "string" && value.trim() !== "";
+
+/** The note of a release, as plain text, or undefined when it has none worth showing. */
+export function releaseNoteOf(release: ReleaseInfo | undefined, fallbackUrl: string): ReleaseEntryNote | undefined {
+  const note = release?.note;
+  if (!note || !text(note.text)) return undefined;
+  const clipped = (line: string) =>
+    line.length > MAX_NOTE_CHARS ? `${line.slice(0, MAX_NOTE_CHARS - 1).trimEnd()}…` : line;
+  const important = (Array.isArray(note.important) ? note.important : [])
+    .filter(text)
+    .slice(0, MAX_NOTE_LINES)
+    .map(clipped);
+  const label = note.reference && text(note.reference.label) ? note.reference.label : undefined;
+  const link = label && note.reference?.url ? vendorUrl(note.reference.url, fallbackUrl) : undefined;
+  return {
+    text: note.text.trim(),
+    ...(text(note.detail) ? { detail: note.detail.trim() } : {}),
+    important,
+    ...(label ? { reference: { label, ...(link && link !== fallbackUrl ? { url: link } : {}) } } : {}),
+  };
+}
+
 function entryOf(service: ServiceSnapshot, component: ComponentHealth): ReleaseEntry {
   const release = component.release;
   const url = vendorUrl(release?.url, service.sourceUrl);
@@ -87,6 +123,9 @@ function entryOf(service: ServiceSnapshot, component: ComponentHealth): ReleaseE
   }
   const releasedAt = releaseDate(release.releasedAt);
   const updatedAt = releaseDate(release.updatedAt);
+  const note = releaseNoteOf(release, service.sourceUrl);
+  // A line the note already shows as important is not listed again among the first changes.
+  const notes = noteLinesOf(release).filter((line) => !note?.important.includes(line));
   return {
     ...base,
     version: release.version && release.version !== component.name ? release.version : undefined,
@@ -94,7 +133,8 @@ function entryOf(service: ServiceSnapshot, component: ComponentHealth): ReleaseE
     linkLabel: typeof release.linkLabel === "string" && release.linkLabel.trim() ? release.linkLabel : undefined,
     releasedAt,
     updatedAt: updatedAt && (!releasedAt || !sameDay(updatedAt, releasedAt)) ? updatedAt : undefined,
-    notes: noteLinesOf(release),
+    notes,
+    ...(note ? { note } : {}),
   };
 }
 

@@ -46,9 +46,9 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 | **One board, five states** | Twenty services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
-| **At home on Apple devices** | Warm paper in light and true black in dark as your system is set, opaque panels with a hairline, the system typeface on Apple devices, and colour kept to small exact points. Pick **Glass** or **Full** in Settings for frosted panels over a still glow, or the slow drift, small glass bubbles that float over the glow, a light that wanders across the cards and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
+| **At home on Apple devices** | Warm paper by day and true black by night (a switch in the header, or your own clock), opaque panels with a hairline, the system typeface on Apple devices, and colour kept to small exact points. Pick **Glass** or **Full** in Settings for frosted panels over a still glow with a soft light that wanders across the cards, or, in Full, also the slow drift, small glass bubbles that float over the glow and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
 | **Open integrations** | A current-status JSON API, an Atom feed, Shields.io badges and Prometheus metrics |
-| **Runs anywhere** | Any Node host or Cloudflare Workers, with an in-memory cache per process or isolate. `docker compose` for a local run with no Node install |
+| **Runs anywhere** | A Docker image (amd64 and arm64, signed), any Node host, or Cloudflare Workers, with an in-memory cache per process or isolate. No keys, no database, no volume |
 
 ## What it watches
 
@@ -110,7 +110,7 @@ The headline at the top of the page is one sentence about the board: **Everythin
 
 The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days (the Android page gives no dates, so that card never carries the tag; see below). A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
-Each Releases row has a **Details** button, and clicking the row's name or line opens it too (the star and the open-in-a-new-tab link keep their own targets). It is a small pop-up on a desktop and a sheet from the bottom edge on a phone; **Esc** or a click outside closes it. It lists every channel, OS or version the card tracks, not only the two in the row's line: the version and build, the day it came out (in your own time zone; Windows's table gives only a day, shown as is), **New release** while it is fresh, and a link to the vendor's page for it. MikroTik RouterOS also shows the first few lines of each version's official changelog. Apple's feed, Microsoft's table and Google's Android page have no notes text, so those say so and link the vendor's page (Apple's post about the release, Microsoft's release health page, the version's page on developer.android.com) instead of making something up. It adds nothing to `/api/status.json`, the feed, the badges or the metrics.
+Each Releases row has a **Details** button, and clicking the row's name or line opens it too (the star and the open-in-a-new-tab link keep their own targets). It is a small pop-up on a desktop and a sheet from the bottom edge on a phone; **Esc** or a click outside closes it. It lists every channel, OS or version the card tracks, not only the two in the row's line: the version and build, the day it came out (in your own time zone; Windows's table gives only a day, shown as is), **New release** while it is fresh, and a link to the vendor's page for it. MikroTik RouterOS also shows the first few lines of each version's official changelog, and a short note per version (the change count and areas, with the lines MikroTik marks important first), which its row repeats on one muted line under the versions (the first listed release that has a note, led by its channel, clamped to one line on a desktop and two on a phone, so a row grows by one line at most; the others are in Details). Windows 11 shows the update type of each version's latest build as its note, with the KB article. Apple's feed, Microsoft's table and Google's Android page have no notes text, so those say so and link the vendor's page (Apple's post about the release, Microsoft's release health page, the version's page on developer.android.com) instead of making something up. It adds nothing to `/api/status.json`, the feed, the badges or the metrics.
 
 ### Release lines on status cards
 
@@ -137,9 +137,9 @@ It is advisory and kept apart from health. It never changes a card's health, the
 | Apple | `system_status_en_US.js`, services with an active event |
 | Android / Google Play | Play `incidents.json`; only incidents without an end time count. The components come from the dashboard's `products.json` the same way as Google Cloud's, when it is published |
 | Grok | RSS `feed.xml`. An item counts when it is not resolved and was published within the last 14 days (not in the future, past a few minutes of clock skew). A feed of more than 5000 items reads Unknown, since nothing says which end is newest. Components: the status page's `v2/components.json` is attempted, but it may not exist or may be blocked (its JSON sits behind Cloudflare's challenge), and a list whose statuses are all unreadable is ignored, so the card falls back to the services that active items' titles lead with (`[API] Elevated error rates`, `[Grok (iOS)] Models outage`); they add detail and never change the card's health, so a component row from the vendor's list can read worse than the card's badge, which follows the feed |
-| MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus, in the background after the health check and the release feeds, the first 64 KB of each listed version's `CHANGELOG` (the newest release by date has its first note as the summary, where the plain line names the stable one; each version's first notes are in Details; they show on the next board, and a changelog that cannot be read changes no health result) |
+| MikroTik RouterOS | The official `NEWEST*` files for RouterOS 7 stable, long-term, testing and development and RouterOS 6 long-term, plus, in the background after the health check and the release feeds, the first 64 KB of each listed version's `CHANGELOG` (the newest release by date has its first note as the summary, where the plain line names the stable one; each version's first notes are in Details; each version also gets a short note from its own "What's new in" section alone: how many changes it lists, the areas they name in order of first appearance (the text before ` - ` in `*) area - text`) and how many MikroTik flags important (`!)`), for example `23 changes: bgp, wifi, container +9 more · 2 important`. The areas are counted in full (`+N more` and `in N areas` are the section's own count; Details name the first 30), and Details say how many important lines they leave out when there are more than five. A changelog that is not read yet, failed, or was cut before its section ended has no note, and the row stays as it was. They show on the next board, and a changelog that cannot be read changes no health result) |
 | Apple OS | Releases RSS, latest version of iOS, iPadOS, macOS, watchOS, tvOS and visionOS; a feed of more than 5000 items reads Unknown |
-| Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. A page without that table reads Unknown. This is one of two sources read as HTML, an exception recorded in `CONTRIBUTING.md` |
+| Windows 11 | The versions table on the release health page: the four newest versions by availability date, each with its latest build and the date of its latest update. A new version appears as a new row with no code change, and is the only thing the **New release** tag flags. Where the page's history table for a version lists that latest build with an update type, the version also gets a short note: `B` is a **Security update**, `D` an **Optional preview**, `OOB` an **Out-of-band fix** (any other value, or a version with no history table, has no note), with the KB article from the same row, linked only when the table links it on `support.microsoft.com`. A page without that table reads Unknown. This is one of two sources read as HTML, an exception recorded in `CONTRIBUTING.md` |
 | Android releases | The releases page on developer.android.com: the four newest Android versions it links as "Android 17", "Android 16" and so on, newest first, read from the site menu and the footer. A new major version (Android 18) appears as a new link with no code change, and the oldest drops off. The page gives no release dates, so the card never carries **New release**. A browser that already had the board sees a version joining the list in **Recent changes** as "Android 18 released" and, with alerts on, gets an alert; a first-time visitor sees only the list. The page links a version as "Android 18" once it has shipped (a beta is linked as "Android Beta"), which is an assumption about Google's markup. The quarterly platform releases (QPRs) are not listed: the page links only betas for them, so none is read as a release. A page with no such links reads Unknown. This is the second source read as HTML, an exception recorded in `CONTRIBUTING.md` |
 
 </details>
@@ -175,7 +175,7 @@ pnpm run dev
 
 Open the local URL that Vite prints. The first load reads all twenty sources, which can take a few seconds.
 
-No Node on the machine? Docker is enough: `docker compose up preview` builds the board and serves it on http://127.0.0.1:4173.
+No Node on the machine? Docker is enough: `docker compose up preview` builds the board and serves it on http://127.0.0.1:4173. To run the board rather than work on it, see [Self-host with Docker](#self-host-with-docker).
 
 ### On the board
 
@@ -190,11 +190,11 @@ No Node on the machine? Docker is enough: `docker compose up preview` builds the
 - **Star** the services you care about: they sort first in their group, though never above a more urgent service in Needs a look, and **Starred** shows only them.
 - **Share a view:** search and filters live in the address, so `/?q=aws&issues=true` opens the board already filtered.
 - **Drive it from the keyboard:** `/` searches (on a narrow screen with the page scrolled down it brings up the copy of the field in the floating bar), `1`–`6` pick a filter, `I` and `S` toggle Issues only and Starred, `R` refreshes, `Esc` clears, and `?` opens **Settings**, which lists them all. If single keys get in the way, for example with speech input, switch **Single-key shortcuts** off there: every shortcut but `Esc` stops, the search box stays a Tab away, and the **Settings** button at the foot of the page opens the list again. The first Tab stop is **Skip to the board**.
-- **Light or dark:** the board follows your system appearance, and switches with it.
-- **Background** in **Settings** is **Quiet** (flat paper, the default), **Glass** (frosted panels over a still glow) or **Full** (adds the slow drift, small floating glass bubbles and a light that wanders across the cards). The choice is kept in this browser.
+- **Day or night:** the switch next to Notifications and Refresh (a Material-style sun and moon, in the floating bar too from 640px wide) picks warm paper or true black, and the choice is kept in this browser. Until you press it, your own clock decides: night from 20:00 to 06:00, day from 06:00 to 20:00, checked every minute and when you come back to the tab. A choice made in one tab reaches the others. It is set before the first paint, so there is no flash of the other one, and with scripts off the board follows your system's light or dark setting as before.
+- **Background** in **Settings** is **Quiet** (warm paper with a faint static grain by day and true black by night, the default), **Glass** (frosted panels over a still glow, with a soft light that wanders across the cards, on phones and tablets too) or **Full** (adds the slow drift and small floating glass bubbles). The choice is kept in this browser. Quiet's grain is a still, painted tile on the page (our own SVG noise, no script, no animation, no extra layer), three levels of 255 at the most, by day only (the night's black stays true black), and it is off under Increase Contrast, forced colours, Reduce glass and in print.
 - **Reduce glass** in **Settings** turns any of those solid: panels opaque, nothing blurred, the background gone, for easier reading or an older phone. Safari does not tell web pages about the system's Reduce Transparency setting, so the board has its own switch; browsers that do pass it on get the same result without it. The choice is kept in this browser.
-- **Tilt lighting** in **Settings**, on phones and tablets (iPhone, iPad, Android), makes the light on the glass follow how you tilt the device. It is off until you switch it on, because iOS asks for motion access first; it needs the Glass or Full background, pauses under Reduce glass and Reduce Motion, and the choice is kept in this browser. On iPhone and iPad, Safari asks again after it has been closed; the board says so, and a tap turns it back on.
-- **Scroll down** and a floating bar comes up at the top of the screen, with the verdict in short ("1 down · 1 degraded"), when the board was last checked, and the **Notifications** and **Refresh** icon buttons (Notifications where supported). In a wide window (1024px or wider) the search field docks into it. On a narrower screen, a phone or an iPad held upright, the field scrolls away with the page: **scroll up** a little and it shows in the bar, **scroll down** and it hides again. It stays while you type in it or have a search written in it, and under Reduce Motion it appears and goes without a fade.
+- **Tilt lighting** in **Settings**, on phones and tablets (iPhone, iPad, Android), makes the light on the glass follow how you tilt the device. It is off until you switch it on, because iOS asks for motion access first; it needs the Glass or Full background, pauses under Reduce glass, Reduce Motion, Reduce Transparency, Increase Contrast and forced colours, and the choice is kept in this browser. In **Glass** and **Full** the card light wanders by itself with or without it; while Tilt lighting is on and driving the light it takes the cards' light over, and the wander comes back when it is switched off or declined, or when the device sends no motion readings. On iPhone and iPad, Safari asks again after it has been closed; the board says so, and a tap turns it back on.
+- **Scroll down** and a floating bar comes up at the top of the screen, with the verdict in short ("1 down · 1 degraded"), when the board was last checked, and the **Notifications** and **Refresh** icon buttons (Notifications where supported), with the day/night switch before them from 640px wide (on a phone the bar keeps its room for the verdict, and the switch is at the top of the page). In a wide window (1024px or wider) the search field docks into it. On a narrower screen, a phone or an iPad held upright, the field scrolls away with the page: **scroll up** a little and it shows in the bar, **scroll down** and it hides again. It stays while you type in it or have a search written in it, and under Reduce Motion it appears and goes without a fade. **On a phone** (under 640px wide) the bar itself is out of your way as you read: it slides off the top of the screen while you scroll down and comes back as soon as you scroll up a little (more than 8px), the way the header of the AI catalogue does. It returns with the verdict between its icons; scroll up a little further (24px) and the search field takes the verdict's place, as it does when the bar is already up. A phone held on its side is wider than 640px, so it keeps the tablet's bar, which does not hide. It stays while you use its search field or have a search written there, and it looks like the AI catalogue's header: edge to edge from the very top of the screen (it covers the notch's strip too, so nothing of the page shows above it), square, with a 1px hairline under it and the page's own background at 90% over a 12px blur, on every background, day and night (solid and unblurred under Increase Contrast, Reduce Transparency and forced colours). A tablet's or a desktop's stays once it is up.
 - **Add to Home Screen** in Safari's share menu to open the board full screen, with its own icon, like an app.
 - **Know how fresh it is:** the board pulls a snapshot every two minutes, 15 to 30 seconds after each two-minute mark, by when a request can start a new collection, and the countdown ends when it does. The live line under the headline says when the snapshot on screen was taken ("Checked 14:05 UTC · next in 1:52"), in your own time zone once the page has loaded and in UTC before that; hover a time for the full UTC moment. If no fresh snapshot arrives for six minutes, **Live** turns into **Stale** with the time since the last one did; a snapshot already more than half an hour old when the page opens shows **Stale** straight away.
 - **See how long an incident has run:** a card shows when the vendor says it began, such as "since 14:05 UTC (2h 10m)", or when planned maintenance is due, such as "scheduled for 22:00 UTC".
@@ -328,22 +328,60 @@ groups:
 | Where | How |
 | --- | --- |
 | **Cloudflare Workers** | [`deploy.yml`](.github/workflows/deploy.yml) deploys `main` to the `status-page` Worker at [status.szolotov.com](https://status.szolotov.com) and creates `stage` as a Worker Preview named `stage` of that same Worker, at [stage.status.szolotov.com](https://stage.status.szolotov.com); `dev` deploys nothing. Each isolate collects on demand and caches for 45 seconds. With `DEPLOY_URL` set, every deploy is smoke-tested, and a production deploy is rolled back if it fails. [CONTRIBUTING.md](CONTRIBUTING.md#deploying) has the one-time setup and how the deploy token is kept out of reach of pull requests |
-| **Any Node host** | `pnpm run build` produces a Fetch-style handler in `dist/server/server.js`; run it behind your server of choice. `pnpm run preview` is a smoke test of that build, not a production host |
-| **Docker** | `docker compose up preview` serves the built board from the public CI images, for a local run or a quick demo |
+| **Any Node host** | `pnpm run build`, then `HOST=0.0.0.0 PORT=8080 pnpm start`. [`src/node/serve.ts`](src/node/serve.ts) is a small production server on `node:http` alone: it serves `dist/client` with `Cache-Control: public, max-age=31536000, immutable` on `/assets/*` (hashed files that never change, the rule in [`public/_headers`](public/_headers) that only Cloudflare reads) and an hour on the other files, compresses text with Brotli or gzip, sends the [security headers](src/lib/security-headers.ts) on every response, answers `/healthz`, logs one JSON line per request to stdout and stops cleanly on `SIGTERM`. The settings are in [Self-host with Docker](#self-host-with-docker). `pnpm run preview` is a smoke test of the build, not a production host |
+| **Docker** | [`ghcr.io/greenblacked/status-page`](#self-host-with-docker), the same server in an image that runs as a non-root user on a read-only root. `docker compose up preview` is the other thing: it serves the built board from the public CI images, for a local run or a quick demo |
 
 The `stage` preview (`stage.status.szolotov.com`) answers `noindex` to search engines; production and self-hosted builds serve a `/robots.txt` that allows indexing.
+
+### Self-host with Docker
+
+Every release publishes `ghcr.io/greenblacked/status-page` for linux/amd64 and linux/arm64 (a Raspberry Pi 4 or 5 included), built from the release's tag with a provenance attestation and an SBOM, and signed with cosign. The board needs no API keys, no database and no volume: the container only needs outbound HTTPS to the vendors. It runs as the unprivileged `node` user and writes nothing to disk, so a read-only root and no capabilities work as they are.
+
+```bash
+docker run -d --name status-page -p 3000:3000 --restart unless-stopped \
+  --read-only --cap-drop ALL --security-opt no-new-privileges \
+  ghcr.io/greenblacked/status-page:latest
+```
+
+Open http://localhost:3000. The same in Compose, saved as `compose.yaml`, then `docker compose up -d`:
+
+```yaml
+services:
+  status-page:
+    image: ghcr.io/greenblacked/status-page:latest
+    ports: ["127.0.0.1:3000:3000"]
+    read_only: true
+    restart: unless-stopped
+```
+
+Pin a version tag (`:X.Y.Z`, as released) or an `@sha256:` digest instead of `:latest` if you want updates to be your decision. Verify what you pulled with the command in [CONTRIBUTING.md](CONTRIBUTING.md#verifying-a-release). To build it yourself: `docker build -t status-page .`, or `docker compose --profile serve up --build status-page` in a checkout (add `--build-arg VITE_STATUS_HISTORY=1` to `docker build` for the [uptime history strip](#on-the-board)).
+
+The container serves plain HTTP and does not terminate TLS: put Caddy, nginx, Traefik or your platform's load balancer in front of it. The security headers include `Strict-Transport-Security` (see `HSTS` below), which browsers ignore over HTTP and obey over HTTPS.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `PORT` | `3000` | The port to listen on, inside the container |
+| `HOST` | `0.0.0.0` in the image, `127.0.0.1` from `pnpm start` | The address to bind |
+| `TRUST_PROXY` | off | Set to `1` behind a reverse proxy that sets `X-Forwarded-Proto` and `X-Forwarded-Host`, so the board sees its public `https://` address. Leave it off when the container is reached directly: any client can send those headers |
+| `HSTS` | on | `Strict-Transport-Security: max-age=31536000`, which browsers obey only over HTTPS and which pins just the host that sent it. `subdomains` adds `includeSubDomains` (only if every subdomain of your domain is HTTPS-only); `off` sends no header, for a proxy that sets its own |
+| `SHUTDOWN_TIMEOUT_MS` | `5000` | How long `SIGTERM` waits for requests in flight before closing them. Keep it under the 10 s `docker stop` allows before `SIGKILL` |
+
+- **Health:** the image has a `HEALTHCHECK` on `/healthz`, which never reads the board. For a Kubernetes liveness probe use `/healthz`; use `/readyz` for readiness or a monitor ([Integrations](#integrations)).
+- **Logs:** one JSON line per request, plus the collectors' own lines, on stdout, so `docker logs` and any log shipper read them as they are. `/healthz` is not logged while it answers 200.
+- **Scaling:** each process keeps its own 45-second snapshot in memory. Run one container; a second only doubles the requests to the vendors.
+- **Stopping:** `docker stop` sends `SIGTERM`, the server stops accepting connections, closes the idle ones (including a connection that never sent a request), lets requests in flight finish and exits 0, within `SHUTDOWN_TIMEOUT_MS`. For a longer drain raise both: `--stop-timeout 30` (`stop_grace_period: 30s` in Compose) and `SHUTDOWN_TIMEOUT_MS=25000`.
 
 ### Branches and deploys
 
 | Branch | Role | Deploys |
 | --- | --- | --- |
-| `dev` | Contributions: every pull request targets it | Nothing |
+| `dev` | The next release: work is committed straight to it | Nothing |
 | `stage` | What is about to ship | Worker Preview at [stage.status.szolotov.com](https://stage.status.szolotov.com) |
 | `main` | What is released | Production at [status.szolotov.com](https://status.szolotov.com) |
 
-`dev` is paused for now: pull requests go into `stage` (squash-merged) instead, and `stage` → `main` is unchanged. [CONTRIBUTING.md](CONTRIBUTING.md#branches) says how `dev` comes back.
+Work is committed straight to `dev` after the local checks; one pull request then carries `dev` into `stage`. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the details.
 
-Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit. Today only `main` is fully protected: its ruleset requires a pull request plus the `CI OK` and `CodeQL` checks and has no bypass actors, so a release is a pull request into `main` ([CONTRIBUTING.md#releases](CONTRIBUTING.md#releases)). `stage`'s ruleset only blocks deletion and force pushes, and `dev` has no ruleset while it is paused. The recommended setup is in [CONTRIBUTING.md#branch-protection](CONTRIBUTING.md#branch-protection). [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
+Work is promoted `dev` → `stage` → `main`, by the owner only, each step a pull request merged with a merge commit; Codex reviews only the pull requests into `stage` and `main`. Today only `main` is fully protected: its ruleset requires a pull request plus the `CI OK` and `CodeQL` checks and has no bypass actors, so a release is a pull request into `main` ([CONTRIBUTING.md#releases](CONTRIBUTING.md#releases)). `stage`'s ruleset only blocks deletion and force pushes, and `dev` has no ruleset, since work is committed to it directly. The recommended setup is in [CONTRIBUTING.md#branch-protection](CONTRIBUTING.md#branch-protection). [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the branch rules and the [branch protection](CONTRIBUTING.md#branch-protection) settings, and its [one-time setup](CONTRIBUTING.md#one-time-setup) covers the Cloudflare token and the GitHub environments.
 
 ## FAQ
 
@@ -419,6 +457,7 @@ React 19 on TanStack Start, Tailwind CSS 4, TypeScript in strict mode, Vitest an
 | `pnpm run test:coverage` | The same with coverage and its thresholds; the HTML report lands in `coverage/` |
 | `pnpm run test:e2e` | Browser tests with Playwright and axe against the production build. Run `pnpm run build` first, and `pnpm exec playwright install chromium webkit` once |
 | `pnpm run build` / `pnpm run preview` | Production build into `dist/`, and a local server for it |
+| `pnpm start` | The production server ([`src/node/serve.ts`](src/node/serve.ts), the one the Docker image runs) for what `pnpm run build` made. `PORT` and `HOST` set the address |
 | `pnpm run build:cf` / `pnpm run preview:cf` | The same for the Cloudflare Worker, run locally in workerd ([CONTRIBUTING.md](CONTRIBUTING.md#locally)) |
 | `pnpm run deploy:dry-run` | What `wrangler deploy` would upload from a `build:cf` build |
 | `pnpm run source-health` | The one check that calls the real vendors; exits 1 if any source fails |
@@ -456,14 +495,15 @@ CI checks the name. [CONTRIBUTING.md](CONTRIBUTING.md#branches) has the rules (l
 
 ### Quality gates
 
-Every pull request runs the same checks, and `CI OK` sums them up in one required check:
+Every pull request, and every push to `dev`, runs the same checks (a push has no PR title or branch name to check), and `CI OK` sums them up in one required check:
 
 | Check | What it guards |
 | --- | --- |
 | Lint | Biome lint and format, repository hygiene, documentation links, the changelog section, shellcheck |
 | Types and tests | Strict typecheck; unit tests on the pinned Node and Node 24, with coverage thresholds |
 | Build | Production build and SSR smoke test on both Node versions, with the client bundle size in the job summary |
-| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in light and dark: no console errors or hydration warnings, axe WCAG 2.2 AA, the contrast of every status and text colour on the glass's flat fills (on a fixture board, blur stripped, in light, dark and Increase Contrast), keyboard paths |
+| Docker image | The Dockerfile built for amd64 and started as a self-hoster runs it (read-only root, no capabilities): healthy, smoke-tested, stopped cleanly by `SIGTERM` |
+| Browser | Playwright on Chromium (desktop, Android) and WebKit (Mac Safari, iPhone, iPad), in day and night, plus layout checks (no overflow or overlap, 44pt targets, the floating bar, sheets and search) on ten more phone, foldable, tablet and landscape screens, and Chromium again behind the production Node server for its caching, compression and headers: no console errors or hydration warnings, axe WCAG 2.2 AA, the contrast of every status and text colour on the glass's flat fills (on a fixture board, blur stripped, in light, dark and Increase Contrast), keyboard paths |
 | Conventions | Conventional Commit messages and PR title, branch name |
 | Workflows | actionlint and zizmor, so no workflow change weakens the pipeline |
 | Security | CodeQL for TypeScript and the workflows, dependency review |
@@ -471,7 +511,28 @@ Every pull request runs the same checks, and `CI OK` sums them up in one require
 
 Outside pull requests, an hourly job calls every real vendor and opens an issue when a source breaks, OpenSSF Scorecard grades the supply chain on every push to `main` (the project also has an [OpenSSF Best Practices](https://www.bestpractices.dev/projects/15113) entry), and Dependabot proposes updates only once a release has been public for a few days. [.github/workflows/README.md](.github/workflows/README.md) covers each workflow.
 
-**Releases:** pull requests merge into `dev`, which never releases, and the owner promotes `dev` to `stage` (the preview) and `stage` to `main`. Merging `stage` into `main` with a merge commit releases everything it brings: CI picks the version from the commit types, commits the bump, tags it `vX.Y.Z`, publishes a GitHub Release with notes taken from [CHANGELOG.md](CHANGELOG.md), and merges `main` back into `stage` and `dev`. [CONTRIBUTING.md](CONTRIBUTING.md#releases) has the details.
+#### Workflows
+
+One file per workflow in [.github/workflows](.github/workflows); the triggers are read from the files themselves. A push to `dev` is checked like a pull request into `stage`, and deploys nothing.
+
+| Workflow | What it does | Push to `dev` | Push to `stage` | Push to `main` | Pull request | Schedule or manual |
+| --- | --- | --- | --- | --- | --- | --- |
+| [`ci.yml`](.github/workflows/ci.yml) | Every check under Quality gates, summed up by `CI OK` | Yes (commit messages checked against `stage`; no branch name) | Yes | Yes | Yes (adds the branch name check) | Manual, and a merge queue |
+| [`codeql.yml`](.github/workflows/codeql.yml) | CodeQL for the TypeScript sources and the workflows | Yes | Yes | Yes | Yes | Weekly, manual |
+| [`dependency-review.yml`](.github/workflows/dependency-review.yml) | Blocks high or critical vulnerabilities in dependency changes | Yes (against `stage`) | No | No | Yes | No |
+| [`deploy.yml`](.github/workflows/deploy.yml) | Builds the Worker, runs it in workerd; deploys `stage` (preview) and `main` (production) | Build and dry-run only | Build, then deploy the preview | Build, then deploy production | Build and dry-run only | Manual on `main` or `stage`; also started by `release.yml` after it syncs `stage` |
+| [`pr-title.yml`](.github/workflows/pr-title.yml) | The PR title is a Conventional Commit | No | No | No | Yes (only here; the branch name is checked by `ci.yml`, also only here) | No |
+| [`ci-triage.yml`](.github/workflows/ci-triage.yml) | One comment and a `ci-failed` label naming why a PR's checks failed | No | No | No | Yes (after CI, CodeQL or Dependency review finishes) | No |
+| [`rerun-infra.yml`](.github/workflows/rerun-infra.yml) | Re-runs a failed or cancelled run's jobs once when the runner, not our code, failed them (never acquired, lost, shut down) | After CI, CodeQL, Dependency review or Deploy | After CI, CodeQL or Deploy | After CI, CodeQL or Deploy | Yes (after CI, CodeQL, Dependency review, Deploy or PR title finishes) | No |
+| [`release.yml`](.github/workflows/release.yml) | Versions, tags, signs and publishes what reaches `main`, then syncs `stage` and `dev` | No | No | Yes | No | Manual, or a `vX.Y.Z` tag |
+| [`scorecard.yml`](.github/workflows/scorecard.yml) | OpenSSF Scorecard of the supply chain | No | No | Yes | No | Weekly, manual, branch protection changes |
+| [`source-health.yml`](.github/workflows/source-health.yml) | Calls every real vendor and opens an issue when a source breaks | No | No | No | No | Hourly, manual |
+| [`base-images.yml`](.github/workflows/base-images.yml) | Runs `compose.yaml` against the shared CI images | No | No | No | Only when `compose.yaml`, its script or the dependencies change | Weekly, manual |
+| [`screenshot.yml`](.github/workflows/screenshot.yml) | Captures the board with live data for `docs/board.png` | No | No | No | Only when the workflow itself changes | Manual |
+
+Details for each are in [.github/workflows/README.md](.github/workflows/README.md).
+
+**Releases:** work is committed to `dev`, which never releases, and the owner promotes `dev` to `stage` (the preview) and `stage` to `main`. Merging `stage` into `main` with a merge commit releases everything it brings: CI picks the version from the commit types, commits the bump, tags it `vX.Y.Z`, publishes a GitHub Release with notes taken from [CHANGELOG.md](CHANGELOG.md), and merges `main` back into `stage` and `dev`. [CONTRIBUTING.md](CONTRIBUTING.md#releases) has the details.
 
 **Adding a service:** add a catalog entry in `src/lib/status/catalog.ts` and a collector in `src/lib/status/sources.server.ts`, read only an official machine-readable source, map it onto the five states, and add it to [What it watches](#what-it-watches) in the same commit. [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-service) has the full checklist.
 

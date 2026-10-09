@@ -3,10 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   parseWindowsBuild,
   parseWindowsDate,
+  parseWindowsKb,
+  parseWindowsUpdateType,
   parseWindowsVersion,
+  readHtmlCells,
   readHtmlTables,
+  textOfTables,
   windowsReleases,
   windowsShippedAt,
+  windowsUpdateNote,
 } from "./windows-release.ts";
 
 const page = readFileSync(
@@ -29,9 +34,9 @@ const versionsTable = (rows: string[], header = "Version|Availability date|Lates
     .join("")}</table>`;
 
 describe("readHtmlTables", () => {
-  it("reads every top-level table as rows of cell text, skipping script, style and comments", () => {
+  it("reads every top-level table (the versions and three history tables) as rows of cell text, skipping script, style and comments", () => {
     const tables = readHtmlTables(page);
-    expect(tables).toHaveLength(2);
+    expect(tables).toHaveLength(4);
     expect(tables[0][0].slice(0, 5)).toEqual([
       "Version",
       "Servicing option",
@@ -119,6 +124,11 @@ describe("parseWindowsDate and parseWindowsBuild", () => {
     expect(parseWindowsBuild("26300")).toBeUndefined();
     expect(parseWindowsBuild("126300.1000")).toBeUndefined();
     expect(parseWindowsBuild("1.2.26300.1000")).toBeUndefined();
+    expect(parseWindowsBuild("26100.1742a")).toBeUndefined();
+    expect(parseWindowsBuild("a26100.1742")).toBeUndefined();
+    expect(parseWindowsBuild("KB26100.1742")).toBeUndefined();
+    expect(parseWindowsBuild("OS build 26100.1742")).toBe("26100.1742");
+    expect(parseWindowsBuild("(26100.1742)")).toBe("26100.1742");
   });
 });
 
@@ -149,6 +159,13 @@ describe("windowsReleases", () => {
         updatedAt: "2026-09-08T00:00:00.000Z",
         build: "26100.8100",
       },
+    ]);
+  });
+
+  it("reads the date of a cell whose tag holds a > in a quoted value", () => {
+    const table = `<table><tr><th>Version</th><th>Availability date</th></tr><tr><td>26H2</td><td data-note="was>2099-01-01 ">2025-09-30</td></tr></table>`;
+    expect(windowsReleases(readHtmlTables(table))).toEqual([
+      { version: "26H2", availableAt: "2025-09-30T00:00:00.000Z" },
     ]);
   });
 
@@ -220,5 +237,318 @@ describe("windowsShippedAt", () => {
     expect(windowsShippedAt(base)).toBe(base.availableAt);
     expect(windowsShippedAt({ ...base, updatedAt: "2026-09-22T00:00:00.000Z" })).toBe("2026-09-22T00:00:00.000Z");
     expect(windowsShippedAt({ ...base, updatedAt: "2026-01-01T00:00:00.000Z" })).toBe(base.availableAt);
+  });
+});
+
+describe("readHtmlCells", () => {
+  it("keeps the text exactly as readHtmlTables reads it, and the href of the first link in a cell", () => {
+    const html =
+      '<table><tr><th>KB</th></tr><tr><td><a class="x" href="https://support.microsoft.com/help/5000000">KB5000000</a> <a href="https://other.example/">more</a></td><td>plain</td><td><a name="top">no href</a></td></tr></table>';
+    const cells = readHtmlCells(html);
+    expect(textOfTables(cells)).toEqual(readHtmlTables(html));
+    expect(cells[0][1]).toEqual([
+      { text: "KB5000000 more", href: "https://support.microsoft.com/help/5000000" },
+      { text: "plain" },
+      { text: "no href" },
+    ]);
+  });
+
+  it("reads single-quoted and spaced attributes, and ignores a link outside a cell, an empty href and a long tag", () => {
+    const cells = readHtmlCells(
+      `<a href="https://outside.example/"></a><table><tr><td><a  HREF = 'https://a.example/x'>a</a></td><td><a href="">b</a></td><td><a title="${"x".repeat(2100)}" href="https://c.example/">c</a></td><td><a data-href="https://d.example/">d</a></td></tr></table>`,
+    );
+    expect(cells[0][0].map((cell) => cell.href)).toEqual(["https://a.example/x", undefined, undefined, undefined]);
+  });
+});
+
+describe("readHtmlCells tags", () => {
+  it("ends a tag at the first > outside a quoted value, whatever the tag", () => {
+    expect(readHtmlTables(`<table><tr><td title="a>b">GA</td></tr></table>`)).toEqual([[["GA"]]]);
+    expect(
+      readHtmlTables(`<table><tr><td data-note='was>2099' class=x>GA</td><th t="</td>">B</th></tr></table>`),
+    ).toEqual([[["GA", "B"]]]);
+    expect(readHtmlTables(`<table title="<td>x</td>"><tr><td>GA</td></tr></table>`)).toEqual([[["GA"]]]);
+  });
+
+  it("ends a malformed tag at its first >", () => {
+    expect(readHtmlTables(`<table><tr><td title="a>GA</td></tr></table>`)).toEqual([[["GA"]]]);
+  });
+
+  it("does not take td-x or td:x for a td", () => {
+    expect(readHtmlTables(`<table><tr><td-x>no</td-x><td:x>no</td:x><td>GA</td></tr></table>`)).toEqual([[["GA"]]]);
+  });
+});
+
+describe("readHtmlCells links", () => {
+  const hrefs = (anchor: string) =>
+    readHtmlCells(`<table><tr><td>${anchor}</td></tr></table>`)[0][0].map((cell) => cell.href);
+  const KB = "https://support.microsoft.com/help/5000001";
+
+  it("takes no link from text inside another attribute's value", () => {
+    expect(hrefs(`<a title="see href='${KB}'">KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a title='see href="${KB}"'>KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a title="x" alt="href=${KB}">KB5000001</a>`)).toEqual([undefined]);
+  });
+
+  it("takes no link from an attribute whose name only ends in href", () => {
+    expect(hrefs(`<a data-href="${KB}">KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a xhref='${KB}'>KB5000001</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a hrefs="${KB}">KB5000001</a>`)).toEqual([undefined]);
+  });
+
+  it("reads double-quoted, single-quoted and unquoted values, in any case", () => {
+    expect(hrefs(`<a href="${KB}">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a href='${KB}'>k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a href=${KB}>k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a class=x href=${KB} id=y>k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a HREF="${KB}">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<A\n  Href\n=\n'${KB}'\n>k</A>`)).toEqual([KB]);
+  });
+
+  it("finds an href after an attribute holding a '>' inside quotes, and keeps the text clean", () => {
+    const cells = readHtmlCells(`<table><tr><td><a title="a > b" href="${KB}">KB5000001</a></td></tr></table>`);
+    expect(cells[0][0]).toEqual([{ text: "KB5000001", href: KB }]);
+    expect(hrefs(`<a title='1 > 0' data-x="<td>" href='${KB}'>k</a>`)).toEqual([KB]);
+  });
+
+  it("uses the first href of a tag and the first link of a cell that has one", () => {
+    expect(hrefs(`<a href="${KB}" href="https://other.example/">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a href="">k</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a href="" href="${KB}">k</a>`)).toEqual([undefined]);
+    expect(hrefs(`<a name="top">a</a><a href="${KB}">b</a>`)).toEqual([KB]);
+  });
+
+  it("decodes entities in the href as a browser does", () => {
+    expect(hrefs(`<a href="${KB}?x=1&amp;y=2">k</a>`)).toEqual([`${KB}?x=1&y=2`]);
+    expect(hrefs(`<a href="https:&#x2F;&#x2F;support.microsoft.com/help/5000001">k</a>`)).toEqual([KB]);
+  });
+
+  it("takes a link only from a tag named a, and reads one whose attributes follow a slash", () => {
+    expect(hrefs(`<a-link href="${KB}">k</a-link>`)).toEqual([undefined]);
+    expect(hrefs(`<a:x href="${KB}">k</a:x>`)).toEqual([undefined]);
+    expect(hrefs(`<a/href="${KB}">k</a>`)).toEqual([KB]);
+    expect(hrefs(`<a\nhref="${KB}">k</a>`)).toEqual([KB]);
+  });
+
+  it("gives no link for a malformed tag", () => {
+    for (const tag of [
+      `<a href="${KB}>k</a>`,
+      `<a href='${KB}>k</a>`,
+      `<a href=>k</a>`,
+      `<a ="${KB}">k</a>`,
+      `<a href="${KB}"" >k</a>`,
+      `<a <b href="${KB}">k</a>`,
+      `<a href=${KB}"x">k</a>`,
+      `<a href="${"x".repeat(501)}">k</a>`,
+    ]) {
+      expect(hrefs(tag), tag).toEqual([undefined]);
+    }
+  });
+});
+
+describe("parseWindowsUpdateType", () => {
+  it("reads B, D and OOB with their month, in any case", () => {
+    expect(parseWindowsUpdateType("2026-09 B")).toEqual({ type: "2026-09 B", kind: "B" });
+    expect(parseWindowsUpdateType(" 2026-09  d ")).toEqual({ type: "2026-09 D", kind: "D" });
+    expect(parseWindowsUpdateType("2026-10 OOB")).toEqual({ type: "2026-10 OOB", kind: "OOB" });
+  });
+
+  it("reads a real calendar month only", () => {
+    expect(parseWindowsUpdateType("2026-01 B")).toEqual({ type: "2026-01 B", kind: "B" });
+    expect(parseWindowsUpdateType("2026-12 D")).toEqual({ type: "2026-12 D", kind: "D" });
+    for (const text of ["2026-00 B", "2026-13 D", "2026-99 OOB", "0000-05 B", "1984-05 B"]) {
+      expect(parseWindowsUpdateType(text), text).toBeUndefined();
+    }
+  });
+
+  it("reads nothing else", () => {
+    for (const text of [
+      "",
+      " ",
+      "B",
+      "2026-09",
+      "2026-09 C",
+      "2026-09 X",
+      "2026-9 B",
+      "26-09 B",
+      "2026/09 B",
+      "2026-09 OOBB",
+      "constructor",
+      "2026-09 __proto__",
+      "abcd-ef B",
+    ]) {
+      expect(parseWindowsUpdateType(text), text).toBeUndefined();
+    }
+  });
+});
+
+describe("parseWindowsKb", () => {
+  it("finds a KB number of six or seven digits", () => {
+    expect(parseWindowsKb("KB5000000")).toBe("KB5000000");
+    expect(parseWindowsKb("KB5043080")).toBe("KB5043080");
+    expect(parseWindowsKb("see kb5043080 for details")).toBe("KB5043080");
+    expect(parseWindowsKb("(KB500308)")).toBe("KB500308");
+    expect(parseWindowsKb("MKB1234 then KB5043080")).toBe("KB5043080");
+  });
+
+  it("accepts punctuation, whitespace, an underscore or the end of the text after the digits", () => {
+    for (const text of ["KB5043080.", "KB5043080)", "KB5043080 ", "KB5043080-", "KB5043080_", "KB5043080,x"]) {
+      expect(parseWindowsKb(text), text).toBe("KB5043080");
+    }
+  });
+
+  it("refuses a KB number with letters run on and goes on to a later one", () => {
+    expect(parseWindowsKb("KB5043080X")).toBeUndefined();
+    expect(parseWindowsKb("KB5043080x")).toBeUndefined();
+    expect(parseWindowsKb("KB500308a")).toBeUndefined();
+    expect(parseWindowsKb("KB5043080X then KB5043081")).toBe("KB5043081");
+  });
+
+  it("finds none in anything else", () => {
+    for (const text of [
+      "",
+      "KB",
+      "KB123",
+      "KB1234",
+      "KB12x",
+      "KB0000",
+      "KB00000000",
+      "KB0123456",
+      "MKB1234",
+      "MKB5043080",
+      "KB12345678X",
+      "KB123456789",
+      "5000000",
+      "kilobyte 5000000",
+      "KB KB KB",
+    ]) {
+      expect(parseWindowsKb(text), text).toBeUndefined();
+    }
+  });
+});
+
+describe("windowsUpdateNote", () => {
+  const history = (rows: string[], header = "Servicing option|Update type|Availability date|Build|KB article") =>
+    readHtmlCells(
+      `<table><tr>${header
+        .split("|")
+        .map((cell) => `<th>${cell}</th>`)
+        .join("")}</tr>${rows.map((row) => `<tr>${row}</tr>`).join("")}</table>`,
+    );
+  const row = (
+    type: string,
+    build: string,
+    kb = '<a href="https://support.microsoft.com/help/5000001">KB5000001</a>',
+  ) => `<td>GA</td><td>${type}</td><td>2026-09-09</td><td>${build}</td><td>${kb}</td>`;
+
+  it("maps B, D and OOB to a short label with the table's own KB link", () => {
+    const tables = history([
+      row("2026-09 D", "26100.6800"),
+      row("2026-09 B", "26100.6725", '<a href="https://support.microsoft.com/help/5043080">KB5043080</a>'),
+      row("2026-09 OOB", "26100.6700"),
+    ]);
+    expect(windowsUpdateNote(tables, "26100.6725")).toEqual({
+      text: "Security update",
+      detail: "2026-09 B: the monthly security update.",
+      reference: { label: "KB5043080", url: "https://support.microsoft.com/help/5043080" },
+    });
+    expect(windowsUpdateNote(tables, "26100.6800")?.text).toBe("Optional preview");
+    expect(windowsUpdateNote(tables, "26100.6700")?.text).toBe("Out-of-band fix");
+  });
+
+  it("gives no note without a build, for a build no table lists, or when the row's type is unknown", () => {
+    const tables = history([row("2026-09 B", "26100.6725"), row("2026-09 Q", "26100.6000")]);
+    expect(windowsUpdateNote(tables, undefined)).toBeUndefined();
+    expect(windowsUpdateNote(tables, "")).toBeUndefined();
+    expect(windowsUpdateNote(tables, "26100.9999")).toBeUndefined();
+    expect(windowsUpdateNote(tables, "26100.6000")).toBeUndefined();
+    expect(windowsUpdateNote([], "26100.6725")).toBeUndefined();
+  });
+
+  it("gives no note for a row whose update type has an impossible month", () => {
+    const tables = history([row("2026-00 B", "26100.6725"), row("2026-09 B", "26100.6726")]);
+    expect(windowsUpdateNote(tables, "26100.6725")).toBeUndefined();
+    expect(windowsUpdateNote(tables, "26100.6726")?.text).toBe("Security update");
+  });
+
+  it("needs both an Update type and a Build column, and ignores the table of versions", () => {
+    expect(
+      windowsUpdateNote(history([row("2026-09 B", "26100.6725")], "Servicing option|Kind|Date|Build|KB"), "26100.6725"),
+    ).toBeUndefined();
+    expect(
+      windowsUpdateNote(
+        history([row("2026-09 B", "26100.6725")], "Servicing option|Update type|Date|Revision|KB"),
+        "26100.6725",
+      ),
+    ).toBeUndefined();
+    expect(
+      windowsUpdateNote(readHtmlCells(page.split("<h2>Windows 11, version 26H2</h2>")[0]), "26300.1000"),
+    ).toBeUndefined();
+  });
+
+  it("works without a KB column, and with a KB cell that has no number or no link", () => {
+    const noKb = history(
+      [`<td>GA</td><td>2026-09 B</td><td>2026-09-09</td><td>26100.6725</td>`],
+      "Servicing option|Update type|Availability date|Build",
+    );
+    expect(windowsUpdateNote(noKb, "26100.6725")).toEqual({
+      text: "Security update",
+      detail: "2026-09 B: the monthly security update.",
+    });
+    const text = history([row("2026-09 B", "26100.6725", "KB5000002")]);
+    expect(windowsUpdateNote(text, "26100.6725")?.reference).toEqual({ label: "KB5000002" });
+    const empty = history([row("2026-09 B", "26100.6725", "")]);
+    expect(windowsUpdateNote(empty, "26100.6725")?.reference).toBeUndefined();
+  });
+
+  it("builds no link of its own: only an https link on support.microsoft.com that the cell has is kept", () => {
+    for (const href of [
+      "http://support.microsoft.com/help/5",
+      "https://microsoft.com/help/5",
+      "/help/5",
+      "javascript:alert(1)",
+      "https://user:pw@support.microsoft.com/help/5",
+    ]) {
+      const tables = history([row("2026-09 B", "26100.6725", `<a href="${href}">KB5000003</a>`)]);
+      expect(windowsUpdateNote(tables, "26100.6725")?.reference, href).toEqual({ label: "KB5000003" });
+    }
+  });
+
+  it("reads the KB label from the visible text, not from a > inside an attribute", () => {
+    const tables = history([row("2026-09 B", "26100.6725", '<span title="replaces>KB5000001 ">KB5000060</span>')]);
+    expect(windowsUpdateNote(tables, "26100.6725")?.reference).toEqual({ label: "KB5000060" });
+  });
+
+  it("keeps the link when the href has entities", () => {
+    const tables = history([
+      row("2026-09 B", "26100.6725", '<a href="https:&#x2F;&#x2F;support.microsoft.com/help/5000060">KB5000060</a>'),
+    ]);
+    expect(windowsUpdateNote(tables, "26100.6725")?.reference).toEqual({
+      label: "KB5000060",
+      url: "https://support.microsoft.com/help/5000060",
+    });
+  });
+
+  it("drops the link when it points at a different article than the KB label", () => {
+    const tables = history([
+      row("2026-09 B", "26100.6725", '<a href="https://support.microsoft.com/help/5099999">KB5043080</a>'),
+      row("2026-09 B", "26100.6726", '<a href="https://support.microsoft.com/help/5043080">KB5043080</a>'),
+    ]);
+    expect(windowsUpdateNote(tables, "26100.6725")?.reference).toEqual({ label: "KB5043080" });
+    expect(windowsUpdateNote(tables, "26100.6726")?.reference).toEqual({
+      label: "KB5043080",
+      url: "https://support.microsoft.com/help/5043080",
+    });
+  });
+
+  it("copes with short rows and a table of nothing", () => {
+    expect(
+      windowsUpdateNote(
+        readHtmlCells("<table><tr><th>Update type</th><th>Build</th></tr><tr><td>2026-09 B</td></tr></table>"),
+        "26100.6725",
+      ),
+    ).toBeUndefined();
+    expect(windowsUpdateNote(readHtmlCells("<table></table><table><tr></tr></table>"), "26100.6725")).toBeUndefined();
+    expect(windowsUpdateNote(readHtmlCells(""), "26100.6725")).toBeUndefined();
   });
 });

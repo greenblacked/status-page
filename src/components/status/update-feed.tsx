@@ -1,3 +1,4 @@
+import { useRouter } from "@tanstack/react-router";
 import { LocalTime } from "@/components/status/local-time";
 import { FEED_RESERVE_SCRIPT, FEED_ROW_CLASSES } from "@/lib/status/feed-reserve";
 import type { Pulse } from "@/lib/status/pulse";
@@ -12,6 +13,8 @@ import { cn } from "@/lib/utils";
  */
 export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?: string }) {
   const rows = recentRows(pulses);
+  // The page's Content-Security-Policy runs an inline script only with this response's nonce. No router in a bare render (unit tests).
+  const nonce = useRouter({ warn: false })?.options.ssr?.nonce;
 
   return (
     // Never the scroll anchor: it sits in view under Needs a look, and when a search empties the sections above it
@@ -64,7 +67,7 @@ export function UpdateFeed({ pulses, className }: { pulses: Pulse[]; className?:
         {/* Right after the surface: the script measures the element before it. Only while empty, as it is only then needed. */}
         {rows.length === 0 ? (
           // biome-ignore lint/security/noDangerouslySetInnerHtml: a constant of ours, built from no input.
-          <script dangerouslySetInnerHTML={{ __html: FEED_RESERVE_SCRIPT }} />
+          <script nonce={nonce} dangerouslySetInnerHTML={{ __html: FEED_RESERVE_SCRIPT }} />
         ) : null}
         <p className="mt-2 text-footnote text-subtle md:hidden">On this device</p>
       </div>

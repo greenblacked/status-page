@@ -134,6 +134,11 @@ jobs:
       - name: Build (pnpm run build)
         run: pnpm run build
 
+      - name: One board cache in the built server
+        # A cache declared beside a server function is built twice (once per
+        # chunk), so the page and the API stop sharing it.
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/single-board-cache.ts dist/server
+
       - name: Smoke-test built preview
         # scripts/ci/smoke.sh holds the checks, shared with deploy.yml.
         # /readyz may be 503 here: a runner that cannot reach a vendor
@@ -167,20 +172,62 @@ jobs:
           retention-days: 1
 
   e2e:
-    # One shard per engine family and device. Every project but one runs the
-    # whole suite (the Chromium tablet runs only the search reveal and floating
-    # bar tests), but WebKit is several times slower than Chromium in CI, so the
-    # three Chromium projects share a shard and each WebKit project gets its own.
-    # Together the shards run every project exactly once.
+    # The browser tests are grouped by the operating system of the device they
+    # stand in for: Windows (desktop Chrome), macOS (Desktop Safari), iOS (the
+    # iPhones), iPadOS (the iPads) and Android. A red check then names the
+    # system, and a slice (`ios-1`, `android-phone`) the part of it.
+    #
+    # Five projects run the whole suite (desktop, mobile, Desktop Safari, iPhone
+    # 17 Pro and iPad Pro 11) and the Chromium tablet (an iPad's size in
+    # Chromium) runs only the search reveal, floating bar, field's fill,
+    # self-hosted Inter, content security policy, tilt performance and layout
+    # tests; ten more screens (narrow, short, large, foldable, an Android
+    # tablet, phones on their side) run only the layout tests tagged @layout
+    # (e2e/mobile-layout.spec.ts). Together the shards run every one of the 16
+    # projects exactly once.
+    #
+    # WebKit is several times slower than Chromium in CI, so the iPhone 17 Pro
+    # runs in thirds and the iPad Pro 11 in halves (Playwright's `--shard`, which
+    # splits the tests of the project by count, not by time, and needs no merged
+    # report: every part's exit code gates its own check). The heavy files (tilt,
+    # theme-switch, phone-bar, scroll-jump) all fall in the second half of an
+    # even split, which made it about 70% of the iPhone's time, hence thirds.
+    # The layout-only WebKit screens sit in shards of their own per OS. Whole,
+    # those two projects took 12.8 to 19.4 (iPhone) and 11.1 to 17.9 (iPad)
+    # minutes in the test step across ten runs, against a 25-minute step limit.
+    #
+    # The checks that come out are named `browser tests (<shard>)`:
+    #   windows                  desktop
+    #   macos                    Desktop Safari
+    #   ios-1, ios-2, ios-3      iPhone 17 Pro, first, second and third third
+    #   ios-layout-1, ios-layout-2
+    #                            iPhone SE (3rd gen), iPhone 17 Pro Max,
+    #                            iPhone 17 Pro landscape, in halves
+    #   ipados-1, ipados-2       iPad Pro 11, first and second half
+    #   ipados-layout            iPad Mini
+    #   ipados-chromium          tablet (an iPad's size in Chromium)
+    #   android-phone            mobile (Pixel 7)
+    #   android-layout           Galaxy S9+, Pixel 10, Pixel 7 landscape,
+    #                            Galaxy Z Fold 7, Galaxy Z Fold 7 Cover,
+    #                            Galaxy Tab S9
+    # Only `CI OK` is required by branch protection (CONTRIBUTING.md#ci), so a
+    # shard can be split or renamed without touching the rulesets.
     name: browser tests (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    # Per shard: the Chromium shard runs three projects and a WebKit shard one,
-    # which take 3 to 5 minutes, plus getting the browser. Chromium is
-    # downloaded, with its 32 MB of system libraries from apt. WebKit's
-    # libraries are about 125 MB from apt, and on a slow runner that fetch
-    # took over 30 minutes and failed the job, so the WebKit shards run in
-    # Playwright's own image (below), which has them and the browser already.
+    # Per shard, in wall-clock minutes in the test step (measured from the
+    # test times of recent runs with 2 workers, so ranges, not promises; run to
+    # run the same shard varied by a factor of two or more): windows 5 to 8,
+    # android-phone 11 to 12, android-layout about 8, ipados-chromium 4 to 6,
+    # macos 8 to 13, ios-1 about 5, ios-2 about 9, ios-3 about 8, ios-layout-1
+    # and ios-layout-2 9 to 10 each, ipados-1 about 6, ipados-2 11 to 12,
+    # ipados-layout 2.5 to 5. A Chromium project that runs the whole suite
+    # takes about 6 to 7 minutes, a layout screen 1.5 to 2 on Chromium and 2.5
+    # to 5 on WebKit. Chromium is downloaded, with its 32 MB of
+    # system libraries from apt. WebKit's libraries are about 125 MB from apt,
+    # and on a slow runner that fetch took over 30 minutes and failed the job,
+    # so the WebKit shards run in Playwright's own image (below), which has
+    # them and the browser already.
     # apt is not retried: a killed apt keeps the dpkg lock, so a retry in the
     # same job would fail. Pulling the image (about 1 GB compressed) happens
     # before the steps, so only this job limit bounds it.
@@ -192,10 +239,22 @@ jobs:
       # A slow or failing shard must not hide the results of the others.
       fail-fast: false
       matrix:
+        # `projects` is a comma-separated list of project names from
+        # playwright.config.ts; `split` (optional) is a Playwright `--shard`
+        # value, such as "1/2" or "2/3", for projects run in parts.
         include:
-          - shard: chromium
+          - shard: windows
             browser: chromium
-            projects: desktop,mobile,tablet
+            projects: desktop
+          - shard: android-phone
+            browser: chromium
+            projects: mobile
+          - shard: android-layout
+            browser: chromium
+            projects: Galaxy S9+,Pixel 10,Pixel 7 landscape,Galaxy Z Fold 7,Galaxy Z Fold 7 Cover,Galaxy Tab S9
+          - shard: ipados-chromium
+            browser: chromium
+            projects: tablet
           # The image carries WebKit's system libraries and the browser build
           # that matches @playwright/test, so these shards fetch nothing from
           # apt. Pinned by digest (Scorecard) and by tag for the reader; when
@@ -203,17 +262,50 @@ jobs:
           # both follow: `docker buildx imagetools inspect <image>:<tag>`
           # prints the new digest. Dependabot opens @playwright/test bumps
           # alone (.github/dependabot.yml) for that reason.
-          - shard: desktop-safari
+          - shard: macos
             browser: webkit
             projects: Desktop Safari
             container: &playwright-image mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
-          - shard: iphone
+          - shard: ios-1
             browser: webkit
             projects: iPhone 17 Pro
+            split: 1/3
             container: *playwright-image
-          - shard: ipad
+          - shard: ios-2
+            browser: webkit
+            projects: iPhone 17 Pro
+            split: 2/3
+            container: *playwright-image
+          - shard: ios-3
+            browser: webkit
+            projects: iPhone 17 Pro
+            split: 3/3
+            container: *playwright-image
+          # The iOS screens that run only the @layout tests (90 each), in
+          # halves of their combined tests.
+          - shard: ios-layout-1
+            browser: webkit
+            projects: iPhone SE (3rd gen),iPhone 17 Pro Max,iPhone 17 Pro landscape
+            split: 1/2
+            container: *playwright-image
+          - shard: ios-layout-2
+            browser: webkit
+            projects: iPhone SE (3rd gen),iPhone 17 Pro Max,iPhone 17 Pro landscape
+            split: 2/2
+            container: *playwright-image
+          - shard: ipados-1
             browser: webkit
             projects: iPad Pro 11
+            split: 1/2
+            container: *playwright-image
+          - shard: ipados-2
+            browser: webkit
+            projects: iPad Pro 11
+            split: 2/2
+            container: *playwright-image
+          - shard: ipados-layout
+            browser: webkit
+            projects: iPad Mini
             container: *playwright-image
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -265,18 +357,28 @@ jobs:
           EOF
 
       - name: Browser tests (Playwright)
-        # Runs take 3 to 4.3 minutes; this stops a hung suite long before
-        # the job limit does.
-        timeout-minutes: 10
+        # A Chromium project's full run takes 6 to 7 minutes and a WebKit one's
+        # 8 to 19 in CI (Desktop Safari 8 to 13, iPhone 17 Pro 13 to 19, iPad
+        # Pro 11 11 to 18); a layout screen takes 1.5 to 2 on Chromium and 2.5
+        # to 5 on WebKit. The shards are cut so the longest hold about 9 to 12
+        # minutes (the iPhone in thirds, the iPad and the iPhone layout screens
+        # in halves), which leaves real margin under these 25 and still stops a hung suite well
+        # before the job limit does.
+        timeout-minutes: 25
         env:
           # Comma-separated project names from playwright.config.ts.
           PROJECTS: ${{ matrix.projects }}
+          # A Playwright --shard such as "1/3" to run that part of the tests, empty to run all.
+          SPLIT: ${{ matrix.split }}
         run: |
           args=()
           IFS=, read -ra names <<<"$PROJECTS"
           for name in "${names[@]}"; do
             args+=(--project="$name")
           done
+          if [ -n "$SPLIT" ]; then
+            args+=(--shard="$SPLIT")
+          fi
           pnpm run test:e2e "${args[@]}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -326,11 +428,83 @@ jobs:
             test-results/
           retention-days: 7
 
+  server:
+    name: browser tests (node server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Makes playwright.config.ts start src/node/serve.ts, the server the
+      # Docker image runs, instead of `vite preview`; the @node-server tests
+      # skip themselves without it.
+      E2E_SERVER: node
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain (pnpm install)
+        uses: ./.github/actions/setup # zizmor: ignore[self-repository] actionlint 1.7.12 rejects $/ yet
+
+      - name: Install Playwright's Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build (pnpm run build)
+        run: pnpm run build
+
+      # Chromium on a desktop and on a phone: what differs from the preview
+      # is the server, not the engine, so WebKit is left to the other jobs.
+      - name: Browser tests behind the production server (Playwright)
+        run: pnpm exec playwright test --project=desktop --project=mobile --grep @node-server
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: playwright-report-node-server
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  image:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The Dockerfile that release.yml publishes, built for this runner and
+      # started the way the README runs it. Nothing is pushed.
+      # BuildKit's own image is pinned by tag and digest, as in release.yml;
+      # move the two together.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: status-page:smoke
+
+      - name: Smoke-test the image
+        run: ./scripts/ci/image-smoke.sh status-page:smoke
+
   commits:
     name: commit messages
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name == 'pull_request'
+    # A pull request, and a push to dev: dev is checked against stage, the
+    # range its pull request into stage will check, so the check does not
+    # wait for that pull request to be opened.
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -343,8 +517,9 @@ jobs:
       - name: Check Conventional Commits
         # Branch names are attacker-controlled on a fork PR, so the ref goes
         # through the environment instead of being interpolated into the shell.
+        # A push to dev has no base_ref: the base is stage.
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.base_ref || 'stage' }}
         run: |
           git fetch --no-tags origin "$BASE_REF"
           ./scripts/ci/commits.sh "origin/$BASE_REF..HEAD"
@@ -353,6 +528,8 @@ jobs:
     name: branch name
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Pull requests only: a push to dev has no head branch name to check (the
+    # branch is dev itself), and the base-and-head rule is about a pull request.
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -407,7 +584,7 @@ jobs:
     # request waiting on a check that was skipped.
     name: CI OK
     if: always()
-    needs: [lint, typecheck, test, build, e2e, history, commits, branch, workflows]
+    needs: [lint, typecheck, test, build, e2e, history, server, image, commits, branch, workflows]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -418,7 +595,8 @@ jobs:
           jq -r 'to_entries[] | "\(.value.result)\t\(.key)"' <<<"$RESULTS"
           # `e2e` is a matrix: its result is `failure` or `cancelled` if any
           # shard failed, was cancelled or timed out.
-          # `skipped` is fine: commit and branch checks run on pull requests only.
+          # `skipped` is fine: the branch check runs on pull requests only, and the
+          # commit check on pull requests and pushes to dev.
           if jq -e 'any(.[]; .result == "failure" or .result == "cancelled")' <<<"$RESULTS" >/dev/null; then
             echo "::error::a required job failed or was cancelled"
             exit 1

@@ -67,6 +67,35 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
           ) : null}
         </p>
       ) : null}
+      {entry.note ? (
+        <div data-release-note-details className="mt-2 flex flex-col gap-1.5 text-footnote">
+          {entry.note.important.length > 0 ? (
+            <ul aria-label="Marked important" className="flex list-disc flex-col gap-1 pl-4 text-fg marker:text-subtle">
+              {entry.note.important.map((line, at) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: a changelog can repeat a line; the index only breaks that tie.
+                <li key={at} className="[overflow-wrap:anywhere]">
+                  <span className="font-semibold">Important</span> · {line}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="text-muted [overflow-wrap:anywhere]">{entry.note.detail ?? entry.note.text}</p>
+          {entry.note.reference?.url ? (
+            <a
+              href={entry.note.reference.url}
+              target="_blank"
+              rel="noreferrer"
+              className="focus-ring pressable inline-flex min-h-8 items-center gap-1 self-start rounded-md text-footnote text-accent pointer-coarse:min-h-11"
+            >
+              {entry.note.reference.label}
+              <span className="sr-only"> for {entry.name}</span>
+              <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
+            </a>
+          ) : entry.note.reference ? (
+            <p className="text-muted">{entry.note.reference.label}</p>
+          ) : null}
+        </div>
+      ) : null}
       {entry.notes.length > 0 ? (
         <ul
           aria-label="Changes"
@@ -79,7 +108,7 @@ function Entry({ entry, service, reference }: { entry: ReleaseEntry; service: Se
             </li>
           ))}
         </ul>
-      ) : (
+      ) : entry.note ? null : (
         <p className="mt-2 text-footnote text-subtle">No notes text from {source.name}.</p>
       )}
       <a
@@ -215,9 +244,19 @@ export function ReleaseDetails({
   service: ServiceSnapshot;
   variant: "inline" | "line" | "button";
 }) {
-  const [open, setOpen] = useState(false);
+  // Which press opened the pop-up showing now, or null when none is. Each press is a new pop-up (a new `key`), and a
+  // pop-up closes only the press it was opened by. A modal <dialog> shuts itself on Escape and tells the page with a
+  // `close` event that comes later, as a task of its own; a press between the two (a slow page, a quick key) found
+  // the state still open, changed nothing, and was undone by the event, which closed what it had meant to open.
+  const [pressed, setPressed] = useState<number | null>(null);
+  const presses = useRef(0);
   const trigger = useRef<HTMLButtonElement>(null);
   const wasOpen = useRef(false);
+  const open = pressed !== null;
+  const press = () => {
+    presses.current += 1;
+    setPressed(presses.current);
+  };
   useEffect(() => {
     if (wasOpen.current && !open) trigger.current?.focus();
     wasOpen.current = open;
@@ -228,7 +267,7 @@ export function ReleaseDetails({
       <button
         ref={trigger}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={press}
         aria-haspopup="dialog"
         data-release-details-trigger
         className={cn(
@@ -249,8 +288,15 @@ export function ReleaseDetails({
         <ChevronRight className="size-3.5 shrink-0" aria-hidden />
       </button>
       {/* On <body>, not inside the row: a <dialog> may not sit in the row's <p>, and nothing of the row's layout reaches it. */}
-      {open
-        ? createPortal(<ReleaseDetailsDialog service={service} onClose={() => setOpen(false)} />, document.body)
+      {pressed !== null
+        ? createPortal(
+            <ReleaseDetailsDialog
+              key={pressed}
+              service={service}
+              onClose={() => setPressed((current) => (current === pressed ? null : current))}
+            />,
+            document.body,
+          )
         : null}
     </>
   );

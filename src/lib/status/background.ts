@@ -1,9 +1,9 @@
 import { type AttributeTarget, type PreferenceStorage, REDUCE_GLASS_BOOT_SCRIPT } from "@/lib/status/glass";
 
 /**
- * The page behind the board: Quiet (flat paper, the default), Glass (frosted
- * panels over a still glow) or Full (adds the drift, the glass lenses and a
- * light that wanders across the cards). The choice is a preference kept in this
+ * The page behind the board: Quiet (warm paper, with a faint grain by day, the default), Glass (frosted
+ * panels over a still glow, with a light that wanders across the cards) or Full
+ * (adds the drift and the glass lenses). The choice is a preference kept in this
  * browser; the CSS answers to a `data-background` attribute on <html>
  * (src/background.css), which is absent for Quiet. Reduce glass sits above it:
  * with that on, the page stays solid whatever is chosen.
@@ -63,7 +63,7 @@ export function applyBackground(root: AttributeTarget, value: Background): void 
  * `data-background` for Glass or Full, so those never flash Quiet first. The
  * server writes no attribute (<html> carries suppressHydrationWarning), React
  * renders the same markup either way, and the hooks read the stored choices
- * again after hydration. Inline, which the page's Content-Security-Policy
- * allows ('unsafe-inline' in script-src).
+ * again after hydration. Inline, and run under the page's
+ * Content-Security-Policy by the response's nonce (src/lib/security-headers.ts).
  */
 export const APPEARANCE_BOOT_SCRIPT = `${REDUCE_GLASS_BOOT_SCRIPT};try{var b=localStorage.getItem(${JSON.stringify(BACKGROUND_STORAGE_KEY)});if(b==="glass"||b==="full")document.documentElement.setAttribute(${JSON.stringify(BACKGROUND_ATTRIBUTE)},b)}catch(e){}`;

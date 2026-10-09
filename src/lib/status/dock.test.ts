@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AWAY_PX,
+  AWAY_REST,
+  type AwayMemo,
+  awayFrame,
   BAR_RISE,
   clampScroll,
   createDockStore,
@@ -12,6 +16,7 @@ import {
   dockGeometry,
   focusReveal,
   HIDE_DOWN_PX,
+  heroFieldClear,
   quietScroll,
   quietScrolling,
   REVEAL_REST,
@@ -24,8 +29,9 @@ import {
 } from "./dock";
 
 /** A state as the store holds it. The field's reveal is off unless a test says the hero's field is behind the bar. */
-const state = (barShown: boolean, docked: boolean, heroAway = false, revealed = false): DockState => ({
+const state = (barShown: boolean, docked: boolean, heroAway = false, revealed = false, away = false): DockState => ({
   barShown,
+  away,
   docked,
   heroAway,
   revealed,
@@ -33,8 +39,14 @@ const state = (barShown: boolean, docked: boolean, heroAway = false, revealed = 
 
 describe("createDockStore", () => {
   it("starts at rest: no bar, the field in the hero, nothing revealed", () => {
-    expect(createDockStore().get()).toEqual({ barShown: false, docked: false, heroAway: false, revealed: false });
-    expect(DOCK_REST).toEqual({ barShown: false, docked: false, heroAway: false, revealed: false });
+    expect(createDockStore().get()).toEqual({
+      barShown: false,
+      away: false,
+      docked: false,
+      heroAway: false,
+      revealed: false,
+    });
+    expect(DOCK_REST).toEqual({ barShown: false, away: false, docked: false, heroAway: false, revealed: false });
   });
 
   it("returns what was set and tells its listeners once per change", () => {
@@ -85,6 +97,19 @@ describe("createDockStore", () => {
     store.set(state(true, false));
     store.set(state(false, false));
     expect(later).toHaveBeenCalledTimes(2);
+  });
+
+  it("tells its listeners when only `away` changes", () => {
+    const store = createDockStore();
+    const listener = vi.fn();
+    store.set(state(true, false));
+    store.subscribe(listener);
+    store.set(state(true, false, false, false, true));
+    expect(listener).toHaveBeenCalledTimes(1);
+    store.set(state(true, false, false, false, true));
+    expect(listener).toHaveBeenCalledTimes(1);
+    store.set(state(true, false));
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("tells its listeners when only `heroAway` or only `revealed` changes", () => {
@@ -156,6 +181,23 @@ describe("dockGeometry", () => {
     expect(g.revealFrom).toBe(944);
     // The bar is up alone for a stretch before that.
     expect(g.revealFrom).toBeGreaterThan(g.barStart);
+  });
+
+  it("below 64rem, brings a bar that is a sheet from the screen's top up once the line is off the screen", () => {
+    // The phone's bar covers everything down to its bottom edge, so its top is 0 and the line must be out of sight.
+    const g = dockGeometry({
+      ...measured,
+      barTop: 0,
+      barHeight: 56,
+      wide: false,
+      reduce: false,
+      contentBottom: 920,
+      fieldBottom: 1000,
+      clearTo: 0,
+    });
+    expect(g.barStart).toBe(920);
+    // The bar's bottom edge is the same 56 it was as a pill 8 down and 48 tall.
+    expect(g.revealFrom).toBe(944);
   });
 
   it("below 64rem, moves both thresholds with the bar's top, as the safe area does on a notch", () => {
@@ -278,10 +320,10 @@ describe("dockFrame, on a wide screen", () => {
       store.set(state(next.barShown, next.docked));
     }
     expect(seen).toEqual([
-      '{"barShown":true,"docked":false,"heroAway":false,"revealed":false}',
-      '{"barShown":true,"docked":true,"heroAway":false,"revealed":false}',
-      '{"barShown":false,"docked":true,"heroAway":false,"revealed":false}',
-      '{"barShown":false,"docked":false,"heroAway":false,"revealed":false}',
+      '{"barShown":true,"away":false,"docked":false,"heroAway":false,"revealed":false}',
+      '{"barShown":true,"away":false,"docked":true,"heroAway":false,"revealed":false}',
+      '{"barShown":false,"away":false,"docked":true,"heroAway":false,"revealed":false}',
+      '{"barShown":false,"away":false,"docked":false,"heroAway":false,"revealed":false}',
     ]);
   });
 });
@@ -357,7 +399,7 @@ describe("dockFrame, below 64rem", () => {
       const next = dockFrame(y, geometry, false, store.get());
       store.set(state(next.barShown, next.docked));
     }
-    expect(seen).toEqual(['{"barShown":true,"docked":false,"heroAway":false,"revealed":false}']);
+    expect(seen).toEqual(['{"barShown":true,"away":false,"docked":false,"heroAway":false,"revealed":false}']);
   });
 });
 
@@ -656,6 +698,158 @@ describe("quietScroll", () => {
   });
 });
 
+describe("awayFrame", () => {
+  const MAX = 5000;
+  const phone = { phone: true, barShown: true, hold: false, latched: false };
+  /** Feeds scroll positions one frame at a time, from `from`, and returns the memo after each. */
+  const run = (from: AwayMemo, ys: number[], context: Partial<typeof phone> = {}) => {
+    const seen: AwayMemo[] = [];
+    let memo = from;
+    for (const y of ys) {
+      memo = awayFrame(y, MAX, memo, { ...phone, ...context });
+      seen.push(memo);
+    }
+    return seen;
+  };
+  /** A bar that is up and in sight with the run's highest point at `y`. */
+  const shownAt = (y: number): AwayMemo => ({ away: false, pivot: y, lastY: y });
+
+  it("starts out of sight, and takes the baseline of the position it is up at", () => {
+    expect(AWAY_REST.away).toBe(true);
+    expect(awayFrame(900, MAX, AWAY_REST, { ...phone, barShown: false })).toEqual({
+      away: true,
+      pivot: 900,
+      lastY: 900,
+    });
+  });
+
+  it("is out of sight until the page has been scrolled up: a scroll down from the hero brings it up hidden", () => {
+    const [first, ...rest] = run({ away: true, pivot: 880, lastY: 880 }, [900, 1000, 1200, 1500]);
+    expect(first?.away).toBe(true);
+    expect(rest.every((memo) => memo.away)).toBe(true);
+  });
+
+  it("comes back on a scroll up of more than AWAY_PX, and not before", () => {
+    expect(AWAY_PX).toBe(8);
+    const gone: AwayMemo = { away: true, pivot: 1500, lastY: 1500 };
+    expect(run(gone, [1492])[0]?.away).toBe(true);
+    expect(run(gone, [1491])[0]?.away).toBe(false);
+  });
+
+  it("adds a slow scroll up, frame by frame, from the lowest point of the run", () => {
+    const seen = run({ away: true, pivot: 1500, lastY: 1500 }, [1498, 1496, 1494, 1492, 1490]);
+    expect(seen.map((memo) => memo.away)).toEqual([true, true, true, true, false]);
+  });
+
+  it("goes away again on a scroll down of more than AWAY_PX from the highest point of the run", () => {
+    // Up to 1380 (the run's highest point), then 8 down is not more than 8, and 9 is.
+    const seen = run(shownAt(1400), [1380, 1388, 1389]);
+    expect(seen.map((memo) => memo.away)).toEqual([false, false, true]);
+  });
+
+  it("stays in sight through jitter under AWAY_PX", () => {
+    const seen = run(shownAt(1400), [1403, 1399, 1405, 1401, 1407]);
+    expect(seen.every((memo) => !memo.away)).toBe(true);
+  });
+
+  it("turns round again after a reversal, counting from the new run's own extreme", () => {
+    const seen = run({ away: true, pivot: 1500, lastY: 1500 }, [1520, 1530, 1520, 1510, 1521, 1535]);
+    // Down to 1530, up 20 (shown), down 11 from the lowest of that run (1510) is more than 8: away.
+    expect(seen.map((memo) => memo.away)).toEqual([true, true, false, false, true, true]);
+  });
+
+  it("is `prev` itself on a frame at the same position", () => {
+    const memo = shownAt(1400);
+    expect(awayFrame(1400, MAX, memo, phone)).toBe(memo);
+  });
+
+  it("does not read a rubber band as travel: the top is 0 and the end is the end", () => {
+    // Pulled down past the top, and the recoil from past the end, which reads as a scroll up.
+    expect(awayFrame(-40, MAX, { away: true, pivot: 0, lastY: 0 }, { ...phone, barShown: false }).away).toBe(true);
+    const atEnd: AwayMemo = { away: true, pivot: MAX, lastY: MAX };
+    expect(run(atEnd, [MAX + 60, MAX + 20, MAX + 2, MAX]).every((memo) => memo.away)).toBe(true);
+    // Past the end and back, then a real scroll up from the end: it comes back for that.
+    expect(awayFrame(MAX - 20, MAX, atEnd, phone).away).toBe(false);
+  });
+
+  it("is out of sight when the bar is not up, whatever the direction, and starts the run again from there", () => {
+    const memo = awayFrame(300, MAX, shownAt(900), { ...phone, barShown: false });
+    expect(memo).toEqual({ away: true, pivot: 300, lastY: 300 });
+  });
+
+  it("is never away off a phone, and keeps the baseline, so a bar that is up stays up when the screen narrows", () => {
+    const tablet = awayFrame(2000, MAX, AWAY_REST, { ...phone, phone: false });
+    expect(tablet).toEqual({ away: false, pivot: 2000, lastY: 2000 });
+    // Narrowed to a phone's width: still in sight until the reader goes down.
+    expect(awayFrame(2000, MAX, tablet, phone).away).toBe(false);
+    expect(awayFrame(2012, MAX, tablet, phone).away).toBe(true);
+  });
+
+  it("is held in sight while a field of the bar is in use, whatever the page does", () => {
+    const seen = run({ away: true, pivot: 1500, lastY: 1500 }, [1500, 1700, 2100, 2600], { hold: true });
+    expect(seen.every((memo) => !memo.away)).toBe(true);
+    // And the run starts from where the hold ended: a scroll down of more than AWAY_PX takes it away.
+    const last = seen.at(-1) as AwayMemo;
+    expect(awayFrame(2605, MAX, last, phone).away).toBe(false);
+    expect(awayFrame(2609, MAX, last, phone).away).toBe(true);
+  });
+
+  it("keeps what it is while latched (the page has not armed, a field has focus, a dialog is open), moving the baseline", () => {
+    const hidden: AwayMemo = { away: true, pivot: 1500, lastY: 1500 };
+    // The keyboard opening scrolls the page up: no direction.
+    const held = awayFrame(1200, MAX, hidden, { ...phone, latched: true });
+    expect(held).toEqual({ away: true, pivot: 1200, lastY: 1200 });
+    // And after it, the reader's own scroll up counts from there.
+    expect(awayFrame(1190, MAX, held, phone).away).toBe(false);
+    const shown = awayFrame(1800, MAX, shownAt(1500), { ...phone, latched: true });
+    expect(shown).toEqual({ away: false, pivot: 1800, lastY: 1800 });
+  });
+});
+
+describe("quietScroll, a glide", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("stays quiet for as long as the page keeps scrolling, and clears once it has been still", () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, () => void>();
+    vi.stubGlobal("window", {
+      addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+      removeEventListener: (type: string) => listeners.delete(type),
+    });
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    quietScroll(() => {}, { glide: true });
+    expect(quietScrolling()).toBe(true);
+    // Scrolling on for a second: still quiet at every poll.
+    for (let step = 0; step < 10; step++) {
+      vi.advanceTimersByTime(100);
+      listeners.get("scroll")?.();
+      expect(quietScrolling()).toBe(true);
+    }
+    // Still for the time it takes: clear, and the listener is gone.
+    vi.advanceTimersByTime(300);
+    expect(quietScrolling()).toBe(false);
+    expect(listeners.has("scroll")).toBe(false);
+  });
+
+  it("gives up on a glide that never ends", () => {
+    vi.useFakeTimers();
+    const listeners = new Map<string, () => void>();
+    vi.stubGlobal("window", {
+      addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+      removeEventListener: (type: string) => listeners.delete(type),
+    });
+    quietScroll(() => {}, { glide: true });
+    for (let step = 0; step < 20; step++) {
+      vi.advanceTimersByTime(100);
+      listeners.get("scroll")?.();
+    }
+    expect(quietScrolling()).toBe(false);
+  });
+});
+
 describe("readerMoved", () => {
   const base = { from: 292, scrollY: 292, limit: 800, lastLimit: 800 };
 
@@ -699,11 +893,44 @@ describe("readerMoved", () => {
     expect(readerMoved({ ...base, scrollY: 100, quiet: true })).toBe(false);
   });
 
+  it("reads a move in the direction the end of the page moved, by no more than it moved, as a typed key's", () => {
+    // A key filtered the board: 888px came off the page, 264 of them above the reader's place, and the browser moved
+    // the page up by that much; the card it held was one the search removed, so the anchor has nothing to read.
+    const typed = { from: 591, scrollY: 327, limit: 3147, lastLimit: 4035, anchorMoved: 0 };
+    expect(readerMoved(typed)).toBe(true);
+    expect(readerMoved({ ...typed, typing: true })).toBe(false);
+    // Held to the new end from a position near the old one.
+    expect(readerMoved({ from: 4000, scrollY: 3147, limit: 3147, lastLimit: 4035, typing: true })).toBe(false);
+    // A page that got longer takes the same.
+    expect(readerMoved({ from: 300, scrollY: 400, limit: 1000, lastLimit: 700, typing: true })).toBe(false);
+  });
+
+  it("does not let a typed key hide a scroll that the page's change cannot account for", () => {
+    const typed = { from: 591, limit: 3147, lastLimit: 4035, typing: true };
+    // Against the way the end moved, or by more than it moved.
+    expect(readerMoved({ ...typed, scrollY: 700 })).toBe(true);
+    expect(readerMoved({ ...typed, from: 3500, scrollY: 100 })).toBe(true);
+    // The page's end did not move at all: nothing changed the page, so the scroll is the reader's.
+    expect(readerMoved({ from: 591, scrollY: 327, limit: 3147, lastLimit: 3147, typing: true })).toBe(true);
+  });
+
   it("holds the position to the page, so an overshoot is no travel", () => {
     // iOS reports 40px past the end that the last frame was clamped to.
     expect(readerMoved({ from: 800, scrollY: 840, limit: 800, lastLimit: 800 })).toBe(false);
     expect(readerMoved({ from: 0, scrollY: -30, limit: 800, lastLimit: 800 })).toBe(false);
     // And one past a nearer end is the layout's clamp.
     expect(readerMoved({ from: 600, scrollY: 640, limit: 560, lastLimit: 800 })).toBe(false);
+  });
+});
+
+describe("heroFieldClear", () => {
+  it("is true only once the hero's field is wholly below the bar", () => {
+    // The tablet's bar ends at 56: the field at [27,71] is half under it, [56,100] is clear.
+    expect(heroFieldClear(27, 56)).toBe(false);
+    expect(heroFieldClear(55, 56)).toBe(false);
+    expect(heroFieldClear(56, 56)).toBe(true);
+    expect(heroFieldClear(80, 56)).toBe(true);
+    // Sub-pixel rounding of the two edges does not hold a field that is clear.
+    expect(heroFieldClear(55.6, 56)).toBe(true);
   });
 });

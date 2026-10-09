@@ -2,7 +2,7 @@
 import { Tag as TagIcon } from "lucide-react";
 import { Fragment } from "react";
 import { ReleaseDetails } from "@/components/status/release-details";
-import { ReleaseItem, ReleaseTail } from "@/components/status/release-line";
+import { ReleaseItem, ReleaseNote, ReleaseTail } from "@/components/status/release-line";
 import type { ServiceCardProps } from "@/components/status/service-card-shared";
 import { ChangedTag, ROW_LEAD, RowFrame, RowHeader } from "@/components/status/service-row";
 import { Tag } from "@/components/ui/tag";
@@ -31,12 +31,42 @@ export function releaseLine(service: ServiceSnapshot): string {
 
 /** The items of that line, "Stable 7.21 · Sep 24" each, which the row keeps whole when it wraps. */
 export function releaseItems(service: ServiceSnapshot): string[] {
-  const versions = service.components
+  return releaseParts(service).map((part) => part.item);
+}
+
+/** One item of the line, with the channel or version it names and the short note on that release (the vendor's own data) when it has one. */
+export type ReleasePart = { item: string; name: string; note?: string };
+
+/**
+ * The line's items, each with its name and its note ("23 changes: bgp, wifi, container +9 more"). A release the
+ * collector gave no note for (a changelog not read yet, a build the page lists no update type for) has none, and
+ * its item is exactly what it was.
+ */
+export function releaseParts(service: ServiceSnapshot): ReleasePart[] {
+  const parts = service.components
     .filter((component) => component.detail)
     .sort((a, b) => Number(b.health === "maintenance") - Number(a.health === "maintenance"))
     .slice(0, MAX_VERSIONS)
-    .map((component) => `${component.name} ${component.detail}`);
-  return versions.length > 0 ? versions : ["No new release"];
+    .map((component): ReleasePart => {
+      const note = component.release?.note?.text;
+      const item = `${component.name} ${component.detail}`;
+      return typeof note === "string" && note.trim() !== ""
+        ? { item, name: component.name, note: note.trim() }
+        : { item, name: component.name };
+    });
+  return parts.length > 0 ? parts : [{ item: "No new release", name: "" }];
+}
+
+/**
+ * The note the row prints under its line: the first listed release that has one, led by the name of the channel or
+ * version it belongs to ("Stable · 23 changes: bgp, wifi, container +9 more · 2 important"). One note, on one
+ * line, so a row is its version line plus one line on a desktop, whatever the notes of its releases say; the
+ * others are in Details, which lists every release in full. The " · " inside the note is joined to the word before
+ * it, so a line that wraps on a phone never starts with a stray dot. Plain text; undefined when no release has one.
+ */
+export function rowNoteOf(parts: ReleasePart[]): string | undefined {
+  const part = parts.find((candidate) => candidate.note);
+  return part?.note ? `${part.name} · ${part.note}`.replaceAll(" · ", "\u00a0· ") : undefined;
 }
 
 /**
@@ -52,8 +82,9 @@ export function releaseItems(service: ServiceSnapshot): string[] {
  */
 export function ReleaseRow({ service, emphasized, released, starred, onToggleStar }: ServiceCardProps) {
   const fresh = hasFreshRelease(service);
-  const items = releaseItems(service);
-  const last = items[items.length - 1];
+  const parts = releaseParts(service);
+  const last = parts[parts.length - 1];
+  const note = rowNoteOf(parts);
   return (
     <RowFrame
       service={service}
@@ -64,7 +95,11 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
       lead={<TagIcon aria-hidden strokeWidth={1.7} className={cn("block size-5 text-subtle", ROW_LEAD)} />}
     >
       <div className="flex min-h-(--row-h) min-w-0 items-center">
-        <RowHeader name={service.name} className="relative">
+        <RowHeader
+          name={service.name}
+          className="relative"
+          after={note ? <ReleaseNote>{note}</ReleaseNote> : undefined}
+        >
           {fresh ? (
             <Tag className="mr-1.5 gap-1.5 text-fg">
               <span aria-hidden className="size-1.5 rounded-full bg-accent" />
@@ -72,14 +107,14 @@ export function ReleaseRow({ service, emphasized, released, starred, onToggleSta
             </Tag>
           ) : null}
           {/* The line wraps between items, never inside one, and "Details" stays with the last. */}
-          {items.slice(0, -1).map((item, at) => (
+          {parts.slice(0, -1).map((part, at) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: two versions can read alike; the index only breaks that tie.
             <Fragment key={at}>
-              <ReleaseItem>{item} ·</ReleaseItem>{" "}
+              <ReleaseItem>{part.item} ·</ReleaseItem>{" "}
             </Fragment>
           ))}
           <ReleaseTail>
-            <ReleaseItem>{last}</ReleaseItem>
+            <ReleaseItem>{last.item}</ReleaseItem>
             {emphasized ? (
               <>
                 {" "}
