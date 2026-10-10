@@ -640,6 +640,32 @@ export async function pressSettled(control: Locator): Promise<void> {
     .toBe(0);
 }
 
+/**
+ * Waits until nothing on the page is still easing: every animation that ends (a card's glide, a Changed bar's fade,
+ * the floating bar sliding in) has finished, including any started meanwhile, after a frame in which the style
+ * changes behind them have been applied. One that repeats for ever never finishes, so it is not waited for. It
+ * assumes a background without the period dial: on Full, that dial runs 120 s animations that do end, and this
+ * would wait them out.
+ */
+export async function animationsSettled(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    // A finished one that holds its end state stays in the list; it is over, not something to wait for.
+    const running = () =>
+      document
+        .getAnimations()
+        .filter((a) => a.playState === "running" && a.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY);
+    // One frame, then a macrotask: what other code scheduled in that first frame (a scroll handler's rAF and the
+    // render it triggers) has then applied its style changes, so their animations are in the list.
+    await frame();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    for (let now = running(); now.length > 0; now = running()) {
+      await Promise.allSettled(now.map((animation) => animation.finished));
+      await frame();
+    }
+  });
+}
+
 /** Waits out the dialog's rise, so its box is where it will stay. */
 export async function dialogSettled(dialog: Locator): Promise<void> {
   await dialog.evaluate((element) =>

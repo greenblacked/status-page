@@ -6,6 +6,12 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-10
+
+### Changed
+
+- **Node 22.23.2 for self-hosters.** The Docker image now runs on Node 22.23.2 (it was 22.22.2), and the server's runtime dependencies (TanStack Start and Router) are updated. Nothing changes on the board.
+
 ## [0.7.0] - 2026-10-08
 
 ### Added
@@ -246,7 +252,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/greenblacked/status-page/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/greenblacked/status-page/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/greenblacked/status-page/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/greenblacked/status-page/compare/v0.4.0...v0.5.0

@@ -45,7 +45,7 @@ The **catalog** (`src/lib/status/catalog.ts`) lists every service: id, name, cat
 
 ## Setup and commands
 
-Node 22.22.2 (`.nvmrc`; `engines` also allows `^24.15.0`) and pnpm 12.8.1 (`packageManager` in `package.json`, with the sha512 that Corepack verifies the download against). CI installs that exact pnpm through Corepack with `scripts/ci/pnpm-pin.sh` ([why](CONTRIBUTING.md#dependencies)):
+Node 22.23.2 (`.nvmrc`; `engines` also allows `^24.15.0`) and pnpm 12.8.1 (`packageManager` in `package.json`, with the sha512 that Corepack verifies the download against). CI installs that exact pnpm through Corepack with `scripts/ci/pnpm-pin.sh` ([why](CONTRIBUTING.md#dependencies)):
 
 ```bash
 ./scripts/ci/pnpm-pin.sh install                      # Corepack fetches the pinned pnpm into a shim directory
