@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Changed
+
+- **Node 22.23.2 for self-hosters.** The Docker image now runs on Node 22.23.2 (it was 22.22.2), and the server's runtime dependencies (TanStack Start and Router) are updated. Nothing changes on the board.
+
 ## [0.7.0] - 2026-10-08
 
 ### Added
