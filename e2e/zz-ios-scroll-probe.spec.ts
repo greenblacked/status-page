@@ -22,7 +22,8 @@ const STEP = 120;
 
 async function install(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const w = window as Window & { __p?: { ev: number; ls: number; calls: string[] } };
+    const w = window as Window & { __p?: { ev: number; ls: number; calls: string[] }; __by?: typeof scrollBy };
+    w.__by = scrollBy.bind(window);
     const p = { ev: 0, ls: 0, calls: [] as string[] };
     w.__p = p;
     addEventListener("scroll", () => {
@@ -91,8 +92,24 @@ async function idle(page: Page): Promise<void> {
   }
 }
 
+let wheelWorks = true;
+
+/** A wheel step; mobile WebKit has no mouse wheel, so there the page is scrolled by script (the native scrollBy, unlogged). */
+async function step(page: Page, dy: number): Promise<void> {
+  if (wheelWorks) {
+    try {
+      await page.mouse.wheel(0, dy);
+      return;
+    } catch {
+      wheelWorks = false;
+    }
+  }
+  await page.evaluate((by) => (window as Window & { __by?: typeof scrollBy }).__by?.(0, by), dy);
+}
+
 async function probe(page: Page, label: string): Promise<void> {
   const project = test.info().project.name;
+  wheelWorks = true;
   await expect(controlBar(page)).toBeAttached();
   await install(page);
   const vp = page.viewportSize() ?? { width: 0, height: 0 };
@@ -105,7 +122,7 @@ async function probe(page: Page, label: string): Promise<void> {
   const max = await page.evaluate(() => (document.scrollingElement?.scrollHeight ?? 0) - innerHeight);
   const goal = Math.min(target, max);
   for (let guard = 0; guard < 200 && (await page.evaluate(() => scrollY)) < goal - 1; guard++) {
-    await page.mouse.wheel(0, STEP);
+    await step(page, STEP);
     await frame(page);
   }
   await idle(page);
@@ -115,7 +132,7 @@ async function probe(page: Page, label: string): Promise<void> {
     const before = await read(page);
     if (before.y <= 0) break;
     const exp = -Math.min(STEP, before.y);
-    await page.mouse.wheel(0, -STEP);
+    await step(page, -STEP);
     await frame(page);
     const after = await read(page);
     steps.push({
@@ -152,6 +169,7 @@ async function probe(page: Page, label: string): Promise<void> {
   const out = {
     project,
     label,
+    wheel: wheelWorks,
     vp,
     downTo: { y: downTo.y, h: downTo.h, top: downTo.top },
     n: steps.length,
