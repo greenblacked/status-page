@@ -20,9 +20,16 @@ import { expect, test } from "./test";
 /** Whether this screen is a phone's: under 40rem, where the bar hides on a scroll down. */
 const isPhone = (page: Page) => page.evaluate(() => !matchMedia("(min-width: 40rem)").matches);
 
-/** Waits out the bar's own slide and fade. */
+/** Waits out the bar's own slide and fade, and those of what is inside it (the verdict fades on its own element). */
 const barSettled = (page: Page) =>
-  controlBar(page).evaluate((bar) => Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)));
+  controlBar(page).evaluate((bar) =>
+    Promise.allSettled(
+      bar
+        .getAnimations({ subtree: true })
+        .filter((a) => a.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY)
+        .map((animation) => animation.finished),
+    ),
+  );
 
 /** Where the hero's field ends, as a scroll position: the bar's field can show from about here. */
 const fieldBottom = (page: Page) =>

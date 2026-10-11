@@ -6,6 +6,7 @@ import {
   BACKGROUNDS,
   barBack,
   barSearch,
+  barSettled,
   barWithVerdict,
   cards,
   controlBar,
@@ -322,8 +323,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         if (phone) await expect(bar).toHaveAttribute("data-revealed", "");
         else await expect(bar).not.toHaveAttribute("data-revealed");
         await barWithVerdict(page);
-        const settle = () =>
-          bar.evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+        const settle = () => barSettled(bar);
         await settle();
 
         // The status text is drawn: one form of the verdict has a width and is not transparent.
@@ -339,6 +339,11 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               })
               .filter((span) => span.width > 1 && span.opacity > 0.99),
           );
+        // A transition begun a frame after the settle still resolves: wait for exactly one drawn form.
+        await expect
+          .poll(async () => (await verdict()).length, { timeout: 2000 })
+          .toBe(1)
+          .catch(() => undefined);
         const hidden = await verdict();
         await expectNone(
           page,
@@ -393,6 +398,11 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await page
           .locator(".bar-search")
           .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+        // A transition begun a frame after the settle still resolves: wait for exactly one drawn form.
+        await expect
+          .poll(async () => (await verdict()).length, { timeout: 2000 })
+          .toBe(1)
+          .catch(() => undefined);
         const again = await verdict();
         await expectNone(
           page,

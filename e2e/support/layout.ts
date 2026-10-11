@@ -601,7 +601,8 @@ export async function barBack(page: Page): Promise<void> {
  * its field with it: `revealFrom` in dock.ts). The stretch is at least 24px long and lies just above that line, so one
  * scroll up to a few px short of the line lands in it from any position below it: no walk in steps (each is a round
  * trip and three drawn frames, which a slow-drawing WebKit page cannot afford many of). Fails at once, with the
- * numbers, if the bar is not in that state. Nothing to do elsewhere: from 640px a bar that is up shows its verdict
+ * numbers, if the bar is not in that state, then waits for the bar and its verdict to stop easing (`barSettled`).
+ * Nothing to do elsewhere: from 640px a bar that is up shows its verdict
  * until its field is revealed.
  */
 export async function barWithVerdict(page: Page): Promise<void> {
@@ -626,7 +627,23 @@ export async function barWithVerdict(page: Page): Promise<void> {
     shown: "true",
     revealed: false,
   });
-  await bar.evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+  await barSettled(bar);
+}
+
+/**
+ * Waits out the bar's animations and those of everything inside it that ends: the verdict (`[data-bar-verdict]`) fades
+ * in on its own element, below the bar, when the bar's field is taken back, so the bar's own list is not enough.
+ * One that repeats for ever never finishes, so it is not waited for.
+ */
+export async function barSettled(bar: Locator): Promise<void> {
+  await bar.evaluate((element) =>
+    Promise.allSettled(
+      element
+        .getAnimations({ subtree: true })
+        .filter((a) => a.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY)
+        .map((animation) => animation.finished),
+    ),
+  );
 }
 
 /** Scrolls to `y`, and on a phone then up BAR_BACK_PX, so that the bar is in sight there (see `barBack`). */
