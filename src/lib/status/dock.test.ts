@@ -448,6 +448,13 @@ describe("revealFrame", () => {
     lastY: at,
   });
 
+  it("on a phone shows the field after more than AWAY_PX up, bar already in sight", () => {
+    const phone = { ...up, phone: true };
+    expect(revealFrame(1000 - AWAY_PX, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(false);
+    expect(revealFrame(1000 - AWAY_PX - 1, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(true);
+    expect(revealFrame(1000 - AWAY_PX - 1, LIMIT, geometry, behind(1000, false), up).revealed).toBe(false);
+  });
+
   it("stays hidden and rebases above the hero-away line", () => {
     const frames = run([0, 100, 400, 507.9]);
     for (const [index, memo] of frames.entries()) {

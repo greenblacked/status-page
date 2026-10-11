@@ -459,7 +459,8 @@ export function useSearchDock({
       lastLimit = maxScroll;
       travelFrom = null;
       anchorShift = 0;
-      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep });
+      const phone = !fromSm.matches;
+      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep, phone });
       // The bar's copy is where the field in use is going, and it shows when a field in it has focus.
       if (crossing && crossingTarget({ wide: false, heroAway: memo.heroAway }) === "bar") {
         memo = focusReveal(memo, clampScroll(y, maxScroll));
@@ -488,7 +489,6 @@ export function useSearchDock({
       }
       // On a phone the bar goes away on a scroll down and comes back on a scroll up, once it is up at all. It is held
       // in sight while a field of its own has focus, and while a search is written and its field shows.
-      const phone = !fromSm.matches;
       const inBar = document.activeElement;
       const awayBefore = awayMemo;
       awayMemo = awayFrame(y, maxScroll, awayMemo, {

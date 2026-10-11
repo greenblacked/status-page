@@ -311,7 +311,7 @@ export const REVEAL_REST: RevealMemo = { heroAway: false, revealed: false, dir: 
  *    is off nothing shows, and the memory restarts from `y`.
  * 4. A frame at the same position, with nothing else changed, is `prev` itself.
  * 5. Going down, the pivot follows the page to its lowest point; REVEAL_UP_PX of travel back up from there
- *    reveals the field and turns the run round. Going up, the pivot follows it to its highest point;
+ *    reveals the field and turns the run round (on a phone, `phone`: AWAY_PX + 1, the bar's own turn). Going up, the pivot follows it to its highest point;
  *    HIDE_DOWN_PX of travel down from there hides it. A reversal starts the count again, and jitter under a
  *    threshold changes nothing.
  *
@@ -324,9 +324,11 @@ export function revealFrame(
   maxScroll: number,
   geometry: DockGeometry,
   prev: RevealMemo,
-  context: { barShown: boolean; latched: boolean; keep?: boolean },
+  context: { barShown: boolean; latched: boolean; keep?: boolean; phone?: boolean },
 ): RevealMemo {
   const y = clampScroll(scrollY, maxScroll);
+  // On a phone any scroll up the bar answers (more than AWAY_PX) brings the field, with the bar already in sight too.
+  const upPx = context.phone ? AWAY_PX + 1 : REVEAL_UP_PX;
   const heroAway =
     context.barShown && y >= (prev.heroAway ? geometry.revealFrom : geometry.revealFrom + DOCK_HYSTERESIS);
   // A latch keeps the state, but not past the hero's field coming back into view: the bar's copy and the hero's
@@ -351,7 +353,7 @@ export function revealFrame(
     pivot = y;
   } else if (dir === "down") {
     pivot = Math.max(pivot, y);
-    if (pivot - y >= REVEAL_UP_PX) {
+    if (pivot - y >= upPx) {
       dir = "up";
       revealed = true;
       pivot = y;

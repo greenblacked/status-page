@@ -1004,6 +1004,24 @@ async function scrollDeep(page: Page, offsets: DockOffsets & { limit: number }):
 }
 
 /**
+ * Like `scrollDeep`, but ends with the bar up and its field hidden on a phone too. A phone's bar goes out of sight on
+ * the way down, so the page is taken down on its side (from 640px the bar never hides) and turned upright.
+ */
+async function scrollDeepBarUp(page: Page, offsets: DockOffsets & { limit: number }): Promise<number> {
+  if (!(await isPhone(page))) return scrollDeep(page, offsets);
+  const upright = page.viewportSize();
+  if (!upright) throw new Error("no viewport");
+  await page.setViewportSize({ width: Math.max(upright.height, 800), height: upright.width });
+  await expect.poll(() => isPhone(page)).toBe(false);
+  await scrollDeep(page, { ...offsets, limit: await maxScroll(page) });
+  await page.setViewportSize(upright);
+  await expect.poll(() => isPhone(page)).toBe(true);
+  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  expect(await isRevealed(page)).toBe(false);
+  return page.evaluate(() => window.scrollY);
+}
+
+/**
  * Where the hero's last line has to be above for the bar not to cover it: the bar's top edge, but never below the
  * screen's top. A phone's bar is a sheet from the top edge that slides in from above the screen, so while it comes in
  * its top is above 0, and the line must be off the screen, not just above that.
@@ -1604,8 +1622,12 @@ test("search reveal: scrolling down keeps one field in the page and none in the 
     "the bar came up on the way",
   ).toBe(true);
   // Nothing in the bar takes a tap: at the middle of its slot the bar answers, not an input.
-  // That state does not exist on a phone: its bar comes back with its field.
-  test.skip(await isPhone(page), "a phone's bar comes back with its field, so there is no bar up with it hidden");
+  // A phone's bar comes back with its field on a scroll up; the state with the bar up and its field hidden is the one
+  // after a turn from landscape to upright.
+  if (await isPhone(page)) {
+    await scrollAndSettle(page, 0);
+    await scrollDeepBarUp(page, offsets);
+  }
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   const hit = await page.evaluate(() => {
     const slot = (document.querySelector(".bar-search") as HTMLElement).parentElement as HTMLElement;
@@ -1615,6 +1637,15 @@ test("search reveal: scrolling down keeps one field in the page and none in the 
     return { inBar: Boolean(element && bar.contains(element)), isInput: element instanceof HTMLInputElement };
   });
   expect(hit).toEqual({ inBar: true, isInput: false });
+});
+
+test("search reveal: a phone turned upright with its bar up shows the field on a short scroll up", async ({ page }) => {
+  test.slow();
+  const offsets = await revealBoard(page);
+  test.skip(!(await isPhone(page)), "only a phone turns from landscape, where the bar never hides, to upright");
+  const y0 = await scrollDeepBarUp(page, offsets);
+  await scrollAndSettle(page, y0 - 12);
+  await expectRevealed(page, true);
 });
 
 test("search reveal: scrolling up shows the field in the floating bar", async ({ page }) => {
@@ -2797,8 +2828,7 @@ test("search reveal: Shift+Tab reaches the field from the bar's buttons without 
 }) => {
   test.slow();
   const offsets = await revealBoard(page);
-  test.skip(await isPhone(page), "a phone's bar comes back with its field, so its buttons never wait without it");
-  await scrollDeep(page, offsets);
+  await scrollDeepBarUp(page, offsets);
   // Where the page rests.
   const y0 = await page.evaluate(() => window.scrollY);
   await barSettled(page);
@@ -2829,8 +2859,7 @@ test("search reveal: Shift+Tab reaches the field from the bar's buttons without 
 test("search reveal: Tab reaches the field without moving the page", async ({ page }) => {
   test.slow();
   const offsets = await revealBoard(page);
-  test.skip(await isPhone(page), "a phone's bar comes back with its field, so its buttons never wait without it");
-  await scrollDeep(page, offsets);
+  await scrollDeepBarUp(page, offsets);
   // Where the page rests.
   const y0 = await page.evaluate(() => window.scrollY);
   await barSettled(page);
