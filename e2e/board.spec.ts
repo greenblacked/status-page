@@ -1648,13 +1648,6 @@ test("search reveal: a phone turned upright with its bar up shows the field on a
   await pageHasSeen(page);
   const y0 = await page.evaluate(() => window.scrollY);
   await scrollAndSettle(page, y0 - 12);
-  const diag = await controlBar(page).evaluate((bar) => ({
-    y: window.scrollY,
-    inner: window.innerHeight,
-    client: document.documentElement.clientHeight,
-    attrs: bar.getAttributeNames().join(","),
-  }));
-  expect(JSON.stringify({ y0, diag, offsets }), "DIAG").toContain("revealed");
   await expectRevealed(page, true);
 });
 
