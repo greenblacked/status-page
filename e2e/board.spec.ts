@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { Locator, Page } from "@playwright/test";
 import { CATALOG } from "../src/lib/status/catalog.ts";
-import { BAR_RISE, DOCK_HYSTERESIS, HIDE_DOWN_PX, REVEAL_UP_PX, WIDE_RANGE } from "../src/lib/status/dock.ts";
+import { AWAY_PX, BAR_RISE, DOCK_HYSTERESIS, HIDE_DOWN_PX, REVEAL_UP_PX, WIDE_RANGE } from "../src/lib/status/dock.ts";
 import { PULSE_STORAGE_KEY } from "../src/lib/status/pulse.ts";
 import type { BoardSnapshot } from "../src/lib/status/types.ts";
 import { calmBoard, fixtureBoard, longHeroBoard, serveBoard } from "./fixture-board";
@@ -987,8 +987,7 @@ async function revealServedBoard(
 
 /**
  * Takes the page down past the point where the hero's field is behind the bar, with the bar's field hidden: the
- * way a reader arrives (on a phone then a little up, so that the bar is in sight: see `barBack`; the page rests 12px
- * above the position returned). Returns the position: 200px past it, and at least 160px short of the end of the page, so a
+ * way a reader arrives (on a phone the bar is out of sight too). Returns the position: 200px past it, and at least 160px short of the end of the page, so a
  * test has room to scroll further down from there.
  */
 async function scrollDeep(page: Page, offsets: DockOffsets & { limit: number }): Promise<number> {
@@ -997,10 +996,9 @@ async function scrollDeep(page: Page, offsets: DockOffsets & { limit: number }):
     offsets.revealFrom + DOCK_HYSTERESIS + 2 * REVEAL_UP_PX,
   );
   await scrollAndSettle(page, y);
-  // On a phone the bar is out of sight after a scroll down: the way a reader brings it back is a scroll up, a short
-  // one that is not the 24px that reveal its field.
-  await barBack(page);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
+  // On a phone the bar is out of sight after a scroll down (a scroll up of more than AWAY_PX brings it back, with its
+  // field: see `revealWithBar`); elsewhere it is up, with its field hidden.
+  if (!(await isPhone(page))) await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   expect(await isRevealed(page)).toBe(false);
   return y;
 }
@@ -1605,9 +1603,9 @@ test("search reveal: scrolling down keeps one field in the page and none in the 
     stops.some((stop) => stop.up),
     "the bar came up on the way",
   ).toBe(true);
-  // Nothing in the bar takes a tap: at the middle of its slot the bar answers, not an input. (A phone's bar went away
-  // on that scroll down: a scroll up that is short of revealing its field brings it back to be tapped.)
-  await barBack(page);
+  // Nothing in the bar takes a tap: at the middle of its slot the bar answers, not an input.
+  // That state does not exist on a phone: its bar comes back with its field.
+  test.skip(await isPhone(page), "a phone's bar comes back with its field, so there is no bar up with it hidden");
   await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   const hit = await page.evaluate(() => {
     const slot = (document.querySelector(".bar-search") as HTMLElement).parentElement as HTMLElement;
@@ -1623,10 +1621,12 @@ test("search reveal: scrolling up shows the field in the floating bar", async ({
   test.slow();
   const offsets = await revealBoard(page);
   const y0 = await scrollDeep(page, offsets);
-  // Short of REVEAL_UP_PX it stays hidden, whatever the finger does up to there; past it, it comes in.
-  await scrollAndSettle(page, y0 - (REVEAL_UP_PX - 4));
+  // Short of REVEAL_UP_PX it stays hidden, whatever the finger does up to there; past it, it comes in. A phone's
+  // field comes with its bar, which returns on more than AWAY_PX of scrolling up.
+  const reveal = (await isPhone(page)) ? AWAY_PX : REVEAL_UP_PX;
+  await scrollAndSettle(page, y0 - (reveal - 4));
   expect(await isRevealed(page), "4px short").toBe(false);
-  await scrollAndSettle(page, y0 - (REVEAL_UP_PX + 4));
+  await scrollAndSettle(page, y0 - (reveal + 4));
   await expectRevealed(page, true);
   await barFieldSettled(page);
   expect(
@@ -1674,8 +1674,11 @@ test("search reveal: jitter and reversals do not flip it", async ({ page }) => {
   });
   const flips = () => page.evaluate(() => (window as Window & { __flips?: boolean[] }).__flips ?? []);
   const y0 = await scrollDeep(page, offsets);
-  // Hidden: small steps up and down around the highest point, none of them REVEAL_UP_PX from it.
-  for (const y of [y0 - 10, y0 + 6, y0 - 14, y0 + 8, y0 - 8, y0 + 2]) await scrollAndSettle(page, y);
+  // Hidden: small steps up and down around the highest point, none of them REVEAL_UP_PX from it (AWAY_PX on a
+  // phone, where the field comes with the bar).
+  const phone = await isPhone(page);
+  const hiddenSteps = phone ? [-5, 6, -1, 8, 2, 4] : [-10, 6, -14, 8, -8, 2];
+  for (const step of hiddenSteps) await scrollAndSettle(page, y0 + step);
   expect(await flips(), "jitter while hidden").toEqual([]);
   // A real scroll up reveals it once.
   await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
@@ -1688,8 +1691,9 @@ test("search reveal: jitter and reversals do not flip it", async ({ page }) => {
   // A real scroll down hides it once; a small step back up does not bring it back.
   await scrollAndSettle(page, low - 8 + HIDE_DOWN_PX + 4);
   await expectRevealed(page, false);
-  await scrollAndSettle(page, low - 8 + HIDE_DOWN_PX + 4 - 10);
-  expect(await isRevealed(page), "a step back up of 10px").toBe(false);
+  const stepBack = phone ? AWAY_PX - 2 : 10;
+  await scrollAndSettle(page, low - 8 + HIDE_DOWN_PX + 4 - stepBack);
+  expect(await isRevealed(page), `a step back up of ${stepBack}px`).toBe(false);
   expect(await flips()).toEqual([true, false]);
 });
 
@@ -2067,8 +2071,6 @@ test("search reveal: a reorder above the reader that keeps the board's height do
   await expect.poll(() => maxScroll(page)).toBeGreaterThan(offsets.limit + 2000);
   const y0 = offsets.revealFrom + 1000;
   await scrollAndSettle(page, y0);
-  await barBack(page);
-  await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
   expect(await isRevealed(page)).toBe(false);
   await scrollAndSettle(page, y0 - 2 * REVEAL_UP_PX);
   await expectRevealed(page, true);
@@ -2795,8 +2797,9 @@ test("search reveal: Shift+Tab reaches the field from the bar's buttons without 
 }) => {
   test.slow();
   const offsets = await revealBoard(page);
+  test.skip(await isPhone(page), "a phone's bar comes back with its field, so its buttons never wait without it");
   await scrollDeep(page, offsets);
-  // Where the page rests (on a phone a little above the position scrollDeep returns, which is where it turned).
+  // Where the page rests.
   const y0 = await page.evaluate(() => window.scrollY);
   await barSettled(page);
   const bar = controlBar(page);
@@ -2826,8 +2829,9 @@ test("search reveal: Shift+Tab reaches the field from the bar's buttons without 
 test("search reveal: Tab reaches the field without moving the page", async ({ page }) => {
   test.slow();
   const offsets = await revealBoard(page);
+  test.skip(await isPhone(page), "a phone's bar comes back with its field, so its buttons never wait without it");
   await scrollDeep(page, offsets);
-  // Where the page rests (on a phone a little above the position scrollDeep returns, which is where it turned).
+  // Where the page rests.
   const y0 = await page.evaluate(() => window.scrollY);
   await barSettled(page);
   // The stop before the bar's field in the tab order, whatever it is (the hero's controls, left of the bar in the markup).
@@ -2858,7 +2862,7 @@ test("search reveal: / brings the bar's field up and focuses it without moving t
   test.slow();
   const offsets = await revealBoard(page);
   await scrollDeep(page, offsets);
-  // Where the page rests (on a phone a little above the position scrollDeep returns, which is where it turned).
+  // Where the page rests.
   const y0 = await page.evaluate(() => window.scrollY);
   await page.keyboard.press("/");
   await expect(barSearch(page)).toBeFocused();

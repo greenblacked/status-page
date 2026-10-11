@@ -22,6 +22,7 @@ import {
   type RevealMemo,
   readerMoved,
   revealFrame,
+  revealWithBar,
   TYPING_MS,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
@@ -120,7 +121,8 @@ export const FROM_SM = "(min-width: 40rem)";
  * (`awayFrame`, AWAY_PX): once it exists (above), it is parked above the screen, and only a scroll up brings it down.
  * It has its own baseline, moved by every rebase, so everything that moves the page without the reader is no direction
  * for it either, and it is held in sight while a field of the bar has focus or a search is written and the bar's
- * field shows (`hold`), and while a field in use has the rule latched. Tablets and desktops never hide it.
+ * field shows (`hold`), and while a field in use has the rule latched. Tablets and desktops never hide it. The bar
+ * comes back with its field (`revealWithBar`): on a phone a scroll up is for the search, not the verdict.
  *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
@@ -488,12 +490,15 @@ export function useSearchDock({
       // in sight while a field of its own has focus, and while a search is written and its field shows.
       const phone = !fromSm.matches;
       const inBar = document.activeElement;
+      const awayBefore = awayMemo;
       awayMemo = awayFrame(y, maxScroll, awayMemo, {
         phone,
         barShown: next.barShown,
         hold: (inBar instanceof HTMLInputElement && inBar.dataset.searchInput === "bar") || (keep && memo.heroAway),
         latched,
       });
+      // The bar coming back on a phone brings the field with it (see revealWithBar).
+      memo = revealWithBar(memo, awayBefore, awayMemo, phone, clampScroll(y, maxScroll));
       // The anchor is read while the bar's field can show, and on a phone while the bar is up at all (it comes and
       // goes by the direction), so that the next frame can tell how far it moved.
       if (!(memo.heroAway || (phone && next.barShown))) anchor = null;

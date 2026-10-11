@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Fixed
+
+- On a phone, scrolling back up brings the floating bar back with the search field in it, not the issue summary, also on an iPhone whose toolbar resizes the page as you scroll.
+
 ## [0.7.1] - 2026-10-10
 
 ### Changed

@@ -574,13 +574,14 @@ export const isPhone = (page: Page) => page.evaluate(() => !matchMedia("(min-wid
 
 /**
  * How far up a phone's page is scrolled to bring its bar back: more than AWAY_PX (8) so the bar returns, and less
- * than REVEAL_UP_PX (24) so that its search field does not (that is the next 12px up).
+ * than REVEAL_UP_PX (24): on a phone the search field comes in with the bar (`revealWithBar`), on a tablet it is
+ * the next 12px up.
  */
 export const BAR_BACK_PX = 12;
 
 /**
  * After a scroll down, on a phone, the bar is out of sight: scrolls up BAR_BACK_PX, which brings it back (and no
- * more, so its field stays hidden). Nothing to do elsewhere: from 640px the bar stays up once it is up. Waits for the
+ * more). Nothing to do elsewhere: from 640px the bar stays up once it is up. Waits for the
  * bar's slide to finish, so that it is where it will stay.
  */
 export async function barBack(page: Page): Promise<void> {
@@ -593,6 +594,29 @@ export async function barBack(page: Page): Promise<void> {
   await controlBar(page).evaluate((bar) =>
     Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
   );
+}
+
+/**
+ * On a phone, takes the page up until the bar shows its verdict: the bar is up and its field is not, which is a stretch
+ * of the page where the hero's field is only just out from under the bar (a scroll up that has brought the bar back
+ * has brought its field with it: `revealWithBar`). Steps up 10px at a time, so that the stretch is not jumped over.
+ * Nothing to do elsewhere: from 640px a bar that is up shows its verdict until its field is revealed.
+ */
+export async function barWithVerdict(page: Page): Promise<void> {
+  if (!(await isPhone(page))) return;
+  await pageHasSeen(page);
+  const bar = controlBar(page);
+  for (let at = await page.evaluate(() => window.scrollY); at > 0; at = Math.max(0, at - 10)) {
+    const state = await bar.evaluate((element) => ({
+      shown: element.getAttribute("data-shown") === "true",
+      revealed: element.hasAttribute("data-revealed"),
+    }));
+    if (state.shown && !state.revealed) break;
+    await scrollAndSettle(page, Math.max(0, at - 10));
+  }
+  await expect(bar).toHaveAttribute("data-shown", "true");
+  await expect(bar).not.toHaveAttribute("data-revealed");
+  await bar.evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
 }
 
 /** Scrolls to `y`, and on a phone then up BAR_BACK_PX, so that the bar is in sight there (see `barBack`). */

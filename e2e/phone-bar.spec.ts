@@ -177,9 +177,7 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     await expect(page.getByRole("button", { name: "Refresh status now" }).first()).toBeInViewport();
   });
 
-  test("is never empty in the middle: the verdict after a short scroll up, the search field after a swipe", async ({
-    page,
-  }) => {
+  test("is never empty in the middle: the search field as soon as the bar is back", async ({ page }) => {
     test.slow();
     await openBoard(page, "quiet", { steady: true });
     test.skip(!(await isPhone(page)), "the bar hides on a phone only");
@@ -214,16 +212,20 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
         };
       });
 
-    // A short scroll up brings the bar back with its verdict, and the field stays in.
+    // A short scroll up brings the bar back with the search field in the verdict's place: the reader who scrolls up
+    // is going for the search, and the verdict stays in the bar's glyph and in the hero.
     await scrollAndSettle(page, deep + 300);
     await scrollAndSettle(page, deep + 300 - 12);
     await expect(bar).toHaveAttribute("data-shown", "true");
-    await expect(bar).not.toHaveAttribute("data-revealed");
+    await expect(bar).toHaveAttribute("data-revealed", "");
     await barSettled(page);
+    await page
+      .locator(".bar-search")
+      .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
     const short = await middle();
-    expect(short.verdict.width, "the verdict has room").toBeGreaterThan(40);
-    expect(short.verdict.opacity, "the verdict shows").toBe(1);
-    expect(short.field.opacity, "the field waits").toBe(0);
+    expect(short.field.opacity, "the field shows").toBe(1);
+    expect(short.field.right - short.field.left, "the field has room").toBeGreaterThan(40);
+    expect(short.verdict.opacity, "the verdict gives way to the field").toBe(0);
 
     // A swipe, which is far more than that: the field takes the verdict's place, between the glyph and the buttons,
     // and the middle is not empty.
@@ -242,6 +244,41 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
     expect(swipe.field.left).toBeGreaterThanOrEqual(swipe.glyphRight - 0.5);
     expect(swipe.field.right).toBeLessThanOrEqual(swipe.buttonsLeft + 0.5);
     expect(swipe.verdict.opacity, "the verdict gives way to the field").toBe(0);
+  });
+
+  test("a scroll up brings the search field, not the verdict, through a toolbar that resizes the viewport", async ({
+    page,
+  }) => {
+    test.slow();
+    await openBoard(page, "quiet", { steady: true });
+    test.skip(!(await isPhone(page)), "the bar hides on a phone only");
+    const bar = controlBar(page);
+    const deep = await deepPosition(page);
+    await scrollAndSettle(page, deep + 300);
+    await expect(bar).toHaveAttribute("data-shown", "false");
+    // Scroll input is window.scrollBy in frames, not page.mouse.wheel (WebKit mobile does not support it). On iOS
+    // the toolbar grows as the page is scrolled up and the viewport changes height: a resize event per step for
+    // the first few frames, as the toolbar animates.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          let step = 0;
+          const next = () => {
+            window.scrollBy(0, -6);
+            if (step < 3) window.dispatchEvent(new Event("resize"));
+            if (++step < 5) requestAnimationFrame(next);
+            else requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          };
+          requestAnimationFrame(next);
+        }),
+    );
+    await expect(bar).toHaveAttribute("data-shown", "true");
+    await expect(bar).toHaveAttribute("data-revealed", "");
+    await barSettled(page);
+    const field = barSearch(page);
+    await expect(field).toBeVisible();
+    await field.focus();
+    await expect(field).toBeFocused();
   });
 
   test("adds up a slow drag: a scroll up of 2px at a time brings the bar back, and one down takes it away", async ({

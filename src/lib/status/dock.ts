@@ -433,6 +433,23 @@ export function awayFrame(
 }
 
 /**
+ * On a phone, the bar's field is what a scroll up is for: in the frame the bar comes back into sight (`before` was
+ * out of sight, `after` is not), the field takes the verdict's place, without waiting for REVEAL_UP_PX more. Both
+ * counts restart together on a resize (the iOS toolbar), so a count of the field's own would be late by as many
+ * frames as the toolbar resizes. A tablet (`phone` false) keeps the REVEAL_UP_PX rule. Pure.
+ */
+export function revealWithBar(
+  memo: RevealMemo,
+  before: AwayMemo,
+  after: AwayMemo,
+  phone: boolean,
+  y: number,
+): RevealMemo {
+  if (!phone || !before.away || after.away) return memo;
+  return focusReveal(memo, y);
+}
+
+/**
  * The state of the reveal once a field has the focus in the bar's copy, which shows it without a scroll: a run
  * going up from `y`. Unchanged when the hero's field is not behind the bar (the copy cannot be reached then) or the
  * copy is showing already. Pure.
