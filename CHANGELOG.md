@@ -6,6 +6,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-11
+
 ### Fixed
 
 - On a phone, scrolling back up brings the floating bar back with the search field in it, not the issue summary, also on an iPhone whose toolbar resizes the page as you scroll.
@@ -256,7 +258,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/greenblacked/status-page/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/greenblacked/status-page/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/greenblacked/status-page/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/greenblacked/status-page/compare/v0.5.0...v0.6.0
