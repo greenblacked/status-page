@@ -6,6 +6,8 @@ import {
   BACKGROUNDS,
   barBack,
   barSearch,
+  barSettled,
+  barWithVerdict,
   cards,
   controlBar,
   dialogSettled,
@@ -312,13 +314,16 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         expect(deep, "the page is long enough to scroll down in").toBeLessThan(limit - 160);
         await scrollAndSettle(page, deep);
         // A phone's bar is out of sight after a scroll down (parked above the screen); a scroll up a little brings it
-        // back, and not yet its field (that takes REVEAL_UP_PX).
-        await expect(bar).toHaveAttribute("data-shown", (await isPhone(page)) ? "false" : "true");
+        // back, with its field (elsewhere the field waits for REVEAL_UP_PX), and the verdict is shown where the hero's
+        // field is just out from under the bar.
+        const phone = await isPhone(page);
+        await expect(bar).toHaveAttribute("data-shown", phone ? "false" : "true");
         await barBack(page);
         await expect(bar).toHaveAttribute("data-shown", "true");
-        await expect(bar).not.toHaveAttribute("data-revealed");
-        const settle = () =>
-          bar.evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+        if (phone) await expect(bar).toHaveAttribute("data-revealed", "");
+        else await expect(bar).not.toHaveAttribute("data-revealed");
+        await barWithVerdict(page);
+        const settle = () => barSettled(bar);
         await settle();
 
         // The status text is drawn: one form of the verdict has a width and is not transparent.
@@ -334,6 +339,11 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
               })
               .filter((span) => span.width > 1 && span.opacity > 0.99),
           );
+        // A transition begun a frame after the settle still resolves: wait for exactly one drawn form.
+        await expect
+          .poll(async () => (await verdict()).length, { timeout: 2000 })
+          .toBe(1)
+          .catch(() => undefined);
         const hidden = await verdict();
         await expectNone(
           page,
@@ -354,6 +364,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         }
 
         // A scroll up reveals the bar's field; a scroll down takes it back.
+        await scrollAndSettle(page, deep);
         await scrollAndSettle(page, deep - (REVEAL_UP_PX + 4));
         await expect(bar).toHaveAttribute("data-revealed", "");
         await settle();
@@ -379,13 +390,19 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
 
         await scrollAndSettle(page, deep - (REVEAL_UP_PX + 4) + (HIDE_DOWN_PX + 4));
         await expect(bar).not.toHaveAttribute("data-revealed");
-        // A phone's bar went with that scroll down: back it comes, without the field.
+        // A phone's bar went with that scroll down: back it comes, with its field, and the verdict a little higher up.
         await barBack(page);
+        await barWithVerdict(page);
         await expect(bar).toHaveAttribute("data-shown", "true");
         await settle();
         await page
           .locator(".bar-search")
           .evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
+        // A transition begun a frame after the settle still resolves: wait for exactly one drawn form.
+        await expect
+          .poll(async () => (await verdict()).length, { timeout: 2000 })
+          .toBe(1)
+          .catch(() => undefined);
         const again = await verdict();
         await expectNone(
           page,
@@ -425,7 +442,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
             .locator(".search-dock")
             .evaluate((element) => element.getBoundingClientRect().bottom + window.scrollY);
           await scrollAndSettle(page, Math.ceil(fieldBottom) + 200);
-          await barBack(page);
+          await barWithVerdict(page);
           await expect(controlBar(page)).toHaveAttribute("data-shown", "true");
           await controlBar(page).evaluate((bar) =>
             Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),

@@ -573,14 +573,14 @@ export async function scrollAndSettle(page: Page, y: number): Promise<void> {
 export const isPhone = (page: Page) => page.evaluate(() => !matchMedia("(min-width: 40rem)").matches);
 
 /**
- * How far up a phone's page is scrolled to bring its bar back: more than AWAY_PX (8) so the bar returns, and less
- * than REVEAL_UP_PX (24) so that its search field does not (that is the next 12px up).
+ * How far up a phone's page is scrolled to bring its bar back: more than AWAY_PX (8) so the bar returns. On a phone
+ * the search field turns on at the same travel (`revealFrame`); on a tablet it needs REVEAL_UP_PX (24).
  */
 export const BAR_BACK_PX = 12;
 
 /**
  * After a scroll down, on a phone, the bar is out of sight: scrolls up BAR_BACK_PX, which brings it back (and no
- * more, so its field stays hidden). Nothing to do elsewhere: from 640px the bar stays up once it is up. Waits for the
+ * more). Nothing to do elsewhere: from 640px the bar stays up once it is up. Waits for the
  * bar's slide to finish, so that it is where it will stay.
  */
 export async function barBack(page: Page): Promise<void> {
@@ -592,6 +592,57 @@ export async function barBack(page: Page): Promise<void> {
   await scrollAndSettle(page, Math.max(0, at - BAR_BACK_PX));
   await controlBar(page).evaluate((bar) =>
     Promise.allSettled(bar.getAnimations().map((animation) => animation.finished)),
+  );
+}
+
+/**
+ * On a phone, takes the page to the stretch where the bar shows its verdict: the bar is up and its field is not, which
+ * is where the hero's field is only just out from under the bar (a scroll up that has brought the bar back has brought
+ * its field with it: `revealFrom` in dock.ts). The stretch is at least 24px long and lies just above that line, so one
+ * scroll up to a few px short of the line lands in it from any position below it: no walk in steps (each is a round
+ * trip and three drawn frames, which a slow-drawing WebKit page cannot afford many of). Fails at once, with the
+ * numbers, if the bar is not in that state, then waits for the bar and its verdict to stop easing (`barSettled`).
+ * Nothing to do elsewhere: from 640px a bar that is up shows its verdict
+ * until its field is revealed.
+ */
+export async function barWithVerdict(page: Page): Promise<void> {
+  if (!(await isPhone(page))) return;
+  await pageHasSeen(page);
+  const bar = controlBar(page);
+  const line = await page.evaluate(() => {
+    const barElement = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const dock = document.querySelector(".search-dock") as HTMLElement;
+    const barTop = Number.parseFloat(getComputedStyle(barElement).top) || 0;
+    return dock.getBoundingClientRect().bottom + window.scrollY - (barTop + barElement.offsetHeight);
+  });
+  const at = await page.evaluate(() => window.scrollY);
+  // Only ever up: a position short of the line is already in the stretch, or above it.
+  if (at > line - 6) await scrollAndSettle(page, Math.floor(line) - 6);
+  const state = await bar.evaluate((element) => ({
+    shown: element.getAttribute("data-shown"),
+    revealed: element.hasAttribute("data-revealed"),
+    y: window.scrollY,
+  }));
+  expect(state, `the bar with its verdict, the field's line at ${line} (the page was at ${at})`).toMatchObject({
+    shown: "true",
+    revealed: false,
+  });
+  await barSettled(bar);
+}
+
+/**
+ * Waits out the bar's animations and those of everything inside it that ends: the verdict (`[data-bar-verdict]`) fades
+ * in on its own element, below the bar, when the bar's field is taken back, so the bar's own list is not enough.
+ * One that repeats for ever never finishes, so it is not waited for.
+ */
+export async function barSettled(bar: Locator): Promise<void> {
+  await bar.evaluate((element) =>
+    Promise.allSettled(
+      element
+        .getAnimations({ subtree: true })
+        .filter((a) => a.playState === "running" && a.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY)
+        .map((animation) => animation.finished),
+    ),
   );
 }
 

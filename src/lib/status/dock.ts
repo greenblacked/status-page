@@ -311,7 +311,8 @@ export const REVEAL_REST: RevealMemo = { heroAway: false, revealed: false, dir: 
  *    is off nothing shows, and the memory restarts from `y`.
  * 4. A frame at the same position, with nothing else changed, is `prev` itself.
  * 5. Going down, the pivot follows the page to its lowest point; REVEAL_UP_PX of travel back up from there
- *    reveals the field and turns the run round. Going up, the pivot follows it to its highest point;
+ *    reveals the field and turns the run round (on a phone, `phone`: more than AWAY_PX, the bar's own turn and
+ *    its own comparison). Going up, the pivot follows it to its highest point;
  *    HIDE_DOWN_PX of travel down from there hides it. A reversal starts the count again, and jitter under a
  *    threshold changes nothing.
  *
@@ -324,9 +325,10 @@ export function revealFrame(
   maxScroll: number,
   geometry: DockGeometry,
   prev: RevealMemo,
-  context: { barShown: boolean; latched: boolean; keep?: boolean },
+  context: { barShown: boolean; latched: boolean; keep?: boolean; phone?: boolean },
 ): RevealMemo {
   const y = clampScroll(scrollY, maxScroll);
+  // On a phone any scroll up the bar answers (more than AWAY_PX) brings the field, with the bar already in sight too.
   const heroAway =
     context.barShown && y >= (prev.heroAway ? geometry.revealFrom : geometry.revealFrom + DOCK_HYSTERESIS);
   // A latch keeps the state, but not past the hero's field coming back into view: the bar's copy and the hero's
@@ -351,7 +353,7 @@ export function revealFrame(
     pivot = y;
   } else if (dir === "down") {
     pivot = Math.max(pivot, y);
-    if (pivot - y >= REVEAL_UP_PX) {
+    if (context.phone ? pivot - y > AWAY_PX : pivot - y >= REVEAL_UP_PX) {
       dir = "up";
       revealed = true;
       pivot = y;
@@ -430,6 +432,24 @@ export function awayFrame(
     }
   }
   return { away, pivot, lastY: y };
+}
+
+/**
+ * On a phone, the bar's field is what a scroll up is for: in the frame the bar comes back into sight (`before` was
+ * out of sight, `after` is not), the field takes the verdict's place at once. On a phone `revealFrame` turns the
+ * field on at the same AWAY_PX travel as the bar, so this is a safety net for the runs whose pivots differ (the
+ * page above the hero's field turning `heroAway` on in the middle of a run). A tablet (`phone` false) keeps the
+ * REVEAL_UP_PX rule. Pure.
+ */
+export function revealWithBar(
+  memo: RevealMemo,
+  before: AwayMemo,
+  after: AwayMemo,
+  phone: boolean,
+  y: number,
+): RevealMemo {
+  if (!phone || !before.away || after.away) return memo;
+  return focusReveal(memo, y);
 }
 
 /**
