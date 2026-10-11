@@ -452,6 +452,7 @@ describe("revealFrame", () => {
     const phone = { ...up, phone: true };
     expect(revealFrame(1000 - AWAY_PX, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(false);
     expect(revealFrame(1000 - AWAY_PX - 1, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(true);
+    expect(revealFrame(1000 - AWAY_PX - 0.5, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(true);
     expect(revealFrame(1000 - AWAY_PX - 1, LIMIT, geometry, behind(1000, false), up).revealed).toBe(false);
   });
 

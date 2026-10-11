@@ -573,9 +573,8 @@ export async function scrollAndSettle(page: Page, y: number): Promise<void> {
 export const isPhone = (page: Page) => page.evaluate(() => !matchMedia("(min-width: 40rem)").matches);
 
 /**
- * How far up a phone's page is scrolled to bring its bar back: more than AWAY_PX (8) so the bar returns, and less
- * than REVEAL_UP_PX (24): on a phone the search field comes in with the bar (`revealWithBar`), on a tablet it is
- * the next 12px up.
+ * How far up a phone's page is scrolled to bring its bar back: more than AWAY_PX (8) so the bar returns. On a phone
+ * the search field turns on at the same travel (`revealFrame`); on a tablet it needs REVEAL_UP_PX (24).
  */
 export const BAR_BACK_PX = 12;
 

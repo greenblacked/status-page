@@ -97,8 +97,8 @@ export const FROM_SM = "(min-width: 40rem)";
  *   - The bar comes up once the hero's last line has scrolled clear of it (`barStart`), alone.
  *   - `heroAway` is the hero's field being entirely behind the bar (`revealFrom`). Only then can the bar's copy
  *     be reached (it is inert before) and the hero's is taken out of the Tab order.
- *   - `revealed` is the direction rule (revealFrame): REVEAL_UP_PX of scrolling up shows the copy, HIDE_DOWN_PX of
- *     scrolling down hides it. It does not read the position on a pointer, wheel or touch separately: they all
+ *   - `revealed` is the direction rule (revealFrame): REVEAL_UP_PX of scrolling up (on a phone, more than
+ *     AWAY_PX) shows the copy, HIDE_DOWN_PX of scrolling down hides it. It does not read the position on a pointer, wheel or touch separately: they all
  *     fire `scroll`, which is the single rAF-coalesced listener here. The rule is held (latched) while a search
  *     field has focus or a dialog is open, and until the page has armed, and the baseline is re-set after
  *     anything that moves the page without the reader (a re-measure, a focus leaving, a quietScroll).
@@ -122,7 +122,8 @@ export const FROM_SM = "(min-width: 40rem)";
  * It has its own baseline, moved by every rebase, so everything that moves the page without the reader is no direction
  * for it either, and it is held in sight while a field of the bar has focus or a search is written and the bar's
  * field shows (`hold`), and while a field in use has the rule latched. Tablets and desktops never hide it. The bar
- * comes back with its field (`revealWithBar`): on a phone a scroll up is for the search, not the verdict.
+ * comes back with its field: on a phone the field and the bar turn on the same AWAY_PX of travel (`revealFrame`,
+ * with `revealWithBar` as a safety net), and a scroll up is for the search, not the verdict.
  *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
