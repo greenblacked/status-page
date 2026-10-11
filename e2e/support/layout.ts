@@ -596,25 +596,36 @@ export async function barBack(page: Page): Promise<void> {
 }
 
 /**
- * On a phone, takes the page up until the bar shows its verdict: the bar is up and its field is not, which is a stretch
- * of the page where the hero's field is only just out from under the bar (a scroll up that has brought the bar back
- * has brought its field with it: `revealWithBar`). Steps up 10px at a time, so that the stretch is not jumped over.
- * Nothing to do elsewhere: from 640px a bar that is up shows its verdict until its field is revealed.
+ * On a phone, takes the page to the stretch where the bar shows its verdict: the bar is up and its field is not, which
+ * is where the hero's field is only just out from under the bar (a scroll up that has brought the bar back has brought
+ * its field with it: `revealFrom` in dock.ts). The stretch is at least 24px long and lies just above that line, so one
+ * scroll up to a few px short of the line lands in it from any position below it: no walk in steps (each is a round
+ * trip and three drawn frames, which a slow-drawing WebKit page cannot afford many of). Fails at once, with the
+ * numbers, if the bar is not in that state. Nothing to do elsewhere: from 640px a bar that is up shows its verdict
+ * until its field is revealed.
  */
 export async function barWithVerdict(page: Page): Promise<void> {
   if (!(await isPhone(page))) return;
   await pageHasSeen(page);
   const bar = controlBar(page);
-  for (let at = await page.evaluate(() => window.scrollY); at > 0; at = Math.max(0, at - 10)) {
-    const state = await bar.evaluate((element) => ({
-      shown: element.getAttribute("data-shown") === "true",
-      revealed: element.hasAttribute("data-revealed"),
-    }));
-    if (state.shown && !state.revealed) break;
-    await scrollAndSettle(page, Math.max(0, at - 10));
-  }
-  await expect(bar).toHaveAttribute("data-shown", "true");
-  await expect(bar).not.toHaveAttribute("data-revealed");
+  const line = await page.evaluate(() => {
+    const barElement = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
+    const dock = document.querySelector(".search-dock") as HTMLElement;
+    const barTop = Number.parseFloat(getComputedStyle(barElement).top) || 0;
+    return dock.getBoundingClientRect().bottom + window.scrollY - (barTop + barElement.offsetHeight);
+  });
+  const at = await page.evaluate(() => window.scrollY);
+  // Only ever up: a position short of the line is already in the stretch, or above it.
+  if (at > line - 6) await scrollAndSettle(page, Math.floor(line) - 6);
+  const state = await bar.evaluate((element) => ({
+    shown: element.getAttribute("data-shown"),
+    revealed: element.hasAttribute("data-revealed"),
+    y: window.scrollY,
+  }));
+  expect(state, `the bar with its verdict, the field's line at ${line} (the page was at ${at})`).toMatchObject({
+    shown: "true",
+    revealed: false,
+  });
   await bar.evaluate((element) => Promise.allSettled(element.getAnimations().map((animation) => animation.finished)));
 }
 

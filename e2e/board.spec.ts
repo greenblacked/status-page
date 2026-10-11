@@ -11,7 +11,7 @@ import {
   MIKROTIK_NOTE,
   releaseLineIds,
 } from "./support/first-render";
-import { barBack, isPhone } from "./support/layout";
+import { barBack, isPhone, pageHasSeen } from "./support/layout";
 import { pinToSlot, stopClock } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
@@ -1643,8 +1643,18 @@ test("search reveal: a phone turned upright with its bar up shows the field on a
   test.slow();
   const offsets = await revealBoard(page);
   test.skip(!(await isPhone(page)), "only a phone turns from landscape, where the bar never hides, to upright");
-  const y0 = await scrollDeepBarUp(page, offsets);
+  await scrollDeepBarUp(page, offsets);
+  // Where the page is now: a rotation can leave it a pixel or two from where it was first read.
+  await pageHasSeen(page);
+  const y0 = await page.evaluate(() => window.scrollY);
   await scrollAndSettle(page, y0 - 12);
+  const diag = await controlBar(page).evaluate((bar) => ({
+    y: window.scrollY,
+    inner: window.innerHeight,
+    client: document.documentElement.clientHeight,
+    attrs: bar.getAttributeNames().join(","),
+  }));
+  expect(JSON.stringify({ y0, diag, offsets }), "DIAG").toContain("revealed");
   await expectRevealed(page, true);
 });
 
