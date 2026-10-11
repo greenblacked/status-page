@@ -22,6 +22,7 @@ import {
   type RevealMemo,
   readerMoved,
   revealFrame,
+  revealWithBar,
   TYPING_MS,
 } from "@/lib/status/dock";
 import { keyboardFocus } from "@/lib/status/layout";
@@ -96,8 +97,8 @@ export const FROM_SM = "(min-width: 40rem)";
  *   - The bar comes up once the hero's last line has scrolled clear of it (`barStart`), alone.
  *   - `heroAway` is the hero's field being entirely behind the bar (`revealFrom`). Only then can the bar's copy
  *     be reached (it is inert before) and the hero's is taken out of the Tab order.
- *   - `revealed` is the direction rule (revealFrame): REVEAL_UP_PX of scrolling up shows the copy, HIDE_DOWN_PX of
- *     scrolling down hides it. It does not read the position on a pointer, wheel or touch separately: they all
+ *   - `revealed` is the direction rule (revealFrame): REVEAL_UP_PX of scrolling up (on a phone, more than
+ *     AWAY_PX) shows the copy, HIDE_DOWN_PX of scrolling down hides it. It does not read the position on a pointer, wheel or touch separately: they all
  *     fire `scroll`, which is the single rAF-coalesced listener here. The rule is held (latched) while a search
  *     field has focus or a dialog is open, and until the page has armed, and the baseline is re-set after
  *     anything that moves the page without the reader (a re-measure, a focus leaving, a quietScroll).
@@ -120,7 +121,9 @@ export const FROM_SM = "(min-width: 40rem)";
  * (`awayFrame`, AWAY_PX): once it exists (above), it is parked above the screen, and only a scroll up brings it down.
  * It has its own baseline, moved by every rebase, so everything that moves the page without the reader is no direction
  * for it either, and it is held in sight while a field of the bar has focus or a search is written and the bar's
- * field shows (`hold`), and while a field in use has the rule latched. Tablets and desktops never hide it.
+ * field shows (`hold`), and while a field in use has the rule latched. Tablets and desktops never hide it. The bar
+ * comes back with its field: on a phone the field and the bar turn on the same AWAY_PX of travel (`revealFrame`,
+ * with `revealWithBar` as a safety net), and a scroll up is for the search, not the verdict.
  *
  * A scroll the page makes itself is no direction either. The browser's own scroll anchoring moves the page when
  * the board changes above what the reader is looking at, and a reorder that leaves the board's height alone
@@ -457,7 +460,8 @@ export function useSearchDock({
       lastLimit = maxScroll;
       travelFrom = null;
       anchorShift = 0;
-      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep });
+      const phone = !fromSm.matches;
+      memo = revealFrame(y, maxScroll, held, memo, { barShown: next.barShown, latched, keep, phone });
       // The bar's copy is where the field in use is going, and it shows when a field in it has focus.
       if (crossing && crossingTarget({ wide: false, heroAway: memo.heroAway }) === "bar") {
         memo = focusReveal(memo, clampScroll(y, maxScroll));
@@ -486,14 +490,16 @@ export function useSearchDock({
       }
       // On a phone the bar goes away on a scroll down and comes back on a scroll up, once it is up at all. It is held
       // in sight while a field of its own has focus, and while a search is written and its field shows.
-      const phone = !fromSm.matches;
       const inBar = document.activeElement;
+      const awayBefore = awayMemo;
       awayMemo = awayFrame(y, maxScroll, awayMemo, {
         phone,
         barShown: next.barShown,
         hold: (inBar instanceof HTMLInputElement && inBar.dataset.searchInput === "bar") || (keep && memo.heroAway),
         latched,
       });
+      // The bar coming back on a phone brings the field with it (see revealWithBar).
+      memo = revealWithBar(memo, awayBefore, awayMemo, phone, clampScroll(y, maxScroll));
       // The anchor is read while the bar's field can show, and on a phone while the bar is up at all (it comes and
       // goes by the direction), so that the next frame can tell how far it moved.
       if (!(memo.heroAway || (phone && next.barShown))) anchor = null;

@@ -24,6 +24,7 @@ import {
   type RevealMemo,
   readerMoved,
   revealFrame,
+  revealWithBar,
   WIDE_BAR_AT,
   WIDE_RANGE,
 } from "./dock";
@@ -445,6 +446,14 @@ describe("revealFrame", () => {
     dir: revealed ? "up" : "down",
     pivot: at,
     lastY: at,
+  });
+
+  it("on a phone shows the field after more than AWAY_PX up, bar already in sight", () => {
+    const phone = { ...up, phone: true };
+    expect(revealFrame(1000 - AWAY_PX, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(false);
+    expect(revealFrame(1000 - AWAY_PX - 1, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(true);
+    expect(revealFrame(1000 - AWAY_PX - 0.5, LIMIT, geometry, behind(1000, false), phone).revealed).toBe(true);
+    expect(revealFrame(1000 - AWAY_PX - 1, LIMIT, geometry, behind(1000, false), up).revealed).toBe(false);
   });
 
   it("stays hidden and rebases above the hero-away line", () => {
@@ -932,5 +941,41 @@ describe("heroFieldClear", () => {
     expect(heroFieldClear(80, 56)).toBe(true);
     // Sub-pixel rounding of the two edges does not hold a field that is clear.
     expect(heroFieldClear(55.6, 56)).toBe(true);
+  });
+});
+
+describe("revealWithBar", () => {
+  const MAX_Y = 5000;
+  const behind: RevealMemo = { heroAway: true, revealed: false, dir: "down", pivot: 1500, lastY: 1500 };
+  const gone: AwayMemo = { away: true, pivot: 1500, lastY: 1500 };
+  const back: AwayMemo = { away: false, pivot: 1490, lastY: 1490 };
+
+  it("shows the bar's field in the frame the bar comes back on a phone", () => {
+    const next = revealWithBar(behind, gone, back, true, 1490);
+    expect(next.revealed).toBe(true);
+    expect(next.dir).toBe("up");
+    expect(next.pivot).toBe(1490);
+  });
+
+  it("is the same memo when the bar was already in sight, or stays away", () => {
+    expect(revealWithBar(behind, back, back, true, 1490)).toBe(behind);
+    expect(revealWithBar(behind, gone, gone, true, 1500)).toBe(behind);
+  });
+
+  it("leaves a tablet to the REVEAL_UP_PX rule, and a field with no hero behind the bar", () => {
+    expect(revealWithBar(behind, gone, back, false, 1490)).toBe(behind);
+    const top: RevealMemo = { heroAway: false, revealed: false, dir: "down", pivot: 10, lastY: 10 };
+    expect(revealWithBar(top, gone, back, true, 10)).toBe(top);
+  });
+
+  it("agrees with the frames: a 12px scroll up reveals, a 6px one does not bring the bar", () => {
+    const geometry = { revealFrom: 400 } as DockGeometry;
+    const reveal = revealFrame(1488, MAX_Y, geometry, behind, { barShown: true, latched: false });
+    expect(reveal.revealed).toBe(false);
+    const away = awayFrame(1488, MAX_Y, gone, { phone: true, barShown: true, hold: false, latched: false });
+    expect(away.away).toBe(false);
+    expect(revealWithBar(reveal, gone, away, true, 1488).revealed).toBe(true);
+    const small = awayFrame(1494, MAX_Y, gone, { phone: true, barShown: true, hold: false, latched: false });
+    expect(revealWithBar(reveal, gone, small, true, 1494)).toBe(reveal);
   });
 });
