@@ -640,7 +640,7 @@ export async function barSettled(bar: Locator): Promise<void> {
     Promise.allSettled(
       element
         .getAnimations({ subtree: true })
-        .filter((a) => a.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY)
+        .filter((a) => a.playState === "running" && a.effect?.getComputedTiming().endTime !== Number.POSITIVE_INFINITY)
         .map((animation) => animation.finished),
     ),
   );
