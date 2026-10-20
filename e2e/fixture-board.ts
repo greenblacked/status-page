@@ -513,8 +513,8 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
  * The longest hero the page can have: sixteen services need a look, in all three states, so the headline is
  * "Six are down, five are degraded and five are in maintenance." and the line under it names three of each
  * ("and 3 more" after the first three down, "and 2 more" after the others), says the other three are running
- * normally, and that two could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
- * sits under them.
+ * normally, and that two could not be read (named, each a link). On a phone the headline and that line wrap
+ * to the most lines they can, and the live line sits under them.
  */
 export function longHeroBoard(now: number): BoardSnapshot {
   return needLookBoard(now, ["outage", "degraded", "maintenance"]);
