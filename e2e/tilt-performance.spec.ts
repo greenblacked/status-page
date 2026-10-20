@@ -46,7 +46,7 @@ const SWEEP_MS = 2000;
 /** The traced sweep: the paint, raster and restyle limits below were measured over 3 s. */
 const TRACE_MS = 3000;
 const WARMUP_MS = 500;
-const SERVICES = 20;
+const SERVICES = 21;
 // What the wandering card light may add to the floor's counts (see its test): a repaint on every frame would add 180 or more in
 // the traced 3 s, and the counts themselves wander by a dozen on a busy machine. And the rule that holds the period dial still.
 const STILL_DIAL = ".period-sweep, .period-hand { animation: none !important; }";

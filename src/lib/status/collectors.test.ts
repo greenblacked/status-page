@@ -31,6 +31,7 @@ const URLS = {
   github: "https://www.githubstatus.com/api/v2/summary.json",
   gitlab: "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7",
   confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+  twitch: "https://status.twitch.com/api/v2/summary.json",
   azure: "https://rssfeed.azure.status.microsoft/en-us/status/feed/",
   apple: "https://www.apple.com/support/systemstatus/data/system_status_en_US.js",
   android: "https://status.play.google.com/incidents.json",
@@ -1639,7 +1640,33 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(confluence.upcomingMaintenance).toBeUndefined();
     });
 
-    it.each(["github", "confluence"] as const)(
+    it("Twitch summary.json: all operational, groups are not rows, a resolved incident is not listed, upcoming maintenance is", async () => {
+      stubFetch({ [URLS.twitch]: json(JSON.parse(fixture("twitch/summary.json"))) });
+      const twitch = await collect("twitch");
+      expect(twitch.failure).toBeUndefined();
+      expect(twitch.health).toBe("operational");
+      expect(twitch.summary).toBe("Nothing reported.");
+      expect(twitch.components.map((c) => [c.name, c.health])).toEqual([
+        ["Website", "operational"],
+        ["Video Broadcasting", "operational"],
+        ["Video Playback", "operational"],
+        ["Chat", "operational"],
+        ["Login", "operational"],
+      ]);
+      expect(twitch.incidents).toEqual([]);
+      expect(twitch.upcomingMaintenance).toEqual([
+        {
+          id: "tm1",
+          title: "Scheduled maintenance for Video Broadcasting",
+          scheduledFor: "2026-09-23T06:00:00.000Z",
+          scheduledUntil: "2026-09-23T08:00:00.000Z",
+          url: "https://stspg.io/tm1",
+        },
+      ]);
+      expect(twitch.sourceUrl).toBe("https://status.twitch.com/");
+    });
+
+    it.each(["github", "confluence", "twitch"] as const)(
       "%s: a JSON body that is not a Statuspage summary is unknown with a parser failure",
       async (id) => {
         stubFetch({ [URLS[id]]: json(JSON.parse(fixture(`${id}/summary-malformed.json`))) });
@@ -1705,7 +1732,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(gitlab.incidents[0]).toMatchObject({ id: "a", title: "Slow", health: "degraded" });
     });
 
-    it.each(["github", "confluence"] as const)(
+    it.each(["github", "confluence", "twitch"] as const)(
       "%s: a dense Statuspage body (900,000 components, 300,000 incidents, 100,000 maintenance) is cut before it is mapped",
       async (id) => {
         const body = `{"status":{"indicator":"none","description":"All Systems Operational"},"components":${dense(900_000)},"incidents":${dense(300_000)},"scheduled_maintenances":${dense(100_000)}}`;
@@ -1768,7 +1795,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.components).toEqual([]);
     });
 
-    it.each(["github", "confluence", "gitlab"] as const)(
+    it.each(["github", "confluence", "twitch", "gitlab"] as const)(
       "%s: a body that is not JSON, and a null body, are parser failures",
       async (id) => {
         stubFetch({ [URLS[id]]: text("<html>Attention Required</html>") });
@@ -1778,12 +1805,15 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       },
     );
 
-    it.each(["github", "confluence", "gitlab"] as const)("%s: a 503 is unknown with an http failure", async (id) => {
-      stubFetch({ [URLS[id]]: text("down", { status: 503 }) });
-      const snapshot = await collect(id);
-      expect(snapshot.health).toBe("unknown");
-      expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
-    });
+    it.each(["github", "confluence", "twitch", "gitlab"] as const)(
+      "%s: a 503 is unknown with an http failure",
+      async (id) => {
+        stubFetch({ [URLS[id]]: text("down", { status: 503 }) });
+        const snapshot = await collect(id);
+        expect(snapshot.health).toBe("unknown");
+        expect(snapshot.failure).toMatchObject({ kind: "http", status: 503 });
+      },
+    );
 
     it("GitHub: an incident link off Statuspage's and the vendor's hosts falls back to the card's page", async () => {
       const summary = JSON.parse(fixture("github/summary.json"));

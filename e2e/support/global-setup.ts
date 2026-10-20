@@ -40,6 +40,7 @@ const EXPECTED_HEALTH: Record<string, Health> = {
   github: "degraded",
   gitlab: "degraded",
   confluence: "outage",
+  twitch: "operational",
   grok: "degraded",
   chatgpt: "unknown",
   claude: "unknown",

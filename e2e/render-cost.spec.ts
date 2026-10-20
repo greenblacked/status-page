@@ -6,7 +6,7 @@ import { expect, test } from "./test";
 // and the floating bar rendered with it, for a countdown that only the live line (and, from 640px, the bar) shows.
 // These tests count what React renders, from the page's own commits, and what the clocks show.
 
-const SERVICES = 20;
+const SERVICES = 21;
 const SLOT_MS = 120_000;
 
 type RenderLog = { commits: number; cards: number; ids: string[] };

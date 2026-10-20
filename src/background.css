@@ -340,7 +340,7 @@
     .lens:nth-child(2) { --x: 1.8; --y: 47; --d: clamp(14px, 2.4cqmin, 24px); --dx: 0.4; --dy: 3; }
     .lens:nth-child(3) { --x: 2; --y: 74; --d: clamp(12px, 1.8cqmin, 18px); --dx: 0.5; --dy: 2.4; }
     .lens:nth-child(4) { --x: 95; --y: 22; --d: clamp(16px, 3.2cqmin, 34px); }
-    .lens:nth-child(7) { --x: 96; --y: 45; --d: clamp(22px, 4.6cqmin, 52px); }
+    .lens:nth-child(7) { --x: 96; --y: 49; --d: clamp(22px, 4.6cqmin, 52px); }
     .lens:nth-child(9) { --x: 95; --y: 85; }
     .lens:nth-child(10) { --x: 88; --y: 95; }
   }

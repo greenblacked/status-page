@@ -1584,13 +1584,15 @@ async function collectGrok(): Promise<ServiceSnapshot> {
   }
 }
 
-// GitHub and Confluence each publish a Statuspage of their own, so they are
-// the Spotify collector with a different address. Each fetches the vendor's
-// own host only (http.ts refuses a redirect off it). GitLab is not here: its
-// page runs on Status.io, which has no Statuspage API (see collectGitlab).
+// GitHub, Confluence and Twitch each publish a Statuspage of their own, so
+// they are the Spotify collector with a different address. Each fetches the
+// vendor's own host only (http.ts refuses a redirect off it). GitLab is not
+// here: its page runs on Status.io, which has no Statuspage API (see
+// collectGitlab).
 const STATUSPAGE_SUMMARIES = {
   github: "https://www.githubstatus.com/api/v2/summary.json",
   confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+  twitch: "https://status.twitch.com/api/v2/summary.json",
 } as const;
 
 // A page's own pointer to itself ("Visit www.githubstatus.com for more
@@ -2136,6 +2138,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       () => collectStatuspage("github"),
       collectGitlab,
       () => collectStatuspage("confluence"),
+      () => collectStatuspage("twitch"),
       collectGrok,
       collectChatGpt,
       collectClaude,
