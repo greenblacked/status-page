@@ -60,7 +60,7 @@ describe("BoardSections", () => {
       "Couldn&#x27;t read 1",
       "Cloud 2",
       "Gaming 3",
-      "Platforms 5",
+      "Platforms 6",
       "AI 3",
       "Releases 4",
     ]);

@@ -131,6 +131,14 @@ export const CATALOG: CatalogEntry[] = [
     sourceUrl: "https://confluence.status.atlassian.com/",
   },
   {
+    id: "twitch",
+    name: "Twitch",
+    shortName: "Twitch",
+    category: "platforms",
+    sourceName: "Twitch Status",
+    sourceUrl: "https://status.twitch.com/",
+  },
+  {
     id: "grok",
     name: "Grok",
     shortName: "Grok",

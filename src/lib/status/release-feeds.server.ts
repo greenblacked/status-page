@@ -557,8 +557,8 @@ export function jsonEntries(source: ReleaseSource, body: string): ReleaseFeedEnt
 
 /**
  * Every release feed the board reads. Official, machine-readable feeds only;
- * a vendor with none (Confluence, Claude, ChatGPT, Grok, Spotify, Epic,
- * Fortnite, Apple, Android / Play) has no entry. Dropping a source is
+ * a vendor with none (Confluence, Twitch, Claude, ChatGPT, Grok, Spotify,
+ * Epic, Fortnite, Apple, Android / Play) has no entry. Dropping a source is
  * deleting its object: nothing else refers to it.
  */
 export const RELEASE_SOURCES: readonly ReleaseSource[] = [

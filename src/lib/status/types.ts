@@ -12,6 +12,7 @@ export type ServiceId =
   | "github"
   | "gitlab"
   | "confluence"
+  | "twitch"
   | "grok"
   | "chatgpt"
   | "claude"

@@ -305,7 +305,7 @@ export function fixtureBoard(now: number, { grok = "operational" }: { grok?: Hea
   return { generatedAt: new Date(now).toISOString(), durationMs: 480, services, counts };
 }
 
-/** The same twenty services with nothing wrong anywhere: every one operational, no incident, no failure. */
+/** The same twenty-one services with nothing wrong anywhere: every one operational, no incident, no failure. */
 export function calmBoard(now: number): BoardSnapshot {
   const board = fixtureBoard(now);
   const services = board.services.map((service) => ({
@@ -510,10 +510,10 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
 }
 
 /**
- * The longest hero the page can have: fifteen services need a look, in all three states, so the headline is
- * "Five are down, five are degraded and five are in maintenance." and the line under it names three of each
- * ("and 2 more" after the first three), says the other three are running normally, and that two could not be read
- * (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
+ * The longest hero the page can have: sixteen services need a look, in all three states, so the headline is
+ * "Six are down, five are degraded and five are in maintenance." and the line under it names three of each
+ * ("and 3 more" after the first three down, "and 2 more" after the others), says the other three are running
+ * normally, and that two could not be read (named, each a link). On a phone the headline and that line wrap to the most lines they can, and the live line
  * sits under them.
  */
 export function longHeroBoard(now: number): BoardSnapshot {
@@ -521,8 +521,8 @@ export function longHeroBoard(now: number): BoardSnapshot {
 }
 
 /**
- * The widest compact verdict the floating bar draws, in words: fifteen services need a look and most of them
- * are degraded, the longest state word ("10 degraded · 5 more").
+ * The widest compact verdict the floating bar draws, in words: sixteen services need a look and most of them
+ * are degraded, the longest state word ("11 degraded · 5 more").
  */
 export function degradedLedBoard(now: number): BoardSnapshot {
   return needLookBoard(now, ["degraded", "degraded", "maintenance"]);
@@ -543,7 +543,7 @@ export function unreadBoard(now: number): BoardSnapshot {
   return { ...board, services, counts };
 }
 
-/** The fixture with fifteen services in `states` in turn (the rest as they were, two unread). */
+/** The fixture with sixteen services in `states` in turn (the rest as they were, two unread). */
 function needLookBoard(now: number, states: Health[]): BoardSnapshot {
   const board = fixtureBoard(now);
   const unread = new Set<ServiceId>(["android", "grok"]);

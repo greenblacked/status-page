@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Added
+
+- A card for **Twitch** (under Platforms), read from Twitch's own status page (status.twitch.com) with its components, active incidents and maintenance. The board now has twenty-one services.
+
 ## [0.7.2] - 2026-10-11
 
 ### Fixed

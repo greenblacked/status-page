@@ -9,7 +9,7 @@
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4181 --require-asset-cache
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
-# (20 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
+# (21 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
 # unless --require-ready: CI and sandboxes cannot always reach the vendors,
 # and an all-Unknown board is a correct answer there, not a broken build.
 #
@@ -37,7 +37,7 @@
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
 
-SERVICES=20
+SERVICES=21
 TITLE='<title>Status</title>'
 FOOTER='Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.'
 usage() {

@@ -43,7 +43,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 | | |
 | --- | --- |
-| **One board, five states** | Twenty services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
+| **One board, five states** | Twenty-one services in five groups, each mapped onto Operational, Maintenance, Degraded, Outage or No data, with the reason on the card |
 | **Built for a glance** | Filters, search and stars that live in the address, a log of what changed, browser alerts, and a countdown to the next refresh |
 | **Keyboard and screen reader first** | Single-key shortcuts you can switch off, a skip link, announced results and focus rings that survive high-contrast modes. Checked against WCAG 2.2 AA in CI with axe |
 | **At home on Apple devices** | Warm paper by day and true black by night (a switch in the header, or your own clock), opaque panels with a hairline, the system typeface on Apple devices, and colour kept to small exact points. Pick **Glass** or **Full** in Settings for frosted panels over a still glow with a soft light that wanders across the cards, or, in Full, also the slow drift, small glass bubbles that float over the glow and a dial that ticks through each two-minute check. Fits the notch and home indicator, adds to the Home Screen, follows Increase Contrast and Reduce Motion, and can let the light follow how you tilt the device. Tested in Safari's engine on a Mac, an iPhone and an iPad |
@@ -54,7 +54,7 @@ When something breaks, the answer is spread across a dozen vendor dashboards, ea
 
 🟢 Operational · 🔧 Maintenance · 🟡 Degraded · 🔴 Outage · ❔ No data
 
-Twenty services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
+Twenty-one services, each read from one official source. This table is the contract: if a source is not listed here, Status Page does not read it.
 
 | Group | Service | Official source |
 | --- | --- | --- |
@@ -71,6 +71,7 @@ Twenty services, each read from one official source. This table is the contract:
 | Platforms | GitHub | [githubstatus.com](https://www.githubstatus.com/) |
 | Platforms | GitLab | [status.gitlab.com](https://status.gitlab.com/) (GitLab.com), read from its Status.io public API |
 | Platforms | Atlassian Confluence | [confluence.status.atlassian.com](https://confluence.status.atlassian.com/) (Confluence Cloud) |
+| Platforms | Twitch | [status.twitch.com](https://status.twitch.com/) |
 | AI | Grok | [status.x.ai](https://status.x.ai/) (RSS feed, plus its component list when readable) |
 | AI | ChatGPT | [status.openai.com](https://status.openai.com/) |
 | AI | Claude | [status.claude.com](https://status.claude.com/) |
@@ -90,7 +91,7 @@ Six of these cards also read the vendor's own release or changelog feed, for the
 | GitLab | [GitLab releases](https://docs.gitlab.com/releases/) Atom (monthly "GitLab 19.4 release notes" and "GitLab Patch Release: ..." posts; the GitLab AI Gateway's patch posts are left out), `https://docs.gitlab.com/releases/all-releases.xml` | The newest version ("GitLab 18.4", or "GitLab 18.4.1" for a patch release) and day |
 | CS2 Europe | Steam news for app `730`, `https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/` (community announcements) | The latest update post's title and day |
 
-Confluence, Claude, ChatGPT, Grok, Spotify, Epic, Fortnite, Apple, Android / Play and Steam publish no official machine-readable release feed that this board reads, so their cards have no such line.
+Confluence, Twitch, Claude, ChatGPT, Grok, Spotify, Epic, Fortnite, Apple, Android / Play and Steam publish no official machine-readable release feed that this board reads, so their cards have no such line.
 
 Missing a service? [Request it](https://github.com/greenblacked/status-page/issues/new?template=new-service.yml). It needs an official, machine-readable source.
 
@@ -106,7 +107,7 @@ Each vendor speaks its own dialect. Status Page translates all of them into five
 | 🔴 Outage | Major or critical impact |
 | ❔ No data | The source timed out, returned an error, or sent data Status Page could not read. Says nothing about whether the vendor is up. The API and the badges still call it `unknown` |
 
-The headline at the top of the page is one sentence about the board: **Everything is up.** when all twenty are Operational, what is wrong when an outage, a degradation or maintenance is under way ("Two services are down.", "One service is degraded.", or "One is down, one is degraded." when the states differ; each service named by state and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
+The headline at the top of the page is one sentence about the board: **Everything is up.** when all twenty-one are Operational, what is wrong when an outage, a degradation or maintenance is under way ("Two services are down.", "One service is degraded.", or "One is down, one is degraded." when the states differ; each service named by state and linked to its card), and **Nothing needs a look.** when the only trouble is sources that could not be read. Those (No data) are listed apart and are never counted as things that need a look.
 
 The four Releases services track releases, not incidents. Their rows carry no status while nothing is new, and a **New release** tag when a channel, OS or Windows version was released in the last 14 days (the Android page gives no dates, so that card never carries the tag; see below). A source that could not be read is listed under **Couldn't read** as No data, like any other. In the summary, the API and the badges they still count as Operational.
 
@@ -131,7 +132,7 @@ It is advisory and kept apart from health. It never changes a card's health, the
 | CS2 Europe | European relay points of presence. Outage when the relay config reports failure or lists no European points. Degraded when fewer than 3, or fewer than 40%, of them publish relays. An Operational card shows the player count when it is available; the count never affects health |
 | Epic Games | Statuspage summary, worst component, excluding Fortnite components |
 | Fortnite | Same page, only components whose name contains "Fortnite" |
-| Spotify, ChatGPT, Claude, GitHub, Confluence | Statuspage summary indicator, with the page's components, active incidents and maintenance (in progress or upcoming). A body without a `status` reads Unknown. GitHub's own "Visit … for more information" pseudo-component is not listed |
+| Spotify, ChatGPT, Claude, GitHub, Confluence, Twitch | Statuspage summary indicator, with the page's components, active incidents and maintenance (in progress or upcoming). A body without a `status` reads Unknown. GitHub's own "Visit … for more information" pseudo-component is not listed |
 | GitLab | Status.io public status API (`api.status.io/1.0/status/<page id>`; status.gitlab.com runs on Status.io, which has no Statuspage API). The page's `status_overall.status_code` is the health: 100 Operational, 200 Maintenance, 300, 400 and 600 Degraded, 500 Outage; a missing or other code reads Unknown. Components from `status[]` (with the affected containers as detail), incidents from `incidents[]` (health from the newest message's status code) and maintenance from `maintenance.active[]` and `maintenance.upcoming[]`. An open incident keeps the card at least Degraded. Links go to the page's incident pages on `status.gitlab.com` only |
 | Microsoft Azure | RSS `feed/`, which has no status field and no severity, so an item is read from its title. An item counts when it is dated within the last 14 days (not in the future, past a few minutes of clock skew) and its title does not begin with "Resolved", "Mitigated", "Post Incident Review" or "PIR" (Azure's own prefixes; the same words inside an item's text end nothing). "Outage" or "Service unavailable" in the title is Outage, and anything else still listed is Degraded, since most items are one service in one region. A title with "maintenance" (and no outage wording) is not counted: it never affects health and is not listed as an incident or as upcoming maintenance, because the feed gives no machine-readable window and a notice's own date is when it was announced, not when the work runs. A channel with no items is Operational; a body that is not an RSS channel, or a feed of more than 5000 items, reads Unknown. There is no component list |
 | Apple | `system_status_en_US.js`, services with an active event |
@@ -148,7 +149,7 @@ It is advisory and kept apart from health. It never changes a card's health, the
 
 ```mermaid
 flowchart TB
-  vendors["20 official vendor sources"]
+  vendors["21 official vendor sources"]
   node["Node request and in-memory cache"]
   worker["Worker request and per-isolate cache"]
   browser["Browser refreshes every two minutes"]
@@ -173,7 +174,7 @@ pnpm install
 pnpm run dev
 ```
 
-Open the local URL that Vite prints. The first load reads all twenty sources, which can take a few seconds.
+Open the local URL that Vite prints. The first load reads all twenty-one sources, which can take a few seconds.
 
 No Node on the machine? Docker is enough: `docker compose up preview` builds the board and serves it on http://127.0.0.1:4173. To run the board rather than work on it, see [Self-host with Docker](#self-host-with-docker).
 
@@ -255,7 +256,7 @@ Use a service id, or `board` for the whole board:
 ![Status Page](https://img.shields.io/endpoint?url=https://<your-host>/api/badge/board)
 ```
 
-Service ids: `gcp`, `aws`, `azure`, `steam`, `cs2-europe`, `epic`, `fortnite`, `spotify`, `apple`, `android`, `github`, `gitlab`, `confluence`, `grok`, `chatgpt`, `claude`, `mikrotik`, `apple-os`, `windows`, `android-os`. An unknown id returns a grey "unknown service" badge instead of an error. Shields.io fetches the badge from your host, so badges need a public deployment.
+Service ids: `gcp`, `aws`, `azure`, `steam`, `cs2-europe`, `epic`, `fortnite`, `spotify`, `apple`, `android`, `github`, `gitlab`, `confluence`, `twitch`, `grok`, `chatgpt`, `claude`, `mikrotik`, `apple-os`, `windows`, `android-os`. An unknown id returns a grey "unknown service" badge instead of an error. Shields.io fetches the badge from your host, so badges need a public deployment.
 
 </details>
 
@@ -560,7 +561,7 @@ Report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md). Pl
 
 ## Disclaimer and license
 
-Status Page is not affiliated with Google, Amazon, Valve, Epic Games, Spotify, Apple, Microsoft, GitHub, GitLab, Atlassian, MikroTik, xAI, OpenAI, or Anthropic. Names and marks belong to their owners.
+Status Page is not affiliated with Google, Amazon, Valve, Epic Games, Spotify, Apple, Microsoft, GitHub, GitLab, Atlassian, Twitch, MikroTik, xAI, OpenAI, or Anthropic. Names and marks belong to their owners.
 
 Released under the MIT License. See [LICENSE](LICENSE).
 

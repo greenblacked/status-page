@@ -25,6 +25,7 @@ body:
         - GitHub (github)
         - GitLab (gitlab)
         - Atlassian Confluence (confluence)
+        - Twitch (twitch)
         - Grok (grok)
         - ChatGPT (chatgpt)
         - Claude (claude)

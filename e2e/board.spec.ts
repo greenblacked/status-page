@@ -15,7 +15,7 @@ import { barBack, isPhone, pageHasSeen } from "./support/layout";
 import { pinToSlot, stopClock } from "./support/pin-to-slot";
 import { expect, test } from "./test";
 
-const SERVICES = 20;
+const SERVICES = 21;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 /** The services of one board group: "attention", "unread" (Couldn't read), "up" (every category's list) or "releases". */
 const group = (page: Page, id: "attention" | "unread" | "up" | "releases") =>
@@ -1205,7 +1205,7 @@ test("takes the bar down when the hero grows under it, at every width below 64re
     // reports that the refresh is over. The button is found by its label instead, which a hidden bar keeps.
     await pressRefresh(page, controlBar(page).locator('button[aria-label="Refresh status now"]'));
     await expect(page.getByRole("heading", { level: 1 })).toContainText(
-      "Five are down, five are degraded and five are in maintenance.",
+      "Six are down, five are degraded and five are in maintenance.",
     );
     await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
     grew.push((await heroBottom()) - before);
@@ -3873,7 +3873,7 @@ test("keeps the groups, filters and stars working with full cards", async ({ pag
     /Couldn't read\s*1/,
     /Cloud\s*1/,
     /Gaming\s*3/,
-    /Platforms\s*5/,
+    /Platforms\s*6/,
     /AI\s*3/,
     /Releases\s*4/,
   ]);
@@ -5411,7 +5411,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   // The sentence under it names the services and links each to its card.
   const sub = page.locator("h1 + p");
   await expect(sub).toContainText(
-    "AWS is down. GCP is degraded. Epic is in maintenance. The other sixteen are running normally.",
+    "AWS is down. GCP is degraded. Epic is in maintenance. The other seventeen are running normally.",
   );
   await expect(sub).toContainText("I couldn't read Android.");
   const links = sub.getByRole("link");
@@ -5422,7 +5422,7 @@ test("reads the board as one sentence in the h1, with the count underlined by ha
   await expect(page.locator("#service-aws svg.pen-loop")).toHaveCount(1);
 });
 
-test("writes all quiet by hand, and says so in words, when all twenty are up", async ({ page }) => {
+test("writes all quiet by hand, and says so in words, when all twenty-one are up", async ({ page }) => {
   await openFixture(page, () => calmBoard(Date.now()), { id: "aws", label: "Operational" });
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Everything is up.");
   await expect(page.locator("h1 svg.pen-underline")).toHaveCount(0);
@@ -5430,7 +5430,7 @@ test("writes all quiet by hand, and says so in words, when all twenty are up", a
   await expect(note).toBeVisible();
   await expect(note).toHaveAttribute("aria-hidden", "true");
   expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
-  await expect(page.getByText("All twenty services are running normally.")).toHaveClass(/sr-only/);
+  await expect(page.getByText("All twenty-one services are running normally.")).toHaveClass(/sr-only/);
   // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
   await expect(page).toHaveTitle("Status");
   await expect(group(page, "attention")).toHaveCount(0);

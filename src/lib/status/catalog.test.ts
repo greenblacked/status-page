@@ -13,9 +13,9 @@ describe("catalog", () => {
     expect(CATEGORIES.find((category) => category.id === "updates")?.label).toBe("Releases");
   });
 
-  it("has twenty services, each once, every one in a category", () => {
-    expect(CATALOG).toHaveLength(20);
-    expect(new Set(CATALOG.map((entry) => entry.id)).size).toBe(20);
+  it("has twenty-one services, each once, every one in a category", () => {
+    expect(CATALOG).toHaveLength(21);
+    expect(new Set(CATALOG.map((entry) => entry.id)).size).toBe(21);
     const categories = new Set(CATEGORIES.map((category) => category.id));
     for (const entry of CATALOG) expect(categories.has(entry.category)).toBe(true);
     expect(CATALOG_BY_ID.gcp.name).toBe("Google Cloud");
