@@ -1,6 +1,7 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium, type FullConfig } from "@playwright/test";
 import { CACHE_TTL_MS, MIN_FORCED_REFRESH_MS } from "../../src/lib/status/schedule.ts";
 import type { BoardSnapshot, Health } from "../../src/lib/status/types.ts";
@@ -50,6 +51,50 @@ const EXPECTED_HEALTH: Record<string, Health> = {
   windows: "operational",
   "android-os": "operational",
 };
+
+/** The repository's root, found from this file, not the cwd. */
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+
+/** What the build is made from: its newest change is when dist/ was last up to date, at the earliest. */
+const BUILD_SOURCES = ["src", "public", "vite.config.ts", "package.json"];
+
+/** The build's own outputs, the server bundle the preview runs and the client's assets beside it. */
+const BUILD_OUTPUTS = ["dist/server/server.js", "dist/client"];
+
+/** What is under src/ but not built: the unit tests, their helpers and the vendor payloads the preview reads as is. */
+const notBuilt = (name: string) => name.endsWith(".test.ts") || name === "test" || name === "__fixtures__";
+
+/**
+ * The newest modification time of a file, or of any file under a directory; 0 when there is none. A directory's own
+ * time is left out: a unit test added beside a component changes it, and the build is no older for that.
+ */
+function newestMtime(path: string): number {
+  if (!existsSync(path)) return 0;
+  const stat = statSync(path);
+  if (!stat.isDirectory()) return stat.mtimeMs;
+  return readdirSync(path)
+    .filter((name) => !notBuilt(name))
+    .reduce((newest, name) => Math.max(newest, newestMtime(join(path, name))), 0);
+}
+
+/**
+ * Warns when dist/ is older than what it is built from, or missing: the suite tests the production build, so a
+ * change made since the last `pnpm run build` is not what the browser sees, and a test of it fails (or passes) for
+ * no visible reason. Only a warning, and not in CI, which builds before it tests.
+ */
+function warnIfStaleBuild(): void {
+  if (process.env.CI) return;
+  const sources = Math.max(...BUILD_SOURCES.map((path) => newestMtime(join(ROOT, path))));
+  const outputs = BUILD_OUTPUTS.map((path) => join(ROOT, path));
+  const built = outputs.every((path) => existsSync(path))
+    ? Math.min(...outputs.map((path) => statSync(path).mtimeMs))
+    : 0;
+  if (built < sources) {
+    console.warn(
+      `\n  e2e: dist/ is older than the sources; run pnpm run build${built === 0 ? " (dist/ is missing)" : ""}.\n  The browser tests run against the production build, so they would not test the change.\n`,
+    );
+  }
+}
 
 const count = (list: Entry[], kind: Entry["kind"]) => list.filter((entry) => entry.kind === kind).length;
 
@@ -156,6 +201,8 @@ export default async function globalSetup(config: FullConfig): Promise<() => Pro
       rmSync(join(tmpdir(), name), { force: true });
     }
   }
+
+  warnIfStaleBuild();
 
   // The feeds are read right after this board's sweep and cached for 30 minutes (RELEASE_FEED_TTL_MS); the workers
   // inherit this, and the first-render test asks for the release lines only while they are younger than that.
