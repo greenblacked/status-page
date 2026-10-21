@@ -1313,13 +1313,33 @@ async function collectApple(): Promise<ServiceSnapshot> {
   }
 }
 
+// The first "Severity:" and "Status:" values of a status.x.ai item, as
+// words, in its text with markup stripped (so whitespace is single spaces).
+// The severity keeps a second word for "Partial outage", "Under maintenance".
+const GROK_SEVERITY = /\bseverity:\s?([a-z]+)(?: ([a-z]+))?/;
+const GROK_STATUS = /\bstatus:\s?([a-z]+)/;
 // A partial outage is Degraded, as textSeverity and every component mapping
 // read it, so it never counts as an outage word.
 const PARTIAL_OUTAGE = /\bpartial\s+outage\b/g;
 
+/**
+ * An item's health from its own labels: a Status that is resolved or
+ * completed is over, and otherwise the Severity says how bad it is
+ * (textSeverity, on its first word, else its first two). The prose beside
+ * them is not read, so "not a full outage" or "maintenance later today" never
+ * moves it. An item with a label but no readable severity is Degraded: a
+ * problem of unknown size. Only an item with neither label is read from its
+ * words, as the feed was before it had them.
+ */
 export function grokItemHealth(description: string): Health {
   const text = stripHtml(description).toLowerCase();
-  if (text.includes("status: resolved") || text.includes("severity: available")) return "operational";
+  const severity = GROK_SEVERITY.exec(text);
+  const status = GROK_STATUS.exec(text);
+  if (severity || status) {
+    if (status?.[1] === "resolved" || status?.[1] === "completed") return "operational";
+    if (!severity) return "degraded";
+    return textSeverity(severity[1]) ?? textSeverity(`${severity[1]} ${severity[2] ?? ""}`) ?? "degraded";
+  }
   const rest = text.replace(PARTIAL_OUTAGE, "partial");
   // `\bmajor\b` so "majority of requests" is not read as a major outage.
   if (rest.includes("outage") || /\bmajor\b/.test(rest)) return "outage";

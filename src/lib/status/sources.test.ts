@@ -44,6 +44,17 @@ describe("grok feed", () => {
     assert.equal(grokItemHealth("Scheduled maintenance window"), "maintenance");
   });
 
+  it("reads the first Severity and Status lines, and the prose only when the item has neither", () => {
+    assert.equal(grokItemHealth("<p>Severity: Major outage</p><p>Status: Monitoring</p>"), "outage");
+    assert.equal(grokItemHealth("<p>Severity: Degraded performance</p><p>Status: Identified</p>"), "degraded");
+    assert.equal(grokItemHealth("<p>Severity: Under maintenance</p>"), "maintenance");
+    assert.equal(grokItemHealth("<p>Severity: outage</p><p>Severity: degraded</p>"), "outage");
+    assert.equal(grokItemHealth("<p>Status: Resolved</p><p>Severity: Major outage</p>"), "operational");
+    // A Status line alone that is not a resolution, or an unknown severity: a problem, of unknown size.
+    assert.equal(grokItemHealth("<p>Status: Investigating</p><p>A major outage of the API.</p>"), "degraded");
+    assert.equal(grokItemHealth("<p>Severity: sev2</p>"), "degraded");
+  });
+
   it("ignores an unresolved item older than the staleness window", () => {
     const stale = { description: "Investigating elevated errors", pubDate: new Date(NOW - 20 * DAY).toUTCString() };
     const fresh = { description: "Investigating elevated errors", pubDate: new Date(NOW - 2 * DAY).toUTCString() };

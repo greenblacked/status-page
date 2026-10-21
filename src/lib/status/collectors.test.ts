@@ -1472,6 +1472,19 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(grok.health).toBe("operational");
     });
 
+    it.each([
+      ["<p>Severity: degraded</p><p>Some requests fail; this is not a full outage.</p>", "degraded"],
+      ["<p>Severity: degraded</p><p>Maintenance is planned later today to fix it.</p>", "degraded"],
+      ["<p>Severity: outage</p><p>The issue is resolved for one region; others are still down.</p>", "outage"],
+      ["<h3>Status: ONGOING</h3><p>Severity: Partial outage</p><p>A major outage elsewhere is over.</p>", "degraded"],
+      ["<h3>Status: Completed</h3><p>Severity: outage</p>", "operational"],
+    ])("Grok: health is the item's Severity and Status lines, not its prose (%s)", async (description, health) => {
+      stubFetch({ [URLS.grok]: grokItem(description, "Sun, 20 Sep 2026 11:30:00 GMT") });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe(health);
+    });
+
     it("AWS: open events none of which has a readable date are a parser failure, not an all-clear", async () => {
       const events = JSON.stringify([
         { arn: "arn:aws:health:us-east-1::event/EC2/1", status: "2", service_name: "Amazon EC2", summary: "Errors" },
