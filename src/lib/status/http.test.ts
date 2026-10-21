@@ -13,6 +13,7 @@ import {
   SourceError,
   unwrapJsonp,
 } from "./http";
+import { clearVendorValidators } from "./validator-cache";
 
 const CHUNK = 64 * 1024;
 
@@ -673,5 +674,103 @@ describe("fetchText retries", () => {
     });
     // a -> b (503), then the retry: a -> b (200).
     expect(issued).toBe(4);
+  });
+});
+
+describe("fetchText conditional requests", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearVendorValidators();
+  });
+
+  // Answers each request with the next response and records the headers it carried.
+  function revalidating(...responses: Array<() => Response>) {
+    const sent: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(new Headers(init.headers));
+        return (responses.length > 1 ? responses.shift()! : responses[0]!)();
+      }),
+    );
+    return sent;
+  }
+
+  it("sends the vendor's own ETag back, and answers a 304 with the body it stored", async () => {
+    const sent = revalidating(
+      () => new Response("[1,2]", { headers: { etag: 'W/"a"', "content-type": "application/json" } }),
+      () => new Response(null, { status: 304, headers: { etag: 'W/"a"' } }),
+    );
+    const first = await fetchText("https://status.example.com/a.json");
+    const metered = await meterBytes(async (meter) => ({
+      second: await fetchText("https://status.example.com/a.json"),
+      bytes: meter.bytes,
+    }));
+    expect(sent[0]!.has("if-none-match")).toBe(false);
+    expect(sent[1]!.get("if-none-match")).toBe('W/"a"');
+    expect(sent[1]!.has("if-modified-since")).toBe(false);
+    expect(metered.second).toEqual({ ...first, contentRange: "", status: 200 });
+    expect(metered.second.body).toBe("[1,2]");
+    expect(metered.second.contentType).toBe("application/json");
+    // Nothing was downloaded the second time.
+    expect(metered.bytes).toBe(0);
+    // The stored body is not handed out to be changed.
+    expect(metered.second.bytes).not.toBe(first.bytes);
+  });
+
+  it("sends Last-Modified back as If-Modified-Since", async () => {
+    const date = "Wed, 21 Oct 2026 07:28:00 GMT";
+    const sent = revalidating(
+      () => new Response("x", { headers: { "last-modified": date } }),
+      () => new Response(null, { status: 304 }),
+    );
+    await fetchText("https://status.example.com/a");
+    expect((await fetchText("https://status.example.com/a")).body).toBe("x");
+    expect(sent[1]!.get("if-modified-since")).toBe(date);
+    expect(sent[1]!.has("if-none-match")).toBe(false);
+  });
+
+  it("stores nothing and sends nothing for a response without validators", async () => {
+    const sent = revalidating(() => new Response("x"));
+    await fetchText("https://status.example.com/a");
+    await fetchText("https://status.example.com/a");
+    expect(sent[1]!.has("if-none-match")).toBe(false);
+    expect(sent[1]!.has("if-modified-since")).toBe(false);
+  });
+
+  it("forgets a stored body once the vendor stops sending validators for it", async () => {
+    const sent = revalidating(
+      () => new Response("1", { headers: { etag: '"1"' } }),
+      () => new Response("2"),
+      () => new Response("3"),
+    );
+    await fetchText("https://status.example.com/a");
+    await fetchText("https://status.example.com/a");
+    await fetchText("https://status.example.com/a");
+    expect(sent[1]!.get("if-none-match")).toBe('"1"');
+    expect(sent[2]!.has("if-none-match")).toBe(false);
+  });
+
+  it("never revalidates a head read or a Range request", async () => {
+    const sent = revalidating(() => new Response("x", { headers: { etag: '"1"' } }));
+    await fetchText("https://status.example.com/feed.xml", { head: true });
+    await fetchText("https://status.example.com/feed.xml", { head: true });
+    await fetchText("https://status.example.com/r", { headers: { Range: "bytes=0-10" } });
+    await fetchText("https://status.example.com/r", { headers: { Range: "bytes=0-10" } });
+    for (const headers of sent) expect(headers.has("if-none-match")).toBe(false);
+  });
+
+  it("does not store a body over 512 KiB", async () => {
+    const sent = revalidating(() => new Response(new Uint8Array(512 * 1024 + 1), { headers: { etag: '"big"' } }));
+    await fetchText("https://status.example.com/big");
+    await fetchText("https://status.example.com/big");
+    expect(sent[1]!.has("if-none-match")).toBe(false);
+  });
+
+  it("fails a 304 it has no stored body for", async () => {
+    revalidating(() => new Response(null, { status: 304 }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as SourceError).message).toBe("304 Not Modified from status.example.com without a cached body");
   });
 });

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { clip } from "./bounds.ts";
 import { currentGate, type Gate, type Priority } from "./connection-gate.ts";
+import { MAX_VALIDATED_BYTES, type ValidatorEntry, vendorValidators } from "./validator-cache.ts";
 
 const USER_AGENT = "StatusBar/1.0 (status board; official sources only)";
 const DEFAULT_TIMEOUT_MS = 9000;
@@ -263,16 +264,59 @@ async function fetchVendor(url: string, init: RequestInit, gate?: Gate): Promise
 
 type FetchTextResult = { body: string; bytes: ArrayBuffer; contentType: string; contentRange: string; status: number };
 
+function decode(bytes: ArrayBuffer, binary: boolean | undefined): string {
+  if (!binary) return new TextDecoder("utf-8").decode(bytes);
+  const bom = new Uint8Array(bytes.slice(0, 2));
+  if (bom[0] === 0xfe && bom[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes.slice(2));
+  if (bom[0] === 0xff && bom[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes.slice(2));
+  return new TextDecoder("utf-16le").decode(bytes);
+}
+
+// Keeps the validators of a full 200 body, when the vendor sent any, so the
+// next request for the URL can be conditional; otherwise forgets what the
+// URL had, since a stored body the vendor no longer vouches for is stale.
+function rememberValidators(url: string, response: Response, bytes: ArrayBuffer, contentType: string): void {
+  const etag = response.headers.get("etag") || undefined;
+  const lastModified = response.headers.get("last-modified") || undefined;
+  if (response.status === 200 && (etag || lastModified) && bytes.byteLength <= MAX_VALIDATED_BYTES) {
+    // A copy: the caller owns the buffer it is handed.
+    vendorValidators.set(url, { etag, lastModified, bytes: bytes.slice(0), contentType });
+  } else {
+    vendorValidators.delete(url);
+  }
+}
+
+type ReadOptions = {
+  binary?: boolean;
+  head?: boolean;
+  // Whether this is a plain full GET, whose body may be stored for revalidation.
+  revalidates: boolean;
+  // What is stored for the URL, when the request asked whether it changed.
+  known: ValidatorEntry | undefined;
+};
+
 // One request, its redirects included, with the body read and decoded.
 // Errors leave as they were raised; fetchText decides on a retry and turns
 // them into SourceErrors.
 async function readOnce(
   url: string,
   init: RequestInit,
-  { binary, head }: { binary?: boolean; head?: boolean },
+  { binary, head, revalidates, known }: ReadOptions,
   gate: Gate | undefined,
 ): Promise<FetchTextResult> {
   const response = await fetchVendor(url, init, gate);
+  if (response.status === 304) {
+    // Unchanged: the stored body stands in for the one not sent, and nothing was downloaded.
+    await response.body?.cancel().catch(() => {});
+    if (!known) throw new SourceError(`304 Not Modified from ${sourceHost(url)} without a cached body`);
+    return {
+      body: decode(known.bytes, binary),
+      bytes: known.bytes.slice(0),
+      contentType: known.contentType,
+      contentRange: "",
+      status: 200,
+    };
+  }
   if (!response.ok) {
     // Nothing in an error page is used, so it is never downloaded.
     await response.body?.cancel().catch(() => {});
@@ -288,20 +332,8 @@ async function readOnce(
   const bytes = await readBodyCapped(response, url, MAX_BODY_BYTES, head ? HEAD_BYTES : undefined);
   const contentType = response.headers.get("content-type") ?? "";
   const contentRange = response.headers.get("content-range") ?? "";
-  let body: string;
-  if (binary) {
-    const bom = new Uint8Array(bytes.slice(0, 2));
-    if (bom[0] === 0xfe && bom[1] === 0xff) {
-      body = new TextDecoder("utf-16be").decode(bytes.slice(2));
-    } else if (bom[0] === 0xff && bom[1] === 0xfe) {
-      body = new TextDecoder("utf-16le").decode(bytes.slice(2));
-    } else {
-      body = new TextDecoder("utf-16le").decode(bytes);
-    }
-  } else {
-    body = new TextDecoder("utf-8").decode(bytes);
-  }
-  return { body, bytes, contentType, contentRange, status: response.status };
+  if (revalidates) rememberValidators(url, response, bytes, contentType);
+  return { body: decode(bytes, binary), bytes, contentType, contentRange, status: response.status };
 }
 
 // What a load balancer in front of a vendor answers when one backend drops
@@ -347,18 +379,28 @@ export async function fetchText(
     if (budgetMs <= 0) throw new SourceError(`Timed out waiting for a connection to ${sourceHost(url)}`);
     const startedAt = Date.now();
     timer = setTimeout(() => controller.abort(), budgetMs);
+    // Revalidation is for a plain full GET. A head read or a Range request
+    // keeps only part of a body, which is neither worth storing nor a
+    // stand-in for the whole. Only the validators the vendor sent go back.
+    const method = rest.method?.toUpperCase() ?? "GET";
+    const revalidates = !head && method === "GET" && !new Headers(rest.headers).has("range");
+    const known = revalidates ? vendorValidators.get(url) : undefined;
     const request: RequestInit = {
       ...rest,
       signal: controller.signal,
       headers: {
         Accept: "application/json, application/xml, text/xml, text/javascript, */*",
         "User-Agent": USER_AGENT,
+        ...(known?.etag ? { "If-None-Match": known.etag } : {}),
+        ...(known?.lastModified ? { "If-Modified-Since": known.lastModified } : {}),
         ...(rest.headers ?? {}),
       },
+      // Cloudflare's own subrequest cache, not the vendor's validators: those are handled above.
       cache: "no-store",
     };
+    const read: ReadOptions = { binary, head, revalidates, known };
     try {
-      return await readOnce(url, request, { binary, head }, gate);
+      return await readOnce(url, request, read, gate);
     } catch (error) {
       // One retry, and only inside a sweep, whose gate keeps the subrequest
       // budget. It keeps this slot and this timer, so it cannot outlast the
@@ -367,7 +409,7 @@ export async function fetchText(
       const remainingMs = budgetMs - (Date.now() - startedAt);
       if (!gate?.canRetry() || !worthRetrying(error) || remainingMs < RETRY_MIN_REMAINING_MS) throw error;
       await pause(200 + Math.floor(Math.random() * 200));
-      return await readOnce(url, request, { binary, head }, gate);
+      return await readOnce(url, request, read, gate);
     }
   } catch (error) {
     throw asSourceError(error, url);
