@@ -130,6 +130,60 @@ export function decodeXmlField(raw: string): string {
   }
 }
 
+// RFC 822 zone abbreviations a vendor feed has been seen to write, or plausibly
+// could, that Date.parse does not know (it knows GMT, UT, Z and the US zones,
+// listed here too so the table is the whole answer), as numeric offsets.
+const ZONE_OFFSETS: Readonly<Record<string, string>> = {
+  WET: "+0000",
+  WEST: "+0100",
+  BST: "+0100",
+  CET: "+0100",
+  CEST: "+0200",
+  EET: "+0200",
+  EEST: "+0300",
+  IST: "+0530",
+  JST: "+0900",
+  AEST: "+1000",
+  AEDT: "+1100",
+  EST: "-0500",
+  EDT: "-0400",
+  CST: "-0600",
+  CDT: "-0500",
+  MST: "-0700",
+  MDT: "-0600",
+  PST: "-0800",
+  PDT: "-0700",
+};
+
+// A real date is some 30 characters; anything far longer is not one, and is
+// never handed to Date.parse or the patterns below.
+const MAX_DATE_CHARS = 64;
+// A date and a time with no zone: "2026-09-21 10:00", "2026-09-21T10:00:30".
+const ZONELESS_TIMESTAMP = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?)$/;
+// A date that ends in a zone abbreviation: "Mon, 21 Sep 2026 10:00:00 CEST".
+const TRAILING_ZONE = /^(.{1,48}\d) ([A-Za-z]{2,5})$/;
+
+/**
+ * A feed's date as epoch milliseconds, or undefined when there is none to
+ * read. Date.parse comes first, except for a date and time with no zone,
+ * which is UTC here (Date.parse would read it in the host's own zone).
+ * Failing that, a trailing RFC 822 zone abbreviation Date.parse does not know
+ * (CEST, BST, IST, ...) is read as its offset. The value is cut to a sane
+ * length first, so every step is bounded.
+ */
+export function parseFeedDate(value?: string): number | undefined {
+  const text = value?.trim() ?? "";
+  if (!text || text.length > MAX_DATE_CHARS) return undefined;
+  const zoneless = ZONELESS_TIMESTAMP.exec(text);
+  const direct = Date.parse(zoneless ? `${zoneless[1]}T${zoneless[2]}Z` : text);
+  if (Number.isFinite(direct)) return direct;
+  const zoned = TRAILING_ZONE.exec(text.replace(/\s+/g, " "));
+  const offset = zoned ? ZONE_OFFSETS[zoned[2].toUpperCase()] : undefined;
+  if (!zoned || !offset) return undefined;
+  const at = Date.parse(`${zoned[1]} ${offset}`);
+  return Number.isFinite(at) ? at : undefined;
+}
+
 /** Most `<item>`s kept from a feed: the newest by pubDate. Real feeds carry tens. */
 export const MAX_RSS_ITEMS = 200;
 /**
@@ -181,8 +235,8 @@ export function parseRssItems(
     const block = xml.slice(bodyStart, next ? next.index : xml.length);
     const closed = block.search(ITEM_CLOSE);
     const chunk = closed === -1 ? block : block.slice(0, closed);
-    const date = Date.parse(xmlField(chunk, "pubDate")?.trim() ?? "");
-    scanned.push({ chunk, at: Number.isFinite(date) ? date : Number.NEGATIVE_INFINITY, index: scanned.length });
+    const date = parseFeedDate(xmlField(chunk, "pubDate"));
+    scanned.push({ chunk, at: date ?? Number.NEGATIVE_INFINITY, index: scanned.length });
     open = next;
   }
   if (open) throw new PayloadError(`RSS feed has more than ${MAX_RSS_SCANNED} items.`);

@@ -11,7 +11,7 @@ import {
   parseMikrotikNewest,
   splitAppleBuild,
 } from "./changelog.ts";
-import { parseRssItems, stripHtml } from "./feed-xml.ts";
+import { parseFeedDate, parseRssItems, stripHtml } from "./feed-xml.ts";
 import { fingerprint } from "./fingerprint.ts";
 import {
   googleImpactInfo,
@@ -62,6 +62,7 @@ export {
   decodeXmlField,
   MAX_RSS_ITEMS,
   MAX_RSS_SCANNED,
+  parseFeedDate,
   parseRssItems,
   stripHtml,
 } from "./feed-xml.ts";
@@ -74,6 +75,24 @@ const FUTURE_SKEW_MS = 5 * 60 * 1000;
 // Whether a vendor timestamp (ms) is within the last STALE_MS, allowing FUTURE_SKEW_MS of clock skew.
 function isRecent(at: number, now: number): boolean {
   return Number.isFinite(at) && now - at >= -FUTURE_SKEW_MS && now - at <= STALE_MS;
+}
+
+/**
+ * Refuses a feed whose open items (not over, not maintenance) cannot be dated:
+ * none of them can be told from a current one, so reading the feed as clear
+ * would be an all-clear built on no data. A parser failure instead, which
+ * names the vendor. One dated open item is enough to read the feed.
+ */
+function requireDatedOpenItems<T>(open: readonly T[], vendor: string, dateOf: (item: T) => number | undefined): void {
+  if (open.length > 0 && !open.some((item) => dateOf(item) !== undefined)) {
+    throw new PayloadError(`${vendor} feed items have no readable date.`);
+  }
+}
+
+/** A feed date (see parseFeedDate) as an ISO string, or undefined when it has none. */
+function feedIso(value?: string): string | undefined {
+  const at = parseFeedDate(value);
+  return at === undefined ? undefined : new Date(at).toISOString();
 }
 // Upper bound on components kept per card. The largest real vendor list is
 // Cloudflare's (a component per data center, several hundred, plus its
@@ -736,12 +755,22 @@ function awsLevel(raw: unknown): number {
   return typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "") ? Number(raw) : Number.NaN;
 }
 
+// When an event last changed (ms): its newest log entry, else its own date; 0 when neither is a number.
+function awsEventAt(event: AwsEvent): number {
+  return (Number(awsLatestLog(event)?.timestamp ?? event.date ?? 0) || 0) * 1000;
+}
+
+// An event that is not over: no end time, no "[RESOLVED]" prefix, and a status that is not 0 (resolved).
+function awsEventOpen(event: AwsEvent): boolean {
+  return !event.end_time && !/^\[resolved\]/i.test(event.summary ?? "") && awsLevel(event.status) !== 0;
+}
+
 export function awsEventActive(event: AwsEvent, now: number): boolean {
   if (event.end_time) return false;
   const summary = event.summary ?? "";
   if (/^\[resolved\]/i.test(summary)) return false;
   const last = awsLatestLog(event);
-  const lastTs = (Number(last?.timestamp ?? event.date ?? 0) || 0) * 1000;
+  const lastTs = awsEventAt(event);
   if (!lastTs || !isRecent(lastTs, now)) return false;
   const lastMessage = `${last?.summary ?? ""} ${last?.message ?? ""}`.toLowerCase();
   // `Number(undefined)` is NaN and `NaN !== 0` is true, so an event missing
@@ -930,6 +959,7 @@ async function collectAws(): Promise<ServiceSnapshot> {
       fetchJson<AwsEvent[]>("https://health.aws.amazon.com/public/currentevents", { binary: true }),
     );
     const now = Date.now();
+    requireDatedOpenItems(value.filter(awsEventOpen), "AWS", (event) => awsEventAt(event) || undefined);
     const active = value.filter((event) => awsEventActive(event, now));
     let health: Health = "operational";
     const { incidents, problems, incidentCount } = listIncidents(
@@ -1296,8 +1326,7 @@ export function grokItemHealth(description: string): Health {
 // pubDate cannot be shown to be current; AWS drops undated events the same way.
 export function grokItemActive(item: { description: string; pubDate?: string }, now: number): boolean {
   if (grokItemHealth(item.description) === "operational") return false;
-  const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
-  return isRecent(at, now);
+  return isRecent(parseFeedDate(item.pubDate) ?? Number.NaN, now);
 }
 
 /**
@@ -1352,7 +1381,7 @@ export function grokFeedComponents(
     const service = grokTitleService(item.title);
     if (!service) continue;
     const health = grokItemHealth(item.description);
-    const at = Date.parse(item.pubDate ?? "") || 0;
+    const at = parseFeedDate(item.pubDate) ?? 0;
     const key = service.name.toLowerCase();
     const row = rows.get(key);
     if (!row) {
@@ -1384,6 +1413,11 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     // a confident all-clear built on no data. Unknown is the honest answer.
     if (items.length === 0) throw new PayloadError("Grok feed returned no readable items.");
     const now = Date.now();
+    requireDatedOpenItems(
+      items.filter((item) => !["operational", "maintenance"].includes(grokItemHealth(item.description))),
+      "Grok",
+      (item) => parseFeedDate(item.pubDate),
+    );
     const active = items.filter((item) => grokItemActive(item, now));
     // A list whose every status is unreadable says nothing: ignore it.
     const parsed = parseInstatusComponents(instatus);
@@ -1401,7 +1435,7 @@ async function collectGrok(): Promise<ServiceSnapshot> {
         id: item.link ?? `${item.title}-${index}`,
         title: item.title,
         health: grokItemHealth(item.description),
-        startedAt: isoTimestamp(item.pubDate),
+        startedAt: feedIso(item.pubDate),
         url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
       })),
       8,
@@ -1633,8 +1667,7 @@ export function azureItemHealth(title: string): Health {
 export function azureItemActive(item: { title: string; pubDate?: string }, now: number): boolean {
   const health = azureItemHealth(item.title);
   if (health === "operational" || health === "maintenance") return false;
-  const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
-  return isRecent(at, now);
+  return isRecent(parseFeedDate(item.pubDate) ?? Number.NaN, now);
 }
 
 // The feed Microsoft documents for Azure status. Its host is a subdomain of
@@ -1654,12 +1687,11 @@ async function collectAzure(): Promise<ServiceSnapshot> {
     }
     const items = parseRssItems(value.body);
     const now = Date.now();
-    // Items that are not over, none of which has a readable date, cannot be
-    // told from current ones: a parser failure, not an all-clear.
-    const open = items.filter((item) => !["operational", "maintenance"].includes(azureItemHealth(item.title)));
-    if (open.length > 0 && !open.some((item) => Number.isFinite(Date.parse(item.pubDate ?? "")))) {
-      throw new PayloadError("Azure feed items have no readable date.");
-    }
+    requireDatedOpenItems(
+      items.filter((item) => !["operational", "maintenance"].includes(azureItemHealth(item.title))),
+      "Azure",
+      (item) => parseFeedDate(item.pubDate),
+    );
     const active = items.filter((item) => azureItemActive(item, now));
     const health = active.reduce<Health>(
       (worst, item) => worseHealth(worst, azureItemHealth(item.title)),
@@ -1671,7 +1703,7 @@ async function collectAzure(): Promise<ServiceSnapshot> {
         id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
         title: item.title || "Azure incident",
         health: azureItemHealth(item.title),
-        startedAt: isoTimestamp(item.pubDate),
+        startedAt: feedIso(item.pubDate),
         url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
       })),
     );

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { mikrotikChangelogNote, mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
+import { parseFeedDate } from "./feed-xml.ts";
 import { PayloadError, unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
@@ -128,6 +129,23 @@ describe("parsers stay linear on crafted vendor input", () => {
   it("parseRssItems: a feed past the scan bound is refused in linear time", () => {
     const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
     expect(elapsed(() => expect(() => parseRssItems(xml)).toThrow(PayloadError))).toBeLessThan(BUDGET_MS * 2);
+  });
+
+  it("parseFeedDate: long runs of digits, spaces, zone letters and date shapes", () => {
+    for (const value of [
+      " ".repeat(SIZE),
+      `2026-09-21 10:00${" ".repeat(SIZE)}x`,
+      `Mon, 21 Sep 2026 10:00:00 ${"A".repeat(SIZE)}`,
+      `${"1 ".repeat(SIZE / 2)}CEST`,
+      `${"2026-09-21 ".repeat(SIZE / 11)}10:00`,
+    ]) {
+      let at: number | undefined = 0;
+      expect(elapsed(() => (at = parseFeedDate(value)))).toBeLessThan(BUDGET_MS);
+      expect(at).toBeUndefined();
+    }
+    // Every item of a feed is dated, so a feed of crafted dates must stay linear too.
+    const feed = `<item><pubDate>${"Mon, 21 Sep 2026 ".repeat(SIZE / 17)}CEST</pubDate></item>`.repeat(4);
+    expect(elapsed(() => parseRssItems(feed))).toBeLessThan(BUDGET_MS);
   });
 
   it("CLOUDFLARE_DATA_CENTER: a long name of repeated separators and unfinished codes", () => {

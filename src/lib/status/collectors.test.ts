@@ -1439,6 +1439,62 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(grok.incidents).toEqual([]);
     });
 
+    // One status.x.ai item: its Status and Severity lines, and the pubDate as given.
+    const grokItem = (description: string, pubDate: string) =>
+      text(
+        `<rss version="2.0"><channel><item><title>[API] Requests failing</title>` +
+          `<link>https://status.x.ai/api/INC1</link><description><![CDATA[${description}]]></description>` +
+          `<pubDate>${pubDate}</pubDate></item></channel></rss>`,
+      );
+
+    it("Grok: an open item dated in a European zone is current, not an all-clear", async () => {
+      stubFetch({
+        [URLS.grok]: grokItem("<h3>Status: ONGOING</h3><p>Severity: outage</p>", "Sun, 20 Sep 2026 11:30:00 CEST"),
+      });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("outage");
+      expect(grok.incidents).toHaveLength(1);
+      expect(grok.incidents[0]?.startedAt).toBe("2026-09-20T09:30:00.000Z");
+    });
+
+    it("Grok: open items none of which has a readable date are a parser failure, not an all-clear", async () => {
+      stubFetch({ [URLS.grok]: grokItem("<h3>Status: ONGOING</h3><p>Severity: outage</p>", "yesterday") });
+      const grok = await collect("grok");
+      expect(grok.health).toBe("unknown");
+      expect(grok.failure).toEqual({ kind: "parser", message: "Grok feed items have no readable date." });
+    });
+
+    it("Grok: an undated item that is over does not fail the feed", async () => {
+      stubFetch({ [URLS.grok]: grokItem("<h3>Status: Resolved</h3><p>Severity: outage</p>", "yesterday") });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("operational");
+    });
+
+    it("AWS: open events none of which has a readable date are a parser failure, not an all-clear", async () => {
+      const events = JSON.stringify([
+        { arn: "arn:aws:health:us-east-1::event/EC2/1", status: "2", service_name: "Amazon EC2", summary: "Errors" },
+        { arn: "arn:aws:health:us-east-1::event/S3/2", date: "n/a", status: "3", service_name: "Amazon S3" },
+      ]);
+      stubFetch({ [URLS.aws]: bytes(utf16(events)) });
+      const aws = await collect("aws");
+      expect(aws.health).toBe("unknown");
+      expect(aws.failure).toEqual({ kind: "parser", message: "AWS feed items have no readable date." });
+    });
+
+    it("AWS: undated events that are closed do not fail the feed", async () => {
+      const events = JSON.stringify([
+        { arn: "arn:aws:health:us-east-1::event/EC2/1", status: "0", service_name: "Amazon EC2", summary: "Errors" },
+        { arn: "arn:aws:health:us-east-1::event/S3/2", end_time: 1, service_name: "Amazon S3" },
+        { arn: "arn:aws:health:us-east-1::event/S3/3", summary: "[RESOLVED] Errors", service_name: "Amazon S3" },
+      ]);
+      stubFetch({ [URLS.aws]: bytes(utf16(events)) });
+      const aws = await collect("aws");
+      expect(aws.failure).toBeUndefined();
+      expect(aws.health).toBe("operational");
+    });
+
     it("GitHub summary.json: a degraded and a partly-out component, an active incident and upcoming maintenance", async () => {
       stubFetch({ [URLS.github]: json(JSON.parse(fixture("github/summary.json"))) });
       const github = await collect("github");
