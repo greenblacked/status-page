@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { methodGuard } from "./request-methods";
+import { methodGuard, needsNoCache } from "./request-methods";
 
 const ALLOW = "GET, HEAD, OPTIONS";
 
@@ -60,5 +60,46 @@ describe("methodGuard", () => {
   it("falls back to the server function path when the handler type is not known", () => {
     expect(methodGuard(request("POST", "/_serverFn/abc"))).toBeUndefined();
     expect(methodGuard(request("POST", "/"))?.status).toBe(405);
+  });
+});
+
+describe("needsNoCache", () => {
+  const html = (headers: Record<string, string> = {}) =>
+    new Response("<!doctype html>", { headers: { "Content-Type": "text/html; charset=utf-8", ...headers } });
+  const json = (headers: Record<string, string> = {}) =>
+    new Response("{}", { headers: { "Content-Type": "application/json", ...headers } });
+
+  it("marks a page with no Cache-Control of its own", () => {
+    expect(needsNoCache(request("GET", "/"), html(), "router")).toBe(true);
+    expect(
+      needsNoCache(
+        request("GET", "/missing"),
+        new Response("x", { status: 404, headers: { "Content-Type": "TEXT/HTML" } }),
+        "router",
+      ),
+    ).toBe(true);
+  });
+
+  it("marks a GET server function answer, the board the page polls", () => {
+    expect(needsNoCache(request("GET", "/_serverFn/abc"), json(), "serverFn")).toBe(true);
+  });
+
+  it("leaves a response that set its own Cache-Control alone", () => {
+    expect(needsNoCache(request("GET", "/"), html({ "Cache-Control": "no-store" }), "router")).toBe(false);
+    expect(needsNoCache(request("GET", "/_serverFn/abc"), json({ "Cache-Control": "private" }), "serverFn")).toBe(
+      false,
+    );
+  });
+
+  it("leaves other answers to their own headers", () => {
+    expect(needsNoCache(request("GET", "/api/status.json"), json(), "router")).toBe(false);
+    expect(needsNoCache(request("POST", "/_serverFn/abc"), json(), "serverFn")).toBe(false);
+    expect(
+      needsNoCache(
+        request("GET", "/robots.txt"),
+        new Response("x", { headers: { "Content-Type": "text/plain" } }),
+        "router",
+      ),
+    ).toBe(false);
   });
 });
