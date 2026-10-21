@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { below } from "./hold-place";
 
 /** The little of an element that `below` reads: its children, its box, and whether it is or holds the feed. */
@@ -25,7 +25,10 @@ function column(children: Fake[]): Element {
 const name = (element: Element | null) => (element as unknown as { name: string } | null)?.name ?? null;
 
 describe("below", () => {
-  vi.stubGlobal("getComputedStyle", (element: { style: object }) => element.style);
+  // In a beforeEach, not the describe body: the stub is undone after every test (unstubGlobals in vitest.config.ts).
+  beforeEach(() => {
+    vi.stubGlobal("getComputedStyle", (element: { style: object }) => element.style);
+  });
 
   // Needs a look, Recent changes, a section after it: 32 px apart, as the board's column lays them out.
   const board = [
