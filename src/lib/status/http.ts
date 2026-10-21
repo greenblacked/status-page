@@ -43,11 +43,14 @@ export class SourceError extends Error {
   // parameter properties are not erasable, so they break Node's type
   // stripping and TypeScript's own `erasableSyntaxOnly`.
   readonly status?: number;
+  // How long the vendor asked to be left alone (its Retry-After), when it said.
+  readonly retryAfterMs?: number;
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, retryAfterMs?: number) {
     super(message);
     this.name = "SourceError";
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -56,9 +59,18 @@ export class SourceError extends Error {
 // That says nothing about whether the service is up, so a collector that probes
 // an endpoint directly shows it as "couldn't check" instead of an outage.
 export class RefusedError extends SourceError {
-  constructor(message: string, status: number) {
-    super(message, status);
+  constructor(message: string, status: number, retryAfterMs?: number) {
+    super(message, status, retryAfterMs);
     this.name = "RefusedError";
+  }
+}
+
+// The vendor did not answer in time, or no connection came free before the
+// sweep's deadline. The message still starts with "Timed out".
+export class TimeoutError extends SourceError {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
   }
 }
 
@@ -125,6 +137,28 @@ const REASON_PHRASES: Readonly<Record<number, string>> = {
 function describeStatus(status: number): string {
   const phrase = REASON_PHRASES[status];
   return phrase ? `${status} ${phrase}` : String(status);
+}
+
+// The longest Retry-After kept: a vendor asking for hours says no more to a
+// board that sweeps every few minutes than one asking for ten minutes.
+const MAX_RETRY_AFTER_MS = 600_000;
+
+/**
+ * A Retry-After header in milliseconds from now, clamped to 0..10 minutes:
+ * either delta-seconds or an HTTP date. Undefined when there is none or it is
+ * neither; the value is vendor text, so anything long is not even parsed.
+ * Every HTTP date form starts with the day's name, which keeps Date.parse,
+ * lenient enough to read "-5" as a year, to dates.
+ */
+function parseRetryAfter(header: string | null): number | undefined {
+  const value = header?.trim() ?? "";
+  if (value === "" || value.length > 64) return undefined;
+  let ms: number;
+  if (/^\d+$/.test(value)) ms = Number(value) * 1000;
+  else if (/^[A-Za-z]{3,9},? /.test(value)) ms = Date.parse(value) - Date.now();
+  else return undefined;
+  if (Number.isNaN(ms)) return undefined;
+  return Math.min(Math.max(ms, 0), MAX_RETRY_AFTER_MS);
 }
 
 function tooLarge(url: string, maxBytes: number): PayloadError {
@@ -331,11 +365,12 @@ async function readOnce(
     // Nothing in an error page is used, so it is never downloaded.
     await response.body?.cancel().catch(() => {});
     const message = `${describeStatus(response.status)} from ${sourceHost(url)}`;
+    const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
     // `cf-mitigated: challenge` is Cloudflare's own marker for a bot challenge, whatever status it carries.
     if (REFUSAL_STATUSES.has(response.status) || response.headers.get("cf-mitigated") === "challenge") {
-      throw new RefusedError(message, response.status);
+      throw new RefusedError(message, response.status, retryAfterMs);
     }
-    throw new SourceError(message, response.status);
+    throw new SourceError(message, response.status, retryAfterMs);
   }
   // Still under fetchText's timeout: a vendor trickling a body in slowly
   // is aborted like one that never answers.
@@ -357,7 +392,7 @@ const RETRY_MIN_REMAINING_MS = 3000;
 // asked again), a payload (the same bytes would come back), a timeout (the
 // time is spent), or any other answer from the vendor.
 function worthRetrying(error: unknown): boolean {
-  if (error instanceof RefusedError || error instanceof PayloadError) return false;
+  if (error instanceof RefusedError || error instanceof PayloadError || error instanceof TimeoutError) return false;
   if (error instanceof SourceError) return error.status !== undefined && RETRY_STATUSES.has(error.status);
   return !(error instanceof Error && error.name === "AbortError");
 }
@@ -365,7 +400,7 @@ function worthRetrying(error: unknown): boolean {
 function asSourceError(error: unknown, url: string): SourceError {
   if (error instanceof SourceError) return error;
   if (error instanceof Error && error.name === "AbortError") {
-    return new SourceError(`Timed out fetching ${sourceHost(url)}`);
+    return new TimeoutError(`Timed out fetching ${sourceHost(url)}`);
   }
   return new SourceError(error instanceof Error ? error.message : `Failed to fetch ${sourceHost(url)}`);
 }
@@ -386,7 +421,7 @@ export async function fetchText(
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    if (budgetMs <= 0) throw new SourceError(`Timed out waiting for a connection to ${sourceHost(url)}`);
+    if (budgetMs <= 0) throw new TimeoutError(`Timed out waiting for a connection to ${sourceHost(url)}`);
     const startedAt = Date.now();
     timer = setTimeout(() => controller.abort(), budgetMs);
     // Revalidation is for a plain full GET. A head read or a Range request

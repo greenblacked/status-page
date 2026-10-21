@@ -11,6 +11,7 @@ import {
   RefusedError,
   readBodyCapped,
   SourceError,
+  TimeoutError,
   unwrapJsonp,
 } from "./http";
 import { clearVendorValidators } from "./validator-cache";
@@ -135,9 +136,14 @@ describe("readBodyCapped / fetchText size cap", () => {
       }),
     );
 
-    await expect(fetchText("https://status.example.com/slow.json", { timeoutMs: 20 })).rejects.toThrow(
-      "Timed out fetching status.example.com",
+    const error = await fetchText("https://status.example.com/slow.json", { timeoutMs: 20 }).catch(
+      (caught: unknown) => caught,
     );
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as TimeoutError).name).toBe("TimeoutError");
+    expect((error as TimeoutError).message).toBe("Timed out fetching status.example.com");
+    expect((error as TimeoutError).status).toBeUndefined();
   });
 
   it("meterBytes counts what every fetch inside it read", async () => {
@@ -498,7 +504,8 @@ describe("fetchText inside a connection gate", () => {
       await vi.advanceTimersByTimeAsync(10_000);
       const [a, b] = await results;
       expect(a.status === "rejected" && (a.reason as Error).message).toBe("Timed out fetching status.example.com");
-      expect(b.status === "rejected" && b.reason).toBeInstanceOf(SourceError);
+      expect(a.status === "rejected" && a.reason).toBeInstanceOf(TimeoutError);
+      expect(b.status === "rejected" && b.reason).toBeInstanceOf(TimeoutError);
       expect(b.status === "rejected" && (b.reason as Error).message).toBe(
         "Timed out waiting for a connection to status.example.com",
       );
@@ -812,5 +819,44 @@ describe("fetchText binary decoding", () => {
     expect((await fetchText("https://status.example.com/a", { binary: true })).body).toBe("");
     answerBytes(utf8("7"));
     expect((await fetchText("https://status.example.com/a", { binary: true })).body).toBe("7");
+  });
+});
+
+describe("fetchText Retry-After", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const retryAfter = async (value: string | null, status = 503) => {
+    stubFetch(() => new Response("busy", { status, headers: value === null ? {} : { "retry-after": value } }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    return (error as SourceError).retryAfterMs;
+  };
+
+  it("keeps a delay in seconds, on a refusal and on a failure alike", async () => {
+    expect(await retryAfter("120")).toBe(120_000);
+    expect(await retryAfter(" 30 ", 429)).toBe(30_000);
+    expect(await retryAfter("0")).toBe(0);
+  });
+
+  it("keeps the time until an HTTP date", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-21T12:00:00Z") });
+    expect(await retryAfter("Wed, 21 Oct 2026 12:01:30 GMT")).toBe(90_000);
+    expect(await retryAfter("Wed, 21 Oct 2026 11:00:00 GMT")).toBe(0);
+  });
+
+  it("clamps a delay to ten minutes", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-21T12:00:00Z") });
+    expect(await retryAfter("86400")).toBe(600_000);
+    expect(await retryAfter("Thu, 22 Oct 2026 12:00:00 GMT", 429)).toBe(600_000);
+  });
+
+  it("has none without the header or with one it cannot read", async () => {
+    expect(await retryAfter(null)).toBeUndefined();
+    expect(await retryAfter("soon")).toBeUndefined();
+    expect(await retryAfter("-5")).toBeUndefined();
+    expect(await retryAfter("1.5")).toBeUndefined();
   });
 });
