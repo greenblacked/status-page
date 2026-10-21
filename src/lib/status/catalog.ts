@@ -51,6 +51,14 @@ export const CATALOG: CatalogEntry[] = [
     sourceUrl: "https://azure.status.microsoft/en-us/status/",
   },
   {
+    id: "cloudflare",
+    name: "Cloudflare",
+    shortName: "Cloudflare",
+    category: "cloud",
+    sourceName: "Cloudflare Status",
+    sourceUrl: "https://www.cloudflarestatus.com/",
+  },
+  {
     id: "steam",
     name: "Steam",
     shortName: "Steam",

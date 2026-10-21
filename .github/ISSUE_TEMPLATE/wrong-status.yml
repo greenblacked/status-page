@@ -15,6 +15,7 @@ body:
         - Google Cloud (gcp)
         - AWS (aws)
         - Microsoft Azure (azure)
+        - Cloudflare (cloudflare)
         - Steam (steam)
         - CS2 Europe (cs2-europe)
         - Epic Games (epic)

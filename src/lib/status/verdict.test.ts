@@ -3,7 +3,7 @@ import { CATALOG } from "./catalog";
 import type { BoardSnapshot, Health, ServiceSnapshot } from "./types";
 import { countWord, verdict } from "./verdict";
 
-/** The real twenty-one, every one at `base`, with the given ids set to other states. */
+/** The real twenty-two, every one at `base`, with the given ids set to other states. */
 function board(overrides: Partial<Record<string, Health>> = {}, base: Health = "operational"): BoardSnapshot {
   const services: ServiceSnapshot[] = CATALOG.map((entry) => ({
     id: entry.id,
@@ -25,13 +25,14 @@ function board(overrides: Partial<Record<string, Health>> = {}, base: Health = "
 }
 
 describe("countWord", () => {
-  it("spells out zero to twenty-one and uses numerals after", () => {
+  it("spells out zero to twenty-two and uses numerals after", () => {
     expect(countWord(1)).toBe("one");
     expect(countWord(12)).toBe("twelve");
     expect(countWord(16)).toBe("sixteen");
     expect(countWord(20)).toBe("twenty");
     expect(countWord(21)).toBe("twenty-one");
-    expect(countWord(22)).toBe("22");
+    expect(countWord(22)).toBe("twenty-two");
+    expect(countWord(23)).toBe("23");
     expect(countWord(-1)).toBe("-1");
   });
 });
@@ -49,8 +50,8 @@ describe("verdict when everything is up", () => {
   });
 
   it("gives a screen reader the sentence the hand note stands for, counted from the catalog", () => {
-    expect(CATALOG).toHaveLength(21);
-    expect(calm.srSub).toBe("All twenty-one services are running normally.");
+    expect(CATALOG).toHaveLength(22);
+    expect(calm.srSub).toBe("All twenty-two services are running normally.");
     expect(calm.short).toBe("Everything is up");
   });
 });
@@ -72,10 +73,10 @@ describe("verdict title, by what is wrong", () => {
     );
   });
 
-  it("switches to numerals after twenty-one", () => {
-    const twentyTwo = board({}, "outage");
-    twentyTwo.services.push({ ...twentyTwo.services[0], id: "gcp" });
-    expect(verdict(twentyTwo).title).toBe("22 services are down.");
+  it("switches to numerals after twenty-two", () => {
+    const twentyThree = board({}, "outage");
+    twentyThree.services.push({ ...twentyThree.services[0], id: "gcp" });
+    expect(verdict(twentyThree).title).toBe("23 services are down.");
   });
 
   it("lists two states in urgency order, each with its own count and verb", () => {
@@ -134,7 +135,7 @@ describe("verdict short form, for the floating bar", () => {
 describe("verdict when something needs a look", () => {
   it("names the services state by state, worst first, and says the rest are fine", () => {
     const result = verdict(board({ steam: "degraded", fortnite: "outage" }));
-    expect(result.sub).toBe("Fortnite is down. Steam is degraded. The other nineteen are running normally.");
+    expect(result.sub).toBe("Fortnite is down. Steam is degraded. The other twenty are running normally.");
     expect(result.count).toBe(2);
     expect(result.tone).toBe("outage");
     expect(result.hand).toBe(false);
@@ -143,11 +144,11 @@ describe("verdict when something needs a look", () => {
 
   it("agrees is and are with the number named in each state", () => {
     expect(verdict(board({ steam: "outage", fortnite: "outage" })).sub).toBe(
-      "Steam and Fortnite are down. The other nineteen are running normally.",
+      "Steam and Fortnite are down. The other twenty are running normally.",
     );
     const three = verdict(board({ steam: "outage", fortnite: "degraded", claude: "maintenance" }));
     expect(three.sub).toBe(
-      "Steam is down. Fortnite is degraded. Claude is in maintenance. The other eighteen are running normally.",
+      "Steam is down. Fortnite is degraded. Claude is in maintenance. The other nineteen are running normally.",
     );
   });
 
@@ -159,13 +160,13 @@ describe("verdict when something needs a look", () => {
 
   it("names three in a state, then counts the rest", () => {
     expect(verdict(board(degradedAll("steam", "fortnite", "aws"))).sub).toBe(
-      "AWS, Steam and Fortnite are degraded. The other eighteen are running normally.",
+      "AWS, Steam and Fortnite are degraded. The other nineteen are running normally.",
     );
     expect(verdict(board(degradedAll("steam", "fortnite", "aws", "gcp"))).sub).toBe(
-      "GCP, AWS, Steam and 1 more are degraded. The other seventeen are running normally.",
+      "GCP, AWS, Steam and 1 more are degraded. The other eighteen are running normally.",
     );
     expect(verdict(board(degradedAll("steam", "fortnite", "aws", "gcp", "epic"))).sub).toBe(
-      "GCP, AWS, Steam and 2 more are degraded. The other sixteen are running normally.",
+      "GCP, AWS, Steam and 2 more are degraded. The other seventeen are running normally.",
     );
   });
 
@@ -182,13 +183,13 @@ describe("verdict when something needs a look", () => {
     );
     expect(result.title).toBe("Four are down, four are degraded and one is in maintenance.");
     expect(result.sub).toBe(
-      "Epic, Android, Grok and 1 more are down. GCP, AWS, Steam and 1 more are degraded. Windows 11 is in maintenance. The other twelve are running normally.",
+      "Epic, Android, Grok and 1 more are down. GCP, AWS, Steam and 1 more are degraded. Windows 11 is in maintenance. The other thirteen are running normally.",
     );
     expect(result.short).toBe("4 down \u00b7 4 degraded \u00b7 1 in maintenance");
   });
 
   it("drops the sentence about the rest when nothing else is up", () => {
-    expect(verdict(board({}, "outage")).sub).toBe("GCP, AWS, Azure and 18 more are down.");
+    expect(verdict(board({}, "outage")).sub).toBe("GCP, AWS, Azure and 19 more are down.");
   });
 
   it("hands the page every service it names, in order, to link", () => {
@@ -200,14 +201,14 @@ describe("verdict when something needs a look", () => {
   it("adds what it could not read, by name and linked, without counting it", () => {
     const result = verdict(board({ steam: "degraded", grok: "unknown", android: "unknown" }));
     expect(result.sub).toBe(
-      "Steam is degraded. The other eighteen are running normally. I couldn't read Android and Grok.",
+      "Steam is degraded. The other nineteen are running normally. I couldn't read Android and Grok.",
     );
     expect(result.subParts.filter((part) => part.id).map((part) => part.id)).toEqual(["steam", "android", "grok"]);
     expect(result.count).toBe(1);
     expect(result.tone).toBe("degraded");
     expect(result.title).toBe("One service is degraded.");
     expect(verdict(board({ steam: "degraded", grok: "unknown" })).sub).toBe(
-      "Steam is degraded. The other nineteen are running normally. I couldn't read Grok.",
+      "Steam is degraded. The other twenty are running normally. I couldn't read Grok.",
     );
   });
 
@@ -215,14 +216,14 @@ describe("verdict when something needs a look", () => {
     const result = verdict(board({ steam: "outage", fortnite: "degraded", grok: "unknown" }));
     expect(result.title).toBe("One is down, one is degraded.");
     expect(result.sub).toBe(
-      "Steam is down. Fortnite is degraded. The other eighteen are running normally. I couldn't read Grok.",
+      "Steam is down. Fortnite is degraded. The other nineteen are running normally. I couldn't read Grok.",
     );
   });
 
   it("spells out how many it could not read when there are more than two", () => {
     const result = verdict(board({ steam: "degraded", grok: "unknown", android: "unknown", claude: "unknown" }));
     expect(result.sub).toBe(
-      "Steam is degraded. The other seventeen are running normally. I couldn't read three of them.",
+      "Steam is degraded. The other eighteen are running normally. I couldn't read three of them.",
     );
     expect(result.subParts.filter((part) => part.id).map((part) => part.id)).toEqual(["steam"]);
     expect(result.count).toBe(1);

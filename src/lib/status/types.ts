@@ -2,6 +2,7 @@ export type ServiceId =
   | "gcp"
   | "aws"
   | "azure"
+  | "cloudflare"
   | "steam"
   | "cs2-europe"
   | "epic"
