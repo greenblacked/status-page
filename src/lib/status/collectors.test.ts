@@ -32,6 +32,7 @@ const URLS = {
   gitlab: "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7",
   confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
   twitch: "https://status.twitch.com/api/v2/summary.json",
+  cloudflare: "https://www.cloudflarestatus.com/api/v2/summary.json",
   azure: "https://rssfeed.azure.status.microsoft/en-us/status/feed/",
   apple: "https://www.apple.com/support/systemstatus/data/system_status_en_US.js",
   android: "https://status.play.google.com/incidents.json",
@@ -1666,7 +1667,136 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(twitch.sourceUrl).toBe("https://status.twitch.com/");
     });
 
-    it.each(["github", "confluence", "twitch"] as const)(
+    const cloudflareSummary = () => JSON.parse(fixture("cloudflare/summary.json"));
+    const cloudflareWindow = (summary: ReturnType<typeof cloudflareSummary>, id: string) =>
+      summary.scheduled_maintenances.find((m: { id: string }) => m.id === id);
+    const cloudflareFirstRows = [
+      { name: "São Paulo, Brazil - (GRU)", health: "degraded", detail: "Partial outage" },
+      { name: "Sydney, Australia - (SYD)", health: "degraded", detail: "Partial outage" },
+      { name: "Lagos, Nigeria - (LOS)", health: "maintenance" },
+      { name: "Singapore, Singapore - (SIN)", health: "maintenance" },
+      { name: "Frankfurt, Germany - (FRA)", health: "maintenance" },
+    ];
+
+    it("Cloudflare summary.json: the indicator is the health; data centers are rows, worst first, capped at 300; a data-center window is not maintenance", async () => {
+      stubFetch({ [URLS.cloudflare]: json(cloudflareSummary()) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.failure).toBeUndefined();
+      expect(cloudflare.health).toBe("operational");
+      expect(cloudflare.summary).toBe("Nothing reported.");
+      expect(cloudflare.componentCount).toBe(330);
+      expect(cloudflare.components).toHaveLength(300);
+      expect(cloudflare.components.slice(0, 6)).toEqual([
+        ...cloudflareFirstRows,
+        { name: "Access", health: "operational" },
+      ]);
+      for (const component of cloudflare.components.slice(5)) expect(component.health).toBe("operational");
+      const names = cloudflare.components.map((c) => c.name);
+      for (const group of cloudflareSummary().components.filter((c: { group: boolean }) => c.group)) {
+        expect(names).not.toContain(group.name);
+      }
+      const leaves = cloudflareSummary().components.filter((c: { group: boolean }) => !c.group);
+      expect(names).not.toContain(leaves[leaves.length - 1].name);
+      expect(cloudflare.incidents).toEqual([]);
+      expect(cloudflare.upcomingMaintenance).toEqual([
+        {
+          id: "cf-mx-dash",
+          title: "Cloudflare Dashboard maintenance",
+          scheduledFor: "2026-09-23T06:00:00.000Z",
+          scheduledUntil: "2026-09-23T08:00:00.000Z",
+          url: "https://stspg.io/cfmxdash",
+        },
+      ]);
+      expect(cloudflare.sourceUrl).toBe("https://www.cloudflarestatus.com/");
+    });
+
+    it("Cloudflare: a window on a product is maintenance", async () => {
+      const summary = cloudflareSummary();
+      cloudflareWindow(summary, "cf-mx-dash").status = "in_progress";
+      stubFetch({ [URLS.cloudflare]: json(summary) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.health).toBe("maintenance");
+      expect(cloudflare.summary).toBe("Cloudflare Dashboard maintenance");
+      expect(cloudflare.upcomingMaintenance).toBeUndefined();
+    });
+
+    it("Cloudflare: a window that also lists a product counts", async () => {
+      const summary = cloudflareSummary();
+      const api = summary.components.find((c: { name: string }) => c.name === "API");
+      cloudflareWindow(summary, "cf-mx-fra").components.push(api);
+      stubFetch({ [URLS.cloudflare]: json(summary) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.health).toBe("maintenance");
+      expect(cloudflare.summary).toBe("FRA (Frankfurt) on 2026-09-20");
+    });
+
+    it("Cloudflare: a window that lists no component counts", async () => {
+      const summary = cloudflareSummary();
+      cloudflareWindow(summary, "cf-mx-fra").components = [];
+      stubFetch({ [URLS.cloudflare]: json(summary) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.health).toBe("maintenance");
+      expect(cloudflare.summary).toBe("FRA (Frankfurt) on 2026-09-20");
+    });
+
+    it("Cloudflare: a data center named only by id is still a data center", async () => {
+      const summary = cloudflareSummary();
+      for (const id of ["cf-mx-fra", "cf-mx-sin"]) {
+        const window = cloudflareWindow(summary, id);
+        window.components = [{ id: window.components[0].id }];
+      }
+      stubFetch({ [URLS.cloudflare]: json(summary) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.health).toBe("operational");
+    });
+
+    it("Cloudflare: its own indicator still decides", async () => {
+      const summary = cloudflareSummary();
+      summary.status = { indicator: "minor", description: "Minor Service Outage" };
+      stubFetch({ [URLS.cloudflare]: json(summary) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.health).toBe("degraded");
+      expect(cloudflare.summary).toBe("Minor Service Outage");
+      expect(cloudflare.components.slice(0, 5)).toEqual(cloudflareFirstRows);
+    });
+
+    it("Cloudflare: an open incident on one data center counts", async () => {
+      const summary = cloudflareSummary();
+      const sin = summary.components.find((c: { id: string }) => c.id === "cf-dc-sin");
+      summary.incidents.push({
+        id: "cf-inc-2",
+        name: "Increased latency in Singapore",
+        status: "investigating",
+        impact: "minor",
+        shortlink: "https://stspg.io/cfinc2",
+        started_at: "2026-09-20T11:00:00.000Z",
+        updated_at: "2026-09-20T11:00:00.000Z",
+        components: [sin],
+      });
+      stubFetch({ [URLS.cloudflare]: json(summary) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.health).toBe("degraded");
+      expect(cloudflare.summary).toBe("Increased latency in Singapore");
+      expect(cloudflare.incidents).toHaveLength(1);
+    });
+
+    it("Twitch: a data-center-named window is still maintenance there (the rule is Cloudflare's)", async () => {
+      const summary = JSON.parse(fixture("twitch/summary.json"));
+      summary.scheduled_maintenances.push({
+        id: "tm2",
+        name: "Frankfurt window",
+        status: "in_progress",
+        impact: "maintenance",
+        scheduled_for: "2026-09-20T10:00:00.000Z",
+        scheduled_until: "2026-09-20T14:00:00.000Z",
+        components: [{ id: "x", name: "Frankfurt, Germany - (FRA)" }],
+      });
+      stubFetch({ [URLS.twitch]: json(summary) });
+      const twitch = await collect("twitch");
+      expect(twitch.health).toBe("maintenance");
+    });
+
+    it.each(["github", "confluence", "twitch", "cloudflare"] as const)(
       "%s: a JSON body that is not a Statuspage summary is unknown with a parser failure",
       async (id) => {
         stubFetch({ [URLS[id]]: json(JSON.parse(fixture(`${id}/summary-malformed.json`))) });
@@ -1732,7 +1862,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(gitlab.incidents[0]).toMatchObject({ id: "a", title: "Slow", health: "degraded" });
     });
 
-    it.each(["github", "confluence", "twitch"] as const)(
+    it.each(["github", "confluence", "twitch", "cloudflare"] as const)(
       "%s: a dense Statuspage body (900,000 components, 300,000 incidents, 100,000 maintenance) is cut before it is mapped",
       async (id) => {
         const body = `{"status":{"indicator":"none","description":"All Systems Operational"},"components":${dense(900_000)},"incidents":${dense(300_000)},"scheduled_maintenances":${dense(100_000)}}`;
@@ -1795,7 +1925,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.components).toEqual([]);
     });
 
-    it.each(["github", "confluence", "twitch", "gitlab"] as const)(
+    it.each(["github", "confluence", "twitch", "cloudflare", "gitlab"] as const)(
       "%s: a body that is not JSON, and a null body, are parser failures",
       async (id) => {
         stubFetch({ [URLS[id]]: text("<html>Attention Required</html>") });
@@ -1805,7 +1935,7 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       },
     );
 
-    it.each(["github", "confluence", "twitch", "gitlab"] as const)(
+    it.each(["github", "confluence", "twitch", "cloudflare", "gitlab"] as const)(
       "%s: a 503 is unknown with an http failure",
       async (id) => {
         stubFetch({ [URLS[id]]: text("down", { status: 503 }) });

@@ -30,6 +30,7 @@ const EXPECTED_HEALTH: Record<string, Health> = {
   gcp: "outage",
   aws: "degraded",
   azure: "outage",
+  cloudflare: "operational",
   steam: "unknown",
   "cs2-europe": "unknown",
   epic: "unknown",

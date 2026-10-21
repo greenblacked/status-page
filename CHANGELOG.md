@@ -8,7 +8,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
-- A card for **Twitch** (under Platforms), read from Twitch's own status page (status.twitch.com) with its components, active incidents and maintenance. The board now has twenty-one services.
+- A card for **Twitch** (under Platforms), read from Twitch's own status page (status.twitch.com) with its components, active incidents and maintenance.
+- A card for **Cloudflare** (under Cloud), read from Cloudflare's own status page (cloudflarestatus.com) with its products and data centers, active incidents and maintenance. The card follows Cloudflare's overall status: a data center that is re-routed or in maintenance is listed first on the card but does not change its state on its own. The board now has twenty-two services.
 
 ## [0.7.2] - 2026-10-11
 

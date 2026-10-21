@@ -14,9 +14,9 @@ const manifest = JSON.parse(readFileSync(new URL("../../../public/manifest.webma
 
 describe("site meta", () => {
   it("describes the site in the owner's voice, counting the rest from the catalog", () => {
-    expect(CATALOG).toHaveLength(21);
+    expect(CATALOG).toHaveLength(22);
     expect(SITE_DESCRIPTION).toBe(
-      "Is it them or is it me? Google Cloud, AWS, Steam, ChatGPT, Claude and sixteen more, read from their own status pages.",
+      "Is it them or is it me? Google Cloud, AWS, Steam, ChatGPT, Claude and seventeen more, read from their own status pages.",
     );
   });
 
@@ -32,7 +32,7 @@ describe("the web app manifest", () => {
   it("carries the same name and a short description", () => {
     expect(manifest.name).toBe(APP_NAME);
     expect(manifest.short_name).toBe(APP_NAME);
-    expect(manifest.description).toBe("Twenty-one status pages on one page.");
+    expect(manifest.description).toBe("Twenty-two status pages on one page.");
   });
 
   it("uses the dark pair, which is what a launch screen shows before the page paints", () => {
