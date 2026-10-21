@@ -167,6 +167,55 @@ describe("createTtlCache", () => {
     await vi.waitFor(async () => expect(await cache.get({ allowStale: true })).toBe("later"));
   });
 
+  it("registers every load, cold, stale and forced, so a Worker can keep it alive after the response", async () => {
+    const onBackgroundRefresh = vi.fn();
+    const cache = createTtlCache(counter(), 45_000, { onBackgroundRefresh });
+
+    await cache.get();
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(60_000);
+    await cache.get({ allowStale: true });
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(2);
+    await onBackgroundRefresh.mock.calls[1][0];
+    await cache.get({ force: true });
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(3);
+    // A caller that joins a load in flight registers nothing new.
+    vi.setSystemTime(120_000);
+    await Promise.all([cache.get({ allowStale: true }), cache.get({ allowStale: true })]);
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(4);
+  });
+
+  it("hands the Worker a load that never rejects, even when the load fails", async () => {
+    const onBackgroundRefresh = vi.fn();
+    const cache = createTtlCache(vi.fn().mockRejectedValue(new Error("vendor down")), 45_000, { onBackgroundRefresh });
+
+    await expect(cache.get()).rejects.toThrow("vendor down");
+    await expect(onBackgroundRefresh.mock.calls[0][0]).resolves.toBeUndefined();
+  });
+
+  it("registers a background refresh and keeps serving the old value until it lands", async () => {
+    let resolve!: (value: string) => void;
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce("old")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>((done) => {
+            resolve = done;
+          }),
+      );
+    const onBackgroundRefresh = vi.fn();
+    const cache = createTtlCache(load, 45_000, { onBackgroundRefresh });
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+    await expect(cache.get({ allowStale: true })).resolves.toBe("old");
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(2);
+    resolve("new");
+    await onBackgroundRefresh.mock.calls[1][0];
+    await expect(cache.get()).resolves.toBe("new");
+  });
+
   it("tells the load why it runs: cold, stale or forced", async () => {
     const load = vi.fn(async (_trigger: string) => "board");
     const cache = createTtlCache(load, 45_000);

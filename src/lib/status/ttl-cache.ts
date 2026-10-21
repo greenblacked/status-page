@@ -6,7 +6,8 @@ type TtlCacheOptions = {
   // instead of starting another one, so a scripted Refresh button cannot turn
   // into one vendor sweep per click.
   minForceIntervalMs?: number;
-  // Keep a background refresh alive after a Worker response is sent.
+  // Keep every load alive after the Worker response that began it is sent.
+  // It is handed a promise that never rejects.
   onBackgroundRefresh?: (promise: Promise<unknown>) => void;
 };
 
@@ -37,16 +38,21 @@ export function createTtlCache<T>(
   function refresh(trigger: LoadTrigger): Promise<T> {
     if (inflight) return inflight;
 
-    inflight = load(trigger)
+    const current = load(trigger)
       .then((value) => {
         cached = { at: Date.now(), value };
         return value;
       })
       .finally(() => {
-        inflight = null;
+        if (inflight === current) inflight = null;
       });
-
-    return inflight;
+    inflight = current;
+    // Every load, the cold and the forced ones too, outlives the response that
+    // began it: a caller that joins it later must not find it cancelled. The
+    // handler also keeps a load nobody awaits from being an unhandled rejection.
+    const kept = current.catch(() => {});
+    onBackgroundRefresh?.(kept);
+    return current;
   }
 
   async function get({ force = false, allowStale = false, waitForFreshMs = 0 }: GetOptions = {}): Promise<T> {
@@ -60,8 +66,6 @@ export function createTtlCache<T>(
     // A failed background refresh keeps the old value; the next caller past
     // the TTL starts another.
     const next = refresh("stale");
-    const background = next.catch(() => {});
-    onBackgroundRefresh?.(background);
     if (allowStale || waitForFreshMs <= 0) return stale;
     return new Promise<T>((resolve) => {
       const timer = setTimeout(() => resolve(stale), waitForFreshMs);
