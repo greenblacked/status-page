@@ -774,3 +774,43 @@ describe("fetchText conditional requests", () => {
     expect((error as SourceError).message).toBe("304 Not Modified from status.example.com without a cached body");
   });
 });
+
+describe("fetchText binary decoding", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const answerBytes = (...bytes: number[][]) => {
+    const body = new Uint8Array(bytes.flat());
+    stubFetch(() => new Response(body));
+  };
+  const utf16le = (text: string) => [...text].flatMap((char) => [char.charCodeAt(0) & 0xff, char.charCodeAt(0) >> 8]);
+  const utf16be = (text: string) => [...text].flatMap((char) => [char.charCodeAt(0) >> 8, char.charCodeAt(0) & 0xff]);
+  const utf8 = (text: string) => [...new TextEncoder().encode(text)];
+
+  it("reads a body without a BOM as UTF-8", async () => {
+    answerBytes(utf8("[]"));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual([]);
+    answerBytes(utf8('{"name":"Zürich"}'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual({ name: "Zürich" });
+  });
+
+  it("still reads UTF-16LE without a BOM", async () => {
+    answerBytes(utf16le('[{"a":1}]'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual([{ a: 1 }]);
+  });
+
+  it("reads either UTF-16 byte order from its BOM", async () => {
+    answerBytes([0xff, 0xfe], utf16le('{"a":"é"}'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual({ a: "é" });
+    answerBytes([0xfe, 0xff], utf16be('{"a":"é"}'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual({ a: "é" });
+  });
+
+  it("reads an empty or one-byte body as UTF-8", async () => {
+    answerBytes([]);
+    expect((await fetchText("https://status.example.com/a", { binary: true })).body).toBe("");
+    answerBytes(utf8("7"));
+    expect((await fetchText("https://status.example.com/a", { binary: true })).body).toBe("7");
+  });
+});

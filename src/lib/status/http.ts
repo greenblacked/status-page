@@ -264,12 +264,22 @@ async function fetchVendor(url: string, init: RequestInit, gate?: Gate): Promise
 
 type FetchTextResult = { body: string; bytes: ArrayBuffer; contentType: string; contentRange: string; status: number };
 
+/**
+ * The body as text. Without `binary` it is UTF-8. With it the encoding is
+ * read from the bytes, for a vendor (AWS) that has served UTF-16 and may
+ * serve UTF-8: a UTF-16 BOM names its byte order; without one, a zero second
+ * byte under a non-zero first is the ASCII of UTF-16LE (a JSON body starts
+ * with `[` or `{`), and anything else is UTF-8. A UTF-16BE body without a BOM
+ * starts with a zero byte and would be misread as UTF-8; AWS has not been
+ * seen to send one.
+ */
 function decode(bytes: ArrayBuffer, binary: boolean | undefined): string {
   if (!binary) return new TextDecoder("utf-8").decode(bytes);
-  const bom = new Uint8Array(bytes.slice(0, 2));
-  if (bom[0] === 0xfe && bom[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes.slice(2));
-  if (bom[0] === 0xff && bom[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes.slice(2));
-  return new TextDecoder("utf-16le").decode(bytes);
+  const head = new Uint8Array(bytes, 0, Math.min(2, bytes.byteLength));
+  if (head[0] === 0xfe && head[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes.slice(2));
+  if (head[0] === 0xff && head[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes.slice(2));
+  if (bytes.byteLength >= 2 && head[0] !== 0 && head[1] === 0) return new TextDecoder("utf-16le").decode(bytes);
+  return new TextDecoder("utf-8").decode(bytes);
 }
 
 // Keeps the validators of a full 200 body, when the vendor sent any, so the
