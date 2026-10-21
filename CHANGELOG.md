@@ -6,6 +6,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-21
+
 ### Security
 
 - The build and development tooling (Wrangler, the Cloudflare Vite plugin and the Workers types) is updated, which moves its image library `sharp` to 0.35.5 for the published security advisory GHSA-wq5f-xc86-pv6w. The running board, the Worker and the Docker image do not use that library, so nothing changes on the board.
@@ -273,7 +275,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/greenblacked/status-page/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/greenblacked/status-page/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/greenblacked/status-page/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/greenblacked/status-page/compare/v0.7.0...v0.7.1
