@@ -6,6 +6,8 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-21
+
 ### Added
 
 - A card for **Twitch** (under Platforms), read from Twitch's own status page (status.twitch.com) with its components, active incidents and maintenance.
@@ -267,7 +269,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/greenblacked/status-page/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/greenblacked/status-page/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/greenblacked/status-page/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/greenblacked/status-page/compare/v0.6.0...v0.7.0
