@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FRESH_WAIT_MS } from "./schedule";
 import type { BoardSnapshot } from "./types";
 
 const collectBoard = vi.hoisted(() => vi.fn());
@@ -37,6 +38,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("the board cache", () => {
@@ -99,7 +101,7 @@ describe("the board cache", () => {
     expect(collectBoard).toHaveBeenCalledTimes(1);
   });
 
-  it("serves a recently expired board to routes and the loader while one shared sweep runs, but not to the refetch", async () => {
+  it("serves an expired board of any age to routes and the loader while one shared sweep runs", async () => {
     const { cache, functions } = await load();
     const first = await cache.getStatusBoard();
 
@@ -107,17 +109,69 @@ describe("the board cache", () => {
     let finish: (value: BoardSnapshot) => void = () => {};
     collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
 
-    // Past the TTL (45 s), inside the stale window.
-    vi.advanceTimersByTime(50_000);
+    // Hours past the TTL (45 s): an idle isolate still answers at once.
+    vi.advanceTimersByTime(3 * 60 * 60_000);
     expect(await cache.getStatusBoard()).toEqual(first);
     expect(await functions.loadStatusBoardForPage()).toEqual(first);
     expect(collectBoard).toHaveBeenCalledTimes(2);
 
-    // The refetch wants a fresh board, so it waits for that same sweep.
+    // The refetch prefers a fresh board, so it waits a little for that same sweep.
     const refetch = functions.fetchStatusBoard();
     const second = board(99);
     finish(second);
     expect(await refetch).toEqual(second);
     expect(collectBoard).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes the refetch wait no longer than FRESH_WAIT_MS for a slow sweep", async () => {
+    const { cache, functions } = await load();
+    const first = await cache.getStatusBoard();
+    let finish: (value: BoardSnapshot) => void = () => {};
+    collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
+    vi.advanceTimersByTime(60_000);
+
+    let answered: BoardSnapshot | undefined;
+    const refetch = functions.fetchStatusBoard().then((value) => {
+      answered = value;
+      return value;
+    });
+    await vi.advanceTimersByTimeAsync(FRESH_WAIT_MS - 1);
+    expect(answered).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await refetch).toEqual(first);
+
+    // The sweep lands behind it and the next reader has it.
+    const second = board(99);
+    finish(second);
+    await vi.waitFor(async () => expect(await cache.getStatusBoard()).toEqual(second));
+    expect(collectBoard).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes the readiness probe wait for a slow sweep past FRESH_WAIT_MS", async () => {
+    const { cache } = await load();
+    await cache.getStatusBoard();
+    let finish: (value: BoardSnapshot) => void = () => {};
+    collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
+    vi.advanceTimersByTime(60_000);
+
+    const probe = cache.getStatusBoardForProbe();
+    await vi.advanceTimersByTimeAsync(FRESH_WAIT_MS + 5_000);
+    const second = board(99);
+    finish(second);
+    expect(await probe).toEqual(second);
+  });
+
+  it("logs one line per sweep, with why it ran", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { cache, functions } = await load();
+    await cache.getStatusBoard();
+    vi.advanceTimersByTime(20_000);
+    await functions.refreshStatusBoard();
+
+    const lines = log.mock.calls.map(([line]) => JSON.parse(String(line)));
+    expect(lines).toEqual([
+      { event: "board_collected", trigger: "cold", durationMs: 1, services: 0, unknown: 0 },
+      { event: "board_collected", trigger: "force", durationMs: 2, services: 0, unknown: 0 },
+    ]);
   });
 });

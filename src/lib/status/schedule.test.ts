@@ -3,6 +3,7 @@ import { describe, it } from "vitest";
 import {
   CACHE_TTL_MS,
   everyInterval,
+  FRESH_WAIT_MS,
   formatAge,
   formatCountdown,
   formatDuration,
@@ -18,6 +19,7 @@ import {
   nextPulseAt,
   nextRefetchAt,
   noteSnapshot,
+  PROBE_WAIT_MS,
   PULSE_INTERVAL_MS,
   parseTimestamp,
   periodPhase,
@@ -299,6 +301,15 @@ describe("footer cadence copy", () => {
   it("reads today's constants as the copy the footer used to hard-code", () => {
     assert.equal(everyInterval(PULSE_INTERVAL_MS), "every two minutes");
     assert.equal(spokenDuration(CACHE_TTL_MS), "45 seconds");
+  });
+});
+
+describe("board cache waits", () => {
+  it("lets the refetch wait only briefly for a refresh, the probe longer, both well inside a slot", () => {
+    assert.equal(FRESH_WAIT_MS, 3_000);
+    assert.equal(PROBE_WAIT_MS, 20_000);
+    assert.ok(FRESH_WAIT_MS < PROBE_WAIT_MS);
+    assert.ok(PROBE_WAIT_MS < REFETCH_JITTER_MIN_MS + PULSE_INTERVAL_MS);
   });
 });
 

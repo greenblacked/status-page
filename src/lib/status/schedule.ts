@@ -1,8 +1,13 @@
 export const CACHE_TTL_MS = 45_000;
-// A page load may be served a snapshot up to this long past the TTL while a
-// fresh one is collected behind it, so the first visitor after a quiet spell
-// does not wait on the slowest vendor. The board then refetches at once.
-export const CACHE_MAX_STALE_MS = 75_000;
+// A snapshot past the TTL is still served at once while a fresh one is
+// collected behind it, however old it is, so no visitor waits on the slowest
+// vendor while any snapshot exists. The board's scheduled refetch is the one
+// caller that prefers a fresh board: it waits this long for a refresh that is
+// running (or that it starts), then takes the snapshot in hand.
+export const FRESH_WAIT_MS = 3_000;
+// The readiness probe waits this long for a refresh of a stale snapshot, so
+// it reports on a current board rather than the one an idle isolate held.
+export const PROBE_WAIT_MS = 20_000;
 // Refresh inside this window reuses the last snapshot instead of sweeping
 // every vendor again.
 export const MIN_FORCED_REFRESH_MS = 15_000;
