@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { AttentionCard } from "@/components/status/attention-card";
 import { ReleaseRow } from "@/components/status/release-row";
 import type { ServiceCardProps } from "@/components/status/service-card-shared";
@@ -16,10 +17,13 @@ export type { ServiceCardProps } from "@/components/status/service-card-shared";
  *
  * A card that moves between shapes is a new node (it changes sections too),
  * so its place is looked up by id, never by position.
+ *
+ * Memoised: its props are plain values and the service, which keeps its identity across refetches that did not
+ * change it (React Query's structural sharing), so a keystroke or a refetch renders only the cards that changed.
  */
-export function ServiceCard(props: ServiceCardProps) {
+export const ServiceCard = memo(function ServiceCard(props: ServiceCardProps) {
   const { health, category } = props.service;
   if (health === "outage" || health === "degraded" || health === "maintenance") return <AttentionCard {...props} />;
   if (health === "operational" && category === "updates") return <ReleaseRow {...props} />;
   return <ServiceRow {...props} />;
-}
+});

@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AlertsButton, FilterBar, RefreshButton, SearchField, WhileBarUp } from "@/components/status/board-controls";
 import { BoardSections } from "@/components/status/board-sections";
@@ -46,7 +46,8 @@ const ANNOUNCE_DELAY_MS = 700;
 // not turned up by now is not coming.
 const REVEAL_TIMEOUT_MS = 1_000;
 
-export function BoardView({
+// Memoised: the route renders again when the address follows a filter change, with the same props.
+export const BoardView = memo(function BoardView({
   initial,
   initialFilters,
   onFiltersChange,
@@ -250,8 +251,9 @@ export function BoardView({
 
   // "Issues" are what needs a look; a source that could not be read is not one (see matchesFilters).
   const issueCount = board.services.length - board.counts.operational - board.counts.unknown;
-  // Starring moves a card, so it glides there like a refresh does.
-  const onToggleStar = (id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id));
+  // Starring moves a card, so it glides there like a refresh does. One function for the page's life, so the cards,
+  // which are memoised, are not rendered again for a new one.
+  const onToggleStar = useCallback((id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id)), [toggleStar]);
   const groups = groupServices(visible);
   // The board's most urgent service, from the whole board rather than the
   // filtered view (starred services first among equals, as on the cards).
@@ -527,4 +529,4 @@ export function BoardView({
       </div>
     </div>
   );
-}
+});

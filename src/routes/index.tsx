@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { BoardHistoryProvider } from "@/components/status/board-history-provider";
 import { BoardView } from "@/components/status/board-view";
 import { loadStatusBoardForPage } from "@/lib/status/board";
@@ -17,6 +17,9 @@ function Home() {
   const board = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
+  // Read once: the board owns its filters from here on and the URL follows them, so a search that changes the
+  // address must not hand the board a new (equal) object that renders the whole of it again.
+  const [initialFilters] = useState(() => filtersFromSearch(search));
   // Replace, not push: typing a search should not fill the Back button, and
   // keeping the scroll position means a filter change does not jump the page.
   const onFiltersChange = useCallback(
@@ -25,7 +28,7 @@ function Home() {
   );
   return (
     <BoardHistoryProvider>
-      <BoardView initial={board} initialFilters={filtersFromSearch(search)} onFiltersChange={onFiltersChange} />
+      <BoardView initial={board} initialFilters={initialFilters} onFiltersChange={onFiltersChange} />
     </BoardHistoryProvider>
   );
 }
