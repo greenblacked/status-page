@@ -9,13 +9,14 @@ import { METRICS_CONTENT_TYPE, prometheusMetrics } from "@/lib/status/metrics";
 export const Route = createFileRoute("/metrics")({
   server: {
     handlers: {
-      GET: () =>
+      GET: ({ request }) =>
         respondWithBoard(
           getStatusBoard,
           (board) =>
             new Response(prometheusMetrics(board), {
               headers: { ...PUBLIC_HEADERS, "Content-Type": METRICS_CONTENT_TYPE },
             }),
+          request,
         ),
     },
   },

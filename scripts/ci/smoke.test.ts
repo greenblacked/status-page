@@ -155,3 +155,41 @@ describe("smoke.sh method checks", () => {
     expect(output).toContain("POST /api/status.json: 405 without an Allow header");
   }, 30_000);
 });
+
+/** Serves /api/status.json with `etag` (none when empty), answering a matching If-None-Match with 304 if `honour`. */
+async function serveValidator(etag: string, honour: boolean): Promise<string> {
+  server = createServer((req, res) => {
+    if (req.url !== "/api/status.json") {
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("ok\n");
+      return;
+    }
+    const headers: Record<string, string> = { "content-type": "application/json", ...(etag ? { etag } : {}) };
+    if (honour && etag && req.headers["if-none-match"] === etag) {
+      res.writeHead(304, headers);
+      res.end();
+      return;
+    }
+    res.writeHead(200, headers);
+    res.end("{}");
+  });
+  await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+describe("smoke.sh validator check", () => {
+  it("takes an ETag that a repeat turns into 304", async () => {
+    const output = await smoke(await serveValidator('W/"0123456789abcdef"', true));
+    expect(output).not.toContain("no ETag header");
+    expect(output).not.toContain("with If-None-Match");
+  }, 30_000);
+
+  it("fails an answer without an ETag", async () => {
+    expect(await smoke(await serveValidator("", true))).toContain("/api/status.json: no ETag header");
+  }, 30_000);
+
+  it("fails a server that ignores If-None-Match", async () => {
+    const output = await smoke(await serveValidator('W/"0123456789abcdef"', false));
+    expect(output).toContain('/api/status.json with If-None-Match: W/"0123456789abcdef": 200, expected 304');
+  }, 30_000);
+});

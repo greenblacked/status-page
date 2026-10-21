@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { board, service } from "../../test/fixtures.ts";
-import { atomFeed, publicStatus, shieldsBadge } from "./integrations";
+import { atomFeed, PUBLIC_HEADERS, publicStatus, shieldsBadge } from "./integrations";
 import type { ServiceSnapshot } from "./types";
 
 // Badges and feed titles read the display name, so Google Cloud carries its
 // real one; every other card keeps the fixture's id-as-name default.
 const gcp = (overrides: Partial<ServiceSnapshot>) => service("gcp", { name: "Google Cloud", ...overrides });
+
+describe("PUBLIC_HEADERS", () => {
+  it("lets any origin read the endpoints and caches them for a minute before revalidating", () => {
+    expect(PUBLIC_HEADERS).toEqual({
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=60, stale-while-revalidate=60",
+    });
+  });
+});
 
 describe("publicStatus", () => {
   it("publishes health, headline and incidents, but not collector internals", () => {

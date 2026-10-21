@@ -8,9 +8,11 @@ import { PUBLIC_HEADERS, shieldsBadge } from "@/lib/status/integrations";
 export const Route = createFileRoute("/api/badge/$service")({
   server: {
     handlers: {
-      GET: ({ params }) =>
-        respondWithBoard(getStatusBoard, (board) =>
-          Response.json(shieldsBadge(board, params.service), { headers: PUBLIC_HEADERS }),
+      GET: ({ params, request }) =>
+        respondWithBoard(
+          getStatusBoard,
+          (board) => Response.json(shieldsBadge(board, params.service), { headers: PUBLIC_HEADERS }),
+          request,
         ),
     },
   },

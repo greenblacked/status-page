@@ -8,6 +8,7 @@ import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { methodGuard } from "../lib/request-methods.ts";
 import { DEFAULT_HSTS, securityHeaders } from "../lib/security-headers.ts";
+import { withValidator } from "../lib/status/conditional.ts";
 import { createNodeServer, DEFAULT_NODE_HSTS, hstsFromEnv } from "./server.ts";
 import { IMMUTABLE_CACHE_CONTROL, indexStaticFiles, MIN_COMPRESS_BYTES, SHORT_CACHE_CONTROL } from "./static.ts";
 
@@ -41,6 +42,8 @@ beforeAll(async () => {
         body: request.body ? await request.text() : "",
       });
       if (pathname === "/guarded") return methodGuard(request, "router") ?? new Response("read");
+      if (pathname === "/validated")
+        return withValidator(request, new Response(page, { headers: { "Content-Type": "application/json" } }));
       if (pathname === "/healthz") return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });
       if (pathname === "/throw") throw new Error("boom");
       if (pathname === "/app-hsts")
@@ -239,6 +242,20 @@ describe("the app handler", () => {
     expect(preflight.response.status).toBe(204);
     expect(preflight.bytes.length).toBe(0);
     expect((await get("/guarded")).bytes.toString()).toBe("read");
+  });
+
+  it("passes the app's 304 through with its ETag and no body, compressed or not", async () => {
+    const first = await get("/validated", { "Accept-Encoding": "gzip" });
+    const etag = first.response.headers.get("etag") ?? "";
+    expect(etag).toMatch(/^W\/"/);
+    expect(first.response.headers.get("content-encoding")).toBe("gzip");
+    for (const encoding of ["gzip", "identity"]) {
+      const { response, bytes } = await get("/validated", { "Accept-Encoding": encoding, "If-None-Match": etag });
+      expect(response.status, encoding).toBe(304);
+      expect(response.headers.get("etag"), encoding).toBe(etag);
+      expect(response.headers.has("content-encoding"), encoding).toBe(false);
+      expect(bytes.length, encoding).toBe(0);
+    }
   });
 
   it("adds the security headers to its responses and keeps ones it set itself", async () => {

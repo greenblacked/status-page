@@ -1,3 +1,4 @@
+import { withValidator } from "./conditional.ts";
 import type { BoardSnapshot } from "./types.ts";
 
 /**
@@ -14,10 +15,14 @@ export const BOARD_RETRY_AFTER_SECONDS = 60;
  * readers, Shields.io and scrapers that it is temporary and when to come
  * back. Takes the loader as an argument, so it is the same on both builds
  * and needs no server to test.
+ *
+ * Given the request, the board's answer carries an ETag and a repeat that
+ * sends it back gets 304 (conditional.ts); the 503 never does.
  */
 export async function respondWithBoard(
   load: () => Promise<BoardSnapshot>,
   respond: (board: BoardSnapshot) => Response,
+  request?: Request,
 ): Promise<Response> {
   let board: BoardSnapshot;
   try {
@@ -38,5 +43,6 @@ export async function respondWithBoard(
       },
     );
   }
-  return respond(board);
+  const response = respond(board);
+  return request ? withValidator(request, response) : response;
 }

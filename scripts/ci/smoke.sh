@@ -9,7 +9,8 @@
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4181 --require-asset-cache
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
-# (22 services, a CORS preflight answered with 204, a POST refused with 405),
+# (22 services, an ETag that a repeat turns into 304, a CORS preflight
+# answered with 204, a POST refused with 405),
 # the Atom feed, /metrics and /readyz. /readyz may answer 503
 # unless --require-ready: CI and sandboxes cannot always reach the vendors,
 # and an all-Unknown board is a correct answer there, not a broken build.
@@ -211,6 +212,17 @@ run_checks() {
     fail "/api/status.json: $status, expected 200"
   elif ! jq -e --argjson n "$SERVICES" '(.services | length) == $n and (.generatedAt | type) == "string"' "$work/body" >/dev/null 2>&1; then
     fail "/api/status.json: not JSON with $SERVICES services and a generatedAt"
+  fi
+
+  # The board's answers carry a validator, and a client that sends it back
+  # gets an empty 304 while the board is unchanged.
+  etag="$(header ETag)"
+  if [ "$status" = 200 ] && [ -z "$etag" ]; then
+    fail "/api/status.json: no ETag header"
+  elif [ "$status" = 200 ]; then
+    get /api/status.json --header "If-None-Match: $etag"
+    check_version "/api/status.json (If-None-Match)"
+    [ "$status" = 304 ] || fail "/api/status.json with If-None-Match: $etag: $status, expected 304"
   fi
 
   # Every endpoint is read-only: a preflight from another site is answered
