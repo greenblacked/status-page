@@ -10,8 +10,8 @@
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
 # (22 services, an ETag that a repeat turns into 304, a CORS preflight
-# answered with 204, a POST refused with 405),
-# the Atom feed, /metrics and /readyz. /readyz may answer 503
+# answered with 204, a POST refused with 405), the Atom feed, /metrics, a
+# static file's nosniff header and /readyz. /readyz may answer 503
 # unless --require-ready: CI and sandboxes cannot always reach the vendors,
 # and an all-Unknown board is a correct answer there, not a broken build.
 #
@@ -262,6 +262,16 @@ run_checks() {
   get /metrics
   check_version /metrics
   [ "$status" = 200 ] || fail "/metrics: $status, expected 200"
+
+  # A static file carries the security headers too (on Cloudflare from
+  # public/_headers). No version check: Cloudflare serves it without
+  # invoking the Worker.
+  get /favicon.svg
+  if [ "$status" != 200 ]; then
+    fail "/favicon.svg: $status, expected 200"
+  elif [ "$(header X-Content-Type-Options)" != nosniff ]; then
+    fail "/favicon.svg: X-Content-Type-Options \"$(header X-Content-Type-Options)\", expected nosniff"
+  fi
 
   if [ "$require_asset_cache" = true ]; then check_asset_cache; fi
 

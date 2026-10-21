@@ -193,3 +193,31 @@ describe("smoke.sh validator check", () => {
     expect(output).toContain('/api/status.json with If-None-Match: W/"0123456789abcdef": 200, expected 304');
   }, 30_000);
 });
+
+/** Serves /favicon.svg with `nosniff` as its X-Content-Type-Options (none when empty), and a bare 200 elsewhere. */
+async function serveStatic(nosniff: string): Promise<string> {
+  server = createServer((req, res) => {
+    if (req.url === "/favicon.svg") {
+      res.writeHead(200, {
+        "content-type": "image/svg+xml",
+        ...(nosniff ? { "x-content-type-options": nosniff } : {}),
+      });
+      res.end("<svg/>");
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("ok\n");
+  });
+  await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+describe("smoke.sh static file check", () => {
+  it("takes a static file with nosniff", async () => {
+    expect(await smoke(await serveStatic("nosniff"))).not.toContain("/favicon.svg:");
+  }, 30_000);
+
+  it("fails a static file without it", async () => {
+    expect(await smoke(await serveStatic(""))).toContain('/favicon.svg: X-Content-Type-Options "", expected nosniff');
+  }, 30_000);
+});
