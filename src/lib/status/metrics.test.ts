@@ -43,10 +43,28 @@ describe("prometheusMetrics", () => {
     expect(lines).toContain("statusbar_snapshot_duration_seconds 1.5");
   });
 
+  it("exports how long before the snapshot each source was read, in whole seconds", () => {
+    const aged = prometheusMetrics(
+      board(
+        [
+          service("gcp", { checkedAt: "2026-09-24T23:58:29.700Z" }),
+          service("aws", { checkedAt: "2026-09-25T00:00:00.000Z" }),
+          // A clock a little ahead of the snapshot's never reads as a negative age.
+          service("azure", { checkedAt: "2026-09-25T00:00:02.000Z" }),
+        ],
+        { generatedAt: "2026-09-25T00:00:00.000Z" },
+      ),
+    ).split("\n");
+    expect(aged).toContain('statusbar_service_check_age_seconds{service="gcp",category="cloud"} 90');
+    expect(aged).toContain('statusbar_service_check_age_seconds{service="aws",category="cloud"} 0');
+    expect(aged).toContain('statusbar_service_check_age_seconds{service="azure",category="cloud"} 0');
+    expect(aged).toContain("# TYPE statusbar_service_check_age_seconds gauge");
+  });
+
   it("declares every family once and ends with a newline", () => {
     const types = lines.filter((line) => line.startsWith("# TYPE"));
-    expect(types).toHaveLength(7);
-    expect(new Set(types).size).toBe(7);
+    expect(types).toHaveLength(8);
+    expect(new Set(types).size).toBe(8);
     expect(types.every((line) => line.endsWith(" gauge"))).toBe(true);
     expect(text.endsWith("\n")).toBe(true);
     expect(text.endsWith("\n\n")).toBe(false);
