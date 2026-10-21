@@ -1808,6 +1808,28 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       },
     );
 
+    it.each([
+      ["no indicator", { status: {} }],
+      ["a null indicator", { status: { indicator: null } }],
+      ["a numeric indicator", { status: { indicator: 0 } }],
+      ["an object indicator", { status: { indicator: {} } }],
+    ])(
+      "every Statuspage card: a summary whose status has %s is unknown with a parser failure, not operational",
+      async (_label, body) => {
+        const ids = ["github", "confluence", "twitch", "cloudflare", "spotify", "chatgpt", "claude"] as const;
+        stubFetch({
+          ...Object.fromEntries(ids.map((id) => [URLS[id], json(body)])),
+          [URLS.epicFortnite]: json(body),
+        });
+        const services = await collectAllServices();
+        for (const id of [...ids, "epic", "fortnite"] as const) {
+          const snapshot = services.find((s) => s.id === id)!;
+          expect(snapshot.health, id).toBe("unknown");
+          expect(snapshot.failure, id).toEqual({ kind: "parser", message: "Statuspage summary has no status." });
+        }
+      },
+    );
+
     it("GitLab: a JSON body that is not a Status.io status is unknown with a parser failure", async () => {
       stubFetch({ [URLS.gitlab]: json(JSON.parse(fixture("gitlab/status-malformed.json"))) });
       const gitlab = await collect("gitlab");

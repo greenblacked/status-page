@@ -488,12 +488,14 @@ function fromStatuspage(
   componentFilter?: (name: string, groupName?: string) => boolean,
   isLocalComponent?: (name: string) => boolean,
 ): ServiceSnapshot {
-  // A summary always carries `status`. A body without it is not a summary
-  // (a rate-limit or maintenance notice that happens to be JSON), and reading
-  // it as "none" would be an all-clear built on no data.
-  if (typeof data?.status !== "object" || data.status === null) {
+  // A summary always carries `status.indicator`. A body without it is not a
+  // summary (a rate-limit or maintenance notice that happens to be JSON, or a
+  // `status` with no indicator), and reading it as "none" would be an
+  // all-clear built on no data.
+  if (typeof data?.status !== "object" || data.status === null || typeof data.status.indicator !== "string") {
     throw new PayloadError("Statuspage summary has no status.");
   }
+  const indicator = data.status.indicator;
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
@@ -531,10 +533,10 @@ function fromStatuspage(
   // still counts.
   let health = componentFilter
     ? matched.reduce((acc, component) => worseHealth(acc, component.health), "operational" as Health)
-    : statuspageIndicator(data.status?.indicator);
+    : statuspageIndicator(indicator);
 
   if (componentFilter && matched.length === 0) {
-    health = statuspageIndicator(data.status?.indicator);
+    health = statuspageIndicator(indicator);
   }
 
   // Which of the shared page's cards an incident or maintenance belongs to.
