@@ -5619,6 +5619,17 @@ async function fallbackFaceFound(page: Page): Promise<boolean> {
   });
 }
 
+/**
+ * Skips the test on a machine with no font for the fallback faces, but fails it in CI, whose runner has them
+ * (`playwright install-deps` brings Liberation): a skip there would quietly drop the tests of the fallback that the
+ * visitors without Inter see.
+ */
+async function requireFallbackFace(page: Page): Promise<void> {
+  const found = await fallbackFaceFound(page);
+  if (process.env.CI) expect(found, NO_FALLBACK_FONT).toBe(true);
+  else test.skip(!found, NO_FALLBACK_FONT);
+}
+
 /** Whether a platform font family from drawnFonts is the self-hosted Inter (its file's own name is "Inter Variable"). */
 const isInter = (family: string) => family.startsWith("Inter");
 
@@ -5703,7 +5714,7 @@ for (const [name, makeBoard, ready] of FONT_BOARDS) {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(cards(page)).toHaveCount(SERVICES);
     await hydrated(page);
-    test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
+    await requireFallbackFace(page);
     await pressRefresh(page, page.getByRole("button", { name: "Refresh status now" }).first());
     await expect(page.locator(`#service-${ready.id}`).getByText(ready.label, { exact: true }).first()).toBeVisible();
     // Not vacuous: Inter is still on its way, long past the page's first render, and the board is drawn without it.
@@ -5809,7 +5820,7 @@ for (const width of [1024, 1440]) {
       /** Pins the face: Inter drawn (declared again, as block, so that it is used whenever it arrives) or never. */
       const pinFace = async () => {
         if (face === "fallback") {
-          test.skip(!(await fallbackFaceFound(page)), NO_FALLBACK_FONT);
+          await requireFallbackFace(page);
           expect(await interStatus(page), "Inter never arrives").toBe("error");
           return;
         }
