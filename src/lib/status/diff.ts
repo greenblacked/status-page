@@ -31,7 +31,7 @@ export function overallHealth(board: BoardSnapshot): Health {
  * recovery, not a release. (A changed fingerprint with no nameable version
  * yields "" too: the caller treats that as no release.)
  */
-export function releaseChange(before: ServiceSnapshot, after: ServiceSnapshot): string {
+export function releaseChange(before: Pick<ServiceSnapshot, "meta">, after: Pick<ServiceSnapshot, "meta">): string {
   const previousVersions = versionFingerprint(before.meta);
   const nextVersions = versionFingerprint(after.meta);
   if (!previousVersions || !nextVersions || previousVersions === nextVersions) return "";
@@ -63,7 +63,10 @@ function isFingerprintMigration(before: Record<string, string>, after: Record<st
   );
 }
 
-export function diffBoards(previous: BoardSnapshot, next: BoardSnapshot): PulseChange[] {
+/** What diffBoards reads of the earlier board: each service's id, health and versions (all a saved board keeps). */
+export type DiffBase = { services: ReadonlyArray<Pick<ServiceSnapshot, "id" | "health" | "meta">> };
+
+export function diffBoards(previous: DiffBase, next: BoardSnapshot): PulseChange[] {
   const previousById = new Map(previous.services.map((service) => [service.id, service]));
   const changes: PulseChange[] = [];
   for (const service of next.services) {

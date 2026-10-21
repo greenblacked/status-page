@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it, vi } from "vitest";
 import { board, service } from "../../test/fixtures.ts";
-import { emptyPulseStore, loadPulseStore, type Pulse, parsePulseStore, syncPulse } from "./pulse.ts";
+import { diffBoards } from "./diff.ts";
+import { emptyPulseStore, loadPulseStore, type Pulse, parsePulseStore, slimBoard, syncPulse } from "./pulse.ts";
 import type { BoardSnapshot, Health } from "./types.ts";
 
 function snapshot(at: string, health: Health): BoardSnapshot {
@@ -28,7 +29,8 @@ describe("syncPulse", () => {
     assert.equal(opened.pulses[0]?.changes.length, 0);
 
     const sameSlot = syncPulse(first, noon + 30_000, opened);
-    assert.equal(sameSlot.lastBoard, first);
+    assert.equal(sameSlot, opened);
+    assert.deepEqual(sameSlot.lastBoard, slimBoard(first));
     assert.equal(sameSlot.pulses.length, 1);
 
     const later = snapshot("2026-09-22T12:02:10.000Z", "degraded");
@@ -78,6 +80,107 @@ describe("syncPulse", () => {
     const dipped = syncPulse(tracker("7.24.5", "unknown"), noon + 40_000, released);
     assert.equal(dipped.pulses[0]?.changes[0]?.release, true);
     assert.equal(dipped.pulses[0]?.changes[0]?.to, "unknown");
+  });
+});
+
+describe("the saved last board", () => {
+  const noon = Date.parse("2026-09-22T12:00:00.000Z");
+  const at = "2026-09-22T12:00:00.000Z";
+  const full = (health: Health, version: string, summary = "clear"): BoardSnapshot =>
+    board(
+      [
+        service("aws", {
+          name: "Amazon Web Services",
+          health,
+          summary,
+          components: [{ name: "EC2", health, detail: "us-east-1" }],
+          incidents: [{ id: "aws-1", title: "Error rates", health, startedAt: at }],
+          upcomingMaintenance: [{ id: "m-1", title: "Planned", scheduledFor: at }],
+          componentCount: 300,
+          latencyMs: 412,
+        }),
+        service("mikrotik", {
+          name: "MikroTik RouterOS",
+          category: "updates",
+          summary: `Latest RouterOS ${version}`,
+          meta: { latest: version, versions: `RouterOS 7 stable=${version}`, url: "https://mikrotik.com/download" },
+        }),
+      ],
+      { generatedAt: at, durationMs: 950 },
+    );
+
+  it("keeps only what the next diff reads, and the board's date and counts", () => {
+    const store = syncPulse(full("operational", "7.24.4"), noon + 1_000, emptyPulseStore());
+    assert.deepEqual(store.lastBoard, {
+      generatedAt: at,
+      counts: { operational: 2, degraded: 0, outage: 0, maintenance: 0, unknown: 0 },
+      services: [
+        { id: "aws", name: "Amazon Web Services", health: "operational", summary: "clear" },
+        {
+          id: "mikrotik",
+          name: "MikroTik RouterOS",
+          health: "operational",
+          summary: "Latest RouterOS 7.24.4",
+          meta: { versions: "RouterOS 7 stable=7.24.4", latest: "7.24.4" },
+        },
+      ],
+    });
+  });
+
+  it("still finds a health change and a new release against the slim board", () => {
+    const previous = slimBoard(full("operational", "7.24.4"));
+    const changes = diffBoards(previous, full("outage", "7.24.5", "impact"));
+    assert.deepEqual(changes, [
+      { id: "aws", name: "Amazon Web Services", from: "operational", to: "outage", summary: "impact" },
+      {
+        id: "mikrotik",
+        name: "MikroTik RouterOS",
+        from: "operational",
+        to: "operational",
+        summary: "RouterOS 7 stable 7.24.5",
+        release: true,
+      },
+    ]);
+    assert.deepEqual(diffBoards(previous, full("operational", "7.24.4", "a new summary")), []);
+  });
+
+  it("returns the store itself for a refetch in the same slot that changed nothing it keeps", () => {
+    const opened = syncPulse(full("operational", "7.24.4"), noon + 1_000, emptyPulseStore());
+    // A new object with the same content, and one whose only change is something the slim board does not keep.
+    assert.equal(syncPulse(full("operational", "7.24.4"), noon + 30_000, opened), opened);
+    const slower = { ...full("operational", "7.24.4"), durationMs: 2_000 };
+    assert.equal(syncPulse(slower, noon + 40_000, opened), opened);
+  });
+
+  it("keeps a newer board of the same slot that changed nothing worth a row", () => {
+    const opened = syncPulse(full("operational", "7.24.4"), noon + 1_000, emptyPulseStore());
+    const later = { ...full("operational", "7.24.4", "a new summary"), generatedAt: "2026-09-22T12:00:45.000Z" };
+    const next = syncPulse(later, noon + 50_000, opened);
+    assert.notEqual(next, opened);
+    assert.equal(next.pulses, opened.pulses);
+    assert.equal(next.lastBoard?.generatedAt, "2026-09-22T12:00:45.000Z");
+    assert.equal(next.lastBoard?.services[0]?.summary, "a new summary");
+  });
+
+  it("still reads a full board that an older version stored, and diffs against it", () => {
+    const counts = { operational: 2, degraded: 0, outage: 0, maintenance: 0, unknown: 0 };
+    const old = {
+      lastSlot: noon,
+      lastBoard: full("operational", "7.24.4"),
+      pulses: [{ slot: noon, at, overall: "operational", counts, changes: [], opening: true }],
+    };
+    const store = parsePulseStore(JSON.parse(JSON.stringify(old)));
+    assert.equal(store.lastBoard?.services.length, 2);
+    const next = syncPulse(full("degraded", "7.24.5", "impact"), noon + 125_000, store);
+    assert.deepEqual(
+      next.pulses[0]?.changes.map((change) => [change.id, change.to, change.release ?? false]),
+      [
+        ["aws", "degraded", false],
+        ["mikrotik", "operational", true],
+      ],
+    );
+    // What it writes back is the slim board.
+    assert.deepEqual(next.lastBoard, slimBoard(full("degraded", "7.24.5", "impact")));
   });
 });
 

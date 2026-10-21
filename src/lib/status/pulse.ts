@@ -1,7 +1,7 @@
 import { diffBoards, overallHealth, type PulseChange } from "./diff.ts";
 import { isHealth } from "./history.ts";
 import { lastPulseAt, MAX_PULSES } from "./schedule.ts";
-import type { BoardSnapshot, Health } from "./types.ts";
+import type { BoardSnapshot, Health, ServiceSnapshot } from "./types.ts";
 
 /** The local-storage key of the saved checks; the script that holds Recent changes' height reads it too (feed-reserve.ts). */
 export const PULSE_STORAGE_KEY = "status-bar:pulses:v2";
@@ -15,9 +15,21 @@ export type Pulse = {
   opening: boolean;
 };
 
+/** A service as the saved last board keeps it: what the next check's diff reads, and its name and summary. */
+export type SavedService = Pick<ServiceSnapshot, "id" | "name" | "health" | "summary"> & {
+  /** Only the versions a release is told by (see versionFingerprint), and only when the service has them. */
+  meta?: Partial<Record<"versions" | "latest", string | number>>;
+};
+
+/**
+ * The board the last check saw, as it is saved. Every check used to rewrite the whole board here (each service's
+ * components, incidents and release feed) for a diff that reads a few fields of each service.
+ */
+export type SavedBoard = Pick<BoardSnapshot, "generatedAt" | "counts"> & { services: SavedService[] };
+
 export type PulseStore = {
   lastSlot: number | null;
-  lastBoard: BoardSnapshot | null;
+  lastBoard: SavedBoard | null;
   pulses: Pulse[];
 };
 
@@ -25,7 +37,43 @@ export function emptyPulseStore(): PulseStore {
   return { lastSlot: null, lastBoard: null, pulses: [] };
 }
 
-export function makePulse(board: BoardSnapshot, slot: number, previous: BoardSnapshot | null): Pulse {
+const META_KEYS = ["versions", "latest"] as const;
+
+function slimService(service: SavedService): SavedService {
+  const { id, name, health, summary } = service;
+  const meta: NonNullable<SavedService["meta"]> = {};
+  for (const key of META_KEYS) {
+    const value = service.meta?.[key];
+    if (value !== undefined) meta[key] = value;
+  }
+  return Object.keys(meta).length > 0 ? { id, name, health, summary, meta } : { id, name, health, summary };
+}
+
+/** The board as the pulse store saves it (SavedBoard): only what the readers of `lastBoard` use. */
+export function slimBoard(board: SavedBoard): SavedBoard {
+  return { generatedAt: board.generatedAt, counts: board.counts, services: board.services.map(slimService) };
+}
+
+/**
+ * Whether two saved boards say the same, so a check that brought nothing new need not be saved again. The counts
+ * follow from the services' health, so the services say it all.
+ */
+function sameSavedBoard(a: SavedBoard, b: SavedBoard): boolean {
+  if (a.generatedAt !== b.generatedAt || a.services.length !== b.services.length) return false;
+  return a.services.every((service, index) => {
+    const other = b.services[index];
+    return (
+      other !== undefined &&
+      service.id === other.id &&
+      service.name === other.name &&
+      service.health === other.health &&
+      service.summary === other.summary &&
+      META_KEYS.every((key) => service.meta?.[key] === other.meta?.[key])
+    );
+  });
+}
+
+export function makePulse(board: BoardSnapshot, slot: number, previous: SavedBoard | null): Pulse {
   return {
     slot,
     at: board.generatedAt,
@@ -56,11 +104,13 @@ export function syncPulse(board: BoardSnapshot, now: number, existing: PulseStor
   const slot = lastPulseAt(now);
   const changes = existing.lastBoard ? diffBoards(existing.lastBoard, board) : [];
   const sameSlot = existing.lastSlot === slot && existing.pulses.length > 0;
+  const lastBoard = slimBoard(board);
 
   if (sameSlot) {
     if (changes.length === 0) {
-      if (existing.lastBoard === board) return existing;
-      return { ...existing, lastBoard: board };
+      // The same store, not an equal copy: the board saves only a store that is new (see BoardView).
+      if (existing.lastBoard && sameSavedBoard(existing.lastBoard, lastBoard)) return existing;
+      return { ...existing, lastBoard };
     }
     const current = existing.pulses[0];
     const nextPulse: Pulse = {
@@ -73,14 +123,14 @@ export function syncPulse(board: BoardSnapshot, now: number, existing: PulseStor
     };
     return {
       lastSlot: slot,
-      lastBoard: board,
+      lastBoard,
       pulses: [nextPulse, ...existing.pulses.slice(1)],
     };
   }
 
   return {
     lastSlot: slot,
-    lastBoard: board,
+    lastBoard,
     pulses: upsertPulse(existing.pulses, makePulse(board, slot, existing.lastBoard)),
   };
 }
@@ -130,15 +180,16 @@ function parsePulse(value: unknown): Pulse | null {
  * The board the last check saw, as far as diffBoards reads it: a list of
  * services, each with an id and a health. Services without those are dropped
  * and a value with no list is null, so a tampered entry costs a diff, not
- * the page. The services are otherwise kept as stored.
+ * the page. The services are otherwise kept as stored, so a whole board that
+ * an earlier version saved reads too; a later sync saves it slim.
  */
-function parseLastBoard(value: unknown): BoardSnapshot | null {
+function parseLastBoard(value: unknown): SavedBoard | null {
   if (!isRecord(value) || !Array.isArray(value.services)) return null;
   const services = value.services.filter(
-    (service): service is BoardSnapshot["services"][number] =>
+    (service): service is SavedService =>
       isRecord(service) && typeof service.id === "string" && isHealth(service.health),
   );
-  return { ...(value as BoardSnapshot), services };
+  return { ...(value as SavedBoard), services };
 }
 
 /**
