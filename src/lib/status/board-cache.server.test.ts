@@ -25,7 +25,8 @@ async function load() {
   vi.resetModules();
   const cache = await import("./board-cache.server");
   const functions = await import("./board");
-  return { cache, functions };
+  const context = await import("./cloudflare-context");
+  return { cache, functions, context };
 }
 
 beforeEach(() => {
@@ -173,5 +174,57 @@ describe("the board cache", () => {
       { event: "board_collected", trigger: "cold", durationMs: 1, services: 0, unknown: 0 },
       { event: "board_collected", trigger: "force", durationMs: 2, services: 0, unknown: 0 },
     ]);
+  });
+
+  describe("on a Worker, with the snapshot shared through the Cache API", () => {
+    /** `caches.default` in memory, keyed by URL. */
+    function edgeCache() {
+      const stored = new Map<string, Response>();
+      vi.stubGlobal("caches", {
+        default: {
+          match: async (request: Request) => stored.get(request.url)?.clone(),
+          put: async (request: Request, response: Response) => {
+            stored.set(request.url, response.clone());
+          },
+        },
+      });
+      return stored;
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("starts a cold isolate from the snapshot a peer shared, with no sweep", async () => {
+      edgeCache();
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const waiting: Promise<unknown>[] = [];
+      const request = (fn: () => Promise<BoardSnapshot>, isolate: Awaited<ReturnType<typeof load>>) =>
+        isolate.context.runWithCloudflareContext(
+          {
+            env: { CF_VERSION_METADATA: { id: "v1" } },
+            waitUntil: (promise) => waiting.push(promise),
+            origin: "https://status.example.com",
+          },
+          fn,
+        );
+
+      const first = await load();
+      const collected = await request(() => first.cache.getStatusBoard(), first);
+      await Promise.all(waiting);
+      expect(collectBoard).toHaveBeenCalledTimes(1);
+
+      // Another isolate of the same data center, ten seconds later.
+      vi.advanceTimersByTime(10_000);
+      const peer = await load();
+      expect(await request(() => peer.cache.getStatusBoard(), peer)).toEqual(collected);
+      expect(await request(() => peer.functions.fetchStatusBoard(), peer)).toEqual(collected);
+      expect(collectBoard).toHaveBeenCalledTimes(1);
+      const hits = vi
+        .mocked(console.log)
+        .mock.calls.map(([line]) => JSON.parse(String(line)))
+        .filter((line) => line.event === "board_shared_hit");
+      expect(hits).toEqual([{ event: "board_shared_hit", ageMs: 10_000 }]);
+    });
   });
 });

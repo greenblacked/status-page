@@ -1,3 +1,4 @@
+import { cloudflareBoardStore } from "./board-store";
 import { findCloudflareContext } from "./cloudflare-context";
 import { collectBoard } from "./collect-board";
 import { CACHE_TTL_MS, FRESH_WAIT_MS, MIN_FORCED_REFRESH_MS, PROBE_WAIT_MS } from "./schedule";
@@ -19,9 +20,17 @@ import type { BoardSnapshot } from "./types";
 // (the page's scheduled refetch waits at most FRESH_WAIT_MS for that refresh,
 // the readiness probe PROBE_WAIT_MS). Only the first board of a cold isolate
 // and the Refresh button wait for a sweep.
+//
+// On Workers the isolates of a data center share their newest snapshot
+// through the Cache API (board-store.ts): a cold isolate starts from it, and
+// an isolate whose snapshot has expired adopts a fresher one a peer wrote
+// instead of sweeping again. So only a data center with no snapshot at all
+// waits for a sweep. The Node server has no such level and keeps its own.
 const boardCache = createTtlCache(loadBoard, CACHE_TTL_MS, {
   minForceIntervalMs: MIN_FORCED_REFRESH_MS,
   onBackgroundRefresh: (promise) => findCloudflareContext()?.waitUntil(promise),
+  shared: cloudflareBoardStore,
+  onSharedHit: (entry) => console.log(JSON.stringify({ event: "board_shared_hit", ageMs: Date.now() - entry.at })),
 });
 
 async function loadBoard(trigger: LoadTrigger): Promise<BoardSnapshot> {

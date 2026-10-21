@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTtlCache } from "./ttl-cache";
+import { createTtlCache, type Entry, type SharedStore } from "./ttl-cache";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -227,5 +227,128 @@ describe("createTtlCache", () => {
     await cache.get({ force: true });
 
     expect(load.mock.calls.map(([trigger]) => trigger)).toEqual(["cold", "stale", "force"]);
+  });
+});
+
+describe("createTtlCache with a shared store", () => {
+  /** A shared store in memory that records what it was asked. */
+  function memoryStore(initial?: Entry<string>) {
+    let entry = initial;
+    const store = {
+      read: vi.fn(async () => entry),
+      write: vi.fn((next: Entry<string>) => {
+        entry = next;
+      }),
+    } satisfies SharedStore<string>;
+    return { store, set: (next: Entry<string>) => (entry = next) };
+  }
+
+  it("hydrates a cold cache from the shared store, with no load", async () => {
+    const load = counter();
+    const { store } = memoryStore({ at: -10_000, value: "shared" });
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get()).resolves.toBe("shared");
+    expect(load).not.toHaveBeenCalled();
+    // Its age is the shared entry's: it expires 45 s after that entry was collected.
+    expect(cache.peek()).toEqual({ at: -10_000, value: "shared" });
+  });
+
+  it("reads the shared store once for concurrent cold callers", async () => {
+    const { store } = memoryStore({ at: 0, value: "shared" });
+    const cache = createTtlCache(counter(), 45_000, { shared: () => store });
+
+    await expect(Promise.all([cache.get(), cache.get({ allowStale: true })])).resolves.toEqual(["shared", "shared"]);
+    expect(store.read).toHaveBeenCalledOnce();
+  });
+
+  it("loads on a cold miss and writes what it loaded", async () => {
+    const load = counter();
+    const { store } = memoryStore();
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get()).resolves.toBe("load-1");
+    expect(store.write).toHaveBeenCalledWith({ at: 0, value: "load-1" });
+    expect(store.read).toHaveBeenCalledOnce();
+  });
+
+  it("serves an expired shared entry at once and refreshes it with a load, not a second read", async () => {
+    const load = counter();
+    const { store } = memoryStore({ at: -60_000, value: "shared" });
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get({ allowStale: true })).resolves.toBe("shared");
+    await vi.waitFor(() => expect(store.write).toHaveBeenCalledWith({ at: 0, value: "load-1" }));
+    expect(store.read).toHaveBeenCalledOnce();
+  });
+
+  it("adopts a newer, unexpired shared entry instead of loading when its own has expired", async () => {
+    const load = counter();
+    const { store, set } = memoryStore();
+    const onSharedHit = vi.fn();
+    const cache = createTtlCache(load, 45_000, { shared: () => store, onSharedHit });
+
+    await cache.get();
+    // Another isolate collected a board 10 s ago.
+    vi.setSystemTime(60_000);
+    set({ at: 50_000, value: "other isolate" });
+
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("other isolate");
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(onSharedHit).toHaveBeenCalledWith({ at: 50_000, value: "other isolate" });
+    expect(cache.peek()).toEqual({ at: 50_000, value: "other isolate" });
+  });
+
+  it("loads when the shared entry is no newer than its own, or has expired too", async () => {
+    const load = counter();
+    const { store, set } = memoryStore();
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+    // Its own write is what the shared store holds: no newer.
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-2");
+    vi.setSystemTime(120_000);
+    // Newer than its own, but past the TTL as well.
+    set({ at: 70_000, value: "expired" });
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-3");
+  });
+
+  it("never reads the shared store for a forced refresh", async () => {
+    const load = counter();
+    const { store, set } = memoryStore();
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await cache.get();
+    vi.setSystemTime(20_000);
+    set({ at: 19_000, value: "other isolate" });
+    store.read.mockClear();
+
+    await expect(cache.get({ force: true })).resolves.toBe("load-2");
+    expect(store.read).not.toHaveBeenCalled();
+    expect(store.write).toHaveBeenLastCalledWith({ at: 20_000, value: "load-2" });
+  });
+
+  it("counts a shared read that throws or rejects as a miss", async () => {
+    const load = counter();
+    const store = {
+      read: vi.fn().mockRejectedValueOnce(new Error("cache down")),
+      write: vi.fn(),
+    };
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get()).resolves.toBe("load-1");
+    store.read.mockImplementationOnce(() => {
+      throw new Error("cache down");
+    });
+    vi.setSystemTime(60_000);
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-2");
+  });
+
+  it("carries on without a shared store when there is none for this call", async () => {
+    const load = counter();
+    const cache = createTtlCache(load, 45_000, { shared: () => undefined });
+
+    await expect(cache.get()).resolves.toBe("load-1");
   });
 });

@@ -6,13 +6,17 @@ import { withWorkerVersion } from "@/lib/worker-version";
 
 // Cloudflare's module entry receives bindings directly. TanStack's handler
 // uses the request context for robots.txt; status collection is cached in
-// each isolate by the same board-cache.server.ts implementation as the Node build.
+// each isolate by the same board-cache.server.ts implementation as the Node build,
+// and shared within a data center through the Cache API, keyed by the origin.
 const handleRequest = createStartHandler(defaultStreamHandler);
 
 export default {
   async fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): Promise<Response> {
     const response = withWorkerVersion(
-      await runWithCloudflareContext({ env, waitUntil: ctx.waitUntil.bind(ctx) }, () => handleRequest(request)),
+      await runWithCloudflareContext(
+        { env, waitUntil: ctx.waitUntil.bind(ctx), origin: new URL(request.url).origin },
+        () => handleRequest(request),
+      ),
       env.CF_VERSION_METADATA?.id,
     );
     return isNoindex(env.ROBOTS) ? withNoindex(response) : response;
