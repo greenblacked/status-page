@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { chromium, type FullConfig } from "@playwright/test";
 import { CACHE_TTL_MS, MIN_FORCED_REFRESH_MS } from "../../src/lib/status/schedule.ts";
 import type { BoardSnapshot, Health } from "../../src/lib/status/types.ts";
-import { chromiumArgs } from "./chromium-args.ts";
+import { chromiumArgs, chromiumEnv } from "./chromium-args.ts";
 import { FIRST_RENDER_AT_ENV, missingFromFirstRender } from "./first-render.ts";
 import { VENDOR_LOG_PREFIX, vendorLogPath } from "./vendor-log.ts";
 
@@ -78,6 +78,7 @@ async function refreshBoardOnce(baseURL: string): Promise<boolean> {
     browser = await chromium.launch({
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,
       args: chromiumArgs,
+      ...(chromiumEnv ? { env: chromiumEnv } : {}),
     });
     const page = await browser.newPage({ baseURL });
     await page.goto("/");
