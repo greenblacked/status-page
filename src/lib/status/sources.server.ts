@@ -64,8 +64,11 @@ function isRecent(at: number, now: number): boolean {
   return Number.isFinite(at) && now - at >= -FUTURE_SKEW_MS && now - at <= STALE_MS;
 }
 // Upper bound on components kept per card. The largest real vendor list is
-// Google Cloud (~215 products); the snapshot is cached and served as JSON, so a
-// runaway page must still not grow it without limit.
+// Cloudflare's (a component per data center, several hundred, plus its
+// products), which this cuts on purpose: rankComponents keeps every broken
+// row first and the card links the full list. Google Cloud (~215) fits. The
+// snapshot is cached and served as JSON, so a runaway page must still not
+// grow it without limit.
 const MAX_COMPONENTS = 300;
 // Upper bound on incidents kept per card. Each is a row in the board, the
 // JSON API and the Atom feed; a feed that lists thousands must not grow them.
@@ -483,13 +486,16 @@ function fromStatuspage(
   data: StatuspageSummary,
   latencyMs: number,
   componentFilter?: (name: string, groupName?: string) => boolean,
+  isLocalComponent?: (name: string) => boolean,
 ): ServiceSnapshot {
-  // A summary always carries `status`. A body without it is not a summary
-  // (a rate-limit or maintenance notice that happens to be JSON), and reading
-  // it as "none" would be an all-clear built on no data.
-  if (typeof data?.status !== "object" || data.status === null) {
+  // A summary always carries `status.indicator`. A body without it is not a
+  // summary (a rate-limit or maintenance notice that happens to be JSON, or a
+  // `status` with no indicator), and reading it as "none" would be an
+  // all-clear built on no data.
+  if (typeof data?.status !== "object" || data.status === null || typeof data.status.indicator !== "string") {
     throw new PayloadError("Statuspage summary has no status.");
   }
+  const indicator = data.status.indicator;
   const checkedAt = new Date().toISOString();
   const { sourceUrl } = CATALOG_BY_ID[id];
   const statuspageHosts = ["stspg.io", hostOf(sourceUrl)];
@@ -527,10 +533,10 @@ function fromStatuspage(
   // still counts.
   let health = componentFilter
     ? matched.reduce((acc, component) => worseHealth(acc, component.health), "operational" as Health)
-    : statuspageIndicator(data.status?.indicator);
+    : statuspageIndicator(indicator);
 
   if (componentFilter && matched.length === 0) {
-    health = statuspageIndicator(data.status?.indicator);
+    health = statuspageIndicator(indicator);
   }
 
   // Which of the shared page's cards an incident or maintenance belongs to.
@@ -547,6 +553,23 @@ function fromStatuspage(
       const groupId = ref.group_id ?? known?.group_id;
       return componentFilter(ref.name ?? known?.name ?? "", groupId ? groupNames.get(groupId) : undefined);
     });
+  };
+
+  // A maintenance window listing only data centers, one or many, of a network of
+  // hundreds (Cloudflare's, `isLocalComponent`) is not the service in maintenance:
+  // a window that lists only such components is left out of health and of the upcoming
+  // list. One that lists any other component, none, or more than are read, is kept.
+  const localOnly = (item: { components?: StatuspageRef[] }): boolean => {
+    if (!isLocalComponent || !Array.isArray(item.components) || item.components.length > MAX_NESTED_ROWS) return false;
+    const refs = records<StatuspageRef>(item.components, MAX_NESTED_ROWS);
+    return (
+      refs.length > 0 &&
+      refs.length === item.components.length &&
+      refs.every((ref) => {
+        const name = typeof ref.name === "string" ? ref.name : ref.id ? componentsById.get(ref.id)?.name : undefined;
+        return typeof name === "string" && isLocalComponent(name);
+      })
+    );
   };
 
   const activeIncidents = records<NonNullable<StatuspageSummary["incidents"]>[number]>(data.incidents).filter(
@@ -591,7 +614,7 @@ function fromStatuspage(
 
   const scheduled = records<NonNullable<StatuspageSummary["scheduled_maintenances"]>[number]>(
     data.scheduled_maintenances,
-  ).filter((item) => belongs(item));
+  ).filter((item) => belongs(item) && !localOnly(item));
   const statusOf = (item: { status?: string }) => (item.status ?? "").toLowerCase();
   const maintenances = scheduled.filter((item) => statusOf(item) === "in_progress" || statusOf(item) === "verifying");
 
@@ -1584,19 +1607,32 @@ async function collectGrok(): Promise<ServiceSnapshot> {
   }
 }
 
-// GitHub and Confluence each publish a Statuspage of their own, so they are
-// the Spotify collector with a different address. Each fetches the vendor's
-// own host only (http.ts refuses a redirect off it). GitLab is not here: its
-// page runs on Status.io, which has no Statuspage API (see collectGitlab).
+// GitHub, Confluence, Twitch and Cloudflare each publish a Statuspage of
+// their own, so they are the Spotify collector with a different address. Each
+// fetches the vendor's own host only (http.ts refuses a redirect off it).
+// GitLab is not here: its page runs on Status.io, which has no Statuspage API
+// (see collectGitlab).
 const STATUSPAGE_SUMMARIES = {
   github: "https://www.githubstatus.com/api/v2/summary.json",
   confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
+  twitch: "https://status.twitch.com/api/v2/summary.json",
+  cloudflare: "https://www.cloudflarestatus.com/api/v2/summary.json",
 } as const;
 
 // A page's own pointer to itself ("Visit www.githubstatus.com for more
 // information") is listed by the vendor as a component. It is not a service,
 // and as a row it would read Operational and count as a working component.
 const NOT_A_SERVICE = /^Visit /;
+
+// Cloudflare lists each data center as a component ("Frankfurt, Germany - (FRA)",
+// under a region group such as "Europe") and schedules maintenance one data
+// center at a time, its traffic re-routed meanwhile. Such a window is not
+// Cloudflare in maintenance (see fromStatuspage's localOnly); the data
+// center's own row still reads as Cloudflare sets it. Open incidents always count.
+export const CLOUDFLARE_DATA_CENTER = / - \([A-Z]{3}\)$/;
+const LOCAL_COMPONENTS: Partial<Record<keyof typeof STATUSPAGE_SUMMARIES, RegExp>> = {
+  cloudflare: CLOUDFLARE_DATA_CENTER,
+};
 
 async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise<ServiceSnapshot> {
   const started = Date.now();
@@ -1608,7 +1644,8 @@ async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise
         .slice(0, MAX_SCANNED_ROWS)
         .filter((component) => !(typeof component?.name === "string" && NOT_A_SERVICE.test(component.name)));
     }
-    return fromStatuspage(id, value, ms);
+    const local = LOCAL_COMPONENTS[id];
+    return fromStatuspage(id, value, ms, undefined, local ? (name) => local.test(name) : undefined);
   } catch (error) {
     return failed(id, started, error);
   }
@@ -2126,6 +2163,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectGcp,
       collectAws,
       collectAzure,
+      () => collectStatuspage("cloudflare"),
       collectSteam,
       collectCs2Europe,
       () => collectEpic(sweep),
@@ -2136,6 +2174,7 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       () => collectStatuspage("github"),
       collectGitlab,
       () => collectStatuspage("confluence"),
+      () => collectStatuspage("twitch"),
       collectGrok,
       collectChatGpt,
       collectClaude,

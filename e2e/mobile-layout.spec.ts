@@ -667,7 +667,7 @@ test.describe("mobile layout", { tag: "@layout" }, () => {
         await typeSlowly(page, "git");
         await expect(cards(page).first()).toBeVisible();
         const matches = await cards(page).count();
-        expect(matches, "a search for git leaves a few of the twenty").toBeGreaterThan(0);
+        expect(matches, "a search for git leaves a few of the twenty-two").toBeGreaterThan(0);
         expect(matches).toBeLessThan(SERVICES);
         await fieldFits(field, "hero field with a query");
         await resultsFit("results for git");

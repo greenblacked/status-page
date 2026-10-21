@@ -16,6 +16,7 @@ import {
 } from "./release-feeds.server.ts";
 import {
   azureItemHealth,
+  CLOUDFLARE_DATA_CENTER,
   decodeXmlField,
   grokItemHealth,
   grokTitleService,
@@ -127,6 +128,18 @@ describe("parsers stay linear on crafted vendor input", () => {
   it("parseRssItems: a feed past the scan bound is refused in linear time", () => {
     const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
     expect(elapsed(() => expect(() => parseRssItems(xml)).toThrow(PayloadError))).toBeLessThan(BUDGET_MS * 2);
+  });
+
+  it("CLOUDFLARE_DATA_CENTER: a long name of repeated separators and unfinished codes", () => {
+    for (const name of [
+      `${" - (AB".repeat(SIZE / 6)}x`,
+      `${" - ".repeat(SIZE / 3)}(ABC`,
+      `${"a".repeat(SIZE)} - (ABC) `,
+    ]) {
+      expect(elapsed(() => CLOUDFLARE_DATA_CENTER.test(name))).toBeLessThan(BUDGET_MS);
+    }
+    expect(CLOUDFLARE_DATA_CENTER.test("Frankfurt, Germany - (FRA)")).toBe(true);
+    expect(CLOUDFLARE_DATA_CENTER.test("Cloudflare Access")).toBe(false);
   });
 
   it("decodeXmlField: a repeated unclosed CDATA opener", () => {

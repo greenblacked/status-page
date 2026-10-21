@@ -9,7 +9,7 @@ import { expect, test } from "./test";
 // the header) does not fail the build: the browser blocks the script, hydration never happens and the page looks
 // like a still picture. So these tests load the real build and read what the browser itself reports.
 
-const SERVICES = 20;
+const SERVICES = 22;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 
 /** The `script-src` directive of a policy, the part the nonce is in. */

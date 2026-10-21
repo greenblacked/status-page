@@ -51,6 +51,14 @@ export const CATALOG: CatalogEntry[] = [
     sourceUrl: "https://azure.status.microsoft/en-us/status/",
   },
   {
+    id: "cloudflare",
+    name: "Cloudflare",
+    shortName: "Cloudflare",
+    category: "cloud",
+    sourceName: "Cloudflare Status",
+    sourceUrl: "https://www.cloudflarestatus.com/",
+  },
+  {
     id: "steam",
     name: "Steam",
     shortName: "Steam",
@@ -129,6 +137,14 @@ export const CATALOG: CatalogEntry[] = [
     category: "platforms",
     sourceName: "Confluence Cloud Status",
     sourceUrl: "https://confluence.status.atlassian.com/",
+  },
+  {
+    id: "twitch",
+    name: "Twitch",
+    shortName: "Twitch",
+    category: "platforms",
+    sourceName: "Twitch Status",
+    sourceUrl: "https://status.twitch.com/",
   },
   {
     id: "grok",

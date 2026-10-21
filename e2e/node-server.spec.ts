@@ -23,7 +23,7 @@ test.describe("@node-server the board behind the production server", () => {
     await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
     await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
     await expect(page.locator('article[id^="service-"]').first()).toBeVisible();
-    await expect(page.locator('article[id^="service-"]')).toHaveCount(20);
+    await expect(page.locator('article[id^="service-"]')).toHaveCount(22);
   });
 
   test("loads the page's own script, stylesheet and fonts with a one-year immutable cache", async ({ page }) => {
@@ -77,6 +77,6 @@ test.describe("@node-server the board behind the production server", () => {
     expect(await (await request.get("/healthz")).text()).toBe("ok\n");
     expect([200, 503]).toContain((await request.get("/readyz")).status());
     const board = await (await request.get("/api/status.json")).json();
-    expect(board.services).toHaveLength(20);
+    expect(board.services).toHaveLength(22);
   });
 });

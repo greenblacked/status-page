@@ -8,7 +8,7 @@ import { expect, test } from "./test";
 // where the source has one. Opened from the card's main area or by keyboard, a modal dialog on every size,
 // centred on a desktop and a sheet from the bottom edge on a phone.
 
-const SERVICES = 20;
+const SERVICES = 22;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const dialog = (page: Page) => page.locator("dialog[data-release-details]");
 

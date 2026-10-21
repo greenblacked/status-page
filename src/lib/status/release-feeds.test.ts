@@ -95,6 +95,8 @@ describe("the release sources", () => {
       "windows",
       "android-os",
       "confluence",
+      "twitch",
+      "cloudflare",
       "claude",
       "chatgpt",
       "grok",

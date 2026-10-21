@@ -10,7 +10,7 @@ import { expect, test } from "./test";
 // touch drag (DevTools touch events, which the browser turns into a scroll like a finger does) on Chromium, touch
 // events made in the page with the page scrolled a step at a time on every touch project, and scroll steps alone.
 
-const SERVICES = 20;
+const SERVICES = 22;
 const SLOT_MS = 120_000;
 const cards = (page: Page) => page.locator('article[id^="service-"]');
 const feedRows = (page: Page) => page.locator('section[aria-labelledby="recent-heading"] li');

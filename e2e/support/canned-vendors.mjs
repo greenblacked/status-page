@@ -34,6 +34,8 @@ export const ROUTES = {
   "https://rssfeed.azure.status.microsoft/en-us/status/feed/": at(ANCHOR_STATUS, "azure/feed.xml"),
   "https://www.githubstatus.com/api/v2/summary.json": at(ANCHOR_STATUS, "github/summary.json"),
   "https://confluence.status.atlassian.com/api/v2/summary.json": at(ANCHOR_STATUS, "confluence/summary.json"),
+  "https://status.twitch.com/api/v2/summary.json": at(ANCHOR_STATUS, "twitch/summary.json"),
+  "https://www.cloudflarestatus.com/api/v2/summary.json": at(ANCHOR_STATUS, "cloudflare/summary.json"),
   "https://api.status.io/1.0/status/5b36dc6502d06804c08349f7": at(ANCHOR_STATUS, "gitlab/status.json"),
   "https://status.x.ai/feed.xml": at(ANCHOR_STATUS, "grok/feed.xml"),
   "https://status.x.ai/v2/components.json": at(ANCHOR_STATUS, "grok/components.json"),

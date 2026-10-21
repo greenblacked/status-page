@@ -6,6 +6,17 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-21
+
+### Added
+
+- A card for **Twitch** (under Platforms), read from Twitch's own status page (status.twitch.com) with its components, active incidents and maintenance.
+- A card for **Cloudflare** (under Cloud), read from Cloudflare's own status page (cloudflarestatus.com) with its products and data centers, active incidents and maintenance. The card follows Cloudflare's overall status: a data center that is re-routed or in maintenance is listed first on the card but does not change its state on its own. The board now has twenty-two services.
+
+### Fixed
+
+- A Statuspage-based card whose status page answers with a summary that has no health indicator now reads **Unknown** (No data) instead of Operational.
+
 ## [0.7.2] - 2026-10-11
 
 ### Fixed
@@ -258,7 +269,8 @@ First tagged release.
   - one triage comment per pull request that explains failed checks;
   - an hourly job that checks the live vendor endpoints and opens one issue for each broken source.
 
-[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/greenblacked/status-page/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/greenblacked/status-page/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/greenblacked/status-page/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/greenblacked/status-page/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/greenblacked/status-page/compare/v0.6.0...v0.7.0

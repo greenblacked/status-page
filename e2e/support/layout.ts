@@ -11,7 +11,7 @@ import { pinToSlot } from "./pin-to-slot";
 export const BACKGROUNDS = ["quiet", "glass", "full"] as const;
 export type Background = (typeof BACKGROUNDS)[number];
 
-export const SERVICES = 20;
+export const SERVICES = 22;
 
 /**
  * The floor a "44px target" check holds a control to. WebKit lays out in sub-pixel units, and at a scaled viewport a

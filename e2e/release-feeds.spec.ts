@@ -10,7 +10,7 @@ import { expect, test } from "./test";
 // Details it opens. It is advisory: it sits beside a card's health and changes none of it. A line wraps between
 // its items on a phone and never inside one: a date is never split ("Oct" / "1").
 
-const SERVICES = 20;
+const SERVICES = 22;
 /** Phone widths the wrap tests visit, from the narrowest phone to the widest. */
 const PHONES = [320, 335, 350, 360, 375, 390, 400, 412, 430];
 const WITH_FEED = ["aws", "gcp", "azure", "github", "gitlab", "cs2-europe"];

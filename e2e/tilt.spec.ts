@@ -12,7 +12,7 @@ import { expect, test } from "./test";
 // Linux is built without it), the stub supplies an empty one, so the touch
 // tests run there too; the no-switch test for non-touch devices never uses it.
 
-const SERVICES = 20;
+const SERVICES = 22;
 
 // The light only draws on the Glass and Full backgrounds, and the default is Quiet, so every test here
 // starts on Glass, the way a visitor who chose it would. One test starts on Quiet.
