@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Security
+
+- The build and development tooling (Wrangler, the Cloudflare Vite plugin and the Workers types) is updated, which moves its image library `sharp` to 0.35.5 for the published security advisory GHSA-wq5f-xc86-pv6w. The running board, the Worker and the Docker image do not use that library, so nothing changes on the board.
+
 ## [0.8.0] - 2026-10-21
 
 ### Added
