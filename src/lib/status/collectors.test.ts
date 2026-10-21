@@ -2056,6 +2056,21 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.sourceUrl).toBe("https://azure.status.microsoft/en-us/status/");
     });
 
+    it("Azure feed.xml: a partial outage is degraded, as on a Statuspage component", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<?xml version="1.0"?><rss version="2.0"><channel><title>Azure Status</title><item>' +
+            "<title>Partial outage - Azure SQL - West Europe</title>" +
+            "<link>https://azure.status.microsoft/en-us/status/#sql</link>" +
+            "<pubDate>Sun, 20 Sep 2026 10:20:00 GMT</pubDate></item></channel></rss>",
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("degraded");
+      expect(azure.incidents.map((incident) => incident.health)).toEqual(["degraded"]);
+    });
+
     it("Azure feed.xml: a channel with no items is operational, not a failure", async () => {
       stubFetch({
         [URLS.azure]: text(

@@ -171,6 +171,34 @@ export function instatusComponent(status: string | undefined): Health {
   }
 }
 
+// The words textSeverity reads, each a whole word (or two) in lower case.
+// Every pattern is a fixed alternation with at most one `\s+` between two
+// literals, so it is linear in the text.
+const OPERATIONAL_WORDS = /\b(?:resolved|available|operational)\b/;
+const DEGRADED_WORDS = /\b(?:partial\s+outage|degraded|performance|disruption)\b/;
+const OUTAGE_WORDS = /\b(?:major\s+outage|outage|unavailable|down)\b/;
+const MAINTENANCE_WORDS = /\bmaintenance\b/;
+
+/**
+ * The health a vendor's own severity or status words name, for feeds that
+ * write them as text ("Severity: Partial outage", "Partial outage - Azure
+ * SQL"), or undefined when they name none. Case-folded, whole words, and
+ * read in this order: a resolution or "available" is operational; a partial
+ * outage, a degradation, a performance issue or a disruption is degraded
+ * (as Statuspage's `partial_outage` and Instatus's PARTIALOUTAGE are); a
+ * major outage, an outage, "unavailable" or "down" is an outage; maintenance
+ * is maintenance. Meant for a short value, not prose: the first state that
+ * matches wins, wherever it sits.
+ */
+export function textSeverity(text: string): Health | undefined {
+  const value = text.toLowerCase();
+  if (OPERATIONAL_WORDS.test(value)) return "operational";
+  if (DEGRADED_WORDS.test(value)) return "degraded";
+  if (OUTAGE_WORDS.test(value)) return "outage";
+  if (MAINTENANCE_WORDS.test(value)) return "maintenance";
+  return undefined;
+}
+
 export const ALL_CLEAR_SUMMARY = "Nothing reported.";
 
 // `||`, not `??`: a vendor can send an empty description, and "" must fall

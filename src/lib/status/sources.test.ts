@@ -39,7 +39,8 @@ describe("grok feed", () => {
   it("does not read 'majority' as a major outage", () => {
     assert.equal(grokItemHealth("The majority of requests succeeded"), "degraded");
     assert.equal(grokItemHealth("Major service disruption"), "outage");
-    assert.equal(grokItemHealth("Partial outage in one region"), "outage");
+    // A partial outage is Degraded, as on a Statuspage or Instatus component.
+    assert.equal(grokItemHealth("Partial outage in one region"), "degraded");
     assert.equal(grokItemHealth("Scheduled maintenance window"), "maintenance");
   });
 
