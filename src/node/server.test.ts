@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { methodGuard } from "../lib/request-methods.ts";
 import { DEFAULT_HSTS, securityHeaders } from "../lib/security-headers.ts";
 import { createNodeServer, DEFAULT_NODE_HSTS, hstsFromEnv } from "./server.ts";
 import { IMMUTABLE_CACHE_CONTROL, indexStaticFiles, MIN_COMPRESS_BYTES, SHORT_CACHE_CONTROL } from "./static.ts";
@@ -39,6 +40,7 @@ beforeAll(async () => {
         headers: request.headers,
         body: request.body ? await request.text() : "",
       });
+      if (pathname === "/guarded") return methodGuard(request, "router") ?? new Response("read");
       if (pathname === "/healthz") return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });
       if (pathname === "/throw") throw new Error("boom");
       if (pathname === "/app-hsts")
@@ -225,6 +227,18 @@ describe("the app handler", () => {
     await fetch(`${base}/echo`, { method: "POST", body: "hello" });
     expect(seen.at(-1)?.method).toBe("POST");
     expect(seen.at(-1)?.body).toBe("hello");
+  });
+
+  it("passes the app's 405 and preflight answers through, with the security headers", async () => {
+    const refused = await get("/guarded", {}, "POST");
+    expect(refused.response.status).toBe(405);
+    expect(refused.response.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+    expect(refused.bytes.toString()).toBe("Method Not Allowed\n");
+    expectSecurityHeaders(refused.response);
+    const preflight = await get("/guarded", {}, "OPTIONS");
+    expect(preflight.response.status).toBe(204);
+    expect(preflight.bytes.length).toBe(0);
+    expect((await get("/guarded")).bytes.toString()).toBe("read");
   });
 
   it("adds the security headers to its responses and keeps ones it set itself", async () => {

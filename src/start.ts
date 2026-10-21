@@ -1,4 +1,5 @@
 import { createCsrfMiddleware, createMiddleware, createStart } from "@tanstack/react-start";
+import { methodGuard } from "@/lib/request-methods";
 import { nonceForRequest, withSecurityHeaders } from "@/lib/security-headers";
 
 // Every response, pages and API routes alike, leaves with the security headers.
@@ -14,9 +15,18 @@ const securityHeadersMiddleware = createMiddleware({ type: "request" }).server(a
   };
 });
 
+// A method no page or endpoint serves (POST to a page, PUT to the API) gets a
+// 405, and OPTIONS a preflight answer, before any route runs. It sits inside
+// the security middleware, so those answers carry the same headers; server
+// function calls pass through to the CSRF middleware below.
+const methodGuardMiddleware = createMiddleware({ type: "request" }).server(({ next, request, handlerType }) => {
+  return methodGuard(request, handlerType) ?? next();
+});
+
 export const startInstance = createStart(() => ({
   requestMiddleware: [
     securityHeadersMiddleware,
+    methodGuardMiddleware,
     createCsrfMiddleware({
       filter: (context) => context.handlerType === "serverFn",
     }),

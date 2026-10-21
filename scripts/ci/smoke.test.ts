@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -103,5 +103,55 @@ describe("smoke.sh font cache check", () => {
       "--require-asset-cache",
     );
     expect(output).toContain('woff2: Cache-Control "public, max-age=0, must-revalidate", expected max-age=31536000');
+  }, 30_000);
+});
+
+/** Serves a bare 200 for GET; `methods` answers any other method, or the stub answers 200 to it too. */
+async function serveMethods(methods: (method: string, res: ServerResponse) => void): Promise<string> {
+  server = createServer((req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return methods(req.method ?? "", res);
+    res.writeHead(200, { "content-type": "text/html" });
+    res.end("ok\n");
+  });
+  await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+describe("smoke.sh method checks", () => {
+  it("takes a 204 preflight for any origin and a 405 with Allow for a POST", async () => {
+    const output = await smoke(
+      await serveMethods((method, res) => {
+        if (method === "OPTIONS") {
+          res.writeHead(204, { "access-control-allow-origin": "*", allow: "GET, HEAD, OPTIONS" });
+        } else {
+          res.writeHead(405, { allow: "GET, HEAD, OPTIONS", "content-type": "text/plain" });
+        }
+        res.end();
+      }),
+    );
+    expect(output).not.toContain("OPTIONS /api/status.json:");
+    expect(output).not.toContain("POST /api/status.json:");
+  }, 30_000);
+
+  it("fails a server that answers every method with its page", async () => {
+    const output = await smoke(
+      await serveMethods((_method, res) => {
+        res.writeHead(200, { "content-type": "text/html" });
+        res.end("<!doctype html>");
+      }),
+    );
+    expect(output).toContain("OPTIONS /api/status.json: 200, expected 204");
+    expect(output).toContain("POST /api/status.json: 200, expected 405");
+  }, 30_000);
+
+  it("fails a preflight without CORS and a 405 without Allow", async () => {
+    const output = await smoke(
+      await serveMethods((method, res) => {
+        res.writeHead(method === "OPTIONS" ? 204 : 405);
+        res.end();
+      }),
+    );
+    expect(output).toContain('OPTIONS /api/status.json: Access-Control-Allow-Origin "", expected *');
+    expect(output).toContain("POST /api/status.json: 405 without an Allow header");
   }, 30_000);
 });

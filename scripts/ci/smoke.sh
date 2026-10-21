@@ -9,7 +9,8 @@
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4181 --require-asset-cache
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
-# (22 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
+# (22 services, a CORS preflight answered with 204, a POST refused with 405),
+# the Atom feed, /metrics and /readyz. /readyz may answer 503
 # unless --require-ready: CI and sandboxes cannot always reach the vendors,
 # and an all-Unknown board is a correct answer there, not a broken build.
 #
@@ -81,15 +82,21 @@ trap 'rm -rf "$work"' EXIT
 failed=0
 fail() { echo "::error::$1" >&2; failed=1; }
 
-# get <path>: fetches base+path into $work/body and $work/headers and sets
-# $status to the HTTP code, or 000 when nothing answered.
+# send <method> <path> [curl options]: fetches base+path with that method into
+# $work/body and $work/headers and sets $status to the HTTP code, or 000 when
+# nothing answered. The options add request headers or a body.
 status=000
 quiet=false
-get() {
-  status="$(curl --silent --show-error --max-time 30 --dump-header "$work/headers" \
-    --output "$work/body" --write-out '%{http_code}' "$base$1" 2>"$work/curl-error")" || status=000
+send() {
+  local method="$1" path="$2"
+  shift 2
+  status="$(curl --silent --show-error --max-time 30 --request "$method" "$@" --dump-header "$work/headers" \
+    --output "$work/body" --write-out '%{http_code}' "$base$path" 2>"$work/curl-error")" || status=000
   [ "$status" != 000 ] || [ "$quiet" = true ] || sed 's/^/  /' "$work/curl-error" >&2
 }
+
+# get <path> [curl options]: send GET.
+get() { send GET "$@"; }
 
 header() { grep -i "^$1:" "$work/headers" | head -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//'; }
 
@@ -204,6 +211,24 @@ run_checks() {
     fail "/api/status.json: $status, expected 200"
   elif ! jq -e --argjson n "$SERVICES" '(.services | length) == $n and (.generatedAt | type) == "string"' "$work/body" >/dev/null 2>&1; then
     fail "/api/status.json: not JSON with $SERVICES services and a generatedAt"
+  fi
+
+  # Every endpoint is read-only: a preflight from another site is answered
+  # for any origin, and a write is refused with 405 rather than a page.
+  send OPTIONS /api/status.json --header 'Origin: https://example.com' --header 'Access-Control-Request-Method: GET'
+  check_version "OPTIONS /api/status.json"
+  if [ "$status" != 204 ]; then
+    fail "OPTIONS /api/status.json: $status, expected 204"
+  elif [ "$(header Access-Control-Allow-Origin)" != "*" ]; then
+    fail "OPTIONS /api/status.json: Access-Control-Allow-Origin \"$(header Access-Control-Allow-Origin)\", expected *"
+  fi
+
+  send POST /api/status.json --data ''
+  check_version "POST /api/status.json"
+  if [ "$status" != 405 ]; then
+    fail "POST /api/status.json: $status, expected 405"
+  elif [ -z "$(header Allow)" ]; then
+    fail "POST /api/status.json: 405 without an Allow header"
   fi
 
   get /api/history.json
