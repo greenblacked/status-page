@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { clip } from "./bounds.ts";
+import { currentGate, type Priority } from "./connection-gate.ts";
 
 const USER_AGENT = "StatusBar/1.0 (status board; official sources only)";
 const DEFAULT_TIMEOUT_MS = 9000;
@@ -260,12 +261,20 @@ async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
 
 export async function fetchText(
   url: string,
-  init: RequestInit & { timeoutMs?: number; binary?: boolean; head?: boolean } = {},
+  init: RequestInit & { timeoutMs?: number; binary?: boolean; head?: boolean; priority?: Priority } = {},
 ): Promise<{ body: string; bytes: ArrayBuffer; contentType: string; contentRange: string; status: number }> {
-  const { timeoutMs = DEFAULT_TIMEOUT_MS, binary, head, ...rest } = init;
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, binary, head, priority = "high", ...rest } = init;
+  // Inside a sweep, wait for a connection before the clock starts, so the
+  // timeout measures the vendor and not the queue in front of it. The sweep's
+  // deadline caps it, so no request outlives the sweep.
+  const gate = currentGate();
+  const release = gate ? await gate.acquire(priority) : undefined;
+  const budgetMs = gate ? Math.min(timeoutMs, gate.remainingMs()) : timeoutMs;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    if (budgetMs <= 0) throw new SourceError(`Timed out waiting for a connection to ${sourceHost(url)}`);
+    timer = setTimeout(() => controller.abort(), budgetMs);
     const response = await fetchVendor(url, {
       ...rest,
       signal: controller.signal,
@@ -313,12 +322,14 @@ export async function fetchText(
     throw new SourceError(error instanceof Error ? error.message : `Failed to fetch ${sourceHost(url)}`);
   } finally {
     clearTimeout(timer);
+    // Only now: the body has been read or cancelled, so the connection is free.
+    release?.();
   }
 }
 
 export async function fetchJson<T>(
   url: string,
-  init?: RequestInit & { timeoutMs?: number; binary?: boolean },
+  init?: RequestInit & { timeoutMs?: number; binary?: boolean; priority?: Priority },
 ): Promise<T> {
   const { body, contentType } = await fetchText(url, init);
   const trimmed = body.replace(/^\uFEFF/, "").trim();

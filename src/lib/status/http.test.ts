@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { currentGate, withConnectionGate } from "./connection-gate";
 import {
   fetchJson,
   fetchText,
@@ -434,5 +435,115 @@ describe("fetchJson on a body that is not JSON", () => {
   it("still parses JSON, including a JSONP wrapper", async () => {
     answer('cb({"a":1});', "text/javascript");
     expect(await fetchJson("https://status.example.com/a.json")).toEqual({ a: 1 });
+  });
+});
+
+// A fetch that answers each URL after `delays[url]` ms (default 1000) and
+// fails with an AbortError when its signal fires first, recording when each
+// request was started, so a test with fake timers can see queueing.
+function timedFetch(delays: Record<string, number> = {}) {
+  const started: Array<{ url: string; at: number }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      (url: string, init: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          started.push({ url, at: Date.now() });
+          const timer = setTimeout(() => resolve(new Response("ok")), delays[url] ?? 1000);
+          init.signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    ),
+  );
+  return started;
+}
+
+describe("fetchText inside a connection gate", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("starts a request's timeout when it gets a connection, not when it is queued", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const started = timedFetch({ "https://status.example.com/a": 8_500, "https://status.example.com/b": 1_000 });
+    await withConnectionGate({ limit: 1 }, async () => {
+      const results = Promise.allSettled([
+        fetchText("https://status.example.com/a", { timeoutMs: 9_000 }),
+        fetchText("https://status.example.com/b", { timeoutMs: 9_000 }),
+      ]);
+      await vi.advanceTimersByTimeAsync(12_000);
+      const [a, b] = await results;
+      expect(a.status).toBe("fulfilled");
+      // B waited 8.5 s for A's slot, then answered within its own 9 s.
+      expect(b.status).toBe("fulfilled");
+      expect(started).toEqual([
+        { url: "https://status.example.com/a", at: 0 },
+        { url: "https://status.example.com/b", at: 8_500 },
+      ]);
+    });
+  });
+
+  it("caps a request's timeout at the gate's deadline, and times out one still queued past it", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const started = timedFetch({ "https://status.example.com/a": 60_000 });
+    await withConnectionGate({ limit: 1, deadlineMs: 5_000 }, async () => {
+      const results = Promise.allSettled([
+        fetchText("https://status.example.com/a", { timeoutMs: 9_000 }),
+        fetchText("https://status.example.com/b", { timeoutMs: 9_000 }),
+      ]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const [a, b] = await results;
+      expect(a.status === "rejected" && (a.reason as Error).message).toBe("Timed out fetching status.example.com");
+      expect(b.status === "rejected" && b.reason).toBeInstanceOf(SourceError);
+      expect(b.status === "rejected" && (b.reason as Error).message).toBe(
+        "Timed out waiting for a connection to status.example.com",
+      );
+      expect(started.map((request) => request.url)).toEqual(["https://status.example.com/a"]);
+      expect(currentGate()!.active).toBe(0);
+    });
+  });
+
+  it("starts low-priority requests after every queued high-priority one", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const started = timedFetch();
+    await withConnectionGate({ limit: 1 }, async () => {
+      const results = Promise.all([
+        fetchText("https://status.example.com/first"),
+        fetchText("https://status.example.com/side", { priority: "low" }),
+        fetchText("https://status.example.com/main-1"),
+        fetchText("https://status.example.com/main-2", { priority: "high" }),
+      ]);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await results;
+      expect(started.map((request) => request.url)).toEqual([
+        "https://status.example.com/first",
+        "https://status.example.com/main-1",
+        "https://status.example.com/main-2",
+        "https://status.example.com/side",
+      ]);
+    });
+  });
+
+  it("holds the slot until the body has been read", async () => {
+    let finish = () => {};
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(10));
+        finish = () => controller.close();
+      },
+    });
+    stubFetch(() => new Response(stream));
+    await withConnectionGate({ limit: 1 }, async () => {
+      const gate = currentGate()!;
+      const reading = fetchText("https://status.example.com/a");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(gate.active).toBe(1);
+      finish();
+      expect((await reading).bytes.byteLength).toBe(10);
+      expect(gate.active).toBe(0);
+    });
   });
 });
