@@ -547,3 +547,131 @@ describe("fetchText inside a connection gate", () => {
     });
   });
 });
+
+describe("fetchText retries", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Answers with each response in turn (the last one again once they run out) and counts the calls.
+  function sequence(...responses: Array<() => Response>) {
+    const fetchMock = vi.fn(async () => (responses.length > 1 ? responses.shift()! : responses[0]!)());
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const gated = <T>(fn: () => Promise<T>, options = {}) => withConnectionGate(options, fn);
+  const failure = (promise: Promise<unknown>) => promise.catch((caught: unknown) => caught);
+
+  it("retries a 503 once inside a gate, and returns the retry's answer", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    const { body } = await gated(() => fetchText("https://status.example.com/a"));
+    expect(body).toBe("up");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([502, 504])("retries a %i once inside a gate", async (status) => {
+    const fetchMock = sequence(
+      () => new Response("down", { status }),
+      () => new Response("up"),
+    );
+    expect((await gated(() => fetchText("https://status.example.com/a"))).body).toBe("up");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a dropped connection once inside a gate", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) throw new TypeError("fetch failed");
+        return new Response("up");
+      }),
+    );
+    expect((await gated(() => fetchText("https://status.example.com/a"))).body).toBe("up");
+    expect(calls).toBe(2);
+  });
+
+  it("throws the retry's own error when the retry fails too, and tries no third time", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("down", { status: 502 }),
+      () => new Response("up"),
+    );
+    const error = await failure(gated(() => fetchText("https://status.example.com/a")));
+    expect((error as SourceError).status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry outside a gate", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    expect(((await failure(fetchText("https://status.example.com/a"))) as SourceError).status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a 429", () => new Response("slow down", { status: 429 })],
+    ["a 404", () => new Response("missing", { status: 404 })],
+    ["a 500", () => new Response("broken", { status: 500 })],
+    ["a challenge", () => new Response("challenge", { status: 503, headers: { "cf-mitigated": "challenge" } })],
+    ["an oversized body", () => new Response("x", { headers: { "content-length": String(MAX_BODY_BYTES + 1) } })],
+  ])("does not retry %s", async (_name, response) => {
+    const fetchMock = sequence(response, () => new Response("up"));
+    expect(await failure(gated(() => fetchText("https://status.example.com/a")))).toBeInstanceOf(SourceError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a timeout", async () => {
+    const started = timedFetch({ "https://status.example.com/a": 60_000 });
+    const error = await failure(gated(() => fetchText("https://status.example.com/a", { timeoutMs: 50 })));
+    expect((error as Error).message).toBe("Timed out fetching status.example.com");
+    expect(started).toHaveLength(1);
+  });
+
+  it("does not retry once the gate's subrequest budget is spent", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    const error = await failure(gated(() => fetchText("https://status.example.com/a"), { maxRequests: 1 }));
+    expect((error as SourceError).status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry with less than 3 s of the request's time left", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    await failure(gated(() => fetchText("https://status.example.com/a", { timeoutMs: 2_900 })));
+    await failure(gated(() => fetchText("https://status.example.com/a"), { deadlineMs: 2_900 }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts every redirect hop and every retry as a subrequest", async () => {
+    const responses: Record<string, Array<() => Response>> = {
+      "https://status.example.com/a": [() => new Response(null, { status: 302, headers: { location: "/b" } })],
+      "https://status.example.com/b": [() => new Response("down", { status: 503 }), () => new Response("up")],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const queue = responses[url]!;
+        return (queue.length > 1 ? queue.shift()! : queue[0]!)();
+      }),
+    );
+    const issued = await gated(async () => {
+      await fetchText("https://status.example.com/a");
+      return currentGate()!.issued;
+    });
+    // a -> b (503), then the retry: a -> b (200).
+    expect(issued).toBe(4);
+  });
+});

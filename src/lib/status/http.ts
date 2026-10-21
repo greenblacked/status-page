@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { clip } from "./bounds.ts";
-import { currentGate, type Priority } from "./connection-gate.ts";
+import { currentGate, type Gate, type Priority } from "./connection-gate.ts";
 
 const USER_AGENT = "StatusBar/1.0 (status board; official sources only)";
 const DEFAULT_TIMEOUT_MS = 9000;
@@ -234,11 +234,13 @@ function describeTarget(target: URL | undefined): string {
 
 // fetch with redirects followed by hand, at most MAX_REDIRECTS and only
 // within staysWithVendor. `redirect: "manual"` hands back the 3xx response
-// and its Location header both on Workers and in Node.
-async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
+// and its Location header both on Workers and in Node. Every hop is a
+// subrequest of its own, so each one is counted against the gate's budget.
+async function fetchVendor(url: string, init: RequestInit, gate?: Gate): Promise<Response> {
   const requested = new URL(url);
   let current = requested;
   for (let hops = 0; ; hops += 1) {
+    gate?.noteRequest();
     const response = await fetch(current.href, { ...init, redirect: "manual" });
     const location = REDIRECT_STATUSES.has(response.status) ? response.headers.get("location") : null;
     if (location === null) return response;
@@ -259,10 +261,79 @@ async function fetchVendor(url: string, init: RequestInit): Promise<Response> {
   }
 }
 
+type FetchTextResult = { body: string; bytes: ArrayBuffer; contentType: string; contentRange: string; status: number };
+
+// One request, its redirects included, with the body read and decoded.
+// Errors leave as they were raised; fetchText decides on a retry and turns
+// them into SourceErrors.
+async function readOnce(
+  url: string,
+  init: RequestInit,
+  { binary, head }: { binary?: boolean; head?: boolean },
+  gate: Gate | undefined,
+): Promise<FetchTextResult> {
+  const response = await fetchVendor(url, init, gate);
+  if (!response.ok) {
+    // Nothing in an error page is used, so it is never downloaded.
+    await response.body?.cancel().catch(() => {});
+    const message = `${describeStatus(response.status)} from ${sourceHost(url)}`;
+    // `cf-mitigated: challenge` is Cloudflare's own marker for a bot challenge, whatever status it carries.
+    if (REFUSAL_STATUSES.has(response.status) || response.headers.get("cf-mitigated") === "challenge") {
+      throw new RefusedError(message, response.status);
+    }
+    throw new SourceError(message, response.status);
+  }
+  // Still under fetchText's timeout: a vendor trickling a body in slowly
+  // is aborted like one that never answers.
+  const bytes = await readBodyCapped(response, url, MAX_BODY_BYTES, head ? HEAD_BYTES : undefined);
+  const contentType = response.headers.get("content-type") ?? "";
+  const contentRange = response.headers.get("content-range") ?? "";
+  let body: string;
+  if (binary) {
+    const bom = new Uint8Array(bytes.slice(0, 2));
+    if (bom[0] === 0xfe && bom[1] === 0xff) {
+      body = new TextDecoder("utf-16be").decode(bytes.slice(2));
+    } else if (bom[0] === 0xff && bom[1] === 0xfe) {
+      body = new TextDecoder("utf-16le").decode(bytes.slice(2));
+    } else {
+      body = new TextDecoder("utf-16le").decode(bytes);
+    }
+  } else {
+    body = new TextDecoder("utf-8").decode(bytes);
+  }
+  return { body, bytes, contentType, contentRange, status: response.status };
+}
+
+// What a load balancer in front of a vendor answers when one backend drops
+// out; the next attempt usually reaches another.
+const RETRY_STATUSES: ReadonlySet<number> = new Set([502, 503, 504]);
+// The least of a request's own time a retry needs left to be worth making.
+const RETRY_MIN_REMAINING_MS = 3000;
+
+// Whether a failed attempt earns one more: a dropped connection or a 502,
+// 503 or 504. Never a refusal (a rate limit or a challenge asks not to be
+// asked again), a payload (the same bytes would come back), a timeout (the
+// time is spent), or any other answer from the vendor.
+function worthRetrying(error: unknown): boolean {
+  if (error instanceof RefusedError || error instanceof PayloadError) return false;
+  if (error instanceof SourceError) return error.status !== undefined && RETRY_STATUSES.has(error.status);
+  return !(error instanceof Error && error.name === "AbortError");
+}
+
+function asSourceError(error: unknown, url: string): SourceError {
+  if (error instanceof SourceError) return error;
+  if (error instanceof Error && error.name === "AbortError") {
+    return new SourceError(`Timed out fetching ${sourceHost(url)}`);
+  }
+  return new SourceError(error instanceof Error ? error.message : `Failed to fetch ${sourceHost(url)}`);
+}
+
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export async function fetchText(
   url: string,
   init: RequestInit & { timeoutMs?: number; binary?: boolean; head?: boolean; priority?: Priority } = {},
-): Promise<{ body: string; bytes: ArrayBuffer; contentType: string; contentRange: string; status: number }> {
+): Promise<FetchTextResult> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, binary, head, priority = "high", ...rest } = init;
   // Inside a sweep, wait for a connection before the clock starts, so the
   // timeout measures the vendor and not the queue in front of it. The sweep's
@@ -274,8 +345,9 @@ export async function fetchText(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     if (budgetMs <= 0) throw new SourceError(`Timed out waiting for a connection to ${sourceHost(url)}`);
+    const startedAt = Date.now();
     timer = setTimeout(() => controller.abort(), budgetMs);
-    const response = await fetchVendor(url, {
+    const request: RequestInit = {
       ...rest,
       signal: controller.signal,
       headers: {
@@ -284,42 +356,21 @@ export async function fetchText(
         ...(rest.headers ?? {}),
       },
       cache: "no-store",
-    });
-    if (!response.ok) {
-      // Nothing in an error page is used, so it is never downloaded.
-      await response.body?.cancel().catch(() => {});
-      const message = `${describeStatus(response.status)} from ${sourceHost(url)}`;
-      // `cf-mitigated: challenge` is Cloudflare's own marker for a bot challenge, whatever status it carries.
-      if (REFUSAL_STATUSES.has(response.status) || response.headers.get("cf-mitigated") === "challenge") {
-        throw new RefusedError(message, response.status);
-      }
-      throw new SourceError(message, response.status);
+    };
+    try {
+      return await readOnce(url, request, { binary, head }, gate);
+    } catch (error) {
+      // One retry, and only inside a sweep, whose gate keeps the subrequest
+      // budget. It keeps this slot and this timer, so it cannot outlast the
+      // request it repeats; the short jittered pause keeps every collector
+      // that hit the same blip from asking again at the same instant.
+      const remainingMs = budgetMs - (Date.now() - startedAt);
+      if (!gate?.canRetry() || !worthRetrying(error) || remainingMs < RETRY_MIN_REMAINING_MS) throw error;
+      await pause(200 + Math.floor(Math.random() * 200));
+      return await readOnce(url, request, { binary, head }, gate);
     }
-    // Still under the timeout above: a vendor trickling a body in slowly
-    // is aborted like one that never answers.
-    const bytes = await readBodyCapped(response, url, MAX_BODY_BYTES, head ? HEAD_BYTES : undefined);
-    const contentType = response.headers.get("content-type") ?? "";
-    const contentRange = response.headers.get("content-range") ?? "";
-    let body: string;
-    if (binary) {
-      const bom = new Uint8Array(bytes.slice(0, 2));
-      if (bom[0] === 0xfe && bom[1] === 0xff) {
-        body = new TextDecoder("utf-16be").decode(bytes.slice(2));
-      } else if (bom[0] === 0xff && bom[1] === 0xfe) {
-        body = new TextDecoder("utf-16le").decode(bytes.slice(2));
-      } else {
-        body = new TextDecoder("utf-16le").decode(bytes);
-      }
-    } else {
-      body = new TextDecoder("utf-8").decode(bytes);
-    }
-    return { body, bytes, contentType, contentRange, status: response.status };
   } catch (error) {
-    if (error instanceof SourceError) throw error;
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new SourceError(`Timed out fetching ${sourceHost(url)}`);
-    }
-    throw new SourceError(error instanceof Error ? error.message : `Failed to fetch ${sourceHost(url)}`);
+    throw asSourceError(error, url);
   } finally {
     clearTimeout(timer);
     // Only now: the body has been read or cancelled, so the connection is free.
