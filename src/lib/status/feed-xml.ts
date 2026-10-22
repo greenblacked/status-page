@@ -198,7 +198,7 @@ export const MAX_RSS_SCANNED = 5000;
 
 const ITEM_CLOSE = /<\/item\s*>/i;
 const ENTRY_CLOSE = /<\/entry\s*>/i;
-// Whether a feed has any RSS `<item>` or Atom `<entry>` at all.
+// Whether a feed holds an RSS `<item>` or an Atom `<entry>` at all.
 const HAS_ITEM = /<item[\s>]/i;
 const HAS_ENTRY = /<entry[\s>]/i;
 
