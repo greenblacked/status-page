@@ -202,6 +202,14 @@ describe("a partial outage in a feed reads as on a Statuspage component", () => 
     expect(azureItemHealth("Partial outage - Virtual Machines - Service unavailable")).toBe("outage");
   });
 
+  it("reads a one-word Grok severity of major, critical or full as an outage", () => {
+    expect(grokItemHealth("<p>Severity: Major</p><p>Status: Investigating</p>")).toBe("outage");
+    expect(grokItemHealth("<p>Severity: Critical</p><p>Status: Identified</p>")).toBe("outage");
+    expect(grokItemHealth("<p>Severity: Full</p>")).toBe("outage");
+    expect(grokItemHealth("<p>Severity: Minor</p><p>Status: Investigating</p>")).toBe("degraded");
+    expect(grokItemHealth("<p>Severity: Major</p><p>Status: Resolved</p>")).toBe("operational");
+  });
+
   it("leaves an Azure outage an outage when its title also names the symptoms", () => {
     expect(azureItemHealth("Outage - Azure Front Door: degraded performance")).toBe("outage");
     expect(azureItemHealth("Service outage - Azure SQL: disruption in West Europe")).toBe("outage");
