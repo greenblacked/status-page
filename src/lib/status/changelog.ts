@@ -301,16 +301,24 @@ export function appleOsReleases(items: Array<{ title: string; pubDate?: string; 
   return releases;
 }
 
+// A release's date for ranking: an undated one ranks below every dated one.
+function publishedRank(release: OsRelease): number {
+  const at = release.publishedAt ? Date.parse(release.publishedAt) : Number.NaN;
+  return Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * The newest release of each OS family, by its date rather than its place in
+ * the feed (a feed may list an older post above a newer one). Among equal
+ * dates, and among undated ones, the first listed wins.
+ */
 export function latestAppleOsByFamily(items: Array<{ title: string; pubDate?: string; link?: string }>): OsRelease[] {
-  const seen = new Set<string>();
-  const latest: OsRelease[] = [];
+  const newest = new Map<string, OsRelease>();
   for (const release of appleOsReleases(items)) {
-    if (seen.has(release.family)) continue;
-    seen.add(release.family);
-    latest.push(release);
-    if (latest.length === OS_FAMILIES.length) break;
+    const kept = newest.get(release.family);
+    if (!kept || publishedRank(release) > publishedRank(kept)) newest.set(release.family, release);
   }
-  return latest.sort(
+  return [...newest.values()].sort(
     (a, b) =>
       OS_FAMILIES.indexOf(a.family as (typeof OS_FAMILIES)[number]) -
       OS_FAMILIES.indexOf(b.family as (typeof OS_FAMILIES)[number]),
