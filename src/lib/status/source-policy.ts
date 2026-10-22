@@ -8,7 +8,11 @@ import type { ServiceId, ServiceSnapshot, SourceFailure } from "./types.ts";
 // sources.server.ts this runs under Node's own type stripping, so it uses
 // relative .ts imports and erasable syntax only.
 
-/** How long a slow-moving source's raw read is reused (ttlMs), retried after a failure (retryMs) and kept as a fallback while it fails (keepGoodMs). */
+/**
+ * How long a slow-moving source's raw read is reused (ttlMs), kept as a
+ * fallback while it fails (keepGoodMs), and left alone after a failure while
+ * that fallback stands in (retryMs).
+ */
 export type SourceTier = { ttlMs: number; retryMs: number; keepGoodMs: number };
 
 const MINUTE_MS = 60_000;
@@ -107,7 +111,7 @@ function retryAfterOf(error: unknown): number {
 }
 
 type Breaker = { lastGood?: ServiceSnapshot; last?: ServiceSnapshot; failures: number; openUntil: number };
-type Cached<T> = { value?: { value: T; at: number }; failedAt?: number; error?: unknown; loading?: Promise<unknown> };
+type Cached<T> = { value?: { value: T; at: number }; failedAt?: number; loading?: Promise<unknown> };
 
 /**
  * A policy whose state (breakers, last good snapshots, cached reads) lives in
@@ -187,10 +191,15 @@ export function createSourcePolicy({
         counts.cachedReads += 1;
         return { value: cached.value.value, fetchedAt: cached.value.at, fromCache: true };
       }
+      // After a failure the last good value stands in, without asking, until
+      // retryMs has passed. With nothing kept the source is asked again:
+      // replaying the old error would pass off a failure that is not new as a
+      // new one (a card checked "just now", and a breaker counting requests
+      // that were never made). The breaker alone holds back a source that
+      // keeps failing.
       if (cached.failedAt !== undefined && now() - cached.failedAt < tier.retryMs) {
         const fallback = kept();
         if (fallback) return fallback;
-        throw cached.error;
       }
       if (cached.loading) return cached.loading as Promise<{ value: T; fetchedAt: number; fromCache: boolean }>;
       const loading = attempt(load)
@@ -199,12 +208,10 @@ export function createSourcePolicy({
             const at = now();
             cached.value = { value, at };
             cached.failedAt = undefined;
-            cached.error = undefined;
             return { value, fetchedAt: at, fromCache: false };
           },
           (error: unknown) => {
             cached.failedAt = now();
-            cached.error = error;
             const fallback = kept();
             if (fallback) return fallback;
             throw error;

@@ -241,7 +241,7 @@ describe("SourcePolicy.read", () => {
     await expect(policy.read("k", TIER, load)).rejects.toThrow("down");
   });
 
-  it("does not load again before retryMs after a failure", async () => {
+  it("with nothing kept, asks again on the next read after a failure instead of replaying it", async () => {
     const { clock, policy } = harness();
     let loads = 0;
     const load = async () => {
@@ -250,11 +250,40 @@ describe("SourcePolicy.read", () => {
     };
     await expect(policy.read("k", TIER, load)).rejects.toThrow("down 1");
     clock.now += TIER.retryMs - 1;
-    await expect(policy.read("k", TIER, load)).rejects.toThrow("down 1");
-    expect(loads).toBe(1);
-    clock.now += 1;
+    // A replayed error would be shown as a new failure, checked now, and count towards the breaker.
     await expect(policy.read("k", TIER, load)).rejects.toThrow("down 2");
     expect(loads).toBe(2);
+  });
+
+  it("feeds the breaker only with reads that were really made", async () => {
+    const { clock, policy } = harness();
+    let loads = 0;
+    const read = () =>
+      policy.read("k", TIER, async () => {
+        loads += 1;
+        throw new Error("down");
+      });
+    const collect = async () => {
+      try {
+        await read();
+        return good(clock.now);
+      } catch {
+        return bad(clock.now, PARSER);
+      }
+    };
+    // A sweep a minute: the breaker opens after three failures, each a request the source really got.
+    for (let sweep = 0; sweep < BREAKER_THRESHOLD; sweep += 1) {
+      if (sweep > 0) clock.now += MINUTE;
+      const snapshot = await policy.run("mikrotik", collect);
+      expect(snapshot.checkedAt).toBe(new Date(clock.now).toISOString());
+    }
+    expect(loads).toBe(BREAKER_THRESHOLD);
+    // Open: the last failure is shown with its own time, and nothing is asked.
+    const lastAsked = clock.now;
+    clock.now += BREAKER_BASE_MS / 2;
+    const held = await policy.run("mikrotik", collect);
+    expect(held.checkedAt).toBe(new Date(lastAsked).toISOString());
+    expect(loads).toBe(BREAKER_THRESHOLD);
   });
 
   it("serves the last good value without loading during the retry wait", async () => {
