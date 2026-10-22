@@ -6,7 +6,10 @@
 //     collector unit tests read, the same table as src/test/stub-fetch.ts routes) is answered from that file,
 //     with its dates moved to the present so the collectors' windows (14 days and the like) see it as current
 //     (the routes, the dates moved and the anchor of each fixture group are in canned-vendors.mjs);
-//   - any other host or URL is refused at once, as a network that is down would refuse it.
+//   - any other host or URL is refused at once, as a network that is down would refuse it. Inside a sweep
+//     http.ts takes that for a dropped connection and, while the sweep's request budget lasts, asks once
+//     more after a pause of 200 to 400 ms, so a refused source can take a few hundred milliseconds to fail
+//     and be logged (and counted in the report) as two refused requests.
 // The first render, and the hydration that follows it, is the same board in a sandbox, on a laptop and in CI,
 // with outages, degraded and maintenance cards, incidents with times, component lists and release lines on it
 // (the services without a canned payload read Unknown). Every request is written to E2E_VENDOR_LOG, one JSON
