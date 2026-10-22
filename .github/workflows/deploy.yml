@@ -415,11 +415,13 @@ jobs:
 
       - name: Roll back the failed deployment
         id: rollback
-        # Only after a smoke test that actually ran and failed, or was
-        # cancelled or timed out before it passed: a build or auth failure
-        # earlier leaves nothing new deployed to roll back from. Production
-        # only: a preview has no traffic to roll back.
-        if: (failure() || cancelled()) && (steps.smoke-test.outcome == 'failure' || steps.smoke-test.outcome == 'cancelled') && needs.build.outputs.environment == 'production'
+        # Only once the deploy reported its version, and only after a smoke
+        # test that actually ran and failed, or was cancelled or timed out
+        # before it passed, or a run cancelled between the deploy and the
+        # smoke test (which then never starts, so it reads skipped): a build
+        # or auth failure earlier leaves nothing new deployed to roll back
+        # from. Production only: a preview has no traffic to roll back.
+        if: (failure() || cancelled()) && needs.build.outputs.environment == 'production' && steps.deploy.outputs.version_id != '' && (steps.smoke-test.outcome == 'failure' || steps.smoke-test.outcome == 'cancelled' || (cancelled() && steps.smoke-test.outcome == 'skipped'))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -439,7 +441,8 @@ jobs:
         # answering: wait until /healthz stops naming the failed version. The
         # version rolled back to may predate X-Worker-Version and send none,
         # which counts as not the failed one.
-        if: (failure() || cancelled()) && steps.rollback.outputs.rolled_back == 'true'
+        # A run cancelled before it picked the URL has none to ask.
+        if: (failure() || cancelled()) && steps.rollback.outputs.rolled_back == 'true' && steps.target.outputs.url != ''
         env:
           DEPLOY_URL: ${{ steps.target.outputs.url }}
           FAILED_VERSION: ${{ steps.deploy.outputs.version_id }}

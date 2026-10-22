@@ -22,6 +22,17 @@ function stepScript(id: string): string {
     .join("\n");
 }
 
+/** The `if:` condition of the step with this id. */
+function stepCondition(id: string): string {
+  const start = DEPLOY.search(new RegExp(`^ +id: ${id}\\n`, "m"));
+  expect(start, `step ${id}`).toBeGreaterThanOrEqual(0);
+  const rest = DEPLOY.slice(start);
+  const end = rest.search(/^ {6}- /m);
+  const condition = (end < 0 ? rest : rest.slice(0, end)).match(/^ +if: (.+)$/m);
+  expect(condition, `if: of ${id}`).not.toBeNull();
+  return condition?.[1] ?? "";
+}
+
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -61,5 +72,17 @@ describe("deploy.yml: Read the production URL", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toMatch(/^::warning::the first route in dist\/server\/wrangler\.json is not a plain host/);
     expect(result.output).toBe("");
+  });
+});
+
+describe("deploy.yml: Roll back the failed deployment", () => {
+  it("also rolls back production when the run is cancelled after the deploy but before the smoke test starts", () => {
+    const condition = stepCondition("rollback");
+    // A smoke test that never started is skipped, and a cancelled run skips it: the deploy is live and untested.
+    expect(condition).toContain("steps.deploy.outputs.version_id != ''");
+    expect(condition).toMatch(/cancelled\(\) && steps\.smoke-test\.outcome == 'skipped'/);
+    expect(condition).toContain("steps.smoke-test.outcome == 'failure'");
+    expect(condition).toContain("steps.smoke-test.outcome == 'cancelled'");
+    expect(condition).toContain("needs.build.outputs.environment == 'production'");
   });
 });

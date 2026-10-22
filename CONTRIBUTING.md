@@ -378,7 +378,7 @@ A cold local Worker collects vendors on its first request. Run `./scripts/ci/smo
 
 ### Rolling back
 
-`deploy.yml` already does this by itself when a production deploy fails its smoke test (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` reach only that one rollback step, same as the deploy and preview steps). A failed preview is not rolled back: it never receives production traffic. If `wrangler deploy` fails after it has uploaded the script (for example when the token lacks Zone Workers Routes Edit or Zone Read, so publishing the Custom Domain fails), the new version is already live, and it was neither smoke-tested nor rolled back. The job says so; check it, and roll back by hand if needed. To go back to the previous production version by hand:
+`deploy.yml` already does this by itself when a production deploy fails its smoke test, or when the run is cancelled or times out after the deploy and before that test has passed (`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` reach only that one rollback step, same as the deploy and preview steps). A failed preview is not rolled back: it never receives production traffic. If `wrangler deploy` fails after it has uploaded the script (for example when the token lacks Zone Workers Routes Edit or Zone Read, so publishing the Custom Domain fails), the new version is already live, and it was neither smoke-tested nor rolled back. The job says so; check it, and roll back by hand if needed. To go back to the previous production version by hand:
 
 ```bash
 pnpm exec wrangler rollback --name status-page
