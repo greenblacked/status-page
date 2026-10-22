@@ -24,7 +24,7 @@ import {
   steamNoteLines,
   withReleaseFeeds,
 } from "./release-feeds.server.ts";
-import { MAX_RSS_SCANNED } from "./sources.server.ts";
+import { collectAllServices, MAX_RSS_SCANNED } from "./sources.server.ts";
 import type { ReleaseFeed, ServiceId } from "./types.ts";
 
 // The vendors' release feeds, read against hand-built fixtures in the formats
@@ -1257,9 +1257,22 @@ describe("the advisory rule", () => {
       });
 
       it("starts no feed request until the slowest health request has finished", async () => {
+        const notFound = () => Promise.resolve(new Response("not found", { status: 404, statusText: "Not Found" }));
+        // How many health requests a sweep makes besides the slowest one, from a sweep with nothing held.
+        let expectedOthers = 0;
+        vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+          const url = urlOf(input);
+          if (url === CLAUDE) return Promise.resolve(new Response(JSON.stringify(degraded)));
+          expectedOthers += 1;
+          return notFound();
+        });
+        await collectAllServices();
+        expect(expectedOthers).toBeGreaterThan(0);
+
         let slowest: (() => void) | undefined;
         const feedStartsBeforeSlowest: string[] = [];
         let slowestDone = false;
+        let answered = 0;
         const feedRoutes = allFeedsUp();
         vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
           const url = urlOf(input);
@@ -1276,15 +1289,20 @@ describe("the advisory rule", () => {
               };
             });
           }
-          return Promise.resolve(new Response("not found", { status: 404, statusText: "Not Found" }));
+          answered += 1;
+          return notFound();
         });
         let finished = false;
         const run = collectInWorker().then((result) => {
           finished = true;
           return result;
         });
-        // Every other source has answered, one is still out: nothing may have started.
-        await settle();
+        // Every other source has answered, one is still out: nothing may have started. Waiting for that state,
+        // not for a number of ticks, is what keeps this from depending on how fast the sweep gets going.
+        await vi.waitFor(() => {
+          expect(slowest).toBeDefined();
+          expect(answered).toBe(expectedOthers);
+        });
         await settle();
         expect(finished).toBe(false);
         expect(feedStartsBeforeSlowest).toEqual([]);
