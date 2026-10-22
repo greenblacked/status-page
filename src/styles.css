@@ -1460,6 +1460,11 @@ article[id^="service-"],
     transition: none;
   }
 
+  /* The details chevron turns by a transition, which the animation rule above does not reach: it snaps open. */
+  .row-details > summary::after {
+    transition: none;
+  }
+
   /* The bar's field and the verdict it replaces step in and out: no move in time. */
   .bar-search,
   [data-bar-verdict] {
