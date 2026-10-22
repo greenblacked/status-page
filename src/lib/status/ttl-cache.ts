@@ -144,7 +144,9 @@ export function createTtlCache<T>(
   /**
    * Changes the value in hand in place, for what arrives after its load (the
    * release feeds and notes of a board). It keeps the entry's load time, so
-   * the value expires when it would have, and shares the change. A patch that
+   * the value expires when it would have, and writes the change to the shared
+   * store, for a peer that reads it later: one that already adopted the entry
+   * does not take it again, since it is no younger. A patch that
    * returns the same value changes nothing; with no value yet there is nothing
    * to patch.
    */

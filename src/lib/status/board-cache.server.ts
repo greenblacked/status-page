@@ -27,7 +27,11 @@ import type { BoardSnapshot } from "./types";
 // instead of sweeping again. So only a data center with no snapshot at all
 // waits for a sweep. The Node server has no such level and keeps its own.
 // The release feeds and notes read after a sweep patch the cached snapshot in
-// place, at both levels, without making it any younger.
+// place, without making it any younger, and the patched snapshot replaces the
+// shared one: an isolate that starts cold after that reads it with the lines
+// on. A peer that adopted the snapshot before the patch landed keeps it as it
+// was, without the lines, until its own next refresh (adopt() takes only a
+// younger entry, and the patch keeps the age).
 const boardCache = createTtlCache(loadBoard, CACHE_TTL_MS, {
   minForceIntervalMs: MIN_FORCED_REFRESH_MS,
   onBackgroundRefresh: (promise) => findCloudflareContext()?.waitUntil(promise),
