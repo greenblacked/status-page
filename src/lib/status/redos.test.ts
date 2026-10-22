@@ -83,6 +83,8 @@ describe("parsers stay linear on crafted vendor input", () => {
       `${"service ".repeat(SIZE / 8)}unavailable`,
       `${"d".repeat(SIZE)}own`,
       `${"o".repeat(SIZE)}utage`,
+      `${"partial ".repeat(SIZE / 8)}x`,
+      `partial${" ".repeat(SIZE)}x`,
     ];
     for (const body of cases) expect(elapsed(() => azureItemHealth(body))).toBeLessThan(BUDGET_MS);
     expect(azureItemHealth(`${"resolved ".repeat(10)}x`)).toBe("operational");

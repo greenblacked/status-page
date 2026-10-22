@@ -1715,27 +1715,29 @@ async function collectGitlab(): Promise<ServiceSnapshot> {
 // Anchored at the start, so the test is linear.
 const AZURE_OVER = /^[\s[(]*(?:(?:preliminary|final)[\s-]+)?(?:resolved|mitigated|post[ -]incident review|pir)\b/i;
 // An outage only when the title says so; the feed has no severity and most
-// items are one service in one region. "Service unavailable" is an outage
-// whatever else the title says; a bare "outage" only when no milder word
-// (a partial outage, a degradation) qualifies it.
+// items are one service in one region. "Service unavailable" or "outage" is
+// an outage whatever symptoms the title also names; only "partial outage" is
+// not, and reads Degraded as textSeverity and every component mapping read it.
 const AZURE_UNAVAILABLE = /\bservice unavailable\b/i;
 const AZURE_OUTAGE = /\boutage\b/i;
+const AZURE_PARTIAL_OUTAGE = /\bpartial\s+outage\b/gi;
 
 /**
  * What an Azure status feed item's title says about its incident. The feed is
  * RSS 2.0 with no status field, so the reading is from the title alone,
  * case-folded: a resolution or post incident review prefix means it is over
- * ("operational"), "service unavailable" means "outage", a partial outage or
- * another degradation word (textSeverity) means "degraded", a remaining
- * "outage" means "outage", "maintenance" means "maintenance", and anything
- * else the feed still lists is "degraded". Anchored or bounded regexes and a
- * substring test, so the cost is linear in the text.
+ * ("operational"), "service unavailable" or an "outage" other than a
+ * partial one means "outage", a partial outage means "degraded",
+ * "maintenance" means "maintenance", and anything else the feed still lists
+ * is "degraded". Anchored or bounded regexes and a substring test, so the
+ * cost is linear in the text.
  */
 export function azureItemHealth(title: string): Health {
   if (AZURE_OVER.test(title)) return "operational";
   if (AZURE_UNAVAILABLE.test(title)) return "outage";
-  if (textSeverity(title) === "degraded") return "degraded";
-  if (AZURE_OUTAGE.test(title)) return "outage";
+  const rest = title.replace(AZURE_PARTIAL_OUTAGE, "partial");
+  if (AZURE_OUTAGE.test(rest)) return "outage";
+  if (rest !== title) return "degraded";
   if (title.toLowerCase().includes("maintenance")) return "maintenance";
   return "degraded";
 }

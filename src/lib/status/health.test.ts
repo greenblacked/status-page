@@ -201,4 +201,12 @@ describe("a partial outage in a feed reads as on a Statuspage component", () => 
     expect(azureItemHealth("Outage - Azure SQL - West Europe")).toBe("outage");
     expect(azureItemHealth("Partial outage - Virtual Machines - Service unavailable")).toBe("outage");
   });
+
+  it("leaves an Azure outage an outage when its title also names the symptoms", () => {
+    expect(azureItemHealth("Outage - Azure Front Door: degraded performance")).toBe("outage");
+    expect(azureItemHealth("Service outage - Azure SQL: disruption in West Europe")).toBe("outage");
+    expect(azureItemHealth("Partial outage in East US; outage in West Europe")).toBe("outage");
+    expect(azureItemHealth("Partial outage - Storage - degraded performance")).toBe("degraded");
+    expect(azureItemHealth("Partial outage during maintenance - Storage")).toBe("degraded");
+  });
 });
