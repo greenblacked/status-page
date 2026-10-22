@@ -404,6 +404,52 @@ describe("SourcePolicy: a load that never reached the vendor", () => {
     expect(loads).toBe(3);
   });
 
+  it("is not counted as a collector's failure: starved sweeps never open the breaker", async () => {
+    const { clock, policy } = harness();
+    let calls = 0;
+    const starved = async (noteError: (error: unknown) => void) => {
+      calls += 1;
+      noteError(unasked());
+      return bad(clock.now, TIMEOUT);
+    };
+    for (let i = 0; i < BREAKER_THRESHOLD; i += 1) {
+      clock.now += 1_000;
+      expect((await policy.run("claude", starved)).failure).toEqual(TIMEOUT);
+    }
+    // The vendor was never asked, so the next sweep asks it rather than skipping the card.
+    clock.now += 1_000;
+    await policy.run("claude", starved);
+    expect(calls).toBe(BREAKER_THRESHOLD + 1);
+    expect(policy.stats().skipped).toBe(0);
+  });
+
+  it("carries the last good snapshot without bringing the breaker closer to opening", async () => {
+    const { clock, policy } = harness();
+    const last = good(clock.now);
+    await policy.run("claude", async () => last);
+    for (let i = 0; i < BREAKER_THRESHOLD; i += 1) {
+      clock.now += 1_000;
+      const shown = await policy.run("claude", async (noteError) => {
+        noteError(unasked());
+        return bad(clock.now, TIMEOUT);
+      });
+      expect(shown).toBe(last);
+    }
+    expect(policy.stats().carried).toBe(BREAKER_THRESHOLD);
+    // Real failures still count from zero: the starved sweeps added nothing.
+    let calls = 0;
+    const failing = async () => {
+      calls += 1;
+      return bad(clock.now, HTTP_404);
+    };
+    for (let i = 0; i < BREAKER_THRESHOLD - 1; i += 1) await policy.run("claude", failing);
+    await policy.run("claude", failing);
+    expect(calls).toBe(BREAKER_THRESHOLD);
+    await policy.run("claude", failing);
+    expect(calls).toBe(BREAKER_THRESHOLD);
+    expect(policy.stats().skipped).toBe(1);
+  });
+
   it("covers a side read queued past the sweep's deadline behind the reads that decide a card", async () => {
     vi.useFakeTimers({ now: 0 });
     const asked: string[] = [];

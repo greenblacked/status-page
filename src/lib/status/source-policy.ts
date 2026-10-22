@@ -161,9 +161,12 @@ export function createSourcePolicy({
         breaker.openUntil = 0;
         return snapshot;
       }
-      breaker.failures += 1;
+      // A collector whose read never got a connection failed for this sweep's
+      // lack of time, not the vendor's: the breaker neither counts it nor
+      // opens on it, and the last good snapshot may still stand in.
+      if (reachedVendor(error)) breaker.failures += 1;
       const at = now();
-      if (breaker.failures >= BREAKER_THRESHOLD) {
+      if (reachedVendor(error) && breaker.failures >= BREAKER_THRESHOLD) {
         const backoff = Math.min(BREAKER_MAX_MS, BREAKER_BASE_MS * 2 ** (breaker.failures - BREAKER_THRESHOLD));
         breaker.openUntil = at + jitter(Math.max(retryAfterOf(error), backoff));
       }
