@@ -369,7 +369,7 @@ The container serves plain HTTP and does not terminate TLS: put Caddy, nginx, Tr
 | `PORT` | `3000` | The port to listen on, inside the container |
 | `HOST` | `0.0.0.0` in the image, `127.0.0.1` from `pnpm start` | The address to bind |
 | `TRUST_PROXY` | off | Set to `1` behind a reverse proxy that sets `X-Forwarded-Proto` and `X-Forwarded-Host`, so the board sees its public `https://` address. Leave it off when the container is reached directly: any client can send those headers |
-| `PUBLIC_ORIGIN` | unset | The public origin for feed links, e.g. `https://status.example.com`; overrides the Host header (and `X-Forwarded-*` with `TRUST_PROXY`). A value that is not a plain http(s) origin stops the server at start |
+| `PUBLIC_ORIGIN` | unset | The public origin for feed links, e.g. `https://status.example.com`; overrides the Host header (and `X-Forwarded-*` with `TRUST_PROXY`). Set it whenever a cache sits in front: without it the feed, which may be cached for a minute, links to whatever host the client named. A value that is not a plain http(s) origin stops the server at start |
 | `HSTS` | on | `Strict-Transport-Security: max-age=31536000`, which browsers obey only over HTTPS and which pins just the host that sent it. `subdomains` adds `includeSubDomains` (only if every subdomain of your domain is HTTPS-only); `off` sends no header, for a proxy that sets its own |
 | `SHUTDOWN_TIMEOUT_MS` | `5000` | How long `SIGTERM` waits for requests in flight before closing them. Keep it under the 10 s `docker stop` allows before `SIGKILL` |
 
