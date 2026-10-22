@@ -9,8 +9,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { methodGuard } from "../lib/request-methods.ts";
 import { DEFAULT_HSTS, securityHeaders } from "../lib/security-headers.ts";
 import { withValidator } from "../lib/status/conditional.ts";
+import { Route as healthzRoute } from "../routes/healthz.ts";
 import { createNodeServer, DEFAULT_NODE_HSTS, hstsFromEnv } from "./server.ts";
 import { IMMUTABLE_CACHE_CONTROL, indexStaticFiles, MIN_COMPRESS_BYTES, SHORT_CACHE_CONTROL } from "./static.ts";
+
+// The real /healthz handler, so the test sees the headers the app gives it.
+type RouteHandler = (context: { request: Request }) => Response | Promise<Response>;
+const healthz = (healthzRoute.options.server as unknown as { handlers: { GET: RouteHandler } }).handlers.GET;
 
 const css = "body { color: red; }\n".repeat(200);
 const page = `<!doctype html><title>Board</title>${"<p>service</p>".repeat(200)}`;
@@ -44,7 +49,7 @@ beforeAll(async () => {
       if (pathname === "/guarded") return methodGuard(request, "router") ?? new Response("read");
       if (pathname === "/validated")
         return withValidator(request, new Response(page, { headers: { "Content-Type": "application/json" } }));
-      if (pathname === "/healthz") return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });
+      if (pathname === "/healthz") return healthz({ request });
       if (pathname === "/throw") throw new Error("boom");
       if (pathname === "/app-hsts")
         return new Response("x", { headers: { "Strict-Transport-Security": DEFAULT_HSTS } });
@@ -287,6 +292,15 @@ describe("the app handler", () => {
     await get("/page");
     await vi.waitFor(() => expect(logs.some((entry) => entry.path === "/page")).toBe(true));
     expect(logs.filter((entry) => entry.path === "/healthz")).toEqual([]);
+  });
+
+  it("sends /healthz as it is, never compressed", async () => {
+    for (const encoding of ["gzip", "br"]) {
+      const { response, bytes } = await get("/healthz", { "Accept-Encoding": encoding });
+      expect(response.headers.has("content-encoding"), encoding).toBe(false);
+      expect(response.headers.get("content-length"), encoding).toBe("3");
+      expect(bytes.toString(), encoding).toBe("ok\n");
+    }
   });
 
   it("compresses a text response and leaves an image or a no-transform one alone", async () => {
