@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createTtlCache } from "./ttl-cache";
+import { createTtlCache, type Entry, type SharedStore } from "./ttl-cache";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -15,6 +15,15 @@ function counter() {
   return vi.fn(async () => `load-${++n}`);
 }
 
+/** A load that stays pending until the test settles it. */
+function held() {
+  let resolve!: (value: string) => void;
+  const promise = new Promise<string>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("createTtlCache", () => {
   it("returns a cached value until its TTL expires", async () => {
     const load = counter();
@@ -24,8 +33,10 @@ describe("createTtlCache", () => {
     vi.setSystemTime(44_999);
     await expect(cache.get()).resolves.toBe("load-1");
     vi.setSystemTime(45_000);
-    await expect(cache.get()).resolves.toBe("load-2");
-
+    // Past the TTL the old value comes back at once and the refresh runs behind it.
+    await expect(cache.get()).resolves.toBe("load-1");
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.waitFor(async () => expect(await cache.get()).toBe("load-2"));
     expect(load).toHaveBeenCalledTimes(2);
   });
 
@@ -60,12 +71,13 @@ describe("createTtlCache", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("serves a stale value at once only to callers that allow it, and refreshes behind it", async () => {
+  it("serves a value of any age at once to a caller that allows it, and refreshes behind it", async () => {
     const load = counter();
-    const cache = createTtlCache(load, 45_000, { maxStaleMs: 75_000 });
+    const cache = createTtlCache(load, 45_000);
 
     await cache.get();
-    vi.setSystemTime(60_000);
+    // Far past the TTL and past the 75 s stale window there once was.
+    vi.setSystemTime(6 * 60 * 60_000);
 
     await expect(cache.get({ allowStale: true })).resolves.toBe("load-1");
     expect(load).toHaveBeenCalledTimes(2);
@@ -73,7 +85,115 @@ describe("createTtlCache", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("registers background refreshes so a Worker can keep them alive after the response", async () => {
+  it("gives a fresh-preferring caller the new value when the refresh lands within its wait", async () => {
+    const next = held();
+    const load = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("old")
+      .mockImplementationOnce(() => next.promise);
+    const cache = createTtlCache(load, 45_000);
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+    const fresh = cache.get({ waitForFreshMs: 3_000 });
+    await vi.advanceTimersByTimeAsync(2_999);
+    next.resolve("new");
+
+    await expect(fresh).resolves.toBe("new");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives a fresh-preferring caller the value in hand once its wait is up, and the refresh lands later", async () => {
+    const next = held();
+    const load = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("old")
+      .mockImplementationOnce(() => next.promise);
+    const cache = createTtlCache(load, 45_000);
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+    let settled: string | undefined;
+    const fresh = cache.get({ waitForFreshMs: 3_000 }).then((value) => {
+      settled = value;
+      return value;
+    });
+    await vi.advanceTimersByTimeAsync(2_999);
+    expect(settled).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(fresh).resolves.toBe("old");
+
+    next.resolve("new");
+    await vi.waitFor(async () => expect(await cache.get()).toBe("new"));
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("gives a fresh-preferring caller the value in hand at once when the refresh fails", async () => {
+    const load = vi
+      .fn<() => Promise<string>>()
+      .mockResolvedValueOnce("old")
+      .mockRejectedValueOnce(new Error("vendor down"));
+    const cache = createTtlCache(load, 45_000);
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("old");
+  });
+
+  it("propagates a failed cold load, and the next caller loads again", async () => {
+    const load = vi.fn().mockRejectedValueOnce(new Error("vendor down")).mockResolvedValue("board");
+    const cache = createTtlCache(load, 45_000);
+
+    await expect(cache.get()).rejects.toThrow("vendor down");
+    await expect(cache.get()).resolves.toBe("board");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the last value when a background refresh fails, and refreshes again after it", async () => {
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce("good")
+      .mockRejectedValueOnce(new Error("vendor down"))
+      .mockResolvedValue("later");
+    const cache = createTtlCache(load, 45_000);
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+
+    await expect(cache.get({ allowStale: true })).resolves.toBe("good");
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    // The failed refresh did not wedge the cache: the next caller gets the old value and starts another one.
+    await vi.waitFor(async () => expect(await cache.get({ allowStale: true })).toBe("later"));
+  });
+
+  it("registers every load, cold, stale and forced, so a Worker can keep it alive after the response", async () => {
+    const onBackgroundRefresh = vi.fn();
+    const cache = createTtlCache(counter(), 45_000, { onBackgroundRefresh });
+
+    await cache.get();
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(60_000);
+    await cache.get({ allowStale: true });
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(2);
+    await onBackgroundRefresh.mock.calls[1][0];
+    await cache.get({ force: true });
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(3);
+    // A caller that joins a load in flight registers nothing new.
+    vi.setSystemTime(120_000);
+    await Promise.all([cache.get({ allowStale: true }), cache.get({ allowStale: true })]);
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(4);
+  });
+
+  it("hands the Worker a load that never rejects, even when the load fails", async () => {
+    const onBackgroundRefresh = vi.fn();
+    const cache = createTtlCache(vi.fn().mockRejectedValue(new Error("vendor down")), 45_000, { onBackgroundRefresh });
+
+    await expect(cache.get()).rejects.toThrow("vendor down");
+    await expect(onBackgroundRefresh.mock.calls[0][0]).resolves.toBeUndefined();
+  });
+
+  it("registers a background refresh and keeps serving the old value until it lands", async () => {
     let resolve!: (value: string) => void;
     const load = vi
       .fn()
@@ -85,40 +205,187 @@ describe("createTtlCache", () => {
           }),
       );
     const onBackgroundRefresh = vi.fn();
-    const cache = createTtlCache(load, 45_000, { maxStaleMs: 75_000, onBackgroundRefresh });
+    const cache = createTtlCache(load, 45_000, { onBackgroundRefresh });
 
     await cache.get();
     vi.setSystemTime(60_000);
     await expect(cache.get({ allowStale: true })).resolves.toBe("old");
-    expect(onBackgroundRefresh).toHaveBeenCalledOnce();
+    expect(onBackgroundRefresh).toHaveBeenCalledTimes(2);
     resolve("new");
-    await onBackgroundRefresh.mock.calls[0][0];
+    await onBackgroundRefresh.mock.calls[1][0];
     await expect(cache.get()).resolves.toBe("new");
   });
 
-  it("waits for a fresh value once the stale window has passed", async () => {
-    const load = counter();
-    const cache = createTtlCache(load, 45_000, { maxStaleMs: 75_000 });
-
-    await cache.get();
-    vi.setSystemTime(120_000);
-
-    await expect(cache.get({ allowStale: true })).resolves.toBe("load-2");
-  });
-
-  it("keeps the last value when a background refresh fails", async () => {
-    const load = vi
-      .fn()
-      .mockResolvedValueOnce("good")
-      .mockRejectedValueOnce(new Error("vendor down"))
-      .mockResolvedValue("later");
-    const cache = createTtlCache(load, 45_000, { maxStaleMs: 75_000 });
+  it("tells the load why it runs: cold, stale or forced", async () => {
+    const load = vi.fn(async (_trigger: string) => "board");
+    const cache = createTtlCache(load, 45_000);
 
     await cache.get();
     vi.setSystemTime(60_000);
-
-    await expect(cache.get({ allowStale: true })).resolves.toBe("good");
+    await cache.get({ allowStale: true });
     await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
-    await expect(cache.get({ allowStale: true })).resolves.toBe("good");
+    await cache.get({ force: true });
+
+    expect(load.mock.calls.map(([trigger]) => trigger)).toEqual(["cold", "stale", "force"]);
+  });
+});
+
+describe("createTtlCache with a shared store", () => {
+  /** A shared store in memory that records what it was asked. */
+  function memoryStore(initial?: Entry<string>) {
+    let entry = initial;
+    const store = {
+      read: vi.fn(async () => entry),
+      write: vi.fn((next: Entry<string>) => {
+        entry = next;
+      }),
+    } satisfies SharedStore<string>;
+    return { store, set: (next: Entry<string>) => (entry = next) };
+  }
+
+  it("hydrates a cold cache from the shared store, with no load", async () => {
+    const load = counter();
+    const { store } = memoryStore({ at: -10_000, value: "shared" });
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get()).resolves.toBe("shared");
+    expect(load).not.toHaveBeenCalled();
+    // Its age is the shared entry's: it expires 45 s after that entry was collected.
+    expect(cache.peek()).toEqual({ at: -10_000, value: "shared" });
+  });
+
+  it("reads the shared store once for concurrent cold callers", async () => {
+    const { store } = memoryStore({ at: 0, value: "shared" });
+    const cache = createTtlCache(counter(), 45_000, { shared: () => store });
+
+    await expect(Promise.all([cache.get(), cache.get({ allowStale: true })])).resolves.toEqual(["shared", "shared"]);
+    expect(store.read).toHaveBeenCalledOnce();
+  });
+
+  it("loads on a cold miss and writes what it loaded", async () => {
+    const load = counter();
+    const { store } = memoryStore();
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get()).resolves.toBe("load-1");
+    expect(store.write).toHaveBeenCalledWith({ at: 0, value: "load-1" });
+    expect(store.read).toHaveBeenCalledOnce();
+  });
+
+  it("serves an expired shared entry at once and refreshes it with a load, not a second read", async () => {
+    const load = counter();
+    const { store } = memoryStore({ at: -60_000, value: "shared" });
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get({ allowStale: true })).resolves.toBe("shared");
+    await vi.waitFor(() => expect(store.write).toHaveBeenCalledWith({ at: 0, value: "load-1" }));
+    expect(store.read).toHaveBeenCalledOnce();
+  });
+
+  it("adopts a newer, unexpired shared entry instead of loading when its own has expired", async () => {
+    const load = counter();
+    const { store, set } = memoryStore();
+    const onSharedHit = vi.fn();
+    const cache = createTtlCache(load, 45_000, { shared: () => store, onSharedHit });
+
+    await cache.get();
+    // Another isolate collected a board 10 s ago.
+    vi.setSystemTime(60_000);
+    set({ at: 50_000, value: "other isolate" });
+
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("other isolate");
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(onSharedHit).toHaveBeenCalledWith({ at: 50_000, value: "other isolate" });
+    expect(cache.peek()).toEqual({ at: 50_000, value: "other isolate" });
+  });
+
+  it("loads when the shared entry is no newer than its own, or has expired too", async () => {
+    const load = counter();
+    const { store, set } = memoryStore();
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await cache.get();
+    vi.setSystemTime(60_000);
+    // Its own write is what the shared store holds: no newer.
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-2");
+    vi.setSystemTime(120_000);
+    // Newer than its own, but past the TTL as well.
+    set({ at: 70_000, value: "expired" });
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-3");
+  });
+
+  it("never reads the shared store for a forced refresh", async () => {
+    const load = counter();
+    const { store, set } = memoryStore();
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await cache.get();
+    vi.setSystemTime(20_000);
+    set({ at: 19_000, value: "other isolate" });
+    store.read.mockClear();
+
+    await expect(cache.get({ force: true })).resolves.toBe("load-2");
+    expect(store.read).not.toHaveBeenCalled();
+    expect(store.write).toHaveBeenLastCalledWith({ at: 20_000, value: "load-2" });
+  });
+
+  it("counts a shared read that throws or rejects as a miss", async () => {
+    const load = counter();
+    const store = {
+      read: vi.fn().mockRejectedValueOnce(new Error("cache down")),
+      write: vi.fn(),
+    };
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+
+    await expect(cache.get()).resolves.toBe("load-1");
+    store.read.mockImplementationOnce(() => {
+      throw new Error("cache down");
+    });
+    vi.setSystemTime(60_000);
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-2");
+  });
+
+  it("carries on without a shared store when there is none for this call", async () => {
+    const load = counter();
+    const cache = createTtlCache(load, 45_000, { shared: () => undefined });
+
+    await expect(cache.get()).resolves.toBe("load-1");
+  });
+});
+
+describe("createTtlCache update", () => {
+  it("changes the value in hand in place, keeping when it was loaded, and shares the change", async () => {
+    const load = counter();
+    const store = { read: vi.fn(async () => undefined), write: vi.fn() };
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+    await cache.get();
+    vi.setSystemTime(10_000);
+
+    cache.update((value) => `${value} with feeds`);
+
+    expect(cache.peek()).toEqual({ at: 0, value: "load-1 with feeds" });
+    expect(store.write).toHaveBeenLastCalledWith({ at: 0, value: "load-1 with feeds" });
+    await expect(cache.get()).resolves.toBe("load-1 with feeds");
+    expect(load).toHaveBeenCalledOnce();
+    // The patch does not make the value younger: it still expires 45 s after its load.
+    vi.setSystemTime(45_000);
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-2");
+  });
+
+  it("does nothing when the patch returns the same value, or there is no value yet", async () => {
+    const store = { read: vi.fn(async () => undefined), write: vi.fn() };
+    const cache = createTtlCache(counter(), 45_000, { shared: () => store });
+    const patch = vi.fn((value: string) => value);
+
+    cache.update(patch);
+    expect(patch).not.toHaveBeenCalled();
+    expect(cache.peek()).toBeUndefined();
+
+    await cache.get();
+    store.write.mockClear();
+    cache.update(patch);
+    expect(patch).toHaveBeenCalledWith("load-1");
+    expect(store.write).not.toHaveBeenCalled();
+    expect(cache.peek()).toEqual({ at: 0, value: "load-1" });
   });
 });

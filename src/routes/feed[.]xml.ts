@@ -14,6 +14,7 @@ export const Route = createFileRoute("/feed.xml")({
             new Response(atomFeed(board, new URL(request.url).origin), {
               headers: { ...PUBLIC_HEADERS, "Content-Type": "application/atom+xml; charset=utf-8" },
             }),
+          request,
         ),
     },
   },

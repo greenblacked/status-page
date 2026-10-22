@@ -28,6 +28,7 @@ import {
   parseVersionMap,
   summarizeMikrotikChangelog,
 } from "./changelog.ts";
+import { parseFeedDate } from "./feed-xml.ts";
 import { PayloadError, unwrapJsonp } from "./http.ts";
 import {
   decodeHtmlNames,
@@ -966,6 +967,42 @@ const feedMarkup = fc
   .map((parts) => parts.join(""));
 const TAG_LIKE = /<\/?[a-zA-Z][^<>]*>/;
 
+describe("incident feeds", () => {
+  it("parseRssItems with any RSS or Atom markup gives at most MAX_RSS_ITEMS items, all text", () => {
+    fc.assert(
+      fc.property(feedMarkup, (xml) => {
+        let items: ReturnType<typeof parseRssItems>;
+        try {
+          items = parseRssItems(xml);
+        } catch (error) {
+          expect(error).toBeInstanceOf(PayloadError);
+          return;
+        }
+        expect(items.length).toBeLessThanOrEqual(MAX_RSS_ITEMS);
+        for (const item of items) {
+          expect(typeof item.title).toBe("string");
+          expect(typeof item.description).toBe("string");
+          expect(item.title).toBe(item.title.trim());
+          for (const field of [item.pubDate, item.link, item.guid]) {
+            if (field !== undefined) expect(typeof field).toBe("string");
+          }
+        }
+      }),
+      run(),
+    );
+  });
+
+  it("parseFeedDate reads any text as a finite epoch or none, and never throws", () => {
+    fc.assert(
+      fc.property(fc.oneof(feedMarkup, anyText), (value) => {
+        const at = parseFeedDate(value);
+        if (at !== undefined) expect(Number.isFinite(at)).toBe(true);
+      }),
+      run(),
+    );
+  });
+});
+
 describe("release feeds", () => {
   it("parseFeedItems with any markup gives a handful of entries, all text, with a real ISO date or none", () => {
     fc.assert(
@@ -1164,6 +1201,7 @@ describe("parsers stay linear", () => {
   const parsers: Array<[string, (input: string) => unknown]> = [
     ["readHtmlTables", readHtmlTables],
     ["parseRssItems", parseRssItems],
+    ["parseFeedDate", parseFeedDate],
     ["decodeXmlField", decodeXmlField],
     ["decodeXmlEntities", decodeXmlEntities],
     ["unwrapJsonp", unwrapJsonp],
@@ -1188,6 +1226,33 @@ describe("parsers stay linear", () => {
     ["steamNoteLines", (input: string) => steamNoteLines(input, "title")],
     ["decodeHtmlNames", decodeHtmlNames],
   ];
+
+  // The same, from the fragments of RSS and Atom feeds, for the readers of both.
+  const craftedFeed = fc
+    .array(fc.oneof(fc.constantFrom(...FEED_MARKUP), fc.string({ maxLength: 4 })), { minLength: 1, maxLength: 4 })
+    .map((parts) => {
+      const unit = parts.join("") || "<";
+      return unit.repeat(Math.ceil(SIZE / unit.length)).slice(0, SIZE);
+    });
+
+  it.each<[string, (input: string) => unknown]>([
+    ["parseRssItems", parseRssItems],
+    ["parseRssItems (Atom)", (input: string) => parseRssItems(`<feed><entry>${input}`)],
+    ["parseFeedDate", parseFeedDate],
+  ])("%s: crafted feed input is read in linear time", (_name, parse) => {
+    fc.assert(
+      fc.property(craftedFeed, (input) => {
+        const started = performance.now();
+        try {
+          parse(input);
+        } catch (error) {
+          if (!(error instanceof PayloadError)) throw error;
+        }
+        expect(performance.now() - started).toBeLessThan(BUDGET_MS);
+      }),
+      run(12),
+    );
+  });
 
   it.each(parsers)("%s: crafted input is read in linear time", (_name, parse) => {
     fc.assert(

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BrowserContext, chromium, type Page } from "@playwright/test";
 import { upstreamUrl } from "../scripts/ci/upstream-url.ts";
-import { chromiumArgs } from "./support/chromium-args.ts";
+import { chromiumArgs, chromiumEnv } from "./support/chromium-args.ts";
 import { expect, test, watchStrays } from "./test";
 
 // A return visit draws the page in the self-hosted Inter only if the browser can use its copy of the font without
@@ -135,6 +135,7 @@ async function returnVisits(origin: string, shipped: boolean, visits: number, st
       baseURL: url,
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,
       args: chromiumArgs,
+      ...(chromiumEnv ? { env: chromiumEnv } : {}),
       locale: "en-GB",
       timezoneId: "UTC",
     });

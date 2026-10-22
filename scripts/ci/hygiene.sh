@@ -9,7 +9,9 @@ fail=0
 note() { printf '::error file=%s::%s\n' "$1" "$2" >&2; fail=1; }
 
 # Text files only: skip anything git considers binary.
-mapfile -t files < <(git ls-files | while read -r f; do
+# A read loop, not mapfile: macOS ships bash 3.2, which has no mapfile.
+files=()
+while IFS= read -r line; do files+=("$line"); done < <(git ls-files | while read -r f; do
   if [ -z "$(git diff --no-index --numstat /dev/null "$f" 2>/dev/null | cut -f1 | grep -x -- '-' || true)" ]; then
     printf '%s\n' "$f"
   fi

@@ -6,9 +6,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { methodGuard } from "../lib/request-methods.ts";
 import { DEFAULT_HSTS, securityHeaders } from "../lib/security-headers.ts";
-import { createNodeServer, DEFAULT_NODE_HSTS, hstsFromEnv } from "./server.ts";
+import { withValidator } from "../lib/status/conditional.ts";
+import { Route as healthzRoute } from "../routes/healthz.ts";
+import { createNodeServer, DEFAULT_NODE_HSTS, hstsFromEnv, publicOriginFromEnv } from "./server.ts";
 import { IMMUTABLE_CACHE_CONTROL, indexStaticFiles, MIN_COMPRESS_BYTES, SHORT_CACHE_CONTROL } from "./static.ts";
+
+// The real /healthz handler, so the test sees the headers the app gives it.
+type RouteHandler = (context: { request: Request }) => Response | Promise<Response>;
+const healthz = (healthzRoute.options.server as unknown as { handlers: { GET: RouteHandler } }).handlers.GET;
 
 const css = "body { color: red; }\n".repeat(200);
 const page = `<!doctype html><title>Board</title>${"<p>service</p>".repeat(200)}`;
@@ -39,7 +46,10 @@ beforeAll(async () => {
         headers: request.headers,
         body: request.body ? await request.text() : "",
       });
-      if (pathname === "/healthz") return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });
+      if (pathname === "/guarded") return methodGuard(request, "router") ?? new Response("read");
+      if (pathname === "/validated")
+        return withValidator(request, new Response(page, { headers: { "Content-Type": "application/json" } }));
+      if (pathname === "/healthz") return healthz({ request });
       if (pathname === "/throw") throw new Error("boom");
       if (pathname === "/app-hsts")
         return new Response("x", { headers: { "Strict-Transport-Security": DEFAULT_HSTS } });
@@ -227,6 +237,35 @@ describe("the app handler", () => {
     expect(seen.at(-1)?.body).toBe("hello");
   });
 
+  it("passes the app's 405 and preflight answers through, with the security headers", async () => {
+    const refused = await get("/guarded", {}, "POST");
+    expect(refused.response.status).toBe(405);
+    expect(refused.response.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+    expect(refused.bytes.toString()).toBe("Method Not Allowed\n");
+    expectSecurityHeaders(refused.response);
+    const preflight = await get("/guarded", {}, "OPTIONS");
+    expect(preflight.response.status).toBe(204);
+    expect(preflight.bytes.length).toBe(0);
+    expect((await get("/guarded")).bytes.toString()).toBe("read");
+  });
+
+  it("passes the app's 304 through with its ETag and no body, compressed or not", async () => {
+    const first = await get("/validated", { "Accept-Encoding": "gzip" });
+    const etag = first.response.headers.get("etag") ?? "";
+    expect(etag).toMatch(/^W\/"/);
+    expect(first.response.headers.get("content-encoding")).toBe("gzip");
+    for (const encoding of ["gzip", "identity"]) {
+      const { response, bytes } = await get("/validated", { "Accept-Encoding": encoding, "If-None-Match": etag });
+      expect(response.status, encoding).toBe(304);
+      expect(response.headers.get("etag"), encoding).toBe(etag);
+      expect(response.headers.has("content-encoding"), encoding).toBe(false);
+      // The 200 varies by Accept-Encoding, so its 304 says so too, or a shared cache could merge the variants.
+      expect(response.headers.get("vary"), encoding).toBe(first.response.headers.get("vary"));
+      expect(response.headers.get("vary"), encoding).toBe("Accept-Encoding");
+      expect(bytes.length, encoding).toBe(0);
+    }
+  });
+
   it("adds the security headers to its responses and keeps ones it set itself", async () => {
     const { response } = await get("/page");
     expectSecurityHeaders(response);
@@ -256,6 +295,15 @@ describe("the app handler", () => {
     await get("/page");
     await vi.waitFor(() => expect(logs.some((entry) => entry.path === "/page")).toBe(true));
     expect(logs.filter((entry) => entry.path === "/healthz")).toEqual([]);
+  });
+
+  it("sends /healthz as it is, never compressed", async () => {
+    for (const encoding of ["gzip", "br"]) {
+      const { response, bytes } = await get("/healthz", { "Accept-Encoding": encoding });
+      expect(response.headers.has("content-encoding"), encoding).toBe(false);
+      expect(response.headers.get("content-length"), encoding).toBe("3");
+      expect(bytes.toString(), encoding).toBe("ok\n");
+    }
   });
 
   it("compresses a text response and leaves an image or a no-transform one alone", async () => {
@@ -516,5 +564,79 @@ describe("trustProxy", () => {
   it("falls back to http and the Host header for anything else", async () => {
     const url = await origin(true, { "X-Forwarded-Proto": "javascript", "X-Forwarded-Host": "bad host/with spaces" });
     expect(url).toMatch(/^http:\/\/localhost\/p\?q=1$/);
+  });
+});
+
+describe("publicOrigin", () => {
+  // The URL the app sees for a request that names a hostile Host (and, behind
+  // a trusted proxy, X-Forwarded-Host), on a server given `publicOrigin`.
+  async function urlSeen(publicOrigin: string | undefined, trustProxy = false): Promise<string> {
+    let url = "";
+    const own = createNodeServer({
+      staticFiles: new Map(),
+      trustProxy,
+      ...(publicOrigin === undefined ? {} : { publicOrigin }),
+      handler: (request) => {
+        url = request.url;
+        return new Response("ok");
+      },
+    });
+    await new Promise<void>((resolve) => own.listen(0, "127.0.0.1", resolve));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = httpRequest(
+          {
+            host: "127.0.0.1",
+            port: (own.address() as AddressInfo).port,
+            path: "/feed.xml?q=1",
+            headers: { Host: "evil.example", "X-Forwarded-Proto": "http", "X-Forwarded-Host": "evil.example" },
+          },
+          (res) => {
+            res.resume();
+            res.on("end", resolve);
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+    } finally {
+      own.closeAllConnections();
+      await new Promise((resolve) => own.close(resolve));
+    }
+    return url;
+  }
+
+  it("builds the request URL from the Host header without it", async () => {
+    expect(await urlSeen(undefined)).toBe("http://evil.example/feed.xml?q=1");
+  });
+
+  it("builds it from the public origin when set, whatever Host and X-Forwarded-* say", async () => {
+    expect(await urlSeen("https://status.example.com")).toBe("https://status.example.com/feed.xml?q=1");
+    expect(await urlSeen("https://status.example.com/", true)).toBe("https://status.example.com/feed.xml?q=1");
+  });
+
+  it("refuses a public origin that is not an http(s) origin", () => {
+    expect(() =>
+      createNodeServer({ staticFiles: new Map(), handler: () => new Response(), publicOrigin: "x" }),
+    ).toThrow(/PUBLIC_ORIGIN must be/);
+  });
+
+  it("reads the PUBLIC_ORIGIN variable", () => {
+    expect(publicOriginFromEnv(undefined)).toBeUndefined();
+    expect(publicOriginFromEnv(" ")).toBeUndefined();
+    expect(publicOriginFromEnv("https://status.example.com")).toBe("https://status.example.com");
+    expect(publicOriginFromEnv("https://Status.Example.com/")).toBe("https://status.example.com");
+    expect(publicOriginFromEnv("http://127.0.0.1:8080")).toBe("http://127.0.0.1:8080");
+    for (const bad of [
+      "status.example.com",
+      "ftp://status.example.com",
+      "javascript:alert(1)",
+      "https://status.example.com/board",
+      "https://status.example.com?q=1",
+      "https://status.example.com#top",
+      "https://user:pass@status.example.com",
+    ]) {
+      expect(() => publicOriginFromEnv(bad), bad).toThrow(/PUBLIC_ORIGIN must be/);
+    }
   });
 });

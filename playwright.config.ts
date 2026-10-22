@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import { androidProjectMetadata, reducedAndroidUserAgent } from "./e2e/support/android-user-agent.ts";
-import { chromiumArgs } from "./e2e/support/chromium-args.ts";
+import { chromiumArgs, chromiumEnv } from "./e2e/support/chromium-args.ts";
 import { vendorLogPath } from "./e2e/support/vendor-log.ts";
 
 // Browser tests against the production build, served the way CI's smoke
@@ -33,8 +33,8 @@ const run = process.env.E2E_RUN;
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 
 // Chromium's other hosts are cut off at launch (e2e/support/chromium-args.ts), not with a route, which would switch
-// off its HTTP cache.
-const chromiumLaunch = { executablePath, args: chromiumArgs };
+// off its HTTP cache. On Linux it also starts without the machine's own Inter (chromiumEnv, e2e/support/fonts.conf).
+const chromiumLaunch = { executablePath, args: chromiumArgs, ...(chromiumEnv ? { env: chromiumEnv } : {}) };
 
 // The tests of how the page lays out on a screen carry this tag (e2e/mobile-layout.spec.ts). The projects of the
 // extra screens run nothing else, and every other project runs them with the rest.

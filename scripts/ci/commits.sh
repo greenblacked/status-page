@@ -106,14 +106,17 @@ fi
 # which --subject guards.
 range="${1:-origin/dev..HEAD}"
 
-# `mapfile < <(...)` cannot see the subshell's exit status, so an unfetched or
-# malformed range would look like "no commits" and pass the gate silently.
+# A read loop over `< <(...)` cannot see the subshell's exit status, so an
+# unfetched or malformed range would look like "no commits" and pass the gate
+# silently.
 if ! git rev-list --no-merges "$range" >/dev/null 2>&1; then
   echo "::error::cannot resolve commit range: $range" >&2
   exit 1
 fi
 
-mapfile -t shas < <(git rev-list --no-merges "$range")
+# A read loop, not mapfile: macOS ships bash 3.2, which has no mapfile.
+shas=()
+while IFS= read -r line; do shas+=("$line"); done < <(git rev-list --no-merges "$range")
 
 if [ "${#shas[@]}" -eq 0 ]; then
   echo "commits: no non-merge commits in $range"

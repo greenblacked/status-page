@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { currentGate, withConnectionGate } from "./connection-gate";
 import {
   fetchJson,
   fetchText,
@@ -7,11 +8,14 @@ import {
   MAX_BODY_BYTES,
   meterBytes,
   PayloadError,
+  QueueTimeoutError,
   RefusedError,
   readBodyCapped,
   SourceError,
+  TimeoutError,
   unwrapJsonp,
 } from "./http";
+import { clearVendorValidators } from "./validator-cache";
 
 const CHUNK = 64 * 1024;
 
@@ -133,9 +137,14 @@ describe("readBodyCapped / fetchText size cap", () => {
       }),
     );
 
-    await expect(fetchText("https://status.example.com/slow.json", { timeoutMs: 20 })).rejects.toThrow(
-      "Timed out fetching status.example.com",
+    const error = await fetchText("https://status.example.com/slow.json", { timeoutMs: 20 }).catch(
+      (caught: unknown) => caught,
     );
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as TimeoutError).name).toBe("TimeoutError");
+    expect((error as TimeoutError).message).toBe("Timed out fetching status.example.com");
+    expect((error as TimeoutError).status).toBeUndefined();
   });
 
   it("meterBytes counts what every fetch inside it read", async () => {
@@ -434,5 +443,444 @@ describe("fetchJson on a body that is not JSON", () => {
   it("still parses JSON, including a JSONP wrapper", async () => {
     answer('cb({"a":1});', "text/javascript");
     expect(await fetchJson("https://status.example.com/a.json")).toEqual({ a: 1 });
+  });
+});
+
+// A fetch that answers each URL after `delays[url]` ms (default 1000) and
+// fails with an AbortError when its signal fires first, recording when each
+// request was started, so a test with fake timers can see queueing.
+function timedFetch(delays: Record<string, number> = {}) {
+  const started: Array<{ url: string; at: number }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      (url: string, init: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          started.push({ url, at: Date.now() });
+          const timer = setTimeout(() => resolve(new Response("ok")), delays[url] ?? 1000);
+          init.signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    ),
+  );
+  return started;
+}
+
+describe("fetchText inside a connection gate", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("starts a request's timeout when it gets a connection, not when it is queued", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const started = timedFetch({ "https://status.example.com/a": 8_500, "https://status.example.com/b": 1_000 });
+    await withConnectionGate({ limit: 1 }, async () => {
+      const results = Promise.allSettled([
+        fetchText("https://status.example.com/a", { timeoutMs: 9_000 }),
+        fetchText("https://status.example.com/b", { timeoutMs: 9_000 }),
+      ]);
+      await vi.advanceTimersByTimeAsync(12_000);
+      const [a, b] = await results;
+      expect(a.status).toBe("fulfilled");
+      // B waited 8.5 s for A's slot, then answered within its own 9 s.
+      expect(b.status).toBe("fulfilled");
+      expect(started).toEqual([
+        { url: "https://status.example.com/a", at: 0 },
+        { url: "https://status.example.com/b", at: 8_500 },
+      ]);
+    });
+  });
+
+  it("caps a request's timeout at the gate's deadline, and times out one still queued past it", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const started = timedFetch({ "https://status.example.com/a": 60_000 });
+    await withConnectionGate({ limit: 1, deadlineMs: 5_000 }, async () => {
+      const results = Promise.allSettled([
+        fetchText("https://status.example.com/a", { timeoutMs: 9_000 }),
+        fetchText("https://status.example.com/b", { timeoutMs: 9_000 }),
+      ]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      const [a, b] = await results;
+      expect(a.status === "rejected" && (a.reason as Error).message).toBe("Timed out fetching status.example.com");
+      expect(a.status === "rejected" && a.reason).toBeInstanceOf(TimeoutError);
+      expect(b.status === "rejected" && b.reason).toBeInstanceOf(TimeoutError);
+      expect(b.status === "rejected" && (b.reason as Error).message).toBe(
+        "Timed out waiting for a connection to status.example.com",
+      );
+      // Only the one that never got a connection is marked as never having asked the vendor.
+      expect(b.status === "rejected" && b.reason).toBeInstanceOf(QueueTimeoutError);
+      expect(b.status === "rejected" && (b.reason as QueueTimeoutError).asked).toBe(false);
+      expect(a.status === "rejected" && a.reason).not.toBeInstanceOf(QueueTimeoutError);
+      expect(started.map((request) => request.url)).toEqual(["https://status.example.com/a"]);
+      expect(currentGate()!.active).toBe(0);
+    });
+  });
+
+  it("starts low-priority requests after every queued high-priority one", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const started = timedFetch();
+    await withConnectionGate({ limit: 1 }, async () => {
+      const results = Promise.all([
+        fetchText("https://status.example.com/first"),
+        fetchText("https://status.example.com/side", { priority: "low" }),
+        fetchText("https://status.example.com/main-1"),
+        fetchText("https://status.example.com/main-2", { priority: "high" }),
+      ]);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await results;
+      expect(started.map((request) => request.url)).toEqual([
+        "https://status.example.com/first",
+        "https://status.example.com/main-1",
+        "https://status.example.com/main-2",
+        "https://status.example.com/side",
+      ]);
+    });
+  });
+
+  it("holds the slot until the body has been read", async () => {
+    let finish = () => {};
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(10));
+        finish = () => controller.close();
+      },
+    });
+    stubFetch(() => new Response(stream));
+    await withConnectionGate({ limit: 1 }, async () => {
+      const gate = currentGate()!;
+      const reading = fetchText("https://status.example.com/a");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(gate.active).toBe(1);
+      finish();
+      expect((await reading).bytes.byteLength).toBe(10);
+      expect(gate.active).toBe(0);
+    });
+  });
+});
+
+describe("fetchText retries", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Answers with each response in turn (the last one again once they run out) and counts the calls.
+  function sequence(...responses: Array<() => Response>) {
+    const fetchMock = vi.fn(async () => (responses.length > 1 ? responses.shift()! : responses[0]!)());
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const gated = <T>(fn: () => Promise<T>, options = {}) => withConnectionGate(options, fn);
+  const failure = (promise: Promise<unknown>) => promise.catch((caught: unknown) => caught);
+
+  it("retries a 503 once inside a gate, and returns the retry's answer", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    const { body } = await gated(() => fetchText("https://status.example.com/a"));
+    expect(body).toBe("up");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([502, 504])("retries a %i once inside a gate", async (status) => {
+    const fetchMock = sequence(
+      () => new Response("down", { status }),
+      () => new Response("up"),
+    );
+    expect((await gated(() => fetchText("https://status.example.com/a"))).body).toBe("up");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries a dropped connection once inside a gate", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) throw new TypeError("fetch failed");
+        return new Response("up");
+      }),
+    );
+    expect((await gated(() => fetchText("https://status.example.com/a"))).body).toBe("up");
+    expect(calls).toBe(2);
+  });
+
+  it("throws the retry's own error when the retry fails too, and tries no third time", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("down", { status: 502 }),
+      () => new Response("up"),
+    );
+    const error = await failure(gated(() => fetchText("https://status.example.com/a")));
+    expect((error as SourceError).status).toBe(502);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry outside a gate", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    expect(((await failure(fetchText("https://status.example.com/a"))) as SourceError).status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a 429", () => new Response("slow down", { status: 429 })],
+    ["a 404", () => new Response("missing", { status: 404 })],
+    ["a 500", () => new Response("broken", { status: 500 })],
+    ["a challenge", () => new Response("challenge", { status: 503, headers: { "cf-mitigated": "challenge" } })],
+    ["an oversized body", () => new Response("x", { headers: { "content-length": String(MAX_BODY_BYTES + 1) } })],
+  ])("does not retry %s", async (_name, response) => {
+    const fetchMock = sequence(response, () => new Response("up"));
+    expect(await failure(gated(() => fetchText("https://status.example.com/a")))).toBeInstanceOf(SourceError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a timeout", async () => {
+    const started = timedFetch({ "https://status.example.com/a": 60_000 });
+    const error = await failure(gated(() => fetchText("https://status.example.com/a", { timeoutMs: 50 })));
+    expect((error as Error).message).toBe("Timed out fetching status.example.com");
+    expect(started).toHaveLength(1);
+  });
+
+  it("does not retry once the gate's subrequest budget is spent", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    const error = await failure(gated(() => fetchText("https://status.example.com/a"), { maxRequests: 1 }));
+    expect((error as SourceError).status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets failures that land together retry only as far as the budget goes", async () => {
+    // Four requests fail at once with three subrequests left: the first three of them that fail
+    // take those, and the fourth does not retry, although none of the retries has been made yet.
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        return calls.filter((seen) => seen === url).length === 1
+          ? new Response("down", { status: 503 })
+          : new Response("up");
+      }),
+    );
+    const urls = ["a", "b", "c", "d"].map((path) => `https://status.example.com/${path}`);
+    const results = await gated(() => Promise.allSettled(urls.map((url) => fetchText(url))), { maxRequests: 7 });
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(3);
+    expect(calls).toHaveLength(7);
+  });
+
+  it("does not retry with less than 3 s of the request's time left", async () => {
+    const fetchMock = sequence(
+      () => new Response("down", { status: 503 }),
+      () => new Response("up"),
+    );
+    await failure(gated(() => fetchText("https://status.example.com/a", { timeoutMs: 2_900 })));
+    await failure(gated(() => fetchText("https://status.example.com/a"), { deadlineMs: 2_900 }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts every redirect hop and every retry as a subrequest", async () => {
+    const responses: Record<string, Array<() => Response>> = {
+      "https://status.example.com/a": [() => new Response(null, { status: 302, headers: { location: "/b" } })],
+      "https://status.example.com/b": [() => new Response("down", { status: 503 }), () => new Response("up")],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const queue = responses[url]!;
+        return (queue.length > 1 ? queue.shift()! : queue[0]!)();
+      }),
+    );
+    const issued = await gated(async () => {
+      await fetchText("https://status.example.com/a");
+      return currentGate()!.issued;
+    });
+    // a -> b (503), then the retry: a -> b (200).
+    expect(issued).toBe(4);
+  });
+});
+
+describe("fetchText conditional requests", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    clearVendorValidators();
+  });
+
+  // Answers each request with the next response and records the headers it carried.
+  function revalidating(...responses: Array<() => Response>) {
+    const sent: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        sent.push(new Headers(init.headers));
+        return (responses.length > 1 ? responses.shift()! : responses[0]!)();
+      }),
+    );
+    return sent;
+  }
+
+  it("sends the vendor's own ETag back, and answers a 304 with the body it stored", async () => {
+    const sent = revalidating(
+      () => new Response("[1,2]", { headers: { etag: 'W/"a"', "content-type": "application/json" } }),
+      () => new Response(null, { status: 304, headers: { etag: 'W/"a"' } }),
+    );
+    const first = await fetchText("https://status.example.com/a.json");
+    const metered = await meterBytes(async (meter) => ({
+      second: await fetchText("https://status.example.com/a.json"),
+      bytes: meter.bytes,
+    }));
+    expect(sent[0]!.has("if-none-match")).toBe(false);
+    expect(sent[1]!.get("if-none-match")).toBe('W/"a"');
+    expect(sent[1]!.has("if-modified-since")).toBe(false);
+    expect(metered.second).toEqual({ ...first, contentRange: "", status: 200 });
+    expect(metered.second.body).toBe("[1,2]");
+    expect(metered.second.contentType).toBe("application/json");
+    // Nothing was downloaded the second time.
+    expect(metered.bytes).toBe(0);
+    // The stored body is not handed out to be changed.
+    expect(metered.second.bytes).not.toBe(first.bytes);
+  });
+
+  it("sends Last-Modified back as If-Modified-Since", async () => {
+    const date = "Wed, 21 Oct 2026 07:28:00 GMT";
+    const sent = revalidating(
+      () => new Response("x", { headers: { "last-modified": date } }),
+      () => new Response(null, { status: 304 }),
+    );
+    await fetchText("https://status.example.com/a");
+    expect((await fetchText("https://status.example.com/a")).body).toBe("x");
+    expect(sent[1]!.get("if-modified-since")).toBe(date);
+    expect(sent[1]!.has("if-none-match")).toBe(false);
+  });
+
+  it("stores nothing and sends nothing for a response without validators", async () => {
+    const sent = revalidating(() => new Response("x"));
+    await fetchText("https://status.example.com/a");
+    await fetchText("https://status.example.com/a");
+    expect(sent[1]!.has("if-none-match")).toBe(false);
+    expect(sent[1]!.has("if-modified-since")).toBe(false);
+  });
+
+  it("forgets a stored body once the vendor stops sending validators for it", async () => {
+    const sent = revalidating(
+      () => new Response("1", { headers: { etag: '"1"' } }),
+      () => new Response("2"),
+      () => new Response("3"),
+    );
+    await fetchText("https://status.example.com/a");
+    await fetchText("https://status.example.com/a");
+    await fetchText("https://status.example.com/a");
+    expect(sent[1]!.get("if-none-match")).toBe('"1"');
+    expect(sent[2]!.has("if-none-match")).toBe(false);
+  });
+
+  it("never revalidates a head read or a Range request", async () => {
+    const sent = revalidating(() => new Response("x", { headers: { etag: '"1"' } }));
+    await fetchText("https://status.example.com/feed.xml", { head: true });
+    await fetchText("https://status.example.com/feed.xml", { head: true });
+    await fetchText("https://status.example.com/r", { headers: { Range: "bytes=0-10" } });
+    await fetchText("https://status.example.com/r", { headers: { Range: "bytes=0-10" } });
+    for (const headers of sent) expect(headers.has("if-none-match")).toBe(false);
+  });
+
+  it("does not store a body over 512 KiB", async () => {
+    const sent = revalidating(() => new Response(new Uint8Array(512 * 1024 + 1), { headers: { etag: '"big"' } }));
+    await fetchText("https://status.example.com/big");
+    await fetchText("https://status.example.com/big");
+    expect(sent[1]!.has("if-none-match")).toBe(false);
+  });
+
+  it("fails a 304 it has no stored body for", async () => {
+    revalidating(() => new Response(null, { status: 304 }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    expect((error as SourceError).message).toBe("304 Not Modified from status.example.com without a cached body");
+  });
+});
+
+describe("fetchText binary decoding", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const answerBytes = (...bytes: number[][]) => {
+    const body = new Uint8Array(bytes.flat());
+    stubFetch(() => new Response(body));
+  };
+  const utf16le = (text: string) => [...text].flatMap((char) => [char.charCodeAt(0) & 0xff, char.charCodeAt(0) >> 8]);
+  const utf16be = (text: string) => [...text].flatMap((char) => [char.charCodeAt(0) >> 8, char.charCodeAt(0) & 0xff]);
+  const utf8 = (text: string) => [...new TextEncoder().encode(text)];
+
+  it("reads a body without a BOM as UTF-8", async () => {
+    answerBytes(utf8("[]"));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual([]);
+    answerBytes(utf8('{"name":"Zürich"}'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual({ name: "Zürich" });
+  });
+
+  it("still reads UTF-16LE without a BOM", async () => {
+    answerBytes(utf16le('[{"a":1}]'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual([{ a: 1 }]);
+  });
+
+  it("reads either UTF-16 byte order from its BOM", async () => {
+    answerBytes([0xff, 0xfe], utf16le('{"a":"é"}'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual({ a: "é" });
+    answerBytes([0xfe, 0xff], utf16be('{"a":"é"}'));
+    expect(await fetchJson("https://status.example.com/a", { binary: true })).toEqual({ a: "é" });
+  });
+
+  it("reads an empty or one-byte body as UTF-8", async () => {
+    answerBytes([]);
+    expect((await fetchText("https://status.example.com/a", { binary: true })).body).toBe("");
+    answerBytes(utf8("7"));
+    expect((await fetchText("https://status.example.com/a", { binary: true })).body).toBe("7");
+  });
+});
+
+describe("fetchText Retry-After", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  const retryAfter = async (value: string | null, status = 503) => {
+    stubFetch(() => new Response("busy", { status, headers: value === null ? {} : { "retry-after": value } }));
+    const error = await fetchText("https://status.example.com/a").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SourceError);
+    return (error as SourceError).retryAfterMs;
+  };
+
+  it("keeps a delay in seconds, on a refusal and on a failure alike", async () => {
+    expect(await retryAfter("120")).toBe(120_000);
+    expect(await retryAfter(" 30 ", 429)).toBe(30_000);
+    expect(await retryAfter("0")).toBe(0);
+  });
+
+  it("keeps the time until an HTTP date", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-21T12:00:00Z") });
+    expect(await retryAfter("Wed, 21 Oct 2026 12:01:30 GMT")).toBe(90_000);
+    expect(await retryAfter("Wed, 21 Oct 2026 11:00:00 GMT")).toBe(0);
+  });
+
+  it("clamps a delay to ten minutes", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-21T12:00:00Z") });
+    expect(await retryAfter("86400")).toBe(600_000);
+    expect(await retryAfter("Thu, 22 Oct 2026 12:00:00 GMT", 429)).toBe(600_000);
+  });
+
+  it("has none without the header or with one it cannot read", async () => {
+    expect(await retryAfter(null)).toBeUndefined();
+    expect(await retryAfter("soon")).toBeUndefined();
+    expect(await retryAfter("-5")).toBeUndefined();
+    expect(await retryAfter("1.5")).toBeUndefined();
   });
 });

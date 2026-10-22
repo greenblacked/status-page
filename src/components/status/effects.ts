@@ -53,20 +53,8 @@ function atCurrentScroll(before: Layout): Map<string, Box> {
   return shifted;
 }
 
-/** A card still fading in carries a few pixels of `rise-in` offset, which would fight the glide over `transform`. */
-function settleRiseIn(card: Element): void {
-  for (const animation of card.getAnimations()) {
-    if ((animation as CSSAnimation).animationName === "rise-in") animation.finish();
-  }
-}
-
 /** Glides every card that moved from where it was to where it is now; false when none did. */
 function glideCards(before: Layout): boolean {
-  // Settled first, so the measurement below is where each card really is.
-  for (const id of before.boxes.keys()) {
-    const card = document.getElementById(id);
-    if (card) settleRiseIn(card);
-  }
   const moves = cardMoves(atCurrentScroll(before), measureCards().boxes, window.innerHeight);
   for (const { id, dx, dy } of moves) {
     // A card that crossed sections is a new node, so look it up by id.

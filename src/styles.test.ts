@@ -81,3 +81,19 @@ describe("the paper grain on Quiet", () => {
     expect(background).toContain("opacity: var(--grain-opacity);");
   });
 });
+
+describe("reduced motion", () => {
+  const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  /** The page-wide block in column 0, to its closing brace in column 0. */
+  const reduced = (): string => {
+    const start = "\n@media (prefers-reduced-motion: reduce) {\n";
+    const at = styles.indexOf(start);
+    expect(at, "the reduced-motion block in styles.css").toBeGreaterThanOrEqual(0);
+    return styles.slice(at, styles.indexOf("\n}\n", at));
+  };
+
+  it("stops the details chevron turning, which a transition (not an animation) moves", () => {
+    expect(styles).toMatch(/\.row-details > summary::after \{[^}]*transition: transform/);
+    expect(reduced()).toMatch(/\.row-details > summary::after \{\s*transition: none;\s*\}/);
+  });
+});

@@ -134,6 +134,51 @@ test("renders no card for a tick of the seconds clock, and still counts the seco
   expect(after.cards - before.cards, `cards rendered: ${after.ids.slice(before.ids.length).join(", ")}`).toBe(0);
 });
 
+test("renders no card for one keystroke in the search", async ({ page }) => {
+  await countCardRenders(page);
+  await openSteady(page);
+  await page.waitForTimeout(800);
+  const search = page.locator('[data-search-input="hero"]');
+  await search.focus();
+  const before = await renders(page);
+  await page.keyboard.type("s");
+  // The keystroke's own commit, then the router's: the address follows the board.
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("s");
+  await page.waitForTimeout(800);
+  const after = await renders(page);
+  const ids = after.ids.slice(before.ids.length);
+  console.log(`${after.commits - before.commits} commits and ${ids.length} card renders for one keystroke`);
+  // A card the search keeps is the same card with the same props: it is not rendered again, twice over, for every
+  // key (once for the keystroke and once more when the address caught up). The one prop a search can change is
+  // the highlight, when it hides a starred card ahead of the most urgent one, and nothing is starred here.
+  expect(ids.length, `cards rendered: ${ids.join(", ")}`).toBe(0);
+});
+
+test("renders no card for a scheduled refetch that brings the same board", async ({ page }) => {
+  await countCardRenders(page);
+  await openSteady(page);
+  // Past the turn of the next slot, which adds its row to Recent changes and moves the minute: those renders are
+  // the clock's, and they are over before the refetch is due, 15 to 30 s into the slot.
+  const toTurn = await page.evaluate((slot) => slot - (Date.now() % slot) + 2_000, SLOT_MS);
+  await page.clock.fastForward(toTurn);
+  await page.waitForTimeout(800);
+  const before = await renders(page);
+  let refetched = false;
+  page.on("response", (response) => {
+    if (response.url().includes("/_serverFn/")) refetched = true;
+  });
+  // A second of the page's time at a step, so the refetch, and the renders it causes, run as they would.
+  for (let step = 0; step < 40 && !refetched; step += 1) await page.clock.runFor(1_000);
+  expect(refetched, "the slot's refetch ran").toBe(true);
+  await expect(page.getByTestId("live-bar")).toContainText(/next in \d+:\d{2}/);
+  await page.waitForTimeout(800);
+  const after = await renders(page);
+  const ids = after.ids.slice(before.ids.length);
+  console.log(`${after.commits - before.commits} commits and ${ids.length} card renders for an unchanged refetch`);
+  expect(after.commits - before.commits, "the refetch's own commits (Checking, then Live)").toBeGreaterThan(0);
+  expect(ids.length, `cards rendered: ${ids.join(", ")}`).toBe(0);
+});
+
 test("floating bar: its countdown ticks each second from 640px and not on a phone", async ({ page }) => {
   await openSteady(page);
   await page.waitForTimeout(500);

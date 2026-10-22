@@ -1,8 +1,18 @@
 export const CACHE_TTL_MS = 45_000;
-// A page load may be served a snapshot up to this long past the TTL while a
-// fresh one is collected behind it, so the first visitor after a quiet spell
-// does not wait on the slowest vendor. The board then refetches at once.
-export const CACHE_MAX_STALE_MS = 75_000;
+// A snapshot past the TTL is still served at once while a fresh one is
+// collected behind it, however old it is, so no visitor waits on the slowest
+// vendor while any snapshot exists. The board's scheduled refetch is the one
+// caller that prefers a fresh board: it waits this long for a refresh that is
+// running (or that it starts), then takes the snapshot in hand.
+export const FRESH_WAIT_MS = 3_000;
+// The readiness probe waits this long for a refresh of a stale snapshot, so
+// it reports on a current board rather than the one an idle isolate held.
+export const PROBE_WAIT_MS = 20_000;
+// How long the Workers Cache API keeps the snapshot the isolates of a data
+// center share (board-store.ts). A cold isolate serves it at once, however
+// old within this hour, and refreshes it behind it; the page already calls a
+// snapshot over STALE_ON_ARRIVAL_MS old stale when it arrives.
+export const SHARED_SNAPSHOT_MAX_AGE_S = 3_600;
 // Refresh inside this window reuses the last snapshot instead of sweeping
 // every vendor again.
 export const MIN_FORCED_REFRESH_MS = 15_000;
@@ -40,8 +50,10 @@ export function nextPulseAt(now = Date.now()): number {
 
 // The board refetches this long after each two-minute slot rather than on
 // it: a spread keeps open tabs from asking the Worker at the same second.
-// Each isolate caches its own collection for 45 seconds; a slow vendor
-// may cause a tab to see a new snapshot on its next refetch.
+// Each isolate caches its collection for 45 seconds, and the isolates of a
+// data center share their newest snapshot through the Workers Cache API, so
+// tabs served by different isolates there see the same board; a slow vendor
+// may still cause a tab to see a new snapshot only on its next refetch.
 export const REFETCH_JITTER_MIN_MS = 15_000;
 export const REFETCH_JITTER_MAX_MS = 30_000;
 

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readiness } from "./readiness";
+import { FRESH_WAIT_MS } from "./schedule";
 import type { BoardSnapshot } from "./types";
 
 const collectBoard = vi.hoisted(() => vi.fn());
@@ -24,7 +26,8 @@ async function load() {
   vi.resetModules();
   const cache = await import("./board-cache.server");
   const functions = await import("./board");
-  return { cache, functions };
+  const context = await import("./cloudflare-context");
+  return { cache, functions, context };
 }
 
 beforeEach(() => {
@@ -37,6 +40,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("the board cache", () => {
@@ -99,7 +103,7 @@ describe("the board cache", () => {
     expect(collectBoard).toHaveBeenCalledTimes(1);
   });
 
-  it("serves a recently expired board to routes and the loader while one shared sweep runs, but not to the refetch", async () => {
+  it("serves an expired board of any age to routes and the loader while one shared sweep runs", async () => {
     const { cache, functions } = await load();
     const first = await cache.getStatusBoard();
 
@@ -107,17 +111,157 @@ describe("the board cache", () => {
     let finish: (value: BoardSnapshot) => void = () => {};
     collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
 
-    // Past the TTL (45 s), inside the stale window.
-    vi.advanceTimersByTime(50_000);
+    // Hours past the TTL (45 s): an idle isolate still answers at once.
+    vi.advanceTimersByTime(3 * 60 * 60_000);
     expect(await cache.getStatusBoard()).toEqual(first);
     expect(await functions.loadStatusBoardForPage()).toEqual(first);
     expect(collectBoard).toHaveBeenCalledTimes(2);
 
-    // The refetch wants a fresh board, so it waits for that same sweep.
+    // The refetch prefers a fresh board, so it waits a little for that same sweep.
     const refetch = functions.fetchStatusBoard();
     const second = board(99);
     finish(second);
     expect(await refetch).toEqual(second);
     expect(collectBoard).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes the refetch wait no longer than FRESH_WAIT_MS for a slow sweep", async () => {
+    const { cache, functions } = await load();
+    const first = await cache.getStatusBoard();
+    let finish: (value: BoardSnapshot) => void = () => {};
+    collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
+    vi.advanceTimersByTime(60_000);
+
+    let answered: BoardSnapshot | undefined;
+    const refetch = functions.fetchStatusBoard().then((value) => {
+      answered = value;
+      return value;
+    });
+    await vi.advanceTimersByTimeAsync(FRESH_WAIT_MS - 1);
+    expect(answered).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await refetch).toEqual(first);
+
+    // The sweep lands behind it and the next reader has it.
+    const second = board(99);
+    finish(second);
+    await vi.waitFor(async () => expect(await cache.getStatusBoard()).toEqual(second));
+    expect(collectBoard).toHaveBeenCalledTimes(2);
+  });
+
+  it("makes the readiness probe wait for a slow sweep past FRESH_WAIT_MS", async () => {
+    const { cache } = await load();
+    await cache.getStatusBoard();
+    let finish: (value: BoardSnapshot) => void = () => {};
+    collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
+    vi.advanceTimersByTime(60_000);
+
+    const probe = cache.getStatusBoardForProbe();
+    await vi.advanceTimersByTimeAsync(FRESH_WAIT_MS + 5_000);
+    const second = board(99);
+    finish(second);
+    expect(await probe).toEqual(second);
+  });
+
+  it("lets the readiness probe answer ready after a quiet spell, by waiting for the refresh of an old board", async () => {
+    const { cache } = await load();
+    const old = await cache.getStatusBoard();
+    // Twelve minutes without a reader: the board in hand is past READY_MAX_AGE_MS.
+    vi.advanceTimersByTime(12 * 60_000);
+    expect(readiness(old, Date.now()).status).toBe("stale");
+    let finish: (value: BoardSnapshot) => void = () => {};
+    collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
+
+    const probe = cache.getStatusBoardForProbe();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const fresh = { ...board(2), services: [{ id: "claude", health: "operational" } as BoardSnapshot["services"][0]] };
+    finish(fresh);
+
+    const answered = await probe;
+    expect(answered).toEqual(fresh);
+    expect(readiness(answered, Date.now()).status).toBe("ready");
+    // One sweep for the old board, and the refresh the probe waited for.
+    expect(collectBoard).toHaveBeenCalledTimes(2);
+  });
+
+  it("puts what a sweep reads after it (release lines, notes) on the cached board in place", async () => {
+    const { cache, functions } = await load();
+    const first = await cache.getStatusBoard();
+    const [{ onLate }] = collectBoard.mock.calls[0];
+
+    vi.advanceTimersByTime(10_000);
+    onLate((current: BoardSnapshot) => ({ ...current, services: [{ id: "gitlab" } as BoardSnapshot["services"][0]] }));
+
+    const patched = await functions.fetchStatusBoard();
+    expect(patched.generatedAt).toBe(first.generatedAt);
+    expect(patched.services).toEqual([{ id: "gitlab" }]);
+    expect(await cache.getStatusBoard()).toEqual(patched);
+    expect(collectBoard).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs one line per sweep, with why it ran", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { cache, functions } = await load();
+    await cache.getStatusBoard();
+    vi.advanceTimersByTime(20_000);
+    await functions.refreshStatusBoard();
+
+    const lines = log.mock.calls.map(([line]) => JSON.parse(String(line)));
+    expect(lines).toEqual([
+      { event: "board_collected", trigger: "cold", durationMs: 1, services: 0, unknown: 0 },
+      { event: "board_collected", trigger: "force", durationMs: 2, services: 0, unknown: 0 },
+    ]);
+  });
+
+  describe("on a Worker, with the snapshot shared through the Cache API", () => {
+    /** `caches.default` in memory, keyed by URL. */
+    function edgeCache() {
+      const stored = new Map<string, Response>();
+      vi.stubGlobal("caches", {
+        default: {
+          match: async (request: Request) => stored.get(request.url)?.clone(),
+          put: async (request: Request, response: Response) => {
+            stored.set(request.url, response.clone());
+          },
+        },
+      });
+      return stored;
+    }
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("starts a cold isolate from the snapshot a peer shared, with no sweep", async () => {
+      edgeCache();
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      const waiting: Promise<unknown>[] = [];
+      const request = (fn: () => Promise<BoardSnapshot>, isolate: Awaited<ReturnType<typeof load>>) =>
+        isolate.context.runWithCloudflareContext(
+          {
+            env: { CF_VERSION_METADATA: { id: "v1" } },
+            waitUntil: (promise) => waiting.push(promise),
+            origin: "https://status.example.com",
+          },
+          fn,
+        );
+
+      const first = await load();
+      const collected = await request(() => first.cache.getStatusBoard(), first);
+      await Promise.all(waiting);
+      expect(collectBoard).toHaveBeenCalledTimes(1);
+
+      // Another isolate of the same data center, ten seconds later.
+      vi.advanceTimersByTime(10_000);
+      const peer = await load();
+      expect(await request(() => peer.cache.getStatusBoard(), peer)).toEqual(collected);
+      expect(await request(() => peer.functions.fetchStatusBoard(), peer)).toEqual(collected);
+      expect(collectBoard).toHaveBeenCalledTimes(1);
+      const hits = vi
+        .mocked(console.log)
+        .mock.calls.map(([line]) => JSON.parse(String(line)))
+        .filter((line) => line.event === "board_shared_hit");
+      expect(hits).toEqual([{ event: "board_shared_hit", ageMs: 10_000 }]);
+    });
   });
 });

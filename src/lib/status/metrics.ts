@@ -41,6 +41,9 @@ function render(family: Family): string {
  * depending on a numeric ranking of states. The snapshot's own timestamp is
  * exported rather than its age, so `time() - statusbar_snapshot_timestamp_seconds`
  * stays correct however long a scrape or an edge cache holds the response.
+ * A source's age is relative to that timestamp too: a source answered from
+ * an earlier read (a cached or carried-over snapshot) shows how much older
+ * it is than the board around it.
  */
 export function prometheusMetrics(board: BoardSnapshot): string {
   const service = (item: BoardSnapshot["services"][number]) => ({
@@ -76,6 +79,14 @@ export function prometheusMetrics(board: BoardSnapshot): string {
       name: "statusbar_source_latency_seconds",
       help: "Time the official source took to answer.",
       samples: board.services.map((item) => ({ labels: service(item), value: item.latencyMs / 1000 })),
+    },
+    {
+      name: "statusbar_service_check_age_seconds",
+      help: "Seconds between when the service's official source was read and when the board snapshot was collected.",
+      samples: board.services.flatMap((item) => {
+        const age = (Date.parse(board.generatedAt) - Date.parse(item.checkedAt)) / 1000;
+        return Number.isFinite(age) ? [{ labels: service(item), value: Math.max(0, Math.floor(age)) }] : [];
+      }),
     },
     {
       name: "statusbar_services",

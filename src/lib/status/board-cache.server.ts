@@ -1,7 +1,8 @@
+import { cloudflareBoardStore } from "./board-store";
 import { findCloudflareContext } from "./cloudflare-context";
 import { collectBoard } from "./collect-board";
-import { CACHE_MAX_STALE_MS, CACHE_TTL_MS, MIN_FORCED_REFRESH_MS } from "./schedule";
-import { createTtlCache } from "./ttl-cache";
+import { CACHE_TTL_MS, FRESH_WAIT_MS, MIN_FORCED_REFRESH_MS, PROBE_WAIT_MS } from "./schedule";
+import { createTtlCache, type LoadTrigger } from "./ttl-cache";
 import type { BoardSnapshot } from "./types";
 
 // The one board cache of a server process (a Worker isolate). It lives in this
@@ -13,28 +14,66 @@ import type { BoardSnapshot } from "./types";
 // board, the server functions in `board.ts` included, goes through here.
 // `scripts/ci/single-board-cache.ts` fails the build if the built server
 // holds more than one.
-const boardCache = createTtlCache(collectBoard, CACHE_TTL_MS, {
-  maxStaleMs: CACHE_MAX_STALE_MS,
+//
+// Once the isolate holds any snapshot, nobody waits for a sweep: every reader
+// gets the snapshot in hand at once and an expired one is refreshed behind it
+// (the page's scheduled refetch waits at most FRESH_WAIT_MS for that refresh,
+// the readiness probe PROBE_WAIT_MS). Only the first board of a cold isolate
+// and the Refresh button wait for a sweep.
+//
+// On Workers the isolates of a data center share their newest snapshot
+// through the Cache API (board-store.ts): a cold isolate starts from it, and
+// an isolate whose snapshot has expired adopts a fresher one a peer wrote
+// instead of sweeping again. So only a data center with no snapshot at all
+// waits for a sweep. The Node server has no such level and keeps its own.
+// The release feeds and notes read after a sweep patch the cached snapshot in
+// place, without making it any younger, and the patched snapshot replaces the
+// shared one: an isolate that starts cold after that reads it with the lines
+// on. A peer that adopted the snapshot before the patch landed keeps it as it
+// was, without the lines, until its own next refresh (adopt() takes only a
+// younger entry, and the patch keeps the age).
+const boardCache = createTtlCache(loadBoard, CACHE_TTL_MS, {
   minForceIntervalMs: MIN_FORCED_REFRESH_MS,
   onBackgroundRefresh: (promise) => findCloudflareContext()?.waitUntil(promise),
+  shared: cloudflareBoardStore,
+  onSharedHit: (entry) => console.log(JSON.stringify({ event: "board_shared_hit", ageMs: Date.now() - entry.at })),
 });
+
+async function loadBoard(trigger: LoadTrigger): Promise<BoardSnapshot> {
+  // The release lines and notes a sweep reads after the board went out are put on the cached board in place
+  // (collect-board.ts), so they show on the next read rather than on the next sweep.
+  const board = await collectBoard({ onLate: (patch) => boardCache.update(patch) });
+  console.log(
+    JSON.stringify({
+      event: "board_collected",
+      trigger,
+      durationMs: board.durationMs,
+      services: board.services.length,
+      unknown: board.counts.unknown,
+    }),
+  );
+  return board;
+}
 
 /**
  * The board the server routes (the JSON API, the feed, metrics and the
- * badges) serve: a recently expired snapshot at once, refreshed behind it.
- * Sharing the cache is what keeps a busy badge from costing a vendor sweep
- * per request.
+ * badges) serve: the snapshot in hand at once, refreshed behind it when it
+ * has expired. Sharing the cache is what keeps a busy badge from costing a
+ * vendor sweep per request.
  */
 export function getStatusBoard(): Promise<BoardSnapshot> {
   return boardCache.get({ allowStale: true });
 }
 
-/** The page's scheduled refetch: a board no older than the cache's TTL. */
+/**
+ * The page's scheduled refetch: a board no older than the cache's TTL when a
+ * refresh lands within FRESH_WAIT_MS, otherwise the snapshot in hand.
+ */
 export function getFreshStatusBoard(): Promise<BoardSnapshot> {
-  return boardCache.get();
+  return boardCache.get({ waitForFreshMs: FRESH_WAIT_MS });
 }
 
-/** The route loader: renders from a recently expired snapshot, no blocking sweep. */
+/** The route loader: renders from the snapshot in hand, never a blocking sweep once there is one. */
 export function getStatusBoardForPage(): Promise<BoardSnapshot> {
   return boardCache.get({ allowStale: true });
 }
@@ -42,4 +81,9 @@ export function getStatusBoardForPage(): Promise<BoardSnapshot> {
 /** The Refresh button: a new sweep, unless one finished just now. */
 export function refreshStatusBoardNow(): Promise<BoardSnapshot> {
   return boardCache.get({ force: true });
+}
+
+/** The readiness probe: like the refetch, but it waits up to PROBE_WAIT_MS for a refresh of an expired board. */
+export function getStatusBoardForProbe(): Promise<BoardSnapshot> {
+  return boardCache.get({ waitForFreshMs: PROBE_WAIT_MS });
 }

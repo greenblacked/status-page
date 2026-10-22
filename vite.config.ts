@@ -14,6 +14,10 @@ export default defineConfig({
     assetsInlineLimit: (file) => (file.endsWith(".woff2") ? false : undefined),
   },
   server: { port: 3000 },
+  // Vite's own CORS middleware would answer every OPTIONS in a preview,
+  // before the app's method guard (src/lib/request-methods.ts) sees it; off,
+  // a local preview answers a preflight as production does.
+  preview: { cors: false },
   resolve: { tsconfigPaths: true },
   plugins: [
     tailwindcss(),

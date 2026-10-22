@@ -11,7 +11,9 @@ import {
   withMikrotikNotes,
 } from "./mikrotik-notes.server.ts";
 import { clearReleaseFeedCache, RELEASE_FEED_RETRY_MS, RELEASE_SOURCES } from "./release-feeds.server.ts";
+import { sharedSourcePolicy } from "./source-policy.ts";
 import type { ServiceSnapshot } from "./types.ts";
+import { clearVendorValidators } from "./validator-cache.ts";
 
 // The MikroTik changelog notes are advisory: read after the health sweep, in the background, cached like a
 // release feed. Most of what is pinned here is what they must NOT do: delay the sweep or change any result.
@@ -88,6 +90,9 @@ describe("MikroTik changelog notes", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     clearMikrotikNotesCache();
     clearReleaseFeedCache();
+    // collectBoard sweeps under the process's shared policy and validator cache: no test inherits another's.
+    sharedSourcePolicy.reset();
+    clearVendorValidators();
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -182,6 +187,17 @@ describe("MikroTik changelog notes", () => {
       vi.setSystemTime(Date.now() + RELEASE_FEED_RETRY_MS + 1);
       await startMikrotikNotes([card()]);
       expect(asked.sort()).toEqual([changelog("6.49.19"), changelog("7.18.4"), changelog("7.21beta3")].sort());
+    });
+
+    it("resolves to how many versions it read notes for, so a board knows whether any arrived", async () => {
+      route(changelogs());
+      // Five versions asked for, two changelogs there to parse.
+      await expect(startMikrotikNotes([card()])).resolves.toBe(2);
+      // Nothing due: nothing read.
+      await expect(startMikrotikNotes([card()])).resolves.toBe(0);
+      // Past the retry window the three failed ones are asked again, and fail again.
+      vi.setSystemTime(Date.now() + RELEASE_FEED_RETRY_MS + 1);
+      await expect(startMikrotikNotes([card()])).resolves.toBe(0);
     });
 
     it("a failed changelog is cached for the retry period and asked again after it", async () => {
@@ -324,7 +340,7 @@ describe("MikroTik changelog notes", () => {
 
     it("never throws or rejects, whatever the changelog host does", async () => {
       vi.stubGlobal("fetch", () => Promise.reject(new TypeError("fetch failed")));
-      await expect(startMikrotikNotes([card()])).resolves.toBeUndefined();
+      await expect(startMikrotikNotes([card()])).resolves.toBe(0);
       expect(withMikrotikNotes([card()])[0].components.every((c) => c.release?.notes === undefined)).toBe(true);
     });
   });
@@ -372,6 +388,9 @@ describe("MikroTik changelog notes", () => {
       for (const [name, scenario] of Object.entries(scenarios)) {
         clearMikrotikNotesCache();
         clearReleaseFeedCache();
+        // Each scenario is a cold board: none reuses the last one's cached reads.
+        sharedSourcePolicy.reset();
+        clearVendorValidators();
         vi.setSystemTime(Date.parse("2026-10-02T12:00:00.000Z"));
         vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
           const url = urlOf(input);

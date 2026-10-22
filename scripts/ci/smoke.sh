@@ -9,9 +9,11 @@
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4181 --require-asset-cache
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
-# (22 services), the Atom feed, /metrics and /readyz. /readyz may answer 503
-# unless --require-ready: CI and sandboxes cannot always reach the vendors,
-# and an all-Unknown board is a correct answer there, not a broken build.
+# (22 services, an ETag that a repeat turns into 304, a CORS preflight
+# answered with 204, a POST refused with 405), the Atom feed, /metrics and
+# /readyz. /readyz may answer 503 unless --require-ready: CI and sandboxes
+# cannot always reach the vendors, and an all-Unknown board is a correct
+# answer there, not a broken build.
 #
 # --attempts retries the whole set of checks, 10 s apart. With
 # --require-ready, /readyz then has to answer 200, checked again every 10 s
@@ -28,11 +30,14 @@
 # somewhere, and a new version that never starts answering fails instead of
 # passing on the old one.
 #
-# --require-asset-cache also fetches the page's stylesheet, takes the first
-# /assets/*.woff2 it names and requires Cache-Control: max-age=31536000 and
-# immutable on it (public/_headers). Only Cloudflare reads that file, so the
-# deploy asks for this check on the Worker (in workerd and live) and CI's Node
-# preview does not.
+# --require-asset-cache also checks the headers a static file is served with:
+# X-Content-Type-Options: nosniff on /favicon.svg, and, through the page's
+# stylesheet, Cache-Control: max-age=31536000 and immutable on the first
+# /assets/*.woff2 it names (public/_headers). Cloudflare reads that file and
+# the Node server (src/node) sets the same headers, so the deploy asks for
+# these checks on the Worker (in workerd and live) and image-smoke.sh on the
+# image. CI's Node preview does not: vite preview serves public/ and /assets/
+# itself, without them.
 #
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
@@ -81,15 +86,21 @@ trap 'rm -rf "$work"' EXIT
 failed=0
 fail() { echo "::error::$1" >&2; failed=1; }
 
-# get <path>: fetches base+path into $work/body and $work/headers and sets
-# $status to the HTTP code, or 000 when nothing answered.
+# send <method> <path> [curl options]: fetches base+path with that method into
+# $work/body and $work/headers and sets $status to the HTTP code, or 000 when
+# nothing answered. The options add request headers or a body.
 status=000
 quiet=false
-get() {
-  status="$(curl --silent --show-error --max-time 30 --dump-header "$work/headers" \
-    --output "$work/body" --write-out '%{http_code}' "$base$1" 2>"$work/curl-error")" || status=000
+send() {
+  local method="$1" path="$2"
+  shift 2
+  status="$(curl --silent --show-error --max-time 30 --request "$method" "$@" --dump-header "$work/headers" \
+    --output "$work/body" --write-out '%{http_code}' "$base$path" 2>"$work/curl-error")" || status=000
   [ "$status" != 000 ] || [ "$quiet" = true ] || sed 's/^/  /' "$work/curl-error" >&2
 }
+
+# get <path> [curl options]: send GET.
+get() { send GET "$@"; }
 
 header() { grep -i "^$1:" "$work/headers" | head -n 1 | cut -d: -f2- | tr -d '\r' | sed 's/^ *//'; }
 
@@ -128,6 +139,18 @@ wait_for_server() {
     fi
     sleep 2
   done
+}
+
+# check_static_headers: a static file carries the security headers too (on
+# Cloudflare from public/_headers). No version check: Cloudflare serves it
+# without invoking the Worker.
+check_static_headers() {
+  get /favicon.svg
+  if [ "$status" != 200 ]; then
+    fail "/favicon.svg: $status, expected 200"
+  elif [ "$(header X-Content-Type-Options)" != nosniff ]; then
+    fail "/favicon.svg: X-Content-Type-Options \"$(header X-Content-Type-Options)\", expected nosniff"
+  fi
 }
 
 # check_asset_cache: the hashed font under /assets/ has to be cacheable for a
@@ -206,6 +229,35 @@ run_checks() {
     fail "/api/status.json: not JSON with $SERVICES services and a generatedAt"
   fi
 
+  # The board's answers carry a validator, and a client that sends it back
+  # gets an empty 304 while the board is unchanged.
+  etag="$(header ETag)"
+  if [ "$status" = 200 ] && [ -z "$etag" ]; then
+    fail "/api/status.json: no ETag header"
+  elif [ "$status" = 200 ]; then
+    get /api/status.json --header "If-None-Match: $etag"
+    check_version "/api/status.json (If-None-Match)"
+    [ "$status" = 304 ] || fail "/api/status.json with If-None-Match: $etag: $status, expected 304"
+  fi
+
+  # Every endpoint is read-only: a preflight from another site is answered
+  # for any origin, and a write is refused with 405 rather than a page.
+  send OPTIONS /api/status.json --header 'Origin: https://example.com' --header 'Access-Control-Request-Method: GET'
+  check_version "OPTIONS /api/status.json"
+  if [ "$status" != 204 ]; then
+    fail "OPTIONS /api/status.json: $status, expected 204"
+  elif [ "$(header Access-Control-Allow-Origin)" != "*" ]; then
+    fail "OPTIONS /api/status.json: Access-Control-Allow-Origin \"$(header Access-Control-Allow-Origin)\", expected *"
+  fi
+
+  send POST /api/status.json --data ''
+  check_version "POST /api/status.json"
+  if [ "$status" != 405 ]; then
+    fail "POST /api/status.json: $status, expected 405"
+  elif [ -z "$(header Allow)" ]; then
+    fail "POST /api/status.json: 405 without an Allow header"
+  fi
+
   get /api/history.json
   check_version /api/history.json
   if [ "$status" != 200 ]; then
@@ -226,7 +278,10 @@ run_checks() {
   check_version /metrics
   [ "$status" = 200 ] || fail "/metrics: $status, expected 200"
 
-  if [ "$require_asset_cache" = true ]; then check_asset_cache; fi
+  if [ "$require_asset_cache" = true ]; then
+    check_static_headers
+    check_asset_cache
+  fi
 
   get /readyz
   check_version /readyz
@@ -271,7 +326,7 @@ until run_checks; do
   sleep 10
 done
 echo "ok  /healthz, /, /api/status.json, /api/history.json, /feed.xml, /metrics and /readyz answer on $base"
-[ "$require_asset_cache" != true ] || echo "ok  the font under /assets/ is cached for a year on $base"
+[ "$require_asset_cache" != true ] || echo "ok  /favicon.svg carries nosniff and the font under /assets/ is cached for a year on $base"
 
 if [ "$require_ready" = true ]; then
   wait_for_ready || { echo "smoke: FAILED against $base" >&2; exit 1; }

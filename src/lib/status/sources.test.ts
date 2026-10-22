@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
-import { PayloadError, SourceError } from "./http.ts";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
+import { PayloadError, SourceError, TimeoutError } from "./http.ts";
+import { createSourcePolicy } from "./source-policy.ts";
 import {
   awsComponents,
   awsEventActive,
@@ -10,6 +12,7 @@ import {
   azureItemActive,
   azureItemHealth,
   classifyFailure,
+  collectAllServices,
   decodeXmlEntities,
   decodeXmlField,
   epochToIso,
@@ -39,8 +42,20 @@ describe("grok feed", () => {
   it("does not read 'majority' as a major outage", () => {
     assert.equal(grokItemHealth("The majority of requests succeeded"), "degraded");
     assert.equal(grokItemHealth("Major service disruption"), "outage");
-    assert.equal(grokItemHealth("Partial outage in one region"), "outage");
+    // A partial outage is Degraded, as on a Statuspage or Instatus component.
+    assert.equal(grokItemHealth("Partial outage in one region"), "degraded");
     assert.equal(grokItemHealth("Scheduled maintenance window"), "maintenance");
+  });
+
+  it("reads the first Severity and Status lines, and the prose only when the item has neither", () => {
+    assert.equal(grokItemHealth("<p>Severity: Major outage</p><p>Status: Monitoring</p>"), "outage");
+    assert.equal(grokItemHealth("<p>Severity: Degraded performance</p><p>Status: Identified</p>"), "degraded");
+    assert.equal(grokItemHealth("<p>Severity: Under maintenance</p>"), "maintenance");
+    assert.equal(grokItemHealth("<p>Severity: outage</p><p>Severity: degraded</p>"), "outage");
+    assert.equal(grokItemHealth("<p>Status: Resolved</p><p>Severity: Major outage</p>"), "operational");
+    // A Status line alone that is not a resolution, or an unknown severity: a problem, of unknown size.
+    assert.equal(grokItemHealth("<p>Status: Investigating</p><p>A major outage of the API.</p>"), "degraded");
+    assert.equal(grokItemHealth("<p>Severity: sev2</p>"), "degraded");
   });
 
   it("ignores an unresolved item older than the staleness window", () => {
@@ -334,7 +349,7 @@ describe("parseRssItems field scanning", () => {
     const [item] = parseRssItems(
       "<ITEM><Title>One</TITLE><DESCRIPTION>Two</Description><pubdate>d</PUBDATE><LINK> l </link></ITEM>",
     );
-    assert.deepEqual(item, { title: "One", description: "Two", pubDate: "d", link: "l" });
+    assert.deepEqual(item, { title: "One", description: "Two", pubDate: "d", link: "l", guid: undefined });
     const [nested] = parseRssItems("<item><title>a<title>b</title></item>");
     assert.equal(nested.title, "a<title>b");
     const [open] = parseRssItems("<item><title>never closed<link>https://x</link></item>");
@@ -358,26 +373,26 @@ describe("parseRssItems field scanning", () => {
 
   it("keeps the first complete field pair and the original item delimiters", () => {
     assert.deepEqual(parseRssItems("<ITEM\t><TITLE> first </TITLE><title>second</title><link>&amp;</link></ITEM>"), [
-      { title: "first", description: "", pubDate: undefined, link: "&" },
+      { title: "first", description: "", pubDate: undefined, link: "&", guid: undefined },
     ]);
     assert.deepEqual(parseRssItems("<items><title>ignored</title></items><item><title>kept</title></item>"), [
-      { title: "kept", description: "", pubDate: undefined, link: undefined },
+      { title: "kept", description: "", pubDate: undefined, link: undefined, guid: undefined },
     ]);
     assert.deepEqual(parseRssItems("İ<item><title>İssue</title><description>İ</description></item>"), [
-      { title: "İssue", description: "İ", pubDate: undefined, link: undefined },
+      { title: "İssue", description: "İ", pubDate: undefined, link: undefined, guid: undefined },
     ]);
   });
 
   it("leaves a field empty after repeated unclosed openers while reading the next field", () => {
     assert.deepEqual(parseRssItems(`<item>${"<title>".repeat(100)}<description>Working</description></item>`), [
-      { title: "", description: "Working", pubDate: undefined, link: undefined },
+      { title: "", description: "Working", pubDate: undefined, link: undefined, guid: undefined },
     ]);
     assert.deepEqual(parseRssItems("<item><title>unclosed<item><title>second</title></item>"), [
-      { title: "", description: "", pubDate: undefined, link: undefined },
-      { title: "second", description: "", pubDate: undefined, link: undefined },
+      { title: "", description: "", pubDate: undefined, link: undefined, guid: undefined },
+      { title: "second", description: "", pubDate: undefined, link: undefined, guid: undefined },
     ]);
     assert.deepEqual(parseRssItems(`<item><title>Okay</title>${"<description><pubDate><link>".repeat(20)}</item>`), [
-      { title: "Okay", description: "", pubDate: undefined, link: undefined },
+      { title: "Okay", description: "", pubDate: undefined, link: undefined, guid: undefined },
     ]);
   });
 });
@@ -400,7 +415,9 @@ describe("collector failure classification", () => {
       message: "403 Forbidden from https://x",
       status: 403,
     });
-    assert.equal(classifyFailure(new SourceError("Timed out fetching https://x")).kind, "timeout");
+    assert.equal(classifyFailure(new TimeoutError("Timed out fetching x")).kind, "timeout");
+    // The type decides, not the wording: a plain SourceError is a network failure whatever it says.
+    assert.equal(classifyFailure(new SourceError("Timed out fetching https://x")).kind, "network");
     assert.equal(classifyFailure(new SourceError("getaddrinfo ENOTFOUND x")).kind, "network");
   });
 
@@ -1080,5 +1097,74 @@ describe("azure feed", () => {
     assert.equal(azureItemActive({ title: "Planned maintenance - Key Vault" }, NOW), false);
     assert.equal(azureItemActive(item("Service unavailable - maintenance overran"), NOW), true);
     assert.equal(azureItemActive(item("Maintenance in West US: outage"), NOW), true);
+  });
+});
+
+describe("collectAllServices request count", () => {
+  const fixture = (path: string) => readFileSync(new URL(`./__fixtures__/${path}`, import.meta.url), "utf8");
+  const MIKROTIK = "https://upgrade.mikrotik.com/routeros/";
+  // The slow-moving pages and side lists answer; every other vendor 404s.
+  const ROUTES: Record<string, () => string> = {
+    ...Object.fromEntries(
+      ["NEWESTa7.stable", "NEWESTa7.long-term", "NEWESTa7.testing", "NEWESTa7.development", "NEWESTa6.long-term"].map(
+        (file) => [`${MIKROTIK}${file}`, () => fixture(`mikrotik/${file}`)],
+      ),
+    ),
+    "https://developer.apple.com/news/releases/rss/releases.rss": () => fixture("apple-os/releases.rss"),
+    "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information": () =>
+      fixture("windows/windows11-release-information.html"),
+    "https://developer.android.com/about/versions": () => fixture("android-os/versions.html"),
+    "https://status.cloud.google.com/products.json": () => fixture("gcp/products.json"),
+    "https://status.play.google.com/products.json": () => fixture("play/products.json"),
+    "https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0": () =>
+      fixture("steam/cm-list.json"),
+    "https://status.x.ai/v2/components.json": () => fixture("grok/components.json"),
+  };
+  let calls: string[] = [];
+
+  beforeEach(() => {
+    calls = [];
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push(url);
+      const body = ROUTES[url];
+      return body ? new Response(body()) : new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("without a policy, fetches every source on every sweep", async () => {
+    await collectAllServices();
+    assert.equal(calls.length, 31);
+    await collectAllServices();
+    assert.equal(calls.length, 62);
+  });
+
+  it("with one policy, a second sweep within ten minutes reuses the slow pages and side lists", async () => {
+    const policy = createSourcePolicy();
+    const first = await collectAllServices({ policy });
+    assert.equal(calls.length, 31);
+    for (const id of ["mikrotik", "apple-os", "windows", "android-os"]) {
+      assert.equal(first.find((service) => service.id === id)?.failure, undefined, id);
+    }
+    calls = [];
+    const second = await collectAllServices({ policy });
+    // MikroTik's five channels, Apple OS, Windows, Android OS, both product lists and the Steam
+    // connection managers come from the policy; the Grok component list is read fresh.
+    assert.equal(calls.length, 20);
+    assert.ok(calls.includes("https://status.x.ai/v2/components.json"));
+    assert.ok(!calls.some((url) => url.startsWith(MIKROTIK)));
+    for (const id of ["mikrotik", "apple-os", "windows", "android-os"]) {
+      const before = first.find((service) => service.id === id);
+      const after = second.find((service) => service.id === id);
+      assert.equal(after?.checkedAt, before?.checkedAt, id);
+      assert.deepEqual(after?.components, before?.components, id);
+    }
   });
 });

@@ -151,6 +151,25 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(fortnite.health).toBe("operational");
   });
 
+  it.each([
+    ["spotify", URLS.spotify],
+    ["chatgpt", URLS.chatgpt],
+    ["claude", URLS.claude],
+    ["epic", URLS.epicFortnite],
+  ] as const)("%s: a page's pointer to itself is not listed as a component", async (id, url) => {
+    const summary = statuspageSummary({
+      components: [
+        { id: "1", name: "Visit status.example.com for more information", status: "operational" },
+        { id: "2", name: "Web", status: "operational" },
+      ],
+    });
+    stubFetch({ [url]: json(summary) });
+    const services = await collectAllServices();
+    const service = services.find((s) => s.id === id)!;
+    expect(service.failure).toBeUndefined();
+    expect(service.components.map((component) => component.name)).toEqual(["Web"]);
+  });
+
   it("maps plain Statuspage indicators: none/minor/major", async () => {
     stubFetch({
       [URLS.spotify]: json(statuspageSummary({ indicator: "none" })),
@@ -1425,18 +1444,195 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(grok.meta).toBeUndefined();
     });
 
-    it("Grok feed.xml: a feed with no RSS items (an Atom feed) is unknown with a parser failure", async () => {
+    it("Grok feed.xml: an Atom feed is read entry by entry, like an RSS one", async () => {
       stubFetch({
         [URLS.grok]: text(
           '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>xAI Status</title>' +
-            "<entry><title>Elevated errors</title></entry></feed>",
+            '<entry><id>tag:status.x.ai,2026:INC1</id><title type="html">[API] Elevated errors</title>' +
+            '<link rel="alternate" href="https://status.x.ai/incidents/INC1"/>' +
+            "<updated>2026-09-20T11:30:00+02:00</updated>" +
+            '<summary type="html">&lt;h3&gt;Status: ONGOING&lt;/h3&gt;&lt;p&gt;Severity: degraded&lt;/p&gt;</summary>' +
+            "</entry></feed>",
+        ),
+      });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("degraded");
+      expect(grok.incidents).toMatchObject([
+        {
+          id: "https://status.x.ai/incidents/INC1",
+          title: "[API] Elevated errors",
+          health: "degraded",
+          startedAt: "2026-09-20T09:30:00.000Z",
+        },
+      ]);
+    });
+
+    it("Grok feed.xml: a feed with neither RSS items nor Atom entries is unknown with a parser failure", async () => {
+      stubFetch({
+        [URLS.grok]: text(
+          '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>xAI Status</title></feed>',
         ),
       });
       const grok = await collect("grok");
       expect(grok.health).toBe("unknown");
-      expect(grok.failure).toEqual({ kind: "parser", message: "Grok feed returned no readable items." });
+      expect(grok.failure).toEqual({
+        kind: "parser",
+        message: "Grok feed returned no readable items.",
+      });
       expect(grok.summary).toBe("Grok feed returned no readable items.");
       expect(grok.incidents).toEqual([]);
+    });
+
+    // One status.x.ai item: its Status and Severity lines, and the pubDate as given.
+    const grokItem = (description: string, pubDate: string) =>
+      text(
+        `<rss version="2.0"><channel><item><title>[API] Requests failing</title>` +
+          `<link>https://status.x.ai/api/INC1</link><description><![CDATA[${description}]]></description>` +
+          `<pubDate>${pubDate}</pubDate></item></channel></rss>`,
+      );
+
+    it("Grok: an open item dated in a European zone is current, not an all-clear", async () => {
+      stubFetch({
+        [URLS.grok]: grokItem("<h3>Status: ONGOING</h3><p>Severity: outage</p>", "Sun, 20 Sep 2026 11:30:00 CEST"),
+      });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("outage");
+      expect(grok.incidents).toHaveLength(1);
+      expect(grok.incidents[0]?.startedAt).toBe("2026-09-20T09:30:00.000Z");
+    });
+
+    it("Grok: open items none of which has a readable date are a parser failure, not an all-clear", async () => {
+      stubFetch({ [URLS.grok]: grokItem("<h3>Status: ONGOING</h3><p>Severity: outage</p>", "yesterday") });
+      const grok = await collect("grok");
+      expect(grok.health).toBe("unknown");
+      expect(grok.failure).toEqual({ kind: "parser", message: "Grok feed items have no readable date." });
+    });
+
+    it("Grok: an undated item that is over does not fail the feed", async () => {
+      stubFetch({ [URLS.grok]: grokItem("<h3>Status: Resolved</h3><p>Severity: outage</p>", "yesterday") });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("operational");
+    });
+
+    it.each([
+      ["<p>Severity: degraded</p><p>Some requests fail; this is not a full outage.</p>", "degraded"],
+      ["<p>Severity: degraded</p><p>Maintenance is planned later today to fix it.</p>", "degraded"],
+      ["<p>Severity: outage</p><p>The issue is resolved for one region; others are still down.</p>", "outage"],
+      ["<h3>Status: ONGOING</h3><p>Severity: Partial outage</p><p>A major outage elsewhere is over.</p>", "degraded"],
+      ["<h3>Status: Completed</h3><p>Severity: outage</p>", "operational"],
+    ])("Grok: health is the item's Severity and Status lines, not its prose (%s)", async (description, health) => {
+      stubFetch({ [URLS.grok]: grokItem(description, "Sun, 20 Sep 2026 11:30:00 GMT") });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe(health);
+    });
+
+    // status.x.ai items with no link: the guid names an item when the feed gives one, else its title and date do.
+    const grokFeed = (items: string[]) => text(`<rss version="2.0"><channel>${items.join("")}</channel></rss>`);
+    const grokUnlinked = (title: string, guid?: string) =>
+      `<item><title>${title}</title>${guid ? `<guid isPermaLink="false">${guid}</guid>` : ""}` +
+      "<description><![CDATA[<h3>Status: ONGOING</h3><p>Severity: outage</p>]]></description>" +
+      "<pubDate>Sun, 20 Sep 2026 11:30:00 GMT</pubDate></item>";
+
+    it("Grok: an item's id does not move when an earlier item disappears", async () => {
+      const first = grokUnlinked("[API] Requests failing");
+      const second = grokUnlinked("[Web] Slow pages", "INC-2");
+      const third = grokUnlinked("[Voice] Calls drop");
+      stubFetch({ [URLS.grok]: grokFeed([first, second, third]) });
+      const before = (await collect("grok")).incidents.map((incident) => incident.id);
+      stubFetch({ [URLS.grok]: grokFeed([second, third]) });
+      const after = (await collect("grok")).incidents.map((incident) => incident.id);
+      expect(before).toHaveLength(3);
+      expect(after).toEqual(before.slice(1));
+      expect(before).toContain("INC-2");
+      expect(before.filter((id) => id.startsWith("grok-"))).toHaveLength(2);
+    });
+
+    it("Grok: two identical unlinked items still get distinct ids", async () => {
+      const item = grokUnlinked("[API] Requests failing");
+      stubFetch({ [URLS.grok]: grokFeed([item, item]) });
+      const ids = (await collect("grok")).incidents.map((incident) => incident.id);
+      expect(ids).toHaveLength(2);
+      expect(new Set(ids).size).toBe(2);
+    });
+
+    it("AWS: open events none of which has a readable date are a parser failure, not an all-clear", async () => {
+      const events = JSON.stringify([
+        { arn: "arn:aws:health:us-east-1::event/EC2/1", status: "2", service_name: "Amazon EC2", summary: "Errors" },
+        { arn: "arn:aws:health:us-east-1::event/S3/2", date: "n/a", status: "3", service_name: "Amazon S3" },
+      ]);
+      stubFetch({ [URLS.aws]: bytes(utf16(events)) });
+      const aws = await collect("aws");
+      expect(aws.health).toBe("unknown");
+      expect(aws.failure).toEqual({ kind: "parser", message: "AWS feed items have no readable date." });
+    });
+
+    it("AWS: undated events that are closed do not fail the feed", async () => {
+      const events = JSON.stringify([
+        { arn: "arn:aws:health:us-east-1::event/EC2/1", status: "0", service_name: "Amazon EC2", summary: "Errors" },
+        { arn: "arn:aws:health:us-east-1::event/S3/2", end_time: 1, service_name: "Amazon S3" },
+        { arn: "arn:aws:health:us-east-1::event/S3/3", summary: "[RESOLVED] Errors", service_name: "Amazon S3" },
+      ]);
+      stubFetch({ [URLS.aws]: bytes(utf16(events)) });
+      const aws = await collect("aws");
+      expect(aws.failure).toBeUndefined();
+      expect(aws.health).toBe("operational");
+    });
+
+    it("Google Cloud: a null entry is skipped and the card is read from the valid rows", async () => {
+      stubFetch({ [URLS.gcp]: json([null, googleIncident({ id: "open", status_impact: "SERVICE_OUTAGE" })]) });
+      const gcp = await collect("gcp");
+      expect(gcp.failure).toBeUndefined();
+      expect(gcp.health).toBe("outage");
+      expect(gcp.incidents.map((incident) => incident.id)).toEqual(["open"]);
+    });
+
+    it("AWS: a null event is skipped, so a list of only nulls is operational", async () => {
+      stubFetch({ [URLS.aws]: bytes(utf16("[null]")) });
+      const aws = await collect("aws");
+      expect(aws.failure).toBeUndefined();
+      expect(aws.health).toBe("operational");
+      expect(aws.incidents).toEqual([]);
+    });
+
+    it("Apple: a null service is skipped and the others are read", async () => {
+      stubFetch({
+        [URLS.apple]: json({
+          services: [
+            null,
+            { serviceName: "iCloud Mail", events: [null, { eventStatus: "ongoing", statusType: "outage" }] },
+          ],
+        }),
+      });
+      const apple = await collect("apple");
+      expect(apple.failure).toBeUndefined();
+      expect(apple.health).toBe("outage");
+      expect(apple.components.map((component) => component.name)).toEqual(["iCloud Mail"]);
+    });
+
+    it("CS2 Europe: a null pop is skipped and the others are read", async () => {
+      const pops = Object.fromEntries(
+        ["fra", "hel", "lhr"].map((code) => [code, { desc: code, geo: [10, 50], relays: [{ ipv4: "1.2.3.4" }] }]),
+      );
+      stubFetch({ [URLS.cs2Sdr]: json({ success: true, pops: { ams: null, ...pops } }) });
+      const cs2 = await collect("cs2-europe");
+      expect(cs2.failure).toBeUndefined();
+      expect(cs2.health).toBe("operational");
+      expect(cs2.meta).toMatchObject({ euPops: 3, euWithRelays: 3 });
+    });
+
+    it.each([
+      ["gcp", URLS.gcp, json({ incidents: [] }), "Google Cloud payload is not a list"],
+      ["android", URLS.android, json({ incidents: [] }), "Android / Play payload is not a list"],
+      ["aws", URLS.aws, bytes(utf16('{"events":[]}')), "AWS payload is not a list"],
+    ] as const)("%s: a top level that is not a list is a parser failure", async (id, url, handler, message) => {
+      stubFetch({ [url]: handler });
+      const snapshot = await collect(id);
+      expect(snapshot.health).toBe("unknown");
+      expect(snapshot.failure).toEqual({ kind: "parser", message });
     });
 
     it("GitHub summary.json: a degraded and a partly-out component, an active incident and upcoming maintenance", async () => {
@@ -1998,6 +2194,44 @@ describe("collectAllServices against stubbed vendor payloads", () => {
         },
       ]);
       expect(azure.sourceUrl).toBe("https://azure.status.microsoft/en-us/status/");
+    });
+
+    it("Azure feed.xml: a partial outage is degraded, as on a Statuspage component", async () => {
+      stubFetch({
+        [URLS.azure]: text(
+          '<?xml version="1.0"?><rss version="2.0"><channel><title>Azure Status</title><item>' +
+            "<title>Partial outage - Azure SQL - West Europe</title>" +
+            "<link>https://azure.status.microsoft/en-us/status/#sql</link>" +
+            "<pubDate>Sun, 20 Sep 2026 10:20:00 GMT</pubDate></item></channel></rss>",
+        ),
+      });
+      const azure = await collect("azure");
+      expect(azure.failure).toBeUndefined();
+      expect(azure.health).toBe("degraded");
+      expect(azure.incidents.map((incident) => incident.health)).toEqual(["degraded"]);
+    });
+
+    it("Azure feed.xml: an unlinked item's id does not move when an earlier item disappears", async () => {
+      const item = (title: string, guid = "") =>
+        `<item><title>${title}</title>${guid ? `<guid>${guid}</guid>` : ""}` +
+        "<pubDate>Sun, 20 Sep 2026 10:20:00 GMT</pubDate></item>";
+      const feed = (items: string[]) =>
+        text(
+          `<?xml version="1.0"?><rss version="2.0"><channel><title>Azure Status</title>${items.join("")}</channel></rss>`,
+        );
+      const items = [
+        item("Virtual Machines - UK South - Outage"),
+        item("Azure SQL - West Europe - Degraded", "sql-1"),
+        item("Storage - East US - Outage"),
+      ];
+      stubFetch({ [URLS.azure]: feed(items) });
+      const before = (await collect("azure")).incidents.map((incident) => incident.id).sort();
+      stubFetch({ [URLS.azure]: feed(items.slice(1)) });
+      const after = (await collect("azure")).incidents.map((incident) => incident.id).sort();
+      expect(before).toHaveLength(3);
+      expect(after).toHaveLength(2);
+      expect(before).toEqual(expect.arrayContaining(after));
+      expect(after).toContain("sql-1");
     });
 
     it("Azure feed.xml: a channel with no items is operational, not a failure", async () => {

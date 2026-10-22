@@ -407,6 +407,22 @@ describe("apple os releases", () => {
     );
     assert.equal(latest[0]?.beta, true);
   });
+
+  it("keeps the newest item per OS family by its date, whatever the feed's order", () => {
+    const latest = latestAppleOsByFamily([
+      { title: "iOS 27.0 (24A437)", pubDate: "Mon, 14 Sep 2026 10:00:00 PDT" },
+      { title: "macOS 27.1 (26B100)" },
+      { title: "iOS 27.2 beta 2 (24B5089g)", pubDate: "Mon, 21 Sep 2026 10:00:00 PDT" },
+      { title: "macOS 27.0 (26A300)", pubDate: "Mon, 14 Sep 2026 10:00:00 PDT" },
+      { title: "watchOS 13.0 (23R1)", pubDate: "Mon, 14 Sep 2026 10:00:00 PDT" },
+      { title: "watchOS 13.0.1 (23R2)", pubDate: "Mon, 14 Sep 2026 10:00:00 PDT" },
+    ]);
+    assert.deepEqual(
+      latest.map((item) => item.title),
+      // Newer wins; an undated entry ranks below a dated one; a tie keeps the feed's order.
+      ["iOS 27.2 beta 2 (24B5089g)", "macOS 27.0 (26A300)", "watchOS 13.0 (23R1)"],
+    );
+  });
 });
 
 describe("isFreshRelease", () => {

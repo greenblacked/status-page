@@ -11,8 +11,11 @@ import { verdict } from "./verdict.ts";
 /** Shared by every public endpoint: readable from any origin, cached briefly. */
 export const PUBLIC_HEADERS = {
   "Access-Control-Allow-Origin": "*",
-  // The board itself refreshes every two minutes; a minute of edge cache keeps
-  // a popular badge or feed from turning into a vendor sweep per request.
+  // A browser or a downstream cache keeps the answer up to a minute, then
+  // revalidates it with its ETag (conditional.ts) and gets a 304 while the
+  // board is unchanged. Nothing caches in front of the Worker: what bounds
+  // vendor load is the board cache and the data-center snapshot, so a popular
+  // badge or feed never turns into a vendor sweep per request.
   "Cache-Control": "public, max-age=60, stale-while-revalidate=60",
 } as const;
 

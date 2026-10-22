@@ -10,9 +10,11 @@ import {
   statusIoHealth,
   statuspageComponentDetail,
   statuspageIncidentImpact,
+  textSeverity,
   urgencyOf,
   worseHealth,
 } from "./health";
+import { azureItemHealth, grokItemHealth } from "./sources.server.ts";
 
 describe("healthLabel", () => {
   it("names the five states, and calls an unreadable source No data rather than Unknown", () => {
@@ -149,4 +151,70 @@ describe("statusIoHealth", () => {
       expect(statusIoHealth(code)).toBe("unknown");
     },
   );
+});
+
+describe("textSeverity", () => {
+  it.each([
+    ["Resolved", "operational"],
+    ["Available", "operational"],
+    ["All systems operational", "operational"],
+    ["Partial outage", "degraded"],
+    ["partial  OUTAGE in one region", "degraded"],
+    ["Degraded performance", "degraded"],
+    ["Performance issues", "degraded"],
+    ["Service disruption", "degraded"],
+    ["Major outage", "outage"],
+    ["Outage", "outage"],
+    ["Service unavailable", "outage"],
+    ["Down", "outage"],
+    ["Under maintenance", "maintenance"],
+    ["Investigating", undefined],
+    ["", undefined],
+  ] as const)("reads %j as %s", (text, health) => {
+    expect(textSeverity(text)).toBe(health);
+  });
+
+  it("matches whole words only", () => {
+    expect(textSeverity("unavailable")).toBe("outage");
+    expect(textSeverity("unresolved")).toBeUndefined();
+    expect(textSeverity("downstream")).toBeUndefined();
+    expect(textSeverity("outages")).toBeUndefined();
+  });
+
+  it("reads the milder state first when a value names several", () => {
+    expect(textSeverity("Degraded, not a full outage")).toBe("degraded");
+    expect(textSeverity("Outage resolved")).toBe("operational");
+    expect(textSeverity("Outage during maintenance")).toBe("outage");
+  });
+});
+
+describe("a partial outage in a feed reads as on a Statuspage component", () => {
+  it("is degraded in Grok's and Azure's feeds", () => {
+    expect(grokItemHealth("<p>Severity: Partial outage</p><p>Status: Identified</p>")).toBe("degraded");
+    expect(grokItemHealth("Partial outage in one region")).toBe("degraded");
+    expect(azureItemHealth("Partial outage - Azure SQL - West Europe")).toBe("degraded");
+  });
+
+  it("leaves a full outage an outage", () => {
+    expect(grokItemHealth("<p>Severity: Major outage</p><p>Status: Monitoring</p>")).toBe("outage");
+    expect(grokItemHealth("Partial outage became a major outage")).toBe("outage");
+    expect(azureItemHealth("Outage - Azure SQL - West Europe")).toBe("outage");
+    expect(azureItemHealth("Partial outage - Virtual Machines - Service unavailable")).toBe("outage");
+  });
+
+  it("reads a one-word Grok severity of major, critical or full as an outage", () => {
+    expect(grokItemHealth("<p>Severity: Major</p><p>Status: Investigating</p>")).toBe("outage");
+    expect(grokItemHealth("<p>Severity: Critical</p><p>Status: Identified</p>")).toBe("outage");
+    expect(grokItemHealth("<p>Severity: Full</p>")).toBe("outage");
+    expect(grokItemHealth("<p>Severity: Minor</p><p>Status: Investigating</p>")).toBe("degraded");
+    expect(grokItemHealth("<p>Severity: Major</p><p>Status: Resolved</p>")).toBe("operational");
+  });
+
+  it("leaves an Azure outage an outage when its title also names the symptoms", () => {
+    expect(azureItemHealth("Outage - Azure Front Door: degraded performance")).toBe("outage");
+    expect(azureItemHealth("Service outage - Azure SQL: disruption in West Europe")).toBe("outage");
+    expect(azureItemHealth("Partial outage in East US; outage in West Europe")).toBe("outage");
+    expect(azureItemHealth("Partial outage - Storage - degraded performance")).toBe("degraded");
+    expect(azureItemHealth("Partial outage during maintenance - Storage")).toBe("degraded");
+  });
 });

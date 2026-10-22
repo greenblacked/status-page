@@ -11,6 +11,8 @@ import {
   parseMikrotikNewest,
   splitAppleBuild,
 } from "./changelog.ts";
+import { currentGate, defaultConnectionLimit, withConnectionGate } from "./connection-gate.ts";
+import { type FeedItem, parseFeedDate, parseRssItems, stripHtml } from "./feed-xml.ts";
 import { fingerprint } from "./fingerprint.ts";
 import {
   googleImpactInfo,
@@ -21,6 +23,7 @@ import {
   statuspageComponentDetail,
   statuspageIncidentImpact,
   statuspageIndicator,
+  textSeverity,
   urgencyOf,
   worseHealth,
 } from "./health.ts";
@@ -33,8 +36,10 @@ import {
   NotJsonError,
   PayloadError,
   SourceError,
+  TimeoutError,
 } from "./http.ts";
 import { sortIncidents } from "./layout.ts";
+import { PASSTHROUGH_POLICY, SIDE_READS, SOURCE_TIERS, type SourcePolicy } from "./source-policy.ts";
 import type {
   ComponentHealth,
   Health,
@@ -54,6 +59,18 @@ import {
   windowsUpdateNote,
 } from "./windows-release.ts";
 
+// The feed readers live in feed-xml.ts; they are re-exported for the modules
+// and tests that have always imported them from here.
+export {
+  decodeXmlEntities,
+  decodeXmlField,
+  MAX_RSS_ITEMS,
+  MAX_RSS_SCANNED,
+  parseFeedDate,
+  parseRssItems,
+  stripHtml,
+} from "./feed-xml.ts";
+
 const STALE_MS = 14 * 24 * 60 * 60 * 1000;
 // How far ahead of this server's clock a vendor's timestamp may be and still be read as now: their clock can
 // lead ours by a few minutes. A date further ahead is not a moment that has happened, so it is no evidence of a
@@ -62,6 +79,41 @@ const FUTURE_SKEW_MS = 5 * 60 * 1000;
 // Whether a vendor timestamp (ms) is within the last STALE_MS, allowing FUTURE_SKEW_MS of clock skew.
 function isRecent(at: number, now: number): boolean {
   return Number.isFinite(at) && now - at >= -FUTURE_SKEW_MS && now - at <= STALE_MS;
+}
+
+/**
+ * Refuses a feed whose open items (not over, not maintenance) cannot be dated:
+ * none of them can be told from a current one, so reading the feed as clear
+ * would be an all-clear built on no data. A parser failure instead, which
+ * names the vendor. One dated open item is enough to read the feed.
+ */
+function requireDatedOpenItems<T>(open: readonly T[], vendor: string, dateOf: (item: T) => number | undefined): void {
+  if (open.length > 0 && !open.some((item) => dateOf(item) !== undefined)) {
+    throw new PayloadError(`${vendor} feed items have no readable date.`);
+  }
+}
+
+/**
+ * Ids for a feed's items that stay put from one sweep to the next: the item's
+ * link, else its guid, else `<prefix>-` and a fingerprint of its title and
+ * date. Never its position, which moves whenever an earlier item leaves the
+ * feed. A count is appended only to tell exact duplicates apart.
+ */
+function feedItemIds(items: readonly FeedItem[], prefix: string): string[] {
+  const used = new Set<string>();
+  return items.map((item) => {
+    const id = item.link || item.guid || `${prefix}-${fingerprint(`${item.title}|${item.pubDate ?? ""}`)}`;
+    let unique = id;
+    for (let count = 2; used.has(unique); count += 1) unique = `${id}-${count}`;
+    used.add(unique);
+    return unique;
+  });
+}
+
+/** A feed date (see parseFeedDate) as an ISO string, or undefined when it has none. */
+function feedIso(value?: string): string | undefined {
+  const at = parseFeedDate(value);
+  return at === undefined ? undefined : new Date(at).toISOString();
 }
 // Upper bound on components kept per card. The largest real vendor list is
 // Cloudflare's (a component per data center, several hundred, plus its
@@ -234,9 +286,9 @@ const JSON_SYNTAX_MESSAGE = "SyntaxError: response was not valid JSON";
 // field) means the vendor answered with a shape the collector does not expect.
 export function classifyFailure(error: unknown): SourceFailure {
   if (error instanceof PayloadError) return { kind: "parser", message: error.message };
+  if (error instanceof TimeoutError) return { kind: "timeout", message: error.message };
   if (error instanceof SourceError) {
     if (error.status !== undefined) return { kind: "http", message: error.message, status: error.status };
-    if (error.message.startsWith("Timed out")) return { kind: "timeout", message: error.message };
     return { kind: "network", message: error.message };
   }
   // V8's JSON.parse message quotes the first characters of the body, which
@@ -246,6 +298,11 @@ export function classifyFailure(error: unknown): SourceFailure {
   const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return { kind: "parser", message };
 }
+
+// The raw error behind each failure snapshot failed() built, for the source
+// policy: a vendor's Retry-After rides on the error, not on the snapshot's
+// failure record. Weak, so a snapshot that is dropped takes its error along.
+const FAILURE_ERRORS = new WeakMap<ServiceSnapshot, unknown>();
 
 function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot {
   // A SourceError's message is written to be read, except a non-JSON hint: that
@@ -272,7 +329,7 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
       bytes: meteredBytes(),
     }),
   );
-  return {
+  const snapshot: ServiceSnapshot = {
     ...base(id, new Date().toISOString(), latencyMs),
     health: "unknown",
     summary: message,
@@ -280,6 +337,8 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
     incidents: [],
     failure,
   };
+  FAILURE_ERRORS.set(snapshot, error);
+  return snapshot;
 }
 
 function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }> {
@@ -479,7 +538,22 @@ export function records<T extends object>(value: unknown, limit = MAX_SCANNED_RO
     : [];
 }
 
+/**
+ * A payload whose top level must be a list, as it is. Anything else (an
+ * error object, a wrapper the vendor added) is a parser failure that names
+ * the vendor, not an empty list read as an all-clear.
+ */
+function expectArray(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value)) throw new PayloadError(`${label} payload is not a list`);
+  return value;
+}
+
 const MAX_UPCOMING_MAINTENANCE = 3;
+
+// A page's own pointer to itself ("Visit www.githubstatus.com for more
+// information") is listed by the vendor as a component. It is not a service,
+// and as a row it would read Operational and count as a working component.
+const NOT_A_SERVICE = /^Visit /;
 
 function fromStatuspage(
   id: ServiceId,
@@ -512,6 +586,7 @@ function fromStatuspage(
     if (component.group && component.id) groupNames.set(component.id, component.name ?? "");
   }
   const matched = allComponents
+    .filter((component) => !(typeof component.name === "string" && NOT_A_SERVICE.test(component.name)))
     .filter((component) =>
       componentFilter
         ? componentFilter(component.name ?? "", component.group_id ? groupNames.get(component.group_id) : undefined)
@@ -655,19 +730,22 @@ function fromStatuspage(
 // signal and `products.json` is the catalogue the component list is cut from.
 // The catalogue is a side request: it runs beside the incidents and, if it is
 // slow, missing or unreadable, the card keeps the per-incident components.
-async function collectGoogle(id: "gcp" | "android", origin: string): Promise<ServiceSnapshot> {
+async function collectGoogle(id: "gcp" | "android", origin: string, sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const [{ value, ms }, catalogue] = await Promise.all([
-      timed(() => fetchJson<GoogleIncident[]>(`${origin}/incidents.json`)),
-      fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
+      timed(() => fetchJson<unknown>(`${origin}/incidents.json`)),
+      sweep.policy.side(`products:${origin}`, SIDE_READS.googleProducts, () =>
+        fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS, priority: "low" }),
+      ),
     ]);
-    const parsed = googleIncidents(value, id);
+    const incidents = records<GoogleIncident>(expectArray(value, CATALOG_BY_ID[id].name));
+    const parsed = googleIncidents(incidents, id);
     const products = parseGoogleProducts(catalogue);
     const components = products.length
       ? googleComponents(
           products,
-          value.filter((incident) => !incident.end),
+          incidents.filter((incident) => !incident.end),
         )
       : parsed.components;
     return {
@@ -683,8 +761,8 @@ async function collectGoogle(id: "gcp" | "android", origin: string): Promise<Ser
   }
 }
 
-const collectGcp = () => collectGoogle("gcp", "https://status.cloud.google.com");
-const collectAndroid = () => collectGoogle("android", "https://status.play.google.com");
+const collectGcp = (sweep: Sweep) => collectGoogle("gcp", "https://status.cloud.google.com", sweep);
+const collectAndroid = (sweep: Sweep) => collectGoogle("android", "https://status.play.google.com", sweep);
 
 // `includes("resolved")` also matched "unresolved" and "not yet resolved",
 // which would read a live incident's own update as its resolution.
@@ -724,12 +802,22 @@ function awsLevel(raw: unknown): number {
   return typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "") ? Number(raw) : Number.NaN;
 }
 
+// When an event last changed (ms): its newest log entry, else its own date; 0 when neither is a number.
+function awsEventAt(event: AwsEvent): number {
+  return (Number(awsLatestLog(event)?.timestamp ?? event.date ?? 0) || 0) * 1000;
+}
+
+// An event that is not over: no end time, no "[RESOLVED]" prefix, and a status that is not 0 (resolved).
+function awsEventOpen(event: AwsEvent): boolean {
+  return !event.end_time && !/^\[resolved\]/i.test(event.summary ?? "") && awsLevel(event.status) !== 0;
+}
+
 export function awsEventActive(event: AwsEvent, now: number): boolean {
   if (event.end_time) return false;
   const summary = event.summary ?? "";
   if (/^\[resolved\]/i.test(summary)) return false;
   const last = awsLatestLog(event);
-  const lastTs = (Number(last?.timestamp ?? event.date ?? 0) || 0) * 1000;
+  const lastTs = awsEventAt(event);
   if (!lastTs || !isRecent(lastTs, now)) return false;
   const lastMessage = `${last?.summary ?? ""} ${last?.message ?? ""}`.toLowerCase();
   // `Number(undefined)` is NaN and `NaN !== 0` is true, so an event missing
@@ -915,10 +1003,12 @@ async function collectAws(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const { value, ms } = await timed(() =>
-      fetchJson<AwsEvent[]>("https://health.aws.amazon.com/public/currentevents", { binary: true }),
+      fetchJson<unknown>("https://health.aws.amazon.com/public/currentevents", { binary: true }),
     );
+    const events = records<AwsEvent>(expectArray(value, "AWS"));
     const now = Date.now();
-    const active = value.filter((event) => awsEventActive(event, now));
+    requireDatedOpenItems(events.filter(awsEventOpen), "AWS", (event) => awsEventAt(event) || undefined);
+    const active = events.filter((event) => awsEventActive(event, now));
     let health: Health = "operational";
     const { incidents, problems, incidentCount } = listIncidents(
       active.map((event) => {
@@ -953,12 +1043,12 @@ async function collectAws(): Promise<ServiceSnapshot> {
       summary: overallSummary(
         health,
         problems,
-        incidents[0]?.title ?? `${value.length} public Health items, none currently active.`,
+        incidents[0]?.title ?? `${events.length} public Health items, none currently active.`,
       ),
       ...rankComponents(awsComponents(active)),
       incidents,
       ...(incidentCount ? { incidentCount } : {}),
-      meta: { publicEvents: value.length, active: active.length },
+      meta: { publicEvents: events.length, active: active.length },
     };
   } catch (error) {
     return failed("aws", started, error);
@@ -982,7 +1072,7 @@ export function steamCmCount(payload: unknown): number {
   ).length;
 }
 
-async function collectSteam(): Promise<ServiceSnapshot> {
+async function collectSteam(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     // allSettled, not all: one endpoint being down should degrade the card,
@@ -1001,9 +1091,9 @@ async function collectSteam(): Promise<ServiceSnapshot> {
       ),
       timeMain(fetchJson<{ featured_win?: unknown } | null>("https://store.steampowered.com/api/featured/")),
       // Side signal: it never decides the card's health or whether it fails.
-      fetchJson<unknown>("https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0", {
-        timeoutMs: EXTRA_TIMEOUT_MS,
-      }),
+      sweep.policy.side(STEAM_CM_URL, SIDE_READS.steamManagers, () =>
+        fetchJson<unknown>(STEAM_CM_URL, { timeoutMs: EXTRA_TIMEOUT_MS, priority: "low" }),
+      ),
     ]);
     const servertime = info.status === "fulfilled" ? info.value?.servertime : undefined;
     const apiOk = typeof servertime === "number";
@@ -1058,6 +1148,8 @@ async function collectSteam(): Promise<ServiceSnapshot> {
   }
 }
 
+const STEAM_CM_URL = "https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0";
+
 function isEuropePop(code: string, desc: string, geo?: number[]): boolean {
   if (EU_POPS.has(code.toLowerCase())) return true;
   if (/(netherlands|germany|finland|england|spain|france|sweden|austria|poland|europe)/i.test(desc)) {
@@ -1085,7 +1177,8 @@ async function collectCs2Europe(): Promise<ServiceSnapshot> {
     const ms = Math.max(sdr.ms, players?.ms ?? 0);
     const pops = sdr.value.pops ?? {};
     const europe = Object.entries(pops)
-      .filter(([code, pop]) => isEuropePop(code, pop.desc ?? "", pop.geo))
+      // A null pop (or any other non-object) is skipped, not a crash.
+      .filter(([code, pop]) => typeof pop === "object" && pop !== null && isEuropePop(code, pop.desc ?? "", pop.geo))
       .map(([code, pop]) => ({
         code,
         desc: pop.desc ?? code,
@@ -1144,17 +1237,27 @@ async function collectCs2Europe(): Promise<ServiceSnapshot> {
 // only that call: the next sweep starts empty, so nothing here can serve a
 // stale payload.
 type Sweep = {
-  epicSummary: () => Promise<{ value: StatuspageSummary; ms: number }>;
+  /** How sources are read across sweeps (PASSTHROUGH_POLICY: every one, every sweep). */
+  policy: SourcePolicy;
+  /** A Statuspage summary, fetched at most once per URL in this sweep. */
+  statuspageSummary: (url: string) => Promise<{ value: StatuspageSummary; ms: number }>;
 };
 
-function createSweep(): Sweep {
-  let epic: Promise<{ value: StatuspageSummary; ms: number }> | undefined;
+function createSweep(policy: SourcePolicy): Sweep {
+  const summaries = new Map<string, Promise<{ value: StatuspageSummary; ms: number }>>();
   return {
+    policy,
     // Epic and Fortnite are two cards cut from one Statuspage summary, so
     // one sweep fetches it once and both read the same answer (or the same
     // failure). The bytes count toward whichever collector asked first.
-    epicSummary: () =>
-      (epic ??= timed(() => fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"))),
+    statuspageSummary: (url) => {
+      let summary = summaries.get(url);
+      if (!summary) {
+        summary = timed(() => fetchJson<StatuspageSummary>(url));
+        summaries.set(url, summary);
+      }
+      return summary;
+    },
   };
 }
 
@@ -1163,38 +1266,6 @@ function createSweep(): Sweep {
 // Matchmaking). Epic is everything else.
 function isFortnite(name: string, groupName?: string): boolean {
   return /fortnite/i.test(name) || (groupName !== undefined && /fortnite/i.test(groupName));
-}
-
-async function collectEpic(sweep: Sweep): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await sweep.epicSummary();
-    return fromStatuspage("epic", value, ms, (name, groupName) => !isFortnite(name, groupName));
-  } catch (error) {
-    return failed("epic", started, error);
-  }
-}
-
-async function collectFortnite(sweep: Sweep): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await sweep.epicSummary();
-    return fromStatuspage("fortnite", value, ms, isFortnite);
-  } catch (error) {
-    return failed("fortnite", started, error);
-  }
-}
-
-async function collectSpotify(): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://spotify.statuspage.io/api/v2/summary.json"),
-    );
-    return fromStatuspage("spotify", value, ms);
-  } catch (error) {
-    return failed("spotify", started, error);
-  }
 }
 
 // Only events that are happening now have a health. An "upcoming" one has
@@ -1223,8 +1294,9 @@ async function collectApple(): Promise<ServiceSnapshot> {
     const incidents: Incident[] = [];
     const components: ComponentHealth[] = [];
     const upcoming: UpcomingMaintenance[] = [];
-    for (const service of value.services ?? []) {
-      const events = service.events ?? [];
+    const appleServices = records<NonNullable<AppleStatus["services"]>[number]>(value.services);
+    for (const service of appleServices) {
+      const events = records<NonNullable<(typeof service)["events"]>[number]>(service.events);
       for (const event of events.filter(appleEventUpcoming)) {
         upcoming.push({
           id: `${service.serviceName}-${event.epochStartDate ?? event.datePosted ?? event.message}`,
@@ -1263,216 +1335,52 @@ async function collectApple(): Promise<ServiceSnapshot> {
       incidents: sorted,
       ...(incidentCount ? { incidentCount } : {}),
       ...(upcoming.length ? { upcomingMaintenance: soonest(upcoming, MAX_UPCOMING_MAINTENANCE) } : {}),
-      meta: { services: value.services?.length ?? 0 },
+      meta: { services: appleServices.length },
     };
   } catch (error) {
     return failed("apple", started, error);
   }
 }
 
-// Only strip comments and things that look like tags (`<` or `</` followed by
-// a letter). A blanket `<[^>]+>` also ate a decoded "Latency < 500ms", which
-// erased "Status: Resolved" from an otherwise operational item. Plain text
-// such as "a<b ... c>d" still reads as a tag; regex stripping cannot tell.
-//
-// A single pass over the `<` positions rather than a regex: `<!--[\s\S]*?-->`
-// rescans to the end of the text from every unclosed `<!--`, which is
-// quadratic on a body of repeated openers. Here a missing "-->" is looked
-// for once, and a tag body stops at the next `<` or `>`, so nothing is
-// scanned twice.
-function stripMarkup(value: string): string {
-  let out = "";
-  let from = 0;
-  let commentsClose = true;
-  for (;;) {
-    const lt = value.indexOf("<", from);
-    if (lt === -1) return out + value.slice(from);
-    out += value.slice(from, lt);
-    from = lt + 1;
-    if (value.startsWith("<!--", lt)) {
-      const end = commentsClose ? value.indexOf("-->", lt + 4) : -1;
-      if (end !== -1) {
-        out += " ";
-        from = end + 3;
-        continue;
-      }
-      commentsClose = false;
-      out += "<";
-      continue;
-    }
-    let at = lt + 1;
-    if (value[at] === "/") at += 1;
-    if (isAsciiLetter(value.charCodeAt(at))) {
-      at += 1;
-      while (at < value.length && value[at] !== "<" && value[at] !== ">") at += 1;
-      if (value[at] === ">") {
-        out += " ";
-        from = at + 1;
-        continue;
-      }
-    }
-    out += "<";
-  }
-}
+// The first "Severity:" and "Status:" values of a status.x.ai item, as
+// words, in its text with markup stripped (so whitespace is single spaces).
+// The severity keeps a second word for "Partial outage", "Under maintenance".
+const GROK_SEVERITY = /\bseverity:\s?([a-z]+)(?: ([a-z]+))?/;
+const GROK_STATUS = /\bstatus:\s?([a-z]+)/;
+// A severity given as one word that names no state on its own ("Major",
+// "Critical") is still the worst kind, not a problem of unknown size.
+const GROK_OUTAGE_SEVERITY: ReadonlySet<string> = new Set(["major", "critical", "full"]);
+// A partial outage is Degraded, as textSeverity and every component mapping
+// read it, so it never counts as an outage word.
+const PARTIAL_OUTAGE = /\bpartial\s+outage\b/g;
 
-function isAsciiLetter(code: number): boolean {
-  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
-}
-
-export function stripHtml(value: string): string {
-  return stripMarkup(value)
-    .replace(/&nbsp;|&#160;|&#xa0;/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-const XML_NAMED_ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-};
-
-// Matches the five predefined XML entities plus decimal and hex numeric
-// character references. A single pass with a replacer keeps `&amp;lt;` as
-// `&lt;` rather than double-decoding it into `<`: once `&amp;` becomes `&`,
-// the regex has already moved past it and never re-scans the result.
-const XML_ENTITY_RE = /&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g;
-
-export function decodeXmlEntities(text: string): string {
-  return text.replace(XML_ENTITY_RE, (match, body: string) => {
-    if (body[0] === "#") {
-      // The regex's numeric branch only ever produces a lowercase "x", so
-      // there is no uppercase case to handle here.
-      const isHex = body[1] === "x";
-      const digits = isHex ? body.slice(2) : body.slice(1);
-      const codePoint = Number.parseInt(digits, isHex ? 16 : 10);
-      // Reject out-of-range values, lone surrogate halves, and the
-      // characters XML forbids outright (C0 controls other than tab/LF/CR,
-      // and the two permanently-unassigned noncharacters) rather than let
-      // String.fromCodePoint throw or silently emit U+FFFD. `digits` is
-      // always non-negative, so there is no `codePoint < 0` case either.
-      if (
-        !Number.isFinite(codePoint) ||
-        codePoint > 0x10ffff ||
-        (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
-        (codePoint < 0x20 && codePoint !== 0x9 && codePoint !== 0xa && codePoint !== 0xd) ||
-        codePoint === 0xfffe ||
-        codePoint === 0xffff
-      ) {
-        return match;
-      }
-      return String.fromCodePoint(codePoint);
-    }
-    return XML_NAMED_ENTITIES[body] ?? match;
-  });
-}
-
-// CDATA content is already literal text, so it must never be re-decoded
-// (`<![CDATA[a &amp; b]]>` should stay `a &amp; b`). Split on CDATA sections
-// and decode only the parts outside them. Found with indexOf rather than a
-// lazy regex, which rescans to the end from every unclosed opener.
-const CDATA_START = "<![CDATA[";
-const CDATA_END = "]]>";
-
-export function decodeXmlField(raw: string): string {
-  let result = "";
-  let from = 0;
-  for (;;) {
-    const start = raw.indexOf(CDATA_START, from);
-    if (start === -1) return result + decodeXmlEntities(raw.slice(from));
-    result += decodeXmlEntities(raw.slice(from, start));
-    const end = raw.indexOf(CDATA_END, start + CDATA_START.length);
-    // An opener with no closing `]]>` anywhere later: treat everything from
-    // that marker onward as literal CDATA content (strip the marker, leave
-    // the rest undecoded), rather than decoding text the feed meant to be
-    // taken as-is.
-    if (end === -1) return result + raw.slice(start + CDATA_START.length);
-    result += raw.slice(start + CDATA_START.length, end);
-    from = end + CDATA_END.length;
-  }
-}
-
-/** Most `<item>`s kept from a feed: the newest by pubDate. Real feeds carry tens. */
-export const MAX_RSS_ITEMS = 200;
 /**
- * Most `<item>`s read in one feed. status.x.ai serves its whole history and
- * nothing says which end is newest, so every item up to this bound is dated
- * before the newest MAX_RSS_ITEMS are chosen. The bound is for memory, and a
- * feed with more items than this is refused (a PayloadError, so its card is
- * unknown): the items past it could be the current incident, and reading only
- * the others would be an all-clear built on a guess.
+ * An item's health from its own labels: a Status that is resolved or
+ * completed is over, and otherwise the Severity says how bad it is
+ * (textSeverity, on its first word, else its first two). The prose beside
+ * them is not read, so "not a full outage" or "maintenance later today" never
+ * moves it. A lone "major", "critical" or "full" severity is an outage. An
+ * item with a label but no readable severity is Degraded: a problem of
+ * unknown size. Only an item with neither label is read from its words, as
+ * the feed was before it had them.
  */
-export const MAX_RSS_SCANNED = 5000;
-
-const ITEM_CLOSE = /<\/item>/i;
-
-const FIELD_TAGS = new Map<string, [RegExp, RegExp]>();
-
-// The text between the first `<tag>` and the first `</tag>` after it, or
-// undefined. Two literal searches, so a field is read in one pass over its
-// item whatever the item holds; `<tag>([\s\S]*?)</tag>` rescanned the whole
-// item from every repeated, unclosed `<tag>`.
-function xmlField(chunk: string, tag: string): string | undefined {
-  let tags = FIELD_TAGS.get(tag);
-  if (!tags) {
-    tags = [new RegExp(`<${tag}>`, "i"), new RegExp(`</${tag}>`, "i")];
-    FIELD_TAGS.set(tag, tags);
-  }
-  const open = chunk.search(tags[0]);
-  if (open === -1) return undefined;
-  const from = open + tag.length + 2;
-  const close = chunk.slice(from).search(tags[1]);
-  return close === -1 ? undefined : chunk.slice(from, from + close);
-}
-
-export function parseRssItems(
-  xml: string,
-): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
-  // Each item runs from its `<item>` to the next one, cut at its own
-  // `</item>`; every search below stays inside that slice, so the whole feed
-  // is read once. Only the date is read from all of the items scanned; the
-  // newest MAX_RSS_ITEMS are then read in full, before anything downstream
-  // maps or sorts them. An item with no readable date ranks last, and ties
-  // keep the feed's order. The items kept stay in the feed's order.
-  const scanned: Array<{ chunk: string; at: number; index: number }> = [];
-  const itemOpen = /<item[\s>]/gi;
-  let open = itemOpen.exec(xml);
-  while (open && scanned.length < MAX_RSS_SCANNED) {
-    const bodyStart = open.index + open[0].length;
-    const next = itemOpen.exec(xml);
-    const block = xml.slice(bodyStart, next ? next.index : xml.length);
-    const closed = block.search(ITEM_CLOSE);
-    const chunk = closed === -1 ? block : block.slice(0, closed);
-    const date = Date.parse(xmlField(chunk, "pubDate")?.trim() ?? "");
-    scanned.push({ chunk, at: Number.isFinite(date) ? date : Number.NEGATIVE_INFINITY, index: scanned.length });
-    open = next;
-  }
-  if (open) throw new PayloadError(`RSS feed has more than ${MAX_RSS_SCANNED} items.`);
-  const kept =
-    scanned.length > MAX_RSS_ITEMS
-      ? scanned
-          .sort((a, b) => (a.at === b.at ? a.index - b.index : a.at > b.at ? -1 : 1))
-          .slice(0, MAX_RSS_ITEMS)
-          .sort((a, b) => a.index - b.index)
-      : scanned;
-  return kept.map(({ chunk }) => {
-    const title = decodeXmlField(xmlField(chunk, "title") ?? "").trim();
-    const description = decodeXmlField(xmlField(chunk, "description") ?? "").trim();
-    const pubDate = xmlField(chunk, "pubDate")?.trim();
-    const rawLink = xmlField(chunk, "link");
-    const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
-    return { title, description, pubDate, link };
-  });
-}
-
 export function grokItemHealth(description: string): Health {
   const text = stripHtml(description).toLowerCase();
-  if (text.includes("status: resolved") || text.includes("severity: available")) return "operational";
+  const severity = GROK_SEVERITY.exec(text);
+  const status = GROK_STATUS.exec(text);
+  if (severity || status) {
+    if (status?.[1] === "resolved" || status?.[1] === "completed") return "operational";
+    if (!severity) return "degraded";
+    return (
+      textSeverity(severity[1]) ??
+      textSeverity(`${severity[1]} ${severity[2] ?? ""}`) ??
+      (GROK_OUTAGE_SEVERITY.has(severity[1]) ? "outage" : "degraded")
+    );
+  }
+  const rest = text.replace(PARTIAL_OUTAGE, "partial");
   // `\bmajor\b` so "majority of requests" is not read as a major outage.
-  if (text.includes("outage") || /\bmajor\b/.test(text)) return "outage";
-  if (text.includes("maintenance")) return "maintenance";
+  if (rest.includes("outage") || /\bmajor\b/.test(rest)) return "outage";
+  if (rest.includes("maintenance")) return "maintenance";
   return "degraded";
 }
 
@@ -1481,8 +1389,7 @@ export function grokItemHealth(description: string): Health {
 // pubDate cannot be shown to be current; AWS drops undated events the same way.
 export function grokItemActive(item: { description: string; pubDate?: string }, now: number): boolean {
   if (grokItemHealth(item.description) === "operational") return false;
-  const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
-  return isRecent(at, now);
+  return isRecent(parseFeedDate(item.pubDate) ?? Number.NaN, now);
 }
 
 /**
@@ -1537,7 +1444,7 @@ export function grokFeedComponents(
     const service = grokTitleService(item.title);
     if (!service) continue;
     const health = grokItemHealth(item.description);
-    const at = Date.parse(item.pubDate ?? "") || 0;
+    const at = parseFeedDate(item.pubDate) ?? 0;
     const key = service.name.toLowerCase();
     const row = rows.get(key);
     if (!row) {
@@ -1553,7 +1460,9 @@ export function grokFeedComponents(
   return [...rows.values()].map(({ name, health, detail }) => ({ name, health, detail }));
 }
 
-async function collectGrok(): Promise<ServiceSnapshot> {
+const GROK_COMPONENTS_URL = "https://status.x.ai/v2/components.json";
+
+async function collectGrok(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     // status.x.ai's JSON sits behind a Cloudflare challenge more often than
@@ -1561,14 +1470,22 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     // runs beside the feed and is simply absent when it does not answer.
     const [{ value, ms }, instatus] = await Promise.all([
       timed(() => fetchText("https://status.x.ai/feed.xml")),
-      fetchJson<unknown>("https://status.x.ai/v2/components.json", { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
+      sweep.policy.side(GROK_COMPONENTS_URL, SIDE_READS.grokComponents, () =>
+        fetchJson<unknown>(GROK_COMPONENTS_URL, { timeoutMs: EXTRA_TIMEOUT_MS, priority: "low" }),
+      ),
     ]);
     const items = parseRssItems(value.body);
-    // parseRssItems only understands RSS 2.0 <item>. If x.ai moves to Atom
-    // the parse yields nothing, and reporting that as "operational" would be
-    // a confident all-clear built on no data. Unknown is the honest answer.
+    // parseRssItems reads RSS 2.0 items and Atom entries. If x.ai moves to
+    // anything else the parse yields nothing, and reporting that as
+    // "operational" would be a confident all-clear built on no data. Unknown
+    // is the honest answer.
     if (items.length === 0) throw new PayloadError("Grok feed returned no readable items.");
     const now = Date.now();
+    requireDatedOpenItems(
+      items.filter((item) => !["operational", "maintenance"].includes(grokItemHealth(item.description))),
+      "Grok",
+      (item) => parseFeedDate(item.pubDate),
+    );
     const active = items.filter((item) => grokItemActive(item, now));
     // A list whose every status is unreadable says nothing: ignore it.
     const parsed = parseInstatusComponents(instatus);
@@ -1581,12 +1498,13 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     );
     // Sorted worst first before the first 8 are kept, so the cut never drops
     // the most urgent item.
+    const ids = feedItemIds(active, "grok");
     const { incidents, problems, incidentCount } = listIncidents(
       active.map((item, index) => ({
-        id: item.link ?? `${item.title}-${index}`,
+        id: ids[index],
         title: item.title,
         health: grokItemHealth(item.description),
-        startedAt: isoTimestamp(item.pubDate),
+        startedAt: feedIso(item.pubDate),
         url: vendorUrl(item.link, CATALOG_BY_ID.grok.sourceUrl, [hostOf(CATALOG_BY_ID.grok.sourceUrl)]),
       })),
       8,
@@ -1607,45 +1525,59 @@ async function collectGrok(): Promise<ServiceSnapshot> {
   }
 }
 
-// GitHub, Confluence, Twitch and Cloudflare each publish a Statuspage of
-// their own, so they are the Spotify collector with a different address. Each
-// fetches the vendor's own host only (http.ts refuses a redirect off it).
-// GitLab is not here: its page runs on Status.io, which has no Statuspage API
-// (see collectGitlab).
-const STATUSPAGE_SUMMARIES = {
-  github: "https://www.githubstatus.com/api/v2/summary.json",
-  confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
-  twitch: "https://status.twitch.com/api/v2/summary.json",
-  cloudflare: "https://www.cloudflarestatus.com/api/v2/summary.json",
-} as const;
-
-// A page's own pointer to itself ("Visit www.githubstatus.com for more
-// information") is listed by the vendor as a component. It is not a service,
-// and as a row it would read Operational and count as a working component.
-const NOT_A_SERVICE = /^Visit /;
-
 // Cloudflare lists each data center as a component ("Frankfurt, Germany - (FRA)",
 // under a region group such as "Europe") and schedules maintenance one data
 // center at a time, its traffic re-routed meanwhile. Such a window is not
 // Cloudflare in maintenance (see fromStatuspage's localOnly); the data
 // center's own row still reads as Cloudflare sets it. Open incidents always count.
 export const CLOUDFLARE_DATA_CENTER = / - \([A-Z]{3}\)$/;
-const LOCAL_COMPONENTS: Partial<Record<keyof typeof STATUSPAGE_SUMMARIES, RegExp>> = {
-  cloudflare: CLOUDFLARE_DATA_CENTER,
+
+type StatuspageCardId =
+  | "cloudflare"
+  | "github"
+  | "confluence"
+  | "twitch"
+  | "spotify"
+  | "chatgpt"
+  | "claude"
+  | "epic"
+  | "fortnite";
+
+const EPIC_SUMMARY_URL = "https://status.epicgames.com/api/v2/summary.json";
+
+// Every card read from a Statuspage summary: the summary's address, and for a
+// page shared by two cards (Epic and Fortnite) which components are this
+// card's. Each fetches the vendor's own host only (http.ts refuses a redirect
+// off it). GitLab is not here: its page runs on Status.io, which has no
+// Statuspage API (see collectGitlab).
+const STATUSPAGE_SOURCES: Record<
+  StatuspageCardId,
+  {
+    url: string;
+    componentFilter?: (name: string, groupName?: string) => boolean;
+    isLocalComponent?: (name: string) => boolean;
+  }
+> = {
+  cloudflare: {
+    url: "https://www.cloudflarestatus.com/api/v2/summary.json",
+    isLocalComponent: (name) => CLOUDFLARE_DATA_CENTER.test(name),
+  },
+  github: { url: "https://www.githubstatus.com/api/v2/summary.json" },
+  confluence: { url: "https://confluence.status.atlassian.com/api/v2/summary.json" },
+  twitch: { url: "https://status.twitch.com/api/v2/summary.json" },
+  spotify: { url: "https://spotify.statuspage.io/api/v2/summary.json" },
+  chatgpt: { url: "https://status.openai.com/api/v2/summary.json" },
+  claude: { url: "https://status.claude.com/api/v2/summary.json" },
+  epic: { url: EPIC_SUMMARY_URL, componentFilter: (name, groupName) => !isFortnite(name, groupName) },
+  fortnite: { url: EPIC_SUMMARY_URL, componentFilter: isFortnite },
 };
 
-async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise<ServiceSnapshot> {
+async function collectStatuspageCard(id: StatuspageCardId, sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() => fetchJson<StatuspageSummary>(STATUSPAGE_SUMMARIES[id]));
-    if (value && Array.isArray(value.components)) {
-      // Cut before the filter, as records() does, so the pass is bounded too.
-      value.components = value.components
-        .slice(0, MAX_SCANNED_ROWS)
-        .filter((component) => !(typeof component?.name === "string" && NOT_A_SERVICE.test(component.name)));
-    }
-    const local = LOCAL_COMPONENTS[id];
-    return fromStatuspage(id, value, ms, undefined, local ? (name) => local.test(name) : undefined);
+    const { url, componentFilter, isLocalComponent } = STATUSPAGE_SOURCES[id];
+    const { value, ms } = await sweep.statuspageSummary(url);
+    return fromStatuspage(id, value, ms, componentFilter, isLocalComponent);
   } catch (error) {
     return failed(id, started, error);
   }
@@ -1791,21 +1723,29 @@ async function collectGitlab(): Promise<ServiceSnapshot> {
 // Anchored at the start, so the test is linear.
 const AZURE_OVER = /^[\s[(]*(?:(?:preliminary|final)[\s-]+)?(?:resolved|mitigated|post[ -]incident review|pir)\b/i;
 // An outage only when the title says so; the feed has no severity and most
-// items are one service in one region.
-const AZURE_OUTAGE = /\b(?:outage|service unavailable)\b/i;
+// items are one service in one region. "Service unavailable" or "outage" is
+// an outage whatever symptoms the title also names; only "partial outage" is
+// not, and reads Degraded as textSeverity and every component mapping read it.
+const AZURE_UNAVAILABLE = /\bservice unavailable\b/i;
+const AZURE_OUTAGE = /\boutage\b/i;
+const AZURE_PARTIAL_OUTAGE = /\bpartial\s+outage\b/gi;
 
 /**
  * What an Azure status feed item's title says about its incident. The feed is
  * RSS 2.0 with no status field, so the reading is from the title alone,
  * case-folded: a resolution or post incident review prefix means it is over
- * ("operational"), "outage" or "service unavailable" means "outage",
- * "maintenance" means "maintenance", and anything else the feed still lists is
- * "degraded". Two anchored or bounded regexes and a substring test, so the
+ * ("operational"), "service unavailable" or an "outage" other than a
+ * partial one means "outage", a partial outage means "degraded",
+ * "maintenance" means "maintenance", and anything else the feed still lists
+ * is "degraded". Anchored or bounded regexes and a substring test, so the
  * cost is linear in the text.
  */
 export function azureItemHealth(title: string): Health {
   if (AZURE_OVER.test(title)) return "operational";
-  if (AZURE_OUTAGE.test(title)) return "outage";
+  if (AZURE_UNAVAILABLE.test(title)) return "outage";
+  const rest = title.replace(AZURE_PARTIAL_OUTAGE, "partial");
+  if (AZURE_OUTAGE.test(rest)) return "outage";
+  if (rest !== title) return "degraded";
   if (title.toLowerCase().includes("maintenance")) return "maintenance";
   return "degraded";
 }
@@ -1818,8 +1758,7 @@ export function azureItemHealth(title: string): Health {
 export function azureItemActive(item: { title: string; pubDate?: string }, now: number): boolean {
   const health = azureItemHealth(item.title);
   if (health === "operational" || health === "maintenance") return false;
-  const at = item.pubDate ? Date.parse(item.pubDate) : Number.NaN;
-  return isRecent(at, now);
+  return isRecent(parseFeedDate(item.pubDate) ?? Number.NaN, now);
 }
 
 // The feed Microsoft documents for Azure status. Its host is a subdomain of
@@ -1839,24 +1778,24 @@ async function collectAzure(): Promise<ServiceSnapshot> {
     }
     const items = parseRssItems(value.body);
     const now = Date.now();
-    // Items that are not over, none of which has a readable date, cannot be
-    // told from current ones: a parser failure, not an all-clear.
-    const open = items.filter((item) => !["operational", "maintenance"].includes(azureItemHealth(item.title)));
-    if (open.length > 0 && !open.some((item) => Number.isFinite(Date.parse(item.pubDate ?? "")))) {
-      throw new PayloadError("Azure feed items have no readable date.");
-    }
+    requireDatedOpenItems(
+      items.filter((item) => !["operational", "maintenance"].includes(azureItemHealth(item.title))),
+      "Azure",
+      (item) => parseFeedDate(item.pubDate),
+    );
     const active = items.filter((item) => azureItemActive(item, now));
     const health = active.reduce<Health>(
       (worst, item) => worseHealth(worst, azureItemHealth(item.title)),
       "operational",
     );
     const { sourceUrl } = CATALOG_BY_ID.azure;
+    const ids = feedItemIds(active, "azure");
     const { incidents, problems, incidentCount } = listIncidents(
       active.map((item, index) => ({
-        id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
+        id: ids[index],
         title: item.title || "Azure incident",
         health: azureItemHealth(item.title),
-        startedAt: isoTimestamp(item.pubDate),
+        startedAt: feedIso(item.pubDate),
         url: vendorUrl(item.link, sourceUrl, [hostOf(sourceUrl)]),
       })),
     );
@@ -1873,67 +1812,72 @@ async function collectAzure(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectChatGpt(): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.openai.com/api/v2/summary.json"),
-    );
-    return fromStatuspage("chatgpt", value, ms);
-  } catch (error) {
-    return failed("chatgpt", started, error);
-  }
+// One raw page of a slow-moving source, read through the sweep's policy and
+// keyed by its URL: only the fetch is cached, and the page is parsed every
+// sweep. The body is kept with how long its request took and when it was
+// made, so a card built from a reused page says when, and how fast, the page
+// was really read.
+async function tierText(
+  sweep: Sweep,
+  id: keyof typeof SOURCE_TIERS,
+  url: string,
+  init?: Parameters<typeof fetchText>[1],
+): Promise<{ body: string; ms: number; fetchedAt: number }> {
+  const { value, fetchedAt } = await sweep.policy.read(url, SOURCE_TIERS[id], async () => {
+    const { value: response, ms } = await timed(() => fetchText(url, init));
+    return { body: response.body, ms };
+  });
+  return { ...value, fetchedAt };
 }
 
-async function collectClaude(): Promise<ServiceSnapshot> {
+async function collectMikrotik(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.claude.com/api/v2/summary.json"),
-    );
-    return fromStatuspage("claude", value, ms);
-  } catch (error) {
-    return failed("claude", started, error);
-  }
-}
-
-async function collectMikrotik(): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await timed(async () => {
-      // Tell "nothing answered" apart from "something answered but did not
-      // parse": the second is a format change that needs a code fix.
-      let unparsed = 0;
-      const channels = (
-        await Promise.all(
-          MIKROTIK_CHANNELS.map(async (channel) => {
-            try {
-              const { body } = await fetchText(`https://upgrade.mikrotik.com/routeros/${channel.file}`);
-              const parsed = parseMikrotikNewest(body);
-              if (!parsed) {
-                unparsed += 1;
-                return null;
-              }
-              return { ...channel, ...parsed };
-            } catch {
+    // Tell "nothing answered" apart from "something answered but did not
+    // parse": the second is a format change that needs a code fix.
+    let unparsed = 0;
+    const errors: unknown[] = [];
+    const reads = (
+      await Promise.all(
+        MIKROTIK_CHANNELS.map(async (channel) => {
+          try {
+            const read = await tierText(sweep, "mikrotik", `https://upgrade.mikrotik.com/routeros/${channel.file}`);
+            const parsed = parseMikrotikNewest(read.body);
+            if (!parsed) {
+              unparsed += 1;
               return null;
             }
-          }),
-        )
-      ).filter((channel): channel is NonNullable<typeof channel> => Boolean(channel));
-      if (!channels.length) {
-        if (unparsed > 0)
-          throw new PayloadError(`MikroTik answered ${unparsed} version channel(s) in an unrecognised format.`);
-        throw new SourceError("MikroTik version channels did not respond.");
+            return { channel: { ...channel, ...parsed }, ms: read.ms, fetchedAt: read.fetchedAt };
+          } catch (error) {
+            errors.push(error);
+            return null;
+          }
+        }),
+      )
+    ).filter((read): read is NonNullable<typeof read> => Boolean(read));
+    if (!reads.length) {
+      if (unparsed > 0)
+        throw new PayloadError(`MikroTik answered ${unparsed} version channel(s) in an unrecognised format.`);
+      // No channel was asked (none got a connection before the sweep's
+      // deadline): that error, `asked: false`, keeps this sweep's lack of time
+      // out of the source policy's breaker, as every other collector's does.
+      if (errors.length > 0 && errors.every((error) => (error as { asked?: unknown } | null)?.asked === false)) {
+        throw errors[0];
       }
-      const stable = channels.find((channel) => channel.file === "NEWESTa7.stable");
-      const newest = channels.reduce((current, channel) => {
-        const currentTime = Date.parse(current.releasedAt ?? "") || 0;
-        const nextTime = Date.parse(channel.releasedAt ?? "") || 0;
-        return nextTime > currentTime ? channel : current;
-      }, channels[0]);
-      return { channels, stable, newest };
-    });
+      throw new SourceError("MikroTik version channels did not respond.");
+    }
+    const channels = reads.map((read) => read.channel);
+    const stable = channels.find((channel) => channel.file === "NEWESTa7.stable");
+    const newest = channels.reduce((current, channel) => {
+      const currentTime = Date.parse(current.releasedAt ?? "") || 0;
+      const nextTime = Date.parse(channel.releasedAt ?? "") || 0;
+      return nextTime > currentTime ? channel : current;
+    }, channels[0]);
+    const value = { channels, stable, newest };
+    // The channels are read side by side: the card took as long as the slowest,
+    // and is as old as the oldest.
+    const ms = Math.max(...reads.map((read) => read.ms));
+    const fetchedAt = Math.min(...reads.map((read) => read.fetchedAt));
 
     const components: ComponentHealth[] = value.channels.map((channel) => {
       const url = mikrotikChangelogUrl(channel.version);
@@ -1961,7 +1905,7 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
       : "RouterOS channels loaded.";
 
     return {
-      ...base("mikrotik", new Date().toISOString(), ms),
+      ...base("mikrotik", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary,
       components,
@@ -1976,11 +1920,15 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectAppleOs(): Promise<ServiceSnapshot> {
+async function collectAppleOs(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() => fetchText("https://developer.apple.com/news/releases/rss/releases.rss"));
-    const items = parseRssItems(value.body);
+    const { body, ms, fetchedAt } = await tierText(
+      sweep,
+      "apple-os",
+      "https://developer.apple.com/news/releases/rss/releases.rss",
+    );
+    const items = parseRssItems(body);
     const latest = latestAppleOsByFamily(items);
     if (!latest.length) throw new PayloadError("Apple OS release feed had no OS items.");
 
@@ -2014,7 +1962,7 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
       : "Apple OS release feed loaded.";
 
     return {
-      ...base("apple-os", new Date().toISOString(), ms),
+      ...base("apple-os", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary,
       components,
@@ -2029,13 +1977,13 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectWindows(): Promise<ServiceSnapshot> {
+async function collectWindows(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchText(CATALOG_BY_ID.windows.sourceUrl, { headers: { Accept: "text/html, */*" } }),
-    );
-    const tables = readHtmlCells(value.body);
+    const { body, ms, fetchedAt } = await tierText(sweep, "windows", CATALOG_BY_ID.windows.sourceUrl, {
+      headers: { Accept: "text/html, */*" },
+    });
+    const tables = readHtmlCells(body);
     const releases = windowsReleases(textOfTables(tables));
     if (!releases.length) throw new PayloadError("Windows release page had no readable version table.");
 
@@ -2071,7 +2019,7 @@ async function collectWindows(): Promise<ServiceSnapshot> {
     const title = `${WINDOWS_NAME} ${headline.version}${headline.build ? ` (build ${headline.build})` : ""}`;
 
     return {
-      ...base("windows", new Date().toISOString(), ms),
+      ...base("windows", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary: `Latest: ${title} · ${formatReleaseAge(windowsShippedAt(headline))}`,
       components,
@@ -2091,13 +2039,13 @@ async function collectWindows(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectAndroidOs(): Promise<ServiceSnapshot> {
+async function collectAndroidOs(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchText(CATALOG_BY_ID["android-os"].sourceUrl, { headers: { Accept: "text/html, */*" } }),
-    );
-    const releases = androidReleases(readAndroidVersionLinks(value.body));
+    const { body, ms, fetchedAt } = await tierText(sweep, "android-os", CATALOG_BY_ID["android-os"].sourceUrl, {
+      headers: { Accept: "text/html, */*" },
+    });
+    const releases = androidReleases(readAndroidVersionLinks(body));
     if (!releases.length) throw new PayloadError("Android releases page had no readable version list.");
 
     // The page gives no dates, so a version is never marked fresh here: a
@@ -2118,7 +2066,7 @@ async function collectAndroidOs(): Promise<ServiceSnapshot> {
 
     const headline = releases[0];
     return {
-      ...base("android-os", new Date().toISOString(), ms),
+      ...base("android-os", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary: `Latest: ${headline.name}`,
       components,
@@ -2133,55 +2081,142 @@ async function collectAndroidOs(): Promise<ServiceSnapshot> {
   }
 }
 
-// Runs one collector with its own byte meter, and logs the success line
-// that pairs with failed()'s collector_failed, so the log shows every
-// source's latency and download size per sweep, not only the broken ones.
-function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
-  return meterBytes(async (meter) => {
-    // Every string a vendor sent is held to its limit here, once, whichever
-    // collector built the snapshot.
-    const snapshot = boundSnapshot(await collect());
-    if (!snapshot.failure) {
-      console.log(
-        JSON.stringify({
-          event: "collector_completed",
-          service: snapshot.id,
-          health: snapshot.health,
-          latencyMs: snapshot.latencyMs,
-          bytes: meter.bytes,
-        }),
-      );
-    }
-    return snapshot;
-  });
+// Every collector, in catalog order, under the id of the card it builds. Each
+// takes the sweep it runs in, for what the sweep shares.
+export const COLLECTORS: ReadonlyArray<readonly [ServiceId, (sweep: Sweep) => Promise<ServiceSnapshot>]> = [
+  ["gcp", collectGcp],
+  ["aws", collectAws],
+  ["azure", collectAzure],
+  ["cloudflare", (sweep) => collectStatuspageCard("cloudflare", sweep)],
+  ["steam", collectSteam],
+  ["cs2-europe", collectCs2Europe],
+  ["epic", (sweep) => collectStatuspageCard("epic", sweep)],
+  ["fortnite", (sweep) => collectStatuspageCard("fortnite", sweep)],
+  ["spotify", (sweep) => collectStatuspageCard("spotify", sweep)],
+  ["apple", collectApple],
+  ["android", collectAndroid],
+  ["github", (sweep) => collectStatuspageCard("github", sweep)],
+  ["gitlab", collectGitlab],
+  ["confluence", (sweep) => collectStatuspageCard("confluence", sweep)],
+  ["twitch", (sweep) => collectStatuspageCard("twitch", sweep)],
+  ["grok", collectGrok],
+  ["chatgpt", (sweep) => collectStatuspageCard("chatgpt", sweep)],
+  ["claude", (sweep) => collectStatuspageCard("claude", sweep)],
+  ["mikrotik", collectMikrotik],
+  ["apple-os", collectAppleOs],
+  ["windows", collectWindows],
+  ["android-os", collectAndroidOs],
+];
+
+// A card that took at least this long is logged as slow, one line each.
+const SLOW_COLLECTOR_MS = 3000;
+
+// Runs one collector with its own byte meter, under the sweep's source
+// policy, and adds what it downloaded to the sweep's total. A slow card logs
+// collector_slow; a failed one has already logged collector_failed (with
+// what it read before failing); the sweep as a whole logs one summary line
+// (collectAllServices). Whatever the collector throws, synchronously or not
+// (each catches its own vendor's errors, so this is a bug), becomes a
+// failure of its own card only: the other cards of the sweep still arrive.
+// The raw error behind a failure goes to the policy alongside the snapshot
+// (see SourcePolicy.run).
+function metered(
+  id: ServiceId,
+  collect: () => Promise<ServiceSnapshot>,
+  policy: SourcePolicy,
+  tally: { bytes: number },
+): Promise<ServiceSnapshot> {
+  return policy.run(id, (noteError) =>
+    meterBytes(async (meter) => {
+      const started = Date.now();
+      let snapshot: ServiceSnapshot;
+      try {
+        const raw = await collect();
+        if (FAILURE_ERRORS.has(raw)) noteError(FAILURE_ERRORS.get(raw));
+        // Every string a vendor sent is held to its limit here, once, whichever
+        // collector built the snapshot.
+        snapshot = boundSnapshot(raw);
+      } catch (error) {
+        noteError(error);
+        snapshot = boundSnapshot(failed(id, started, error));
+      }
+      tally.bytes += meter.bytes;
+      if (!snapshot.failure && snapshot.latencyMs >= SLOW_COLLECTOR_MS) {
+        console.log(
+          JSON.stringify({
+            event: "collector_slow",
+            service: snapshot.id,
+            health: snapshot.health,
+            latencyMs: snapshot.latencyMs,
+            bytes: meter.bytes,
+          }),
+        );
+      }
+      return snapshot;
+    }),
+  );
 }
 
-export async function collectAllServices(): Promise<ServiceSnapshot[]> {
-  const sweep = createSweep();
-  return Promise.all(
-    [
-      collectGcp,
-      collectAws,
-      collectAzure,
-      () => collectStatuspage("cloudflare"),
-      collectSteam,
-      collectCs2Europe,
-      () => collectEpic(sweep),
-      () => collectFortnite(sweep),
-      collectSpotify,
-      collectApple,
-      collectAndroid,
-      () => collectStatuspage("github"),
-      collectGitlab,
-      () => collectStatuspage("confluence"),
-      () => collectStatuspage("twitch"),
-      collectGrok,
-      collectChatGpt,
-      collectClaude,
-      collectMikrotik,
-      collectAppleOs,
-      collectWindows,
-      collectAndroidOs,
-    ].map(metered),
+/** How long one sweep may take: a request still waiting for a connection, or still running, then times out. */
+export const SWEEP_DEADLINE_MS = 15_000;
+/**
+ * The vendor requests (redirect hops and retries included) after which a
+ * sweep makes no more retries. A cold sweep is 31 requests, so this leaves
+ * room for one retry and keeps a Worker invocation's subrequests for the
+ * release feeds and the changelog notes that follow the sweep.
+ */
+export const SWEEP_MAX_REQUESTS = 32;
+
+/**
+ * Reads every source once, in catalog order. With no policy every source is
+ * fetched in this sweep, as it always was; a policy from createSourcePolicy()
+ * reuses slow-moving pages, holds back a source that keeps failing and shows
+ * a recent good reading over a transient failure (see source-policy.ts).
+ * The sweep's requests share one connection gate (connection-gate.ts): at
+ * most six run at once on a Worker (sixteen on Node), each request's timeout
+ * starts when it gets its connection, the side reads wait behind the reads
+ * that decide a card, no request runs past SWEEP_DEADLINE_MS, and the sweep
+ * returns only once every request it started has finished.
+ * Logs one sweep_completed line: how many cards, how many read fine or are
+ * unknown, what the policy reused or held back, and the bytes and time the
+ * sweep took.
+ */
+export async function collectAllServices({
+  policy = PASSTHROUGH_POLICY,
+}: {
+  policy?: SourcePolicy;
+} = {}): Promise<ServiceSnapshot[]> {
+  const started = Date.now();
+  const sweep = createSweep(policy);
+  const tally = { bytes: 0 };
+  // The policy's counts from before this sweep are not this sweep's.
+  policy.stats();
+  const services = await withConnectionGate(
+    { limit: defaultConnectionLimit(), deadlineMs: SWEEP_DEADLINE_MS, maxRequests: SWEEP_MAX_REQUESTS },
+    async () => {
+      const cards = await Promise.all(
+        COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep), policy, tally)),
+      );
+      // A card can be done while a side read it no longer needs is still out (its main read failed first).
+      // The sweep ends only once that request is too, so nothing that follows the sweep (the release feeds)
+      // shares a Worker's connections with it.
+      await currentGate()?.idle();
+      return cards;
+    },
   );
+  const { carried, skipped, cachedReads } = policy.stats();
+  console.log(
+    JSON.stringify({
+      event: "sweep_completed",
+      services: services.length,
+      ok: services.filter((service) => !service.failure).length,
+      unknown: services.filter((service) => service.health === "unknown").length,
+      carried,
+      skipped,
+      cachedReads,
+      bytes: tally.bytes,
+      durationMs: Date.now() - started,
+    }),
+  );
+  return services;
 }

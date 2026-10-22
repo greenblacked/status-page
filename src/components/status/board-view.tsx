@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AlertsButton, FilterBar, RefreshButton, SearchField, WhileBarUp } from "@/components/status/board-controls";
 import { BoardSections } from "@/components/status/board-sections";
@@ -23,6 +23,7 @@ import { useStarred } from "@/components/status/use-starred";
 import { useTiltLighting } from "@/components/status/use-tilt-lighting";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
+import { BOARD_FETCH_TIMEOUT_MS, BOARD_REFRESH_TIMEOUT_MS, withTimeout } from "@/lib/status/board-fetch";
 import { APP_NAME } from "@/lib/status/catalog";
 import { createDockStore, quietScroll } from "@/lib/status/dock";
 import {
@@ -46,7 +47,8 @@ const ANNOUNCE_DELAY_MS = 700;
 // not turned up by now is not coming.
 const REVEAL_TIMEOUT_MS = 1_000;
 
-export function BoardView({
+// Memoised: the route renders again when the address follows a filter change, with the same props.
+export const BoardView = memo(function BoardView({
   initial,
   initialFilters,
   onFiltersChange,
@@ -99,7 +101,13 @@ export function BoardView({
     // every open tab forced its own full vendor sweep every two minutes, so
     // the 45s server cache never served anyone and load on the vendor APIs
     // scaled with the number of viewers. Forcing is for the Refresh button.
-    queryFn: () => fetchStatusBoard(),
+    // Bounded: a request the network loses is given up, so the live line does not say "Checking…" for good.
+    queryFn: ({ signal }) =>
+      withTimeout(signal, BOARD_FETCH_TIMEOUT_MS, (bounded) => fetchStatusBoard({ signal: bounded })),
+    // One more try after a blip, a few seconds on (spread, so the open tabs do not all ask at once), before the
+    // board says it could not refresh. The next slot's refetch comes on its own either way.
+    retry: 1,
+    retryDelay: () => 2_000 + Math.floor(Math.random() * 2_000),
     initialData: initial,
     // The page may have rendered from a snapshot past the server TTL (see
     // loadStatusBoardForPage). Dating the initial data by when it was
@@ -250,8 +258,9 @@ export function BoardView({
 
   // "Issues" are what needs a look; a source that could not be read is not one (see matchesFilters).
   const issueCount = board.services.length - board.counts.operational - board.counts.unknown;
-  // Starring moves a card, so it glides there like a refresh does.
-  const onToggleStar = (id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id));
+  // Starring moves a card, so it glides there like a refresh does. One function for the page's life, so the cards,
+  // which are memoised, are not rendered again for a new one.
+  const onToggleStar = useCallback((id: ServiceSnapshot["id"]) => withCardMotion(() => toggleStar(id)), [toggleStar]);
   const groups = groupServices(visible);
   // The board's most urgent service, from the whole board rather than the
   // filtered view (starred services first among equals, as on the cards).
@@ -278,7 +287,9 @@ export function BoardView({
       // one, so any refetch running now, or started while this waits, is
       // cancelled before it can.
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
-      const next = await refreshStatusBoard();
+      // Bounded like the refetch: a press that never answers falls back to the cached board below and lets go of
+      // the button, instead of leaving it busy until the page is reloaded.
+      const next = await withTimeout(undefined, BOARD_REFRESH_TIMEOUT_MS, (signal) => refreshStatusBoard({ signal }));
       await queryClient.cancelQueries({ queryKey: ["status-board"] });
       // The person asked for this one, so it does not wait for the page to be still.
       hurry();
@@ -527,4 +538,4 @@ export function BoardView({
       </div>
     </div>
   );
-}
+});

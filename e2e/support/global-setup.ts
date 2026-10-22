@@ -1,10 +1,11 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { chromium, type FullConfig } from "@playwright/test";
 import { CACHE_TTL_MS, MIN_FORCED_REFRESH_MS } from "../../src/lib/status/schedule.ts";
 import type { BoardSnapshot, Health } from "../../src/lib/status/types.ts";
-import { chromiumArgs } from "./chromium-args.ts";
+import { chromiumArgs, chromiumEnv } from "./chromium-args.ts";
 import { FIRST_RENDER_AT_ENV, missingFromFirstRender } from "./first-render.ts";
 import { VENDOR_LOG_PREFIX, vendorLogPath } from "./vendor-log.ts";
 
@@ -51,22 +52,66 @@ const EXPECTED_HEALTH: Record<string, Health> = {
   "android-os": "operational",
 };
 
+/** The repository's root, found from this file, not the cwd. */
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
+
+/** What the build is made from: its newest change is when dist/ was last up to date, at the earliest. */
+const BUILD_SOURCES = ["src", "public", "vite.config.ts", "package.json"];
+
+/** The build's own outputs, the server bundle the preview runs and the client's assets beside it. */
+const BUILD_OUTPUTS = ["dist/server/server.js", "dist/client"];
+
+/** What is under src/ but not built: the unit tests, their helpers and the vendor payloads the preview reads as is. */
+const notBuilt = (name: string) => name.endsWith(".test.ts") || name === "test" || name === "__fixtures__";
+
+/**
+ * The newest modification time of a file, or of any file under a directory; 0 when there is none. A directory's own
+ * time is left out: a unit test added beside a component changes it, and the build is no older for that.
+ */
+function newestMtime(path: string): number {
+  if (!existsSync(path)) return 0;
+  const stat = statSync(path);
+  if (!stat.isDirectory()) return stat.mtimeMs;
+  return readdirSync(path)
+    .filter((name) => !notBuilt(name))
+    .reduce((newest, name) => Math.max(newest, newestMtime(join(path, name))), 0);
+}
+
+/**
+ * Warns when dist/ is older than what it is built from, or missing: the suite tests the production build, so a
+ * change made since the last `pnpm run build` is not what the browser sees, and a test of it fails (or passes) for
+ * no visible reason. Only a warning, and not in CI, which builds before it tests.
+ */
+function warnIfStaleBuild(): void {
+  if (process.env.CI) return;
+  const sources = Math.max(...BUILD_SOURCES.map((path) => newestMtime(join(ROOT, path))));
+  const outputs = BUILD_OUTPUTS.map((path) => join(ROOT, path));
+  const built = outputs.every((path) => existsSync(path))
+    ? Math.min(...outputs.map((path) => statSync(path).mtimeMs))
+    : 0;
+  if (built < sources) {
+    console.warn(
+      `\n  e2e: dist/ is older than the sources; run pnpm run build${built === 0 ? " (dist/ is missing)" : ""}.\n  The browser tests run against the production build, so they would not test the change.\n`,
+    );
+  }
+}
+
 const count = (list: Entry[], kind: Entry["kind"]) => list.filter((entry) => entry.kind === kind).length;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
- * How long the page may take to carry the release lines and the changelog notes when nothing forces a new board.
- * They are read after the sweep and join a board only when the board is built again. The page and the JSON API
- * share one board cache, so the board the setup builds first (without them) is what the page is served for the
- * cache's whole lifetime (CACHE_TTL_MS, 45 s) and a build later; this covers that, with a margin. It is the slow
- * path: the setup normally forces the new build itself (refreshBoardOnce) and the first request finds them.
+ * How long the page may take to carry the release lines and the changelog notes. They are read after the sweep
+ * and patched into the cached board as soon as they have settled (src/lib/status/collect-board.ts), so the first
+ * request after the vendor log goes quiet normally finds them. If the patch did not land, a new build would
+ * carry them: the setup forces one (refreshBoardOnce), and without it the cache builds one once its lifetime
+ * (CACHE_TTL_MS, 45 s) is over; this covers that, with a margin.
  */
 const FIRST_RENDER_DEADLINE_MS = CACHE_TTL_MS + 45_000;
 
 /**
  * Has the board built again now that the release feeds and the changelog notes are settled, as a visitor does by
- * pressing Refresh: opens the page in a short-lived Chromium and presses it (the server function is the page's
+ * pressing Refresh (only when the first page after the reads lacks them): opens the page in a short-lived Chromium and presses it (the server function is the page's
  * own; its URL is not something to rebuild by hand). The cache refuses a forced build within
  * MIN_FORCED_REFRESH_MS of the last one, so the caller waits that out first. Returns whether a forced response
  * came back; a browser that cannot be started or a press that goes unanswered returns false, and the setup falls
@@ -78,6 +123,7 @@ async function refreshBoardOnce(baseURL: string): Promise<boolean> {
     browser = await chromium.launch({
       executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined,
       args: chromiumArgs,
+      ...(chromiumEnv ? { env: chromiumEnv } : {}),
     });
     const page = await browser.newPage({ baseURL });
     await page.goto("/");
@@ -129,13 +175,13 @@ async function waitForQuietLog(log: string, quietMs = 500, limitMs = 10_000): Pr
  * load, this fails instead of the suite quietly depending on them.
  *
  * It then makes the first page render carry what the background reads add. A board is built from the health
- * sweep alone; the release feeds and the MikroTik changelogs are read right after it and join the next build
- * (src/lib/status/collect-board.ts), and the page, the JSON API and the other server routes share one board for 45
- * seconds, so a page served the board built before the reads had settled would show no release line to every
- * test that starts in that window. The setup waits until the vendor log is quiet (those reads are done, in
- * milliseconds on the canned payloads), has the board built again by pressing Refresh in a browser of its own
- * once the cache allows it (MIN_FORCED_REFRESH_MS after the first board; if it cannot, it waits for the cache to
- * expire), only then asks for the page the tests will render, and pins what it carries
+ * sweep alone; the release feeds and the MikroTik changelogs are read right after it and patched into the cached
+ * board once they have settled (src/lib/status/collect-board.ts), and the page, the JSON API and the other server
+ * routes share that board, so a page served before the reads had settled would show no release line. The setup
+ * waits until the vendor log is quiet (those reads are done, in milliseconds on the canned payloads) and asks for
+ * the page the tests will render. Only if that page lacks them does it have the board built again, by pressing
+ * Refresh in a browser of its own once the cache allows it (MIN_FORCED_REFRESH_MS after the first board; if it
+ * cannot, it waits for the cache to expire), and ask again. It pins what the page carries
  * (EXPECTED_RELEASE_LINES and MIKROTIK_NOTE in first-render.ts): that page is the board the first tests are
  * served (for the first RELEASE_LINES_GUARANTEED_MS of the run: the feeds are cached for 30 minutes, after which
  * a build leaves them out until they are read again, so the first-render test stops asking for them). If the reads were late the page is asked again until it has them (at most FIRST_RENDER_DEADLINE_MS),
@@ -155,6 +201,8 @@ export default async function globalSetup(config: FullConfig): Promise<() => Pro
       rmSync(join(tmpdir(), name), { force: true });
     }
   }
+
+  warnIfStaleBuild();
 
   // The feeds are read right after this board's sweep and cached for 30 minutes (RELEASE_FEED_TTL_MS); the workers
   // inherit this, and the first-render test asks for the release lines only while they are younger than that.
@@ -189,15 +237,19 @@ export default async function globalSetup(config: FullConfig): Promise<() => Pro
   // The release feeds and the changelog notes are read after that sweep; let them settle, then get the page.
   const waited = Date.now();
   await waitForQuietLog(log);
-  // The board just built has none of them (it was built before they were read) and the cache would serve it to
-  // the page for 45 seconds; a forced build joins them, once the cache allows one.
-  await sleep(Math.max(0, builtAt + MIN_FORCED_REFRESH_MS + 500 - Date.now()));
-  const refreshed = await refreshBoardOnce(baseURL);
-  let missing: string[] = [];
-  let attempts = 0;
-  for (const deadline = Date.now() + FIRST_RENDER_DEADLINE_MS; ; await sleep(1000)) {
+  const firstRender = () => fetch(new URL("/", baseURL)).then((page) => page.text());
+  let missing = missingFromFirstRender(await firstRender());
+  let attempts = 1;
+  // They are patched into the cached board once settled. Should the page still lack them, a forced build joins
+  // them, once the cache allows one.
+  let refreshed: boolean | undefined;
+  if (missing.length > 0) {
+    await sleep(Math.max(0, builtAt + MIN_FORCED_REFRESH_MS + 500 - Date.now()));
+    refreshed = await refreshBoardOnce(baseURL);
+  }
+  for (const deadline = Date.now() + FIRST_RENDER_DEADLINE_MS; missing.length > 0; await sleep(1000)) {
     attempts += 1;
-    missing = missingFromFirstRender(await (await fetch(new URL("/", baseURL))).text());
+    missing = missingFromFirstRender(await firstRender());
     if (missing.length === 0 || Date.now() >= deadline) break;
   }
   if (missing.length > 0) {
@@ -206,7 +258,7 @@ export default async function globalSetup(config: FullConfig): Promise<() => Pro
     );
   }
   console.log(
-    `e2e: the first page render carries the release lines (${attempts} request${attempts === 1 ? "" : "s"}, ${((Date.now() - waited) / 1000).toFixed(1)} s after the board${refreshed ? "" : "; the board was not refreshed, so it waited for the cache to expire"})`,
+    `e2e: the first page render carries the release lines (${attempts} request${attempts === 1 ? "" : "s"}, ${((Date.now() - waited) / 1000).toFixed(1)} s after the board${refreshed === undefined ? "" : refreshed ? "; the board had to be refreshed" : "; the board was not refreshed, so it waited for the cache to expire"})`,
   );
 
   return async () => {

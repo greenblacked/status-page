@@ -31,7 +31,9 @@ report() { # pattern, message, files...
   fi
 }
 
-mapfile -t sources < <(git ls-files -- 'src/*.tsx')
+# A read loop, not mapfile: macOS ships bash 3.2, which has no mapfile.
+sources=()
+while IFS= read -r line; do sources+=("$line"); done < <(git ls-files -- 'src/*.tsx')
 
 # Split off the files that are allowed a rounded-full dot or a raw colour.
 allowed=()

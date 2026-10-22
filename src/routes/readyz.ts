@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { getStatusBoard } from "@/lib/status/board-cache.server";
+import { getStatusBoardForProbe } from "@/lib/status/board-cache.server";
 import { readiness } from "@/lib/status/readiness";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
@@ -11,12 +11,17 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 // failures turn it red: never use it as a liveness probe,
 // or an orchestrator restarts a healthy server over something a restart
 // cannot fix.
+//
+// Every other reader takes the snapshot in hand at once, however old, and
+// refreshes it behind; the probe instead waits for that refresh (up to
+// PROBE_WAIT_MS), so an isolate that was idle for a quarter of an hour answers
+// from a new board rather than calling its old one stale.
 export const Route = createFileRoute("/readyz")({
   server: {
     handlers: {
       GET: async () => {
         try {
-          const result = readiness(await getStatusBoard(), Date.now());
+          const result = readiness(await getStatusBoardForProbe(), Date.now());
           return Response.json(result, { status: result.status === "ready" ? 200 : 503, headers: NO_STORE });
         } catch {
           // No board at all (the collection failed):

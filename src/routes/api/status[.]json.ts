@@ -8,8 +8,12 @@ import { PUBLIC_HEADERS, publicStatus } from "@/lib/status/integrations";
 export const Route = createFileRoute("/api/status.json")({
   server: {
     handlers: {
-      GET: () =>
-        respondWithBoard(getStatusBoard, (board) => Response.json(publicStatus(board), { headers: PUBLIC_HEADERS })),
+      GET: ({ request }) =>
+        respondWithBoard(
+          getStatusBoard,
+          (board) => Response.json(publicStatus(board), { headers: PUBLIC_HEADERS }),
+          request,
+        ),
     },
   },
 });

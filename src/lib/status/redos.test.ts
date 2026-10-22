@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { androidReleases, readAndroidVersionLinks } from "./android-release.ts";
 import { mikrotikChangelogNote, mikrotikChangelogNotes, parseAppleOsTitle, splitAppleBuild } from "./changelog.ts";
+import { parseFeedDate } from "./feed-xml.ts";
 import { PayloadError, unwrapJsonp } from "./http.ts";
 import { incidentLink } from "./layout.ts";
 import {
@@ -82,6 +83,8 @@ describe("parsers stay linear on crafted vendor input", () => {
       `${"service ".repeat(SIZE / 8)}unavailable`,
       `${"d".repeat(SIZE)}own`,
       `${"o".repeat(SIZE)}utage`,
+      `${"partial ".repeat(SIZE / 8)}x`,
+      `partial${" ".repeat(SIZE)}x`,
     ];
     for (const body of cases) expect(elapsed(() => azureItemHealth(body))).toBeLessThan(BUDGET_MS);
     expect(azureItemHealth(`${"resolved ".repeat(10)}x`)).toBe("operational");
@@ -96,6 +99,35 @@ describe("parsers stay linear on crafted vendor input", () => {
     let items: ReturnType<typeof parseRssItems> = [];
     expect(elapsed(() => (items = parseRssItems(xml)))).toBeLessThan(BUDGET_MS);
     expect(items).toHaveLength(1);
+  });
+
+  it("parseRssItems: openers with long or unclosed attributes, self-closing and spaced closing tags", () => {
+    for (const xml of [
+      `<item>${'<title type="html">'.repeat(SIZE / 19)}`,
+      `<item>${"<title ".repeat(SIZE / 7)}`,
+      `<item><title ${"a".repeat(SIZE)}`,
+      `<item>${`<title ${"a".repeat(600)}>`.repeat(SIZE / 608)}`,
+      `<item>${"<title/>".repeat(SIZE / 8)}`,
+      `<item>${"<title />".repeat(SIZE / 9)}`,
+      `<item><title>x${"</title ".repeat(SIZE / 8)}`,
+      `<item><title>x</title${" ".repeat(SIZE)}`,
+    ]) {
+      let items: ReturnType<typeof parseRssItems> = [];
+      expect(elapsed(() => (items = parseRssItems(xml)))).toBeLessThan(BUDGET_MS);
+      expect(items).toHaveLength(1);
+    }
+  });
+
+  it("parseRssItems: Atom entries of repeated links, unclosed attributes and unclosed entries", () => {
+    for (const xml of [
+      `<feed><entry>${'<link rel="self" href="https://example.com/"/>'.repeat(SIZE / 46)}`,
+      `<feed><entry>${"<link href='".repeat(SIZE / 12)}`,
+      `<feed><entry><link ${'href="'.repeat(SIZE / 6)}`,
+      `<feed>${"<entry>".repeat(SIZE / 7)}`,
+      `<feed>${"<entry><updated>".repeat(SIZE / 16)}`,
+    ]) {
+      expect(elapsed(() => parseRssItems(xml))).toBeLessThan(BUDGET_MS);
+    }
   });
 
   it("parseRssItems: a feed of unclosed <item> openers and of empty items", () => {
@@ -128,6 +160,23 @@ describe("parsers stay linear on crafted vendor input", () => {
   it("parseRssItems: a feed past the scan bound is refused in linear time", () => {
     const xml = Array.from({ length: MAX_RSS_SCANNED * 2 }, (_, i) => `<item><title>t${i}</title></item>`).join("");
     expect(elapsed(() => expect(() => parseRssItems(xml)).toThrow(PayloadError))).toBeLessThan(BUDGET_MS * 2);
+  });
+
+  it("parseFeedDate: long runs of digits, spaces, zone letters and date shapes", () => {
+    for (const value of [
+      " ".repeat(SIZE),
+      `2026-09-21 10:00${" ".repeat(SIZE)}x`,
+      `Mon, 21 Sep 2026 10:00:00 ${"A".repeat(SIZE)}`,
+      `${"1 ".repeat(SIZE / 2)}CEST`,
+      `${"2026-09-21 ".repeat(SIZE / 11)}10:00`,
+    ]) {
+      let at: number | undefined = 0;
+      expect(elapsed(() => (at = parseFeedDate(value)))).toBeLessThan(BUDGET_MS);
+      expect(at).toBeUndefined();
+    }
+    // Every item of a feed is dated, so a feed of crafted dates must stay linear too.
+    const feed = `<item><pubDate>${"Mon, 21 Sep 2026 ".repeat(SIZE / 17)}CEST</pubDate></item>`.repeat(4);
+    expect(elapsed(() => parseRssItems(feed))).toBeLessThan(BUDGET_MS);
   });
 
   it("CLOUDFLARE_DATA_CENTER: a long name of repeated separators and unfinished codes", () => {
