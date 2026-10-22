@@ -146,11 +146,12 @@ jobs:
         id: production-url
         # The Custom Domain production is served on, from the built config,
         # held to the same host pattern as the preview URL in the deploy job.
-        # Not a plain host (a route such as "host/*", or none) leaves it
-        # empty, and a production deploy with no DEPLOY_URL then fails.
+        # Not a plain host (a route such as "host/*", in its string or object
+        # form, or none) leaves it empty, and a production deploy with no
+        # DEPLOY_URL then fails.
         run: |
           host_re='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+'
-          host="$(jq -r '.routes[0].pattern // empty' dist/server/wrangler.json)"
+          host="$(jq -r '(.routes[0] | objects | .pattern) // empty' dist/server/wrangler.json)"
           if [[ "$host" =~ ^$host_re$ ]]; then
             echo "url=https://$host" >>"$GITHUB_OUTPUT"
           else
