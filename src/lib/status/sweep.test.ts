@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cannedPayload } from "../../../e2e/support/canned-vendors.mjs";
 import { CATALOG } from "./catalog";
 import { MAX_BODY_BYTES } from "./http";
+import { createSourcePolicy } from "./source-policy";
 import { COLLECTORS, collectAllServices } from "./sources.server";
 
 // Whole-sweep behaviour of collectAllServices(): what one call logs and
@@ -365,5 +367,143 @@ describe("collectAllServices vendor links", () => {
       "https://status.cloud.google.com/",
       "https://status.cloud.google.com/",
     ]);
+  });
+});
+
+// The four side reads, which wait behind every read that decides a card.
+const LOW_PRIORITY = new Set([
+  "https://status.cloud.google.com/products.json",
+  "https://status.play.google.com/products.json",
+  "https://status.x.ai/v2/components.json",
+  "https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0",
+]);
+
+/** A vendor's canned answer (e2e/support/canned-vendors.mjs) with its dates moved to now, or a 404. */
+function canned(url: string): Response {
+  const payload = cannedPayload(new URL(url), Date.now());
+  if (!payload) return new Response("not found", { status: 404, statusText: "Not Found" });
+  const body = payload.utf16 ? new Uint8Array(Buffer.from(`\uFEFF${payload.body}`, "utf16le")) : payload.body;
+  return new Response(body, { headers: { "content-type": payload.type } });
+}
+
+describe("collectAllServices connections", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: Date.parse("2026-10-22T12:00:00.000Z") });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * fetch as a Worker runs it: six connections at most, the rest queued inside fetch() with the caller's timer
+   * already running, and every vendor answering `answerMs` after its connection opens. Records the order in
+   * which connections open.
+   */
+  function workerFetch(answerMs: number) {
+    vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
+    const opened: string[] = [];
+    let open = 0;
+    let mostOpen = 0;
+    const queue: Array<() => void> = [];
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return new Promise<Response>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let started = false;
+        const start = () => {
+          started = true;
+          open += 1;
+          mostOpen = Math.max(mostOpen, open);
+          opened.push(url);
+          timer = setTimeout(() => {
+            finish();
+            resolve(canned(url));
+          }, answerMs);
+        };
+        const finish = () => {
+          open -= 1;
+          queue.shift()?.();
+        };
+        init?.signal?.addEventListener("abort", () => {
+          if (started) {
+            clearTimeout(timer);
+            finish();
+          } else {
+            queue.splice(queue.indexOf(start), 1);
+          }
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+        if (open < 6) start();
+        else queue.push(start);
+      });
+    });
+    return { opened, mostOpen: () => mostOpen };
+  }
+
+  async function sweep() {
+    let services: Awaited<ReturnType<typeof collectAllServices>> | undefined;
+    const run = collectAllServices().then((result) => {
+      services = result;
+    });
+    while (!services) await vi.advanceTimersByTimeAsync(250);
+    await run;
+    return services;
+  }
+
+  it("times no request out while it waits for a connection, and opens the side reads last", async () => {
+    // Two seconds a vendor, six at a time: the last of the sweep's 31 requests opens ten seconds in. Queued
+    // inside fetch() with their timers running, as they were without the gate, the late ones time out at nine.
+    const worker = workerFetch(2_000);
+
+    const services = await sweep();
+
+    expect(worker.mostOpen()).toBe(6);
+    expect(services.filter((service) => service.failure?.kind === "timeout")).toEqual([]);
+    expect(worker.opened).toHaveLength(31);
+    expect(new Set(worker.opened.slice(-LOW_PRIORITY.size))).toEqual(LOW_PRIORITY);
+    // The side reads answered too, so the cards that use them have their lists.
+    const gcp = services.find((service) => service.id === "gcp");
+    expect(gcp?.failure).toBeUndefined();
+  });
+});
+
+describe("collectAllServices under a source policy", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("leaves a refusing source alone for as long as its Retry-After asks, beyond the breaker's own backoff", async () => {
+    const now = { at: Date.parse("2026-10-22T12:00:00.000Z") };
+    const policy = createSourcePolicy({ now: () => now.at, random: () => 0.5 });
+    const calls = stubFetch((url) =>
+      url === CLAUDE
+        ? new Response("slow down", { status: 429, headers: { "retry-after": "300" } })
+        : new Response("not found", { status: 404, statusText: "Not Found" }),
+    );
+    // Three refusals in a row open the breaker: for the vendor's five minutes rather than its own one.
+    for (let sweep = 0; sweep < 3; sweep += 1) {
+      await collectAllServices({ policy });
+      now.at += 1_000;
+    }
+    expect(calls.filter((url) => url === CLAUDE)).toHaveLength(3);
+
+    now.at += 4 * 60_000;
+    await collectAllServices({ policy });
+    expect(calls.filter((url) => url === CLAUDE)).toHaveLength(3);
+
+    now.at += 2 * 60_000;
+    await collectAllServices({ policy });
+    expect(calls.filter((url) => url === CLAUDE)).toHaveLength(4);
   });
 });

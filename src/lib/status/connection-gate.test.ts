@@ -160,6 +160,33 @@ describe("withConnectionGate", () => {
     });
   });
 
+  it("is idle only once every admitted request, queued ones included, has released its slot", async () => {
+    await withConnectionGate({ limit: 1 }, async () => {
+      const gate = currentGate()!;
+      await gate.idle();
+      const first = await gate.acquire("high");
+      let secondRelease: (() => void) | undefined;
+      void gate.acquire("low").then((release) => {
+        secondRelease = release;
+      });
+      let idle = false;
+      void gate.idle().then(() => {
+        idle = true;
+      });
+      await settle();
+      expect(idle).toBe(false);
+      // The slot passes to the queued request: still not idle.
+      first();
+      await settle();
+      expect(secondRelease).toBeDefined();
+      expect(idle).toBe(false);
+      secondRelease!();
+      await settle();
+      expect(idle).toBe(true);
+      expect(gate.active).toBe(0);
+    });
+  });
+
   it("has no gate outside withConnectionGate, and one per scope inside it", async () => {
     expect(currentGate()).toBeUndefined();
     const [a, b] = await Promise.all([

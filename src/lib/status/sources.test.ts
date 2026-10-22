@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
-import { PayloadError, SourceError } from "./http.ts";
+import { PayloadError, SourceError, TimeoutError } from "./http.ts";
 import { createSourcePolicy } from "./source-policy.ts";
 import {
   awsComponents,
@@ -415,7 +415,9 @@ describe("collector failure classification", () => {
       message: "403 Forbidden from https://x",
       status: 403,
     });
-    assert.equal(classifyFailure(new SourceError("Timed out fetching https://x")).kind, "timeout");
+    assert.equal(classifyFailure(new TimeoutError("Timed out fetching x")).kind, "timeout");
+    // The type decides, not the wording: a plain SourceError is a network failure whatever it says.
+    assert.equal(classifyFailure(new SourceError("Timed out fetching https://x")).kind, "network");
     assert.equal(classifyFailure(new SourceError("getaddrinfo ENOTFOUND x")).kind, "network");
   });
 

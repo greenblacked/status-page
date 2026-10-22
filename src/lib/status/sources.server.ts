@@ -11,6 +11,7 @@ import {
   parseMikrotikNewest,
   splitAppleBuild,
 } from "./changelog.ts";
+import { currentGate, defaultConnectionLimit, withConnectionGate } from "./connection-gate.ts";
 import { type FeedItem, parseFeedDate, parseRssItems, stripHtml } from "./feed-xml.ts";
 import { fingerprint } from "./fingerprint.ts";
 import {
@@ -35,6 +36,7 @@ import {
   NotJsonError,
   PayloadError,
   SourceError,
+  TimeoutError,
 } from "./http.ts";
 import { sortIncidents } from "./layout.ts";
 import { PASSTHROUGH_POLICY, SIDE_READS, SOURCE_TIERS, type SourcePolicy } from "./source-policy.ts";
@@ -284,9 +286,9 @@ const JSON_SYNTAX_MESSAGE = "SyntaxError: response was not valid JSON";
 // field) means the vendor answered with a shape the collector does not expect.
 export function classifyFailure(error: unknown): SourceFailure {
   if (error instanceof PayloadError) return { kind: "parser", message: error.message };
+  if (error instanceof TimeoutError) return { kind: "timeout", message: error.message };
   if (error instanceof SourceError) {
     if (error.status !== undefined) return { kind: "http", message: error.message, status: error.status };
-    if (error.message.startsWith("Timed out")) return { kind: "timeout", message: error.message };
     return { kind: "network", message: error.message };
   }
   // V8's JSON.parse message quotes the first characters of the body, which
@@ -734,7 +736,7 @@ async function collectGoogle(id: "gcp" | "android", origin: string, sweep: Sweep
     const [{ value, ms }, catalogue] = await Promise.all([
       timed(() => fetchJson<unknown>(`${origin}/incidents.json`)),
       sweep.policy.side(`products:${origin}`, SIDE_READS.googleProducts, () =>
-        fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS }),
+        fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS, priority: "low" }),
       ),
     ]);
     const incidents = records<GoogleIncident>(expectArray(value, CATALOG_BY_ID[id].name));
@@ -1090,7 +1092,7 @@ async function collectSteam(sweep: Sweep): Promise<ServiceSnapshot> {
       timeMain(fetchJson<{ featured_win?: unknown } | null>("https://store.steampowered.com/api/featured/")),
       // Side signal: it never decides the card's health or whether it fails.
       sweep.policy.side(STEAM_CM_URL, SIDE_READS.steamManagers, () =>
-        fetchJson<unknown>(STEAM_CM_URL, { timeoutMs: EXTRA_TIMEOUT_MS }),
+        fetchJson<unknown>(STEAM_CM_URL, { timeoutMs: EXTRA_TIMEOUT_MS, priority: "low" }),
       ),
     ]);
     const servertime = info.status === "fulfilled" ? info.value?.servertime : undefined;
@@ -1461,7 +1463,7 @@ async function collectGrok(sweep: Sweep): Promise<ServiceSnapshot> {
     const [{ value, ms }, instatus] = await Promise.all([
       timed(() => fetchText("https://status.x.ai/feed.xml")),
       sweep.policy.side(GROK_COMPONENTS_URL, SIDE_READS.grokComponents, () =>
-        fetchJson<unknown>(GROK_COMPONENTS_URL, { timeoutMs: EXTRA_TIMEOUT_MS }),
+        fetchJson<unknown>(GROK_COMPONENTS_URL, { timeoutMs: EXTRA_TIMEOUT_MS, priority: "low" }),
       ),
     ]);
     const items = parseRssItems(value.body);
@@ -2137,11 +2139,26 @@ function metered(
   );
 }
 
+/** How long one sweep may take: a request still waiting for a connection, or still running, then times out. */
+export const SWEEP_DEADLINE_MS = 15_000;
+/**
+ * The vendor requests (redirect hops and retries included) after which a
+ * sweep makes no more retries. A cold sweep is 31 requests, so this leaves
+ * room for one retry and keeps a Worker invocation's subrequests for the
+ * release feeds and the changelog notes that follow the sweep.
+ */
+export const SWEEP_MAX_REQUESTS = 32;
+
 /**
  * Reads every source once, in catalog order. With no policy every source is
  * fetched in this sweep, as it always was; a policy from createSourcePolicy()
  * reuses slow-moving pages, holds back a source that keeps failing and shows
  * a recent good reading over a transient failure (see source-policy.ts).
+ * The sweep's requests share one connection gate (connection-gate.ts): at
+ * most six run at once on a Worker (sixteen on Node), each request's timeout
+ * starts when it gets its connection, the side reads wait behind the reads
+ * that decide a card, no request runs past SWEEP_DEADLINE_MS, and the sweep
+ * returns only once every request it started has finished.
  * Logs one sweep_completed line: how many cards, how many read fine or are
  * unknown, what the policy reused or held back, and the bytes and time the
  * sweep took.
@@ -2156,8 +2173,18 @@ export async function collectAllServices({
   const tally = { bytes: 0 };
   // The policy's counts from before this sweep are not this sweep's.
   policy.stats();
-  const services = await Promise.all(
-    COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep), policy, tally)),
+  const services = await withConnectionGate(
+    { limit: defaultConnectionLimit(), deadlineMs: SWEEP_DEADLINE_MS, maxRequests: SWEEP_MAX_REQUESTS },
+    async () => {
+      const cards = await Promise.all(
+        COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep), policy, tally)),
+      );
+      // A card can be done while a side read it no longer needs is still out (its main read failed first).
+      // The sweep ends only once that request is too, so nothing that follows the sweep (the release feeds)
+      // shares a Worker's connections with it.
+      await currentGate()?.idle();
+      return cards;
+    },
   );
   const { carried, skipped, cachedReads } = policy.stats();
   console.log(

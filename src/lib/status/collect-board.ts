@@ -30,12 +30,19 @@ type CollectBoardOptions = { onLate?: (patch: LatePatch) => void };
  * JSON API, the badges and the Refresh button all reach them through this
  * function).
  *
+ * The sweep runs under the process's shared source policy (source-policy.ts),
+ * so slow-moving sources are read on their own cadence, a source that keeps
+ * failing is asked less often, and a one-off failure shows the last good
+ * reading for a few minutes.
+ *
  * The release feeds start only after the health sweep has settled, never
  * beside it. A Worker holds at most six outgoing connections at once and
- * queues the rest, while each health request's own timeout (9 s) is already
- * running; the sweep is many more requests than that (the tests measure it),
- * so a feed started first or alongside would take slots from health and
- * could turn a slow but working status source into No data. Started
+ * queues the rest inside fetch(). The sweep's own requests share a gate that
+ * starts each timeout only once a connection is free, but a feed outside that
+ * gate would take one of the six unseen, and a health request would then wait
+ * in fetch() with its timer running; the sweep is many more requests than six
+ * (the tests measure it), so a feed started first or alongside could turn a
+ * slow but working status source into No data. Started
  * afterwards, a feed can never hold a slot while a health request is pending
  * or queued, and it cannot lengthen the sweep or change any result. The
  * board is never held for them either: it ends when the sweep does, with the
@@ -59,13 +66,18 @@ type CollectBoardOptions = { onLate?: (patch: LatePatch) => void };
  */
 export async function collectBoard({ onLate }: CollectBoardOptions = {}): Promise<BoardSnapshot> {
   const started = Date.now();
-  const [{ collectAllServices }, { startReleaseFeeds, withReleaseFeeds }, { startMikrotikNotes, withMikrotikNotes }] =
-    await Promise.all([
-      import("./sources.server"),
-      import("./release-feeds.server"),
-      import("./mikrotik-notes.server"),
-    ]);
-  const services = await collectAllServices();
+  const [
+    { collectAllServices },
+    { sharedSourcePolicy },
+    { startReleaseFeeds, withReleaseFeeds },
+    { startMikrotikNotes, withMikrotikNotes },
+  ] = await Promise.all([
+    import("./sources.server"),
+    import("./source-policy"),
+    import("./release-feeds.server"),
+    import("./mikrotik-notes.server"),
+  ]);
+  const services = await collectAllServices({ policy: sharedSourcePolicy });
   const durationMs = Date.now() - started;
   // Every health request has settled: only now may a feed take a connection.
   const reading = startReleaseFeeds();

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runWithCloudflareContext } from "./cloudflare-context";
 import { assembleBoard, collectBoard } from "./collect-board";
+import { sharedSourcePolicy } from "./source-policy";
 import type { BoardSnapshot, ReleaseFeed, ServiceId, ServiceSnapshot } from "./types";
 
 // collectBoard's own logic, with the sweep, the feeds and the notes stood in
@@ -106,6 +107,13 @@ describe("collectBoard and what arrives after it", () => {
     expect(waiting).toHaveLength(1);
     return { board, late: waiting[0] };
   }
+
+  it("sweeps under the process's shared source policy, so its cadence and breakers carry from board to board", async () => {
+    reading().settle();
+    const { late } = await build(vi.fn());
+    await late;
+    expect(sources.collectAllServices).toHaveBeenCalledWith({ policy: sharedSourcePolicy });
+  });
 
   it("hands over one patch when a feed lands after the board went out, which changes no health or count", async () => {
     const feedsOfBuild = reading();

@@ -24,8 +24,10 @@ import {
   steamNoteLines,
   withReleaseFeeds,
 } from "./release-feeds.server.ts";
+import { sharedSourcePolicy } from "./source-policy.ts";
 import { collectAllServices, MAX_RSS_SCANNED } from "./sources.server.ts";
 import type { ReleaseFeed, ServiceId } from "./types.ts";
+import { clearVendorValidators } from "./validator-cache.ts";
 
 // The vendors' release feeds, read against hand-built fixtures in the formats
 // the vendors document (none was recorded: see __fixtures__/README.md). The
@@ -1029,6 +1031,9 @@ describe("the advisory rule", () => {
       vi.spyOn(console, "log").mockImplementation(() => {});
       vi.spyOn(console, "warn").mockImplementation(() => {});
       clearReleaseFeedCache();
+      // collectBoard sweeps under the process's shared policy and validator cache: no test inherits another's.
+      sharedSourcePolicy.reset();
+      clearVendorValidators();
     });
     afterEach(() => {
       vi.useRealTimers();
@@ -1339,6 +1344,9 @@ describe("the advisory rule", () => {
         const results: Array<{ name: string; durationMs: number; judged: ReturnType<typeof judged> }> = [];
         for (const [name, feed] of Object.entries(scenarios)) {
           clearReleaseFeedCache();
+          // Each scenario is a cold board: none reuses the last one's cached reads.
+          sharedSourcePolicy.reset();
+          clearVendorValidators();
           vi.setSystemTime(T0);
           stubWith(feed);
           // Let the feeds of the last scenario end first: a late read must not land in this one's cache.

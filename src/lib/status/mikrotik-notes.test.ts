@@ -11,7 +11,9 @@ import {
   withMikrotikNotes,
 } from "./mikrotik-notes.server.ts";
 import { clearReleaseFeedCache, RELEASE_FEED_RETRY_MS, RELEASE_SOURCES } from "./release-feeds.server.ts";
+import { sharedSourcePolicy } from "./source-policy.ts";
 import type { ServiceSnapshot } from "./types.ts";
+import { clearVendorValidators } from "./validator-cache.ts";
 
 // The MikroTik changelog notes are advisory: read after the health sweep, in the background, cached like a
 // release feed. Most of what is pinned here is what they must NOT do: delay the sweep or change any result.
@@ -88,6 +90,9 @@ describe("MikroTik changelog notes", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     clearMikrotikNotesCache();
     clearReleaseFeedCache();
+    // collectBoard sweeps under the process's shared policy and validator cache: no test inherits another's.
+    sharedSourcePolicy.reset();
+    clearVendorValidators();
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -383,6 +388,9 @@ describe("MikroTik changelog notes", () => {
       for (const [name, scenario] of Object.entries(scenarios)) {
         clearMikrotikNotesCache();
         clearReleaseFeedCache();
+        // Each scenario is a cold board: none reuses the last one's cached reads.
+        sharedSourcePolicy.reset();
+        clearVendorValidators();
         vi.setSystemTime(Date.parse("2026-10-02T12:00:00.000Z"));
         vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
           const url = urlOf(input);

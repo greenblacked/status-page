@@ -50,6 +50,8 @@ export type Gate = {
    * of their retries is made. False once the budget is spent.
    */
   reserveRetry(): boolean;
+  /** Resolves once no slot is held and nobody is waiting for one: every request the gate admitted has finished. */
+  idle(): Promise<void>;
 };
 
 /**
@@ -68,6 +70,7 @@ function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests 
   const queues: Record<Priority, Array<(release: () => void) => void>> = { high: [], low: [] };
   let active = 0;
   let issued = 0;
+  let idleWaiters: Array<() => void> = [];
 
   // Hands free slots to waiters, high before low. A low waiter is only ever
   // served from here or by a release, never the moment it asks.
@@ -89,6 +92,11 @@ function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests 
       // The slot stays taken and moves to the waiter; only with nobody waiting is it freed.
       if (next) next(releaser());
       else active -= 1;
+      if (active === 0 && queues.low.length === 0) {
+        const waiting = idleWaiters;
+        idleWaiters = [];
+        for (const wake of waiting) wake();
+      }
     };
   }
 
@@ -124,6 +132,11 @@ function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests 
       if (issued >= budget) return false;
       issued += 1;
       return true;
+    },
+    idle() {
+      // A high waiter only queues while every slot is held; a low one can wait a turn with a slot free.
+      if (active === 0 && queues.low.length === 0) return Promise.resolve();
+      return new Promise((resolve) => idleWaiters.push(resolve));
     },
   };
 }
