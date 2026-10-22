@@ -94,20 +94,36 @@ describe("withConnectionGate", () => {
     });
   });
 
-  it("allows retries only while fewer than maxRequests requests have been issued", async () => {
-    await withConnectionGate({ maxRequests: 2 }, async () => {
+  it("counts a request when it asks for a connection, before it gets one", async () => {
+    await withConnectionGate({ limit: 1 }, async () => {
       const gate = currentGate()!;
-      expect(gate.canRetry()).toBe(true);
+      const release = await gate.acquire();
+      void gate.acquire("low");
+      // One holds the slot, one waits for it: both count.
+      expect(gate.issued).toBe(2);
       gate.noteRequest();
+      expect(gate.issued).toBe(3);
+      release();
+    });
+  });
+
+  it("reserves a retry only while fewer than maxRequests requests are counted, and counts it at once", async () => {
+    await withConnectionGate({ maxRequests: 3 }, async () => {
+      const gate = currentGate()!;
+      const release = await gate.acquire();
       expect(gate.issued).toBe(1);
-      expect(gate.canRetry()).toBe(true);
+      expect(gate.reserveRetry()).toBe(true);
+      expect(gate.issued).toBe(2);
       gate.noteRequest();
-      expect(gate.canRetry()).toBe(false);
+      // Spent: the request, its reserved retry and a redirect hop.
+      expect(gate.reserveRetry()).toBe(false);
+      expect(gate.issued).toBe(3);
+      release();
     });
     await withConnectionGate({}, async () => {
       const gate = currentGate()!;
       for (let n = 0; n < 100; n += 1) gate.noteRequest();
-      expect(gate.canRetry()).toBe(true);
+      expect(gate.reserveRetry()).toBe(true);
     });
   });
 

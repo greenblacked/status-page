@@ -29,15 +29,27 @@ export type Gate = {
   readonly limit: number;
   /** Slots in use. */
   readonly active: number;
-  /** Underlying fetch() calls made so far, redirect hops and retries included. */
+  /**
+   * Subrequests counted so far: one per acquire(), counted when it is asked
+   * for, so a request still waiting for a connection already counts, plus
+   * every redirect hop (noteRequest) and every reserved retry.
+   */
   readonly issued: number;
-  /** Resolves with a release function once a slot is free. Calling the release more than once frees one slot. */
+  /**
+   * Counts one request and resolves with a release function once a slot is
+   * free. Calling the release more than once frees one slot.
+   */
   acquire(priority?: Priority): Promise<() => void>;
   /** Milliseconds left before the deadline; Infinity without one, zero or less once it has passed. */
   remainingMs(): number;
+  /** Counts one more subrequest of a request that holds a slot: a redirect hop. */
   noteRequest(): void;
-  /** Whether one more subrequest still fits the budget. */
-  canRetry(): boolean;
+  /**
+   * Takes one subrequest of the budget for a retry and counts it as issued at
+   * once, so failures that land together cannot all pass the check before any
+   * of their retries is made. False once the budget is spent.
+   */
+  reserveRetry(): boolean;
 };
 
 /**
@@ -76,6 +88,9 @@ function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests 
       return issued;
     },
     acquire(priority = "high") {
+      // Counted now, not once it has a slot: every sweep request is asked for
+      // before the first answer lands, so a retry's budget check sees them all.
+      issued += 1;
       if (active < slots) {
         active += 1;
         return Promise.resolve(releaser());
@@ -86,7 +101,11 @@ function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests 
     noteRequest() {
       issued += 1;
     },
-    canRetry: () => issued < budget,
+    reserveRetry() {
+      if (issued >= budget) return false;
+      issued += 1;
+      return true;
+    },
   };
 }
 

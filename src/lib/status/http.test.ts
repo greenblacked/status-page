@@ -653,6 +653,25 @@ describe("fetchText retries", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("lets failures that land together retry only as far as the budget goes", async () => {
+    // Four requests fail at once with three subrequests left: the first three of them that fail
+    // take those, and the fourth does not retry, although none of the retries has been made yet.
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        calls.push(url);
+        return calls.filter((seen) => seen === url).length === 1
+          ? new Response("down", { status: 503 })
+          : new Response("up");
+      }),
+    );
+    const urls = ["a", "b", "c", "d"].map((path) => `https://status.example.com/${path}`);
+    const results = await gated(() => Promise.allSettled(urls.map((url) => fetchText(url))), { maxRequests: 7 });
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(3);
+    expect(calls).toHaveLength(7);
+  });
+
   it("does not retry with less than 3 s of the request's time left", async () => {
     const fetchMock = sequence(
       () => new Response("down", { status: 503 }),

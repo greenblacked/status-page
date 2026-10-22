@@ -270,12 +270,14 @@ function describeTarget(target: URL | undefined): string {
 // fetch with redirects followed by hand, at most MAX_REDIRECTS and only
 // within staysWithVendor. `redirect: "manual"` hands back the 3xx response
 // and its Location header both on Workers and in Node. Every hop is a
-// subrequest of its own, so each one is counted against the gate's budget.
+// subrequest of its own, so each one is counted against the gate's budget:
+// the first was counted when it asked for a connection (or reserved its
+// retry), and each hop after it is counted here.
 async function fetchVendor(url: string, init: RequestInit, gate?: Gate): Promise<Response> {
   const requested = new URL(url);
   let current = requested;
   for (let hops = 0; ; hops += 1) {
-    gate?.noteRequest();
+    if (hops > 0) gate?.noteRequest();
     const response = await fetch(current.href, { ...init, redirect: "manual" });
     const location = REDIRECT_STATUSES.has(response.status) ? response.headers.get("location") : null;
     if (location === null) return response;
@@ -452,7 +454,8 @@ export async function fetchText(
       // request it repeats; the short jittered pause keeps every collector
       // that hit the same blip from asking again at the same instant.
       const remainingMs = budgetMs - (Date.now() - startedAt);
-      if (!gate?.canRetry() || !worthRetrying(error) || remainingMs < RETRY_MIN_REMAINING_MS) throw error;
+      // The budget is taken last, and only for a retry that will be made.
+      if (!gate || !worthRetrying(error) || remainingMs < RETRY_MIN_REMAINING_MS || !gate.reserveRetry()) throw error;
       await pause(200 + Math.floor(Math.random() * 200));
       return await readOnce(url, request, read, gate);
     }
