@@ -202,39 +202,57 @@ const ENTRY_CLOSE = /<\/entry\s*>/i;
 const HAS_ITEM = /<item[\s>]/i;
 const HAS_ENTRY = /<entry[\s>]/i;
 
-const FIELD_TAGS = new Map<string, { open: RegExp; close: RegExp }>();
 // Most characters of attributes an opening tag may carry and still be read.
-// The bound keeps each opener's cost fixed, so a field search stays linear.
 const MAX_ATTRIBUTE_CHARS = 512;
+const TAG_OPENERS = new Map<string, RegExp>();
 
-// The text between the first `<tag>` that is not self-closing (attributes
-// allowed, as in `<title type="html">`) and the first `</tag>` after it
-// (`</tag >` too), or undefined. Two searches from an index, so a field is
-// read in one pass over its item whatever the item holds;
-// `<tag>([\s\S]*?)</tag>` rescanned the whole item from every repeated,
-// unclosed `<tag>`. A longer name (`<titles>`) is not the tag.
-function xmlField(chunk: string, tag: string): string | undefined {
-  let tags = FIELD_TAGS.get(tag);
-  if (!tags) {
-    tags = {
-      open: new RegExp(`<${tag}(?:\\s[^>]{0,${MAX_ATTRIBUTE_CHARS}})?>`, "gi"),
-      close: new RegExp(`</${tag}\\s*>`, "gi"),
-    };
-    FIELD_TAGS.set(tag, tags);
+// Each opening `<tag>` of the chunk, attributes allowed (`<title type="html">`),
+// in order, as the span from its `<` to just past its `>`. A longer name
+// (`<titles>`) is not the tag, and an opener whose attributes run past
+// MAX_ATTRIBUTE_CHARS is skipped. The first `>` after an opener is looked for
+// only when the last one found lies behind it, so however many openers share
+// one missing or distant `>`, the chunk is scanned once; a bounded
+// `<tag(?:\s[^>]{0,N})?>` costs N steps at every opener instead.
+function* openingTags(chunk: string, tag: string): Generator<{ start: number; end: number }> {
+  let opener = TAG_OPENERS.get(tag);
+  if (!opener) {
+    opener = new RegExp(`<${tag}(?=[\\s>])`, "gi");
+    TAG_OPENERS.set(tag, opener);
   }
-  tags.open.lastIndex = 0;
-  for (let open = tags.open.exec(chunk); open; open = tags.open.exec(chunk)) {
+  let gt = -1;
+  for (let from = 0; ; ) {
+    opener.lastIndex = from;
+    const match = opener.exec(chunk);
+    if (!match) return;
+    from = match.index + match[0].length;
+    if (gt < from) gt = chunk.indexOf(">", from);
+    if (gt === -1) return;
+    if (gt - from <= MAX_ATTRIBUTE_CHARS + 1) yield { start: match.index, end: gt + 1 };
+  }
+}
+
+const FIELD_CLOSE = new Map<string, RegExp>();
+
+// The text between the first `<tag>` that is not self-closing and the first
+// `</tag>` after it (`</tag >` too), or undefined. One pass over its item
+// whatever the item holds; `<tag>([\s\S]*?)</tag>` rescanned the whole item
+// from every repeated, unclosed `<tag>`.
+function xmlField(chunk: string, tag: string): string | undefined {
+  let close = FIELD_CLOSE.get(tag);
+  if (!close) {
+    close = new RegExp(`</${tag}\\s*>`, "gi");
+    FIELD_CLOSE.set(tag, close);
+  }
+  for (const { end } of openingTags(chunk, tag)) {
     // A self-closing tag has no text; a later one of the same name may.
-    if (open[0].endsWith("/>")) continue;
-    const from = open.index + open[0].length;
-    tags.close.lastIndex = from;
-    const close = tags.close.exec(chunk);
-    return close ? chunk.slice(from, close.index) : undefined;
+    if (chunk[end - 2] === "/") continue;
+    close.lastIndex = end;
+    const closed = close.exec(chunk);
+    return closed ? chunk.slice(end, closed.index) : undefined;
   }
   return undefined;
 }
 
-const LINK_TAG = new RegExp(`<link(?:\\s[^>]{0,${MAX_ATTRIBUTE_CHARS}})?>`, "gi");
 const HREF_ATTRIBUTE = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
 const REL_ATTRIBUTE = /\brel\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
 // Most `<link>` tags looked at in one entry; a real one has two or three.
@@ -245,10 +263,10 @@ const MAX_LINK_TAGS = 20;
 // links are not the page, but are better than none.
 function atomLink(chunk: string): string | undefined {
   let first: string | undefined;
-  LINK_TAG.lastIndex = 0;
-  for (let seen = 0; seen < MAX_LINK_TAGS; seen += 1) {
-    const tag = LINK_TAG.exec(chunk)?.[0];
-    if (tag === undefined) break;
+  let seen = 0;
+  for (const { start, end } of openingTags(chunk, "link")) {
+    if (++seen > MAX_LINK_TAGS) break;
+    const tag = chunk.slice(start, end);
     const href = HREF_ATTRIBUTE.exec(tag);
     if (!href) continue;
     const value = decodeXmlEntities(href[1] ?? href[2] ?? "").trim();
