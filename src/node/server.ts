@@ -205,7 +205,11 @@ async function sendResponse(
   const empty = head || !body || NO_BODY_STATUSES.has(status);
 
   let encoding: Encoding | null = null;
-  if (isCompressible(headers.get("content-type"))) {
+  // A 304 carries the Vary its 200 would (RFC 9110 15.4.5), but no Content-Type
+  // to tell from. The app's only 304s are the public endpoints' (conditional.ts),
+  // whose bodies (JSON, Atom, SVG, text) are all compressible.
+  const revalidated = status === 304 && headers.has("etag");
+  if (revalidated || isCompressible(headers.get("content-type"))) {
     appendVary(headers, "Accept-Encoding");
     const transform = /\bno-transform\b/i.test(headers.get("cache-control") ?? "");
     const length = Number(headers.get("content-length") ?? Number.POSITIVE_INFINITY);

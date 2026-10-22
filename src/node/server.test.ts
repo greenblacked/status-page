@@ -259,6 +259,9 @@ describe("the app handler", () => {
       expect(response.status, encoding).toBe(304);
       expect(response.headers.get("etag"), encoding).toBe(etag);
       expect(response.headers.has("content-encoding"), encoding).toBe(false);
+      // The 200 varies by Accept-Encoding, so its 304 says so too, or a shared cache could merge the variants.
+      expect(response.headers.get("vary"), encoding).toBe(first.response.headers.get("vary"));
+      expect(response.headers.get("vary"), encoding).toBe("Accept-Encoding");
       expect(bytes.length, encoding).toBe(0);
     }
   });
