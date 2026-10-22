@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,12 +8,18 @@ import { afterEach, describe, expect, it } from "vitest";
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DEPLOY = readFileSync(join(ROOT, ".github/workflows/deploy.yml"), "utf8");
 
-/** The `run: |` script of the step with this id, without its indentation. */
-function stepScript(id: string): string {
+/** The text of the step with this id, from its `id:` line to the next step. */
+function stepBlock(id: string): string {
   const start = DEPLOY.search(new RegExp(`^ +id: ${id}\\n`, "m"));
   expect(start, `step ${id}`).toBeGreaterThanOrEqual(0);
   const rest = DEPLOY.slice(start);
-  const run = rest.match(/^( +)run: \|\n((?:\1 {2}.*\n|\n)+)/m);
+  const end = rest.search(/^ {6}- /m);
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+/** The `run: |` script of the step with this id, without its indentation. */
+function stepScript(id: string): string {
+  const run = stepBlock(id).match(/^( +)run: \|\n((?:\1 {2}.*\n|\n)+)/m);
   expect(run, `run script of ${id}`).not.toBeNull();
   const indent = `${run?.[1] ?? ""}  `;
   return (run?.[2] ?? "")
@@ -24,11 +30,7 @@ function stepScript(id: string): string {
 
 /** The `if:` condition of the step with this id. */
 function stepCondition(id: string): string {
-  const start = DEPLOY.search(new RegExp(`^ +id: ${id}\\n`, "m"));
-  expect(start, `step ${id}`).toBeGreaterThanOrEqual(0);
-  const rest = DEPLOY.slice(start);
-  const end = rest.search(/^ {6}- /m);
-  const condition = (end < 0 ? rest : rest.slice(0, end)).match(/^ +if: (.+)$/m);
+  const condition = stepBlock(id).match(/^ +if: (.+)$/m);
   expect(condition, `if: of ${id}`).not.toBeNull();
   return condition?.[1] ?? "";
 }
@@ -38,16 +40,14 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** Runs the "Read the production URL" step as Actions runs a step with no `shell:` (bash -e) on a built config. */
-function readProductionUrl(config: unknown) {
+/** Runs a step's script as Actions runs a step with no `shell:` (bash -e), with only PATH and GITHUB_OUTPUT set. */
+function runStep(id: string) {
   const dir = mkdtempSync(join(tmpdir(), "deploy-workflow-"));
   dirs.push(dir);
-  mkdirSync(join(dir, "dist/server"), { recursive: true });
-  writeFileSync(join(dir, "dist/server/wrangler.json"), JSON.stringify(config));
   const output = join(dir, "github-output");
   writeFileSync(output, "");
   const script = join(dir, "step.sh");
-  writeFileSync(script, stepScript("production-url"));
+  writeFileSync(script, stepScript(id));
   const result = spawnSync("bash", ["-e", script], {
     cwd: dir,
     encoding: "utf8",
@@ -56,22 +56,49 @@ function readProductionUrl(config: unknown) {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr, output: readFileSync(output, "utf8") };
 }
 
-describe("deploy.yml: Read the production URL", () => {
-  it("takes the Custom Domain of an object route", () => {
-    const result = readProductionUrl({ routes: [{ pattern: "status.example.com", custom_domain: true }] });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.output).toBe("url=https://status.example.com\n");
+describe("deploy.yml: the smoke-test URL", () => {
+  it("is the environment's DEPLOY_URL and nothing else", () => {
+    // The public hostnames sit behind the zone's protection, which can answer
+    // GitHub's runners 403 while the Worker is healthy: neither production's
+    // Custom Domain nor the preview URL wrangler prints is a fallback.
+    const assignments = [...DEPLOY.matchAll(/^ +DEPLOY_URL: (.+)$/gm)].map((match) => match[1]);
+    expect(assignments.length).toBeGreaterThanOrEqual(2);
+    for (const value of assignments) expect(value).toMatch(/^\$\{\{ vars\.DEPLOY_URL \}\}$/);
+    for (const fallback of [
+      "production_url",
+      "production-url",
+      "PRODUCTION_URL",
+      "PREVIEW_URL",
+      "steps.preview.outputs.url",
+      "steps.target.outputs.url",
+    ]) {
+      expect(DEPLOY).not.toContain(fallback);
+    }
   });
 
-  it.each([
-    ["a string route", { routes: ["status.example.com/*"] }],
-    ["an object route with a path", { routes: [{ pattern: "status.example.com/*", zone_name: "example.com" }] }],
-    ["no route", {}],
-  ])("only warns for %s, and leaves the build going", (_name, config) => {
-    const result = readProductionUrl(config);
+  it("is smoke-tested only when DEPLOY_URL is set, within the step's own time limit", () => {
+    expect(stepCondition("smoke-test")).toBe("vars.DEPLOY_URL != ''");
+    expect(stepBlock("smoke-test")).toMatch(/^ +timeout-minutes: \d+$/m);
+  });
+});
+
+describe("deploy.yml: No DEPLOY_URL set", () => {
+  it("runs only when DEPLOY_URL is unset", () => {
+    expect(stepCondition("no-deploy-url")).toBe("vars.DEPLOY_URL == ''");
+  });
+
+  it("warns once, says why, and leaves the job going", () => {
+    const result = runStep("no-deploy-url");
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toMatch(/^::warning::the first route in dist\/server\/wrangler\.json is not a plain host/);
-    expect(result.output).toBe("");
+    const lines = result.stdout.trimEnd().split("\n");
+    expect(lines).toHaveLength(1);
+    const [warning] = lines;
+    expect(warning).toMatch(/^::warning::/);
+    expect(warning).toContain("no DEPLOY_URL variable");
+    expect(warning).toContain("not smoke-tested");
+    expect(warning).toContain("not rolled back");
+    expect(warning).toContain("403");
+    expect(warning).toContain("CONTRIBUTING.md#deploying");
   });
 });
 
@@ -84,5 +111,11 @@ describe("deploy.yml: Roll back the failed deployment", () => {
     expect(condition).toContain("steps.smoke-test.outcome == 'failure'");
     expect(condition).toContain("steps.smoke-test.outcome == 'cancelled'");
     expect(condition).toContain("needs.build.outputs.environment == 'production'");
+  });
+
+  it("never rolls back a deploy that has no DEPLOY_URL to smoke-test", () => {
+    // Without it the smoke test is skipped by design, so a cancelled run must
+    // not read that skip as an untested deploy and roll a healthy release back.
+    expect(stepCondition("rollback")).toMatch(/^\(failure\(\) \|\| cancelled\(\)\) && vars\.DEPLOY_URL != '' && /);
   });
 });

@@ -12,11 +12,12 @@ name: Deploy
 # production deploy that does not answer its smoke test (or whose smoke test
 # is cancelled or times out) is rolled back to the previous version
 # automatically; a preview that does not answer just fails the job, as
-# production is never touched. The smoke test runs against the environment's
-# DEPLOY_URL variable when it is set, and otherwise against production's
-# Custom Domain (the first route in the built wrangler.json) or the stage
-# preview's own URL. Production is never left untested: with no URL to test,
-# its deploy fails. Run workflow deploys only main or
+# production is never touched. The smoke test asks the environment's
+# DEPLOY_URL variable and nothing else: the public hostnames sit behind the
+# zone's protection (Access, WAF or bot rules), which can answer GitHub's
+# runners 403 while the Worker is healthy. Without DEPLOY_URL the deploy is
+# neither smoke-tested nor rolled back, and the job says so in a warning.
+# Run workflow deploys only main or
 # stage; any other ref, dev included, fails at the first step. CONTRIBUTING.md#deploying has
 # the setup.
 #
@@ -73,9 +74,6 @@ jobs:
     timeout-minutes: 10
     outputs:
       environment: ${{ steps.target.outputs.environment }}
-      # https://<host> of production's first route, for the deploy job's smoke
-      # test when the environment sets no DEPLOY_URL; empty if it is not a host.
-      production_url: ${{ steps.production-url.outputs.url }}
     steps:
       - name: Pick the environment
         id: target
@@ -141,22 +139,6 @@ jobs:
         env:
           DEPLOY_TARGET: cloudflare
         run: pnpm run build
-
-      - name: Read the production URL
-        id: production-url
-        # The Custom Domain production is served on, from the built config,
-        # held to the same host pattern as the preview URL in the deploy job.
-        # Not a plain host (a route such as "host/*", in its string or object
-        # form, or none) leaves it empty, and a production deploy with no
-        # DEPLOY_URL then fails.
-        run: |
-          host_re='[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+'
-          host="$(jq -r '(.routes[0] | objects | .pattern) // empty' dist/server/wrangler.json)"
-          if [[ "$host" =~ ^$host_re$ ]]; then
-            echo "url=https://$host" >>"$GITHUB_OUTPUT"
-          else
-            echo "::warning::the first route in dist/server/wrangler.json is not a plain host (\"$host\"), so production can be smoke-tested only through a DEPLOY_URL variable"
-          fi
 
       - name: One board cache in the built Worker
         # The Worker is what gets deployed: a cache declared beside a server
@@ -243,8 +225,6 @@ jobs:
     timeout-minutes: 20
     environment:
       name: ${{ needs.build.outputs.environment }}
-      # An environment url is read before any step runs, so it cannot name the
-      # URL the target step picks; it shows DEPLOY_URL, when set.
       url: ${{ vars.DEPLOY_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -338,7 +318,6 @@ jobs:
           preview_url="$(jq -r 'select(.type == "preview") | .preview_urls[0]? // empty' "$WRANGLER_OUTPUT_FILE_PATH" 2>/dev/null | tail -n 1)" || preview_url=""
           if [[ "$preview_url" =~ ^https://$host_re/?$ ]]; then
             echo "::notice::stage preview: $preview_url"
-            echo "url=${preview_url%/}" >>"$GITHUB_OUTPUT"
           else
             echo "::warning::wrangler preview reported no preview URL, so the custom preview domain is not live yet (it is published by the first wrangler deploy on main with previews_enabled); production traffic is untouched"
           fi
@@ -347,41 +326,25 @@ jobs:
             echo "::notice::this deployment: $deployment_url"
           fi
 
-      - name: Pick the URL to smoke-test
-        id: target
-        # DEPLOY_URL when this environment sets it; otherwise production's
-        # Custom Domain (from the build job) or the stage preview's own URL.
-        # Production is never left untested: with no URL, this step fails.
-        env:
-          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
-          ENVIRONMENT: ${{ needs.build.outputs.environment }}
-          PRODUCTION_URL: ${{ needs.build.outputs.production_url }}
-          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+      - name: No DEPLOY_URL set
+        id: no-deploy-url
+        # DEPLOY_URL is the only address the smoke test asks. Production's
+        # Custom Domain and the preview URL wrangler prints are not used in
+        # its place: the zone's protection in front of them (Access, WAF or
+        # bot rules) can answer GitHub's runners 403 while the Worker is
+        # healthy, which would fail the job and roll back a good release.
+        if: vars.DEPLOY_URL == ''
         run: |
-          if [ -n "$DEPLOY_URL" ]; then
-            url="$DEPLOY_URL"
-          elif [ "$ENVIRONMENT" = production ]; then
-            url="$PRODUCTION_URL"
-          else
-            url="$PREVIEW_URL"
-          fi
-          if [ -z "$url" ]; then
-            if [ "$ENVIRONMENT" = production ]; then
-              echo "::error::no URL to smoke-test production: this environment has no DEPLOY_URL variable and the built config names no Custom Domain. The new version is live and is neither smoke-tested nor rolled back: check it, and roll back by hand if needed (CONTRIBUTING.md#rolling-back)"
-              exit 1
-            fi
-            echo "::warning::this environment has no DEPLOY_URL variable and wrangler reported no preview URL, so the new preview is not smoke-tested (CONTRIBUTING.md#deploying)"
-          fi
-          echo "url=$url" >>"$GITHUB_OUTPUT"
+          echo "::warning::this environment has no DEPLOY_URL variable, so the new version is not smoke-tested and a failed production deploy is not rolled back. Its public hostname is not tested in its place, as the protection in front of it (Access, WAF or bot rules) may answer GitHub's runners 403; set DEPLOY_URL to an address the runners can reach (CONTRIBUTING.md#deploying)"
 
       - name: Smoke-test the deployment
-        # On stage, the URL is the stage preview's. A preview reports no
+        # On stage, DEPLOY_URL is the stage preview's URL. A preview reports no
         # version id to wait for: wrangler prints a preview id and a
         # deployment id, and nothing shows either equals the id in
         # X-Worker-Version. So there is no --expect-version there, and the
         # checks may be answered by the previous deployment for a moment.
         id: smoke-test
-        if: steps.target.outputs.url != ''
+        if: vars.DEPLOY_URL != ''
         # Its own limit, inside the job's: a smoke test that hangs fails here,
         # with time left for the rollback below.
         timeout-minutes: 10
@@ -398,7 +361,7 @@ jobs:
         # A cold isolate collects sources on its first request, so allow
         # time for vendor responses and retries.
         env:
-          DEPLOY_URL: ${{ steps.target.outputs.url }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
           VERSION_ID: ${{ steps.deploy.outputs.version_id }}
         run: |
           expect=()
@@ -420,8 +383,9 @@ jobs:
         # before it passed, or a run cancelled between the deploy and the
         # smoke test (which then never starts, so it reads skipped): a build
         # or auth failure earlier leaves nothing new deployed to roll back
-        # from. Production only: a preview has no traffic to roll back.
-        if: (failure() || cancelled()) && needs.build.outputs.environment == 'production' && steps.deploy.outputs.version_id != '' && (steps.smoke-test.outcome == 'failure' || steps.smoke-test.outcome == 'cancelled' || (cancelled() && steps.smoke-test.outcome == 'skipped'))
+        # from. Production only: a preview has no traffic to roll back. Never
+        # without DEPLOY_URL: its smoke test is skipped by design, not cut short.
+        if: (failure() || cancelled()) && vars.DEPLOY_URL != '' && needs.build.outputs.environment == 'production' && steps.deploy.outputs.version_id != '' && (steps.smoke-test.outcome == 'failure' || steps.smoke-test.outcome == 'cancelled' || (cancelled() && steps.smoke-test.outcome == 'skipped'))
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -441,10 +405,9 @@ jobs:
         # answering: wait until /healthz stops naming the failed version. The
         # version rolled back to may predate X-Worker-Version and send none,
         # which counts as not the failed one.
-        # A run cancelled before it picked the URL has none to ask.
-        if: (failure() || cancelled()) && steps.rollback.outputs.rolled_back == 'true' && steps.target.outputs.url != ''
+        if: (failure() || cancelled()) && steps.rollback.outputs.rolled_back == 'true'
         env:
-          DEPLOY_URL: ${{ steps.target.outputs.url }}
+          DEPLOY_URL: ${{ vars.DEPLOY_URL }}
           FAILED_VERSION: ${{ steps.deploy.outputs.version_id }}
         run: |
           # Without a trailing slash, as smoke.sh takes it: "https://host/"
