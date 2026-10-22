@@ -346,7 +346,7 @@ describe("parseRssItems field scanning", () => {
     const [item] = parseRssItems(
       "<ITEM><Title>One</TITLE><DESCRIPTION>Two</Description><pubdate>d</PUBDATE><LINK> l </link></ITEM>",
     );
-    assert.deepEqual(item, { title: "One", description: "Two", pubDate: "d", link: "l" });
+    assert.deepEqual(item, { title: "One", description: "Two", pubDate: "d", link: "l", guid: undefined });
     const [nested] = parseRssItems("<item><title>a<title>b</title></item>");
     assert.equal(nested.title, "a<title>b");
     const [open] = parseRssItems("<item><title>never closed<link>https://x</link></item>");
@@ -370,26 +370,26 @@ describe("parseRssItems field scanning", () => {
 
   it("keeps the first complete field pair and the original item delimiters", () => {
     assert.deepEqual(parseRssItems("<ITEM\t><TITLE> first </TITLE><title>second</title><link>&amp;</link></ITEM>"), [
-      { title: "first", description: "", pubDate: undefined, link: "&" },
+      { title: "first", description: "", pubDate: undefined, link: "&", guid: undefined },
     ]);
     assert.deepEqual(parseRssItems("<items><title>ignored</title></items><item><title>kept</title></item>"), [
-      { title: "kept", description: "", pubDate: undefined, link: undefined },
+      { title: "kept", description: "", pubDate: undefined, link: undefined, guid: undefined },
     ]);
     assert.deepEqual(parseRssItems("İ<item><title>İssue</title><description>İ</description></item>"), [
-      { title: "İssue", description: "İ", pubDate: undefined, link: undefined },
+      { title: "İssue", description: "İ", pubDate: undefined, link: undefined, guid: undefined },
     ]);
   });
 
   it("leaves a field empty after repeated unclosed openers while reading the next field", () => {
     assert.deepEqual(parseRssItems(`<item>${"<title>".repeat(100)}<description>Working</description></item>`), [
-      { title: "", description: "Working", pubDate: undefined, link: undefined },
+      { title: "", description: "Working", pubDate: undefined, link: undefined, guid: undefined },
     ]);
     assert.deepEqual(parseRssItems("<item><title>unclosed<item><title>second</title></item>"), [
-      { title: "", description: "", pubDate: undefined, link: undefined },
-      { title: "second", description: "", pubDate: undefined, link: undefined },
+      { title: "", description: "", pubDate: undefined, link: undefined, guid: undefined },
+      { title: "second", description: "", pubDate: undefined, link: undefined, guid: undefined },
     ]);
     assert.deepEqual(parseRssItems(`<item><title>Okay</title>${"<description><pubDate><link>".repeat(20)}</item>`), [
-      { title: "Okay", description: "", pubDate: undefined, link: undefined },
+      { title: "Okay", description: "", pubDate: undefined, link: undefined, guid: undefined },
     ]);
   });
 });

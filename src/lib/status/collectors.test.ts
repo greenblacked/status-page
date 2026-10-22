@@ -1425,16 +1425,42 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(grok.meta).toBeUndefined();
     });
 
-    it("Grok feed.xml: a feed with no RSS items (an Atom feed) is unknown with a parser failure", async () => {
+    it("Grok feed.xml: an Atom feed is read entry by entry, like an RSS one", async () => {
       stubFetch({
         [URLS.grok]: text(
           '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>xAI Status</title>' +
-            "<entry><title>Elevated errors</title></entry></feed>",
+            '<entry><id>tag:status.x.ai,2026:INC1</id><title type="html">[API] Elevated errors</title>' +
+            '<link rel="alternate" href="https://status.x.ai/incidents/INC1"/>' +
+            "<updated>2026-09-20T11:30:00+02:00</updated>" +
+            '<summary type="html">&lt;h3&gt;Status: ONGOING&lt;/h3&gt;&lt;p&gt;Severity: degraded&lt;/p&gt;</summary>' +
+            "</entry></feed>",
+        ),
+      });
+      const grok = await collect("grok");
+      expect(grok.failure).toBeUndefined();
+      expect(grok.health).toBe("degraded");
+      expect(grok.incidents).toMatchObject([
+        {
+          id: "https://status.x.ai/incidents/INC1",
+          title: "[API] Elevated errors",
+          health: "degraded",
+          startedAt: "2026-09-20T09:30:00.000Z",
+        },
+      ]);
+    });
+
+    it("Grok feed.xml: a feed with neither RSS items nor Atom entries is unknown with a parser failure", async () => {
+      stubFetch({
+        [URLS.grok]: text(
+          '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>xAI Status</title></feed>',
         ),
       });
       const grok = await collect("grok");
       expect(grok.health).toBe("unknown");
-      expect(grok.failure).toEqual({ kind: "parser", message: "Grok feed returned no readable items." });
+      expect(grok.failure).toEqual({
+        kind: "parser",
+        message: "Grok feed returned no readable items.",
+      });
       expect(grok.summary).toBe("Grok feed returned no readable items.");
       expect(grok.incidents).toEqual([]);
     });
@@ -1483,6 +1509,35 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       const grok = await collect("grok");
       expect(grok.failure).toBeUndefined();
       expect(grok.health).toBe(health);
+    });
+
+    // status.x.ai items with no link: the guid names an item when the feed gives one, else its title and date do.
+    const grokFeed = (items: string[]) => text(`<rss version="2.0"><channel>${items.join("")}</channel></rss>`);
+    const grokUnlinked = (title: string, guid?: string) =>
+      `<item><title>${title}</title>${guid ? `<guid isPermaLink="false">${guid}</guid>` : ""}` +
+      "<description><![CDATA[<h3>Status: ONGOING</h3><p>Severity: outage</p>]]></description>" +
+      "<pubDate>Sun, 20 Sep 2026 11:30:00 GMT</pubDate></item>";
+
+    it("Grok: an item's id does not move when an earlier item disappears", async () => {
+      const first = grokUnlinked("[API] Requests failing");
+      const second = grokUnlinked("[Web] Slow pages", "INC-2");
+      const third = grokUnlinked("[Voice] Calls drop");
+      stubFetch({ [URLS.grok]: grokFeed([first, second, third]) });
+      const before = (await collect("grok")).incidents.map((incident) => incident.id);
+      stubFetch({ [URLS.grok]: grokFeed([second, third]) });
+      const after = (await collect("grok")).incidents.map((incident) => incident.id);
+      expect(before).toHaveLength(3);
+      expect(after).toEqual(before.slice(1));
+      expect(before).toContain("INC-2");
+      expect(before.filter((id) => id.startsWith("grok-"))).toHaveLength(2);
+    });
+
+    it("Grok: two identical unlinked items still get distinct ids", async () => {
+      const item = grokUnlinked("[API] Requests failing");
+      stubFetch({ [URLS.grok]: grokFeed([item, item]) });
+      const ids = (await collect("grok")).incidents.map((incident) => incident.id);
+      expect(ids).toHaveLength(2);
+      expect(new Set(ids).size).toBe(2);
     });
 
     it("AWS: open events none of which has a readable date are a parser failure, not an all-clear", async () => {
@@ -2082,6 +2137,29 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(azure.failure).toBeUndefined();
       expect(azure.health).toBe("degraded");
       expect(azure.incidents.map((incident) => incident.health)).toEqual(["degraded"]);
+    });
+
+    it("Azure feed.xml: an unlinked item's id does not move when an earlier item disappears", async () => {
+      const item = (title: string, guid = "") =>
+        `<item><title>${title}</title>${guid ? `<guid>${guid}</guid>` : ""}` +
+        "<pubDate>Sun, 20 Sep 2026 10:20:00 GMT</pubDate></item>";
+      const feed = (items: string[]) =>
+        text(
+          `<?xml version="1.0"?><rss version="2.0"><channel><title>Azure Status</title>${items.join("")}</channel></rss>`,
+        );
+      const items = [
+        item("Virtual Machines - UK South - Outage"),
+        item("Azure SQL - West Europe - Degraded", "sql-1"),
+        item("Storage - East US - Outage"),
+      ];
+      stubFetch({ [URLS.azure]: feed(items) });
+      const before = (await collect("azure")).incidents.map((incident) => incident.id).sort();
+      stubFetch({ [URLS.azure]: feed(items.slice(1)) });
+      const after = (await collect("azure")).incidents.map((incident) => incident.id).sort();
+      expect(before).toHaveLength(3);
+      expect(after).toHaveLength(2);
+      expect(before).toEqual(expect.arrayContaining(after));
+      expect(after).toContain("sql-1");
     });
 
     it("Azure feed.xml: a channel with no items is operational, not a failure", async () => {

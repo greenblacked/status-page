@@ -11,7 +11,7 @@ import {
   parseMikrotikNewest,
   splitAppleBuild,
 } from "./changelog.ts";
-import { parseFeedDate, parseRssItems, stripHtml } from "./feed-xml.ts";
+import { type FeedItem, parseFeedDate, parseRssItems, stripHtml } from "./feed-xml.ts";
 import { fingerprint } from "./fingerprint.ts";
 import {
   googleImpactInfo,
@@ -88,6 +88,23 @@ function requireDatedOpenItems<T>(open: readonly T[], vendor: string, dateOf: (i
   if (open.length > 0 && !open.some((item) => dateOf(item) !== undefined)) {
     throw new PayloadError(`${vendor} feed items have no readable date.`);
   }
+}
+
+/**
+ * Ids for a feed's items that stay put from one sweep to the next: the item's
+ * link, else its guid, else `<prefix>-` and a fingerprint of its title and
+ * date. Never its position, which moves whenever an earlier item leaves the
+ * feed. A count is appended only to tell exact duplicates apart.
+ */
+function feedItemIds(items: readonly FeedItem[], prefix: string): string[] {
+  const used = new Set<string>();
+  return items.map((item) => {
+    const id = item.link || item.guid || `${prefix}-${fingerprint(`${item.title}|${item.pubDate ?? ""}`)}`;
+    let unique = id;
+    for (let count = 2; used.has(unique); count += 1) unique = `${id}-${count}`;
+    used.add(unique);
+    return unique;
+  });
 }
 
 /** A feed date (see parseFeedDate) as an ISO string, or undefined when it has none. */
@@ -1434,9 +1451,10 @@ async function collectGrok(): Promise<ServiceSnapshot> {
       fetchJson<unknown>("https://status.x.ai/v2/components.json", { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
     ]);
     const items = parseRssItems(value.body);
-    // parseRssItems only understands RSS 2.0 <item>. If x.ai moves to Atom
-    // the parse yields nothing, and reporting that as "operational" would be
-    // a confident all-clear built on no data. Unknown is the honest answer.
+    // parseRssItems reads RSS 2.0 items and Atom entries. If x.ai moves to
+    // anything else the parse yields nothing, and reporting that as
+    // "operational" would be a confident all-clear built on no data. Unknown
+    // is the honest answer.
     if (items.length === 0) throw new PayloadError("Grok feed returned no readable items.");
     const now = Date.now();
     requireDatedOpenItems(
@@ -1456,9 +1474,10 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     );
     // Sorted worst first before the first 8 are kept, so the cut never drops
     // the most urgent item.
+    const ids = feedItemIds(active, "grok");
     const { incidents, problems, incidentCount } = listIncidents(
       active.map((item, index) => ({
-        id: item.link ?? `${item.title}-${index}`,
+        id: ids[index],
         title: item.title,
         health: grokItemHealth(item.description),
         startedAt: feedIso(item.pubDate),
@@ -1730,9 +1749,10 @@ async function collectAzure(): Promise<ServiceSnapshot> {
       "operational",
     );
     const { sourceUrl } = CATALOG_BY_ID.azure;
+    const ids = feedItemIds(active, "azure");
     const { incidents, problems, incidentCount } = listIncidents(
       active.map((item, index) => ({
-        id: item.link || `azure-${fingerprint(`${item.title}|${item.pubDate ?? ""}|${index}`)}`,
+        id: ids[index],
         title: item.title || "Azure incident",
         health: azureItemHealth(item.title),
         startedAt: feedIso(item.pubDate),

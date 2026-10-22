@@ -196,47 +196,105 @@ export const MAX_RSS_ITEMS = 200;
  */
 export const MAX_RSS_SCANNED = 5000;
 
-const ITEM_CLOSE = /<\/item>/i;
+const ITEM_CLOSE = /<\/item\s*>/i;
+const ENTRY_CLOSE = /<\/entry\s*>/i;
+// Whether a feed has any RSS `<item>` or Atom `<entry>` at all.
+const HAS_ITEM = /<item[\s>]/i;
+const HAS_ENTRY = /<entry[\s>]/i;
 
-const FIELD_TAGS = new Map<string, [RegExp, RegExp]>();
+const FIELD_TAGS = new Map<string, { open: RegExp; close: RegExp }>();
+// Most characters of attributes an opening tag may carry and still be read.
+// The bound keeps each opener's cost fixed, so a field search stays linear.
+const MAX_ATTRIBUTE_CHARS = 512;
 
-// The text between the first `<tag>` and the first `</tag>` after it, or
-// undefined. Two literal searches, so a field is read in one pass over its
-// item whatever the item holds; `<tag>([\s\S]*?)</tag>` rescanned the whole
-// item from every repeated, unclosed `<tag>`.
+// The text between the first `<tag>` that is not self-closing (attributes
+// allowed, as in `<title type="html">`) and the first `</tag>` after it
+// (`</tag >` too), or undefined. Two searches from an index, so a field is
+// read in one pass over its item whatever the item holds;
+// `<tag>([\s\S]*?)</tag>` rescanned the whole item from every repeated,
+// unclosed `<tag>`. A longer name (`<titles>`) is not the tag.
 function xmlField(chunk: string, tag: string): string | undefined {
   let tags = FIELD_TAGS.get(tag);
   if (!tags) {
-    tags = [new RegExp(`<${tag}>`, "i"), new RegExp(`</${tag}>`, "i")];
+    tags = {
+      open: new RegExp(`<${tag}(?:\\s[^>]{0,${MAX_ATTRIBUTE_CHARS}})?>`, "gi"),
+      close: new RegExp(`</${tag}\\s*>`, "gi"),
+    };
     FIELD_TAGS.set(tag, tags);
   }
-  const open = chunk.search(tags[0]);
-  if (open === -1) return undefined;
-  const from = open + tag.length + 2;
-  const close = chunk.slice(from).search(tags[1]);
-  return close === -1 ? undefined : chunk.slice(from, from + close);
+  tags.open.lastIndex = 0;
+  for (let open = tags.open.exec(chunk); open; open = tags.open.exec(chunk)) {
+    // A self-closing tag has no text; a later one of the same name may.
+    if (open[0].endsWith("/>")) continue;
+    const from = open.index + open[0].length;
+    tags.close.lastIndex = from;
+    const close = tags.close.exec(chunk);
+    return close ? chunk.slice(from, close.index) : undefined;
+  }
+  return undefined;
 }
 
-export function parseRssItems(
-  xml: string,
-): Array<{ title: string; description: string; pubDate?: string; link?: string }> {
+const LINK_TAG = new RegExp(`<link(?:\\s[^>]{0,${MAX_ATTRIBUTE_CHARS}})?>`, "gi");
+const HREF_ATTRIBUTE = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+const REL_ATTRIBUTE = /\brel\s*=\s*(?:"([^"]*)"|'([^']*)')/i;
+// Most `<link>` tags looked at in one entry; a real one has two or three.
+const MAX_LINK_TAGS = 20;
+
+// An Atom entry's page: the href of its first `rel="alternate"` link (a link
+// with no rel is one), else of its first link; self, edit and enclosure
+// links are not the page, but are better than none.
+function atomLink(chunk: string): string | undefined {
+  let first: string | undefined;
+  LINK_TAG.lastIndex = 0;
+  for (let seen = 0; seen < MAX_LINK_TAGS; seen += 1) {
+    const tag = LINK_TAG.exec(chunk)?.[0];
+    if (tag === undefined) break;
+    const href = HREF_ATTRIBUTE.exec(tag);
+    if (!href) continue;
+    const value = decodeXmlEntities(href[1] ?? href[2] ?? "").trim();
+    const rel = REL_ATTRIBUTE.exec(tag);
+    if ((rel?.[1] ?? rel?.[2] ?? "alternate").trim().toLowerCase() === "alternate") return value;
+    first ??= value;
+  }
+  return first;
+}
+
+// A field's text, decoded and trimmed, or undefined when the item has no such field.
+function decodedField(chunk: string, tag: string): string | undefined {
+  const raw = xmlField(chunk, tag);
+  return raw === undefined ? undefined : decodeXmlField(raw).trim();
+}
+
+/** One item of an RSS feed, or one entry of an Atom feed, as text. */
+export type FeedItem = { title: string; description: string; pubDate?: string; link?: string; guid?: string };
+
+/**
+ * The items of an RSS 2.0 feed, or the entries of an Atom feed (one with no
+ * `<item>` but some `<entry>`), read the same way. An Atom entry's summary
+ * (else its content) is the description, its updated (else published) date
+ * the pubDate, its alternate link the link and its id the guid.
+ */
+export function parseRssItems(xml: string): FeedItem[] {
   // Each item runs from its `<item>` to the next one, cut at its own
   // `</item>`; every search below stays inside that slice, so the whole feed
   // is read once. Only the date is read from all of the items scanned; the
   // newest MAX_RSS_ITEMS are then read in full, before anything downstream
   // maps or sorts them. An item with no readable date ranks last, and ties
   // keep the feed's order. The items kept stay in the feed's order.
+  const atom = !HAS_ITEM.test(xml) && HAS_ENTRY.test(xml);
+  const itemOpen = atom ? /<entry[\s>]/gi : /<item[\s>]/gi;
+  const itemClose = atom ? ENTRY_CLOSE : ITEM_CLOSE;
+  const dateOf = (chunk: string) =>
+    (atom ? (xmlField(chunk, "updated") ?? xmlField(chunk, "published")) : xmlField(chunk, "pubDate"))?.trim();
   const scanned: Array<{ chunk: string; at: number; index: number }> = [];
-  const itemOpen = /<item[\s>]/gi;
   let open = itemOpen.exec(xml);
   while (open && scanned.length < MAX_RSS_SCANNED) {
     const bodyStart = open.index + open[0].length;
     const next = itemOpen.exec(xml);
     const block = xml.slice(bodyStart, next ? next.index : xml.length);
-    const closed = block.search(ITEM_CLOSE);
+    const closed = block.search(itemClose);
     const chunk = closed === -1 ? block : block.slice(0, closed);
-    const date = parseFeedDate(xmlField(chunk, "pubDate"));
-    scanned.push({ chunk, at: date ?? Number.NEGATIVE_INFINITY, index: scanned.length });
+    scanned.push({ chunk, at: parseFeedDate(dateOf(chunk)) ?? Number.NEGATIVE_INFINITY, index: scanned.length });
     open = next;
   }
   if (open) throw new PayloadError(`RSS feed has more than ${MAX_RSS_SCANNED} items.`);
@@ -248,11 +306,14 @@ export function parseRssItems(
           .sort((a, b) => a.index - b.index)
       : scanned;
   return kept.map(({ chunk }) => {
-    const title = decodeXmlField(xmlField(chunk, "title") ?? "").trim();
-    const description = decodeXmlField(xmlField(chunk, "description") ?? "").trim();
-    const pubDate = xmlField(chunk, "pubDate")?.trim();
-    const rawLink = xmlField(chunk, "link");
-    const link = rawLink !== undefined ? decodeXmlField(rawLink).trim() : undefined;
-    return { title, description, pubDate, link };
+    const title = decodedField(chunk, "title") ?? "";
+    const description =
+      (atom
+        ? (decodedField(chunk, "summary") ?? decodedField(chunk, "content"))
+        : decodedField(chunk, "description")) ?? "";
+    const pubDate = dateOf(chunk);
+    const link = (atom ? atomLink(chunk) : undefined) ?? decodedField(chunk, "link");
+    const guid = decodedField(chunk, atom ? "id" : "guid");
+    return { title, description, pubDate, link, guid };
   });
 }

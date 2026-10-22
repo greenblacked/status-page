@@ -65,7 +65,7 @@ describe("bounded vendor payload parsing", () => {
       import assert from "node:assert/strict";
       import { parseRssItems } from ${JSON.stringify(moduleUrl)};
       const rows = parseRssItems("<item>" + "<title>".repeat(80_000) + "<description>Working</description></item>");
-      assert.deepEqual(rows, [{ title: "", description: "Working", pubDate: undefined, link: undefined }]);
+      assert.deepEqual(rows, [{ title: "", description: "Working", pubDate: undefined, link: undefined, guid: undefined }]);
     `);
   }, 12_000);
 

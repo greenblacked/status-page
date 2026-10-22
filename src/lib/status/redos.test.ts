@@ -99,6 +99,35 @@ describe("parsers stay linear on crafted vendor input", () => {
     expect(items).toHaveLength(1);
   });
 
+  it("parseRssItems: openers with long or unclosed attributes, self-closing and spaced closing tags", () => {
+    for (const xml of [
+      `<item>${'<title type="html">'.repeat(SIZE / 19)}`,
+      `<item>${"<title ".repeat(SIZE / 7)}`,
+      `<item><title ${"a".repeat(SIZE)}`,
+      `<item>${`<title ${"a".repeat(600)}>`.repeat(SIZE / 608)}`,
+      `<item>${"<title/>".repeat(SIZE / 8)}`,
+      `<item>${"<title />".repeat(SIZE / 9)}`,
+      `<item><title>x${"</title ".repeat(SIZE / 8)}`,
+      `<item><title>x</title${" ".repeat(SIZE)}`,
+    ]) {
+      let items: ReturnType<typeof parseRssItems> = [];
+      expect(elapsed(() => (items = parseRssItems(xml)))).toBeLessThan(BUDGET_MS);
+      expect(items).toHaveLength(1);
+    }
+  });
+
+  it("parseRssItems: Atom entries of repeated links, unclosed attributes and unclosed entries", () => {
+    for (const xml of [
+      `<feed><entry>${'<link rel="self" href="https://example.com/"/>'.repeat(SIZE / 46)}`,
+      `<feed><entry>${"<link href='".repeat(SIZE / 12)}`,
+      `<feed><entry><link ${'href="'.repeat(SIZE / 6)}`,
+      `<feed>${"<entry>".repeat(SIZE / 7)}`,
+      `<feed>${"<entry><updated>".repeat(SIZE / 16)}`,
+    ]) {
+      expect(elapsed(() => parseRssItems(xml))).toBeLessThan(BUDGET_MS);
+    }
+  });
+
   it("parseRssItems: a feed of unclosed <item> openers and of empty items", () => {
     expect(elapsed(() => parseRssItems("<item>".repeat(SIZE / 6)))).toBeLessThan(BUDGET_MS);
     expect(elapsed(() => parseRssItems("<item></item>".repeat(SIZE / 13)))).toBeLessThan(BUDGET_MS);
