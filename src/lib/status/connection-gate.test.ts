@@ -56,6 +56,39 @@ describe("withConnectionGate", () => {
     });
   });
 
+  it("lets a low request asked for in the same turn as high ones wait for them, even with a slot free", async () => {
+    await withConnectionGate({ limit: 2 }, async () => {
+      const gate = currentGate()!;
+      const granted: string[] = [];
+      const releases: Array<() => void> = [];
+      const ask = (name: string, priority: "high" | "low") =>
+        void gate.acquire(priority).then((release) => {
+          granted.push(name);
+          releases.push(release);
+        });
+      // The side read is asked for first, as a collector that starts it beside its main read does.
+      ask("side", "low");
+      ask("main 1", "high");
+      ask("main 2", "high");
+      ask("main 3", "high");
+      await settle();
+      expect(granted).toEqual(["main 1", "main 2"]);
+      releases[0]!();
+      await settle();
+      expect(granted).toEqual(["main 1", "main 2", "main 3"]);
+      releases[1]!();
+      await settle();
+      expect(granted).toEqual(["main 1", "main 2", "main 3", "side"]);
+      for (const release of releases) release();
+    });
+    await withConnectionGate({ limit: 2 }, async () => {
+      // Alone, it gets a free slot once the turn is over.
+      const release = await currentGate()!.acquire("low");
+      expect(currentGate()!.active).toBe(1);
+      release();
+    });
+  });
+
   it("frees a slot only once, however often its release is called", async () => {
     await withConnectionGate({ limit: 2 }, async () => {
       const gate = currentGate()!;

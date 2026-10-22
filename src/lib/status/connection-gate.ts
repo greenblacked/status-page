@@ -55,9 +55,11 @@ export type Gate = {
 /**
  * A counting semaphore over one sweep's vendor requests, with a deadline and
  * a subrequest count. Waiters are served first come, first served within a
- * priority, and every high-priority waiter before any low one. A slot passes
- * straight from the request that releases it to the next waiter, so a request
- * arriving in between cannot overtake the queue.
+ * priority, and every high-priority waiter before any low one; a low one
+ * waits at least until the end of the turn it asked in, so the high requests
+ * asked for in that turn go first. A slot passes straight from the request
+ * that releases it to the next waiter, so a request arriving in between
+ * cannot overtake the queue.
  */
 function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests }: GateOptions): Gate {
   const slots = Math.max(1, limit);
@@ -66,6 +68,17 @@ function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests 
   const queues: Record<Priority, Array<(release: () => void) => void>> = { high: [], low: [] };
   let active = 0;
   let issued = 0;
+
+  // Hands free slots to waiters, high before low. A low waiter is only ever
+  // served from here or by a release, never the moment it asks.
+  function pump(): void {
+    while (active < slots) {
+      const next = queues.high.shift() ?? queues.low.shift();
+      if (!next) return;
+      active += 1;
+      next(releaser());
+    }
+  }
 
   function releaser(): () => void {
     let released = false;
@@ -91,11 +104,17 @@ function createGate({ limit = defaultConnectionLimit(), deadlineMs, maxRequests 
       // Counted now, not once it has a slot: every sweep request is asked for
       // before the first answer lands, so a retry's budget check sees them all.
       issued += 1;
-      if (active < slots) {
+      if (priority === "high" && active < slots) {
         active += 1;
         return Promise.resolve(releaser());
       }
-      return new Promise((resolve) => queues[priority].push(resolve));
+      return new Promise((resolve) => {
+        queues[priority].push(resolve);
+        // A side read waits for the end of this turn even with a slot free: the
+        // reads that decide a card are asked for in the same turn (a sweep
+        // starts every collector at once), and they go first.
+        if (priority === "low") queueMicrotask(pump);
+      });
     },
     remainingMs: () => deadlineAt - Date.now(),
     noteRequest() {
