@@ -28,7 +28,7 @@ import { vendorUrl } from "./vendor-url.ts";
 // the health sweep has settled (never beside it, so they cannot take a
 // connection slot from a health request) and never waited for (a board takes
 // the feeds the cache already holds when its sweep ends, and a feed read
-// after it joins the next board), a feed that cannot be read is logged
+// after it is put on that board in place), a feed that cannot be read is logged
 // (`release_feed_failed`), reported by `pnpm run source-health`, and leaves the
 // card exactly as it was.
 //
@@ -721,7 +721,7 @@ export function clearReleaseFeedCache(): void {
 export type ReleaseFeedReading = {
   /** The feeds in hand at this moment: fresh in the cache, or already read. A read still running is not in it. */
   ready: () => Map<ServiceId, ReleaseFeed>;
-  /** Settles once every read has finished and been cached for the next board. It never rejects. */
+  /** Settles once every read has finished and been cached, so the board can be patched with it. It never rejects. */
   settled: Promise<void>;
 };
 
@@ -730,8 +730,8 @@ export type ReleaseFeedReading = {
  * a feed fresh in the cache is ready now, any other is read (in parallel, each
  * on its own short deadline) and joins `ready()` when it arrives. The caller
  * decides how long to wait, so a slow vendor can never hold a board back; a
- * feed that misses the board is cached when it arrives and is on the next
- * one. A feed that failed is absent and not asked again for
+ * feed that misses the board is cached when it arrives and put on that board
+ * in place (collect-board.ts). A feed that failed is absent and not asked again for
  * RELEASE_FEED_RETRY_MS.
  *
  * Call it only once the health sweep has settled (collect-board.ts does): it

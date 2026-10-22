@@ -184,6 +184,17 @@ describe("MikroTik changelog notes", () => {
       expect(asked.sort()).toEqual([changelog("6.49.19"), changelog("7.18.4"), changelog("7.21beta3")].sort());
     });
 
+    it("resolves to how many versions it read notes for, so a board knows whether any arrived", async () => {
+      route(changelogs());
+      // Five versions asked for, two changelogs there to parse.
+      await expect(startMikrotikNotes([card()])).resolves.toBe(2);
+      // Nothing due: nothing read.
+      await expect(startMikrotikNotes([card()])).resolves.toBe(0);
+      // Past the retry window the three failed ones are asked again, and fail again.
+      vi.setSystemTime(Date.now() + RELEASE_FEED_RETRY_MS + 1);
+      await expect(startMikrotikNotes([card()])).resolves.toBe(0);
+    });
+
     it("a failed changelog is cached for the retry period and asked again after it", async () => {
       let down = true;
       const { asked } = route({
@@ -324,7 +335,7 @@ describe("MikroTik changelog notes", () => {
 
     it("never throws or rejects, whatever the changelog host does", async () => {
       vi.stubGlobal("fetch", () => Promise.reject(new TypeError("fetch failed")));
-      await expect(startMikrotikNotes([card()])).resolves.toBeUndefined();
+      await expect(startMikrotikNotes([card()])).resolves.toBe(0);
       expect(withMikrotikNotes([card()])[0].components.every((c) => c.release?.notes === undefined)).toBe(true);
     });
   });

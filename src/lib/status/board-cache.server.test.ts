@@ -162,6 +162,21 @@ describe("the board cache", () => {
     expect(await probe).toEqual(second);
   });
 
+  it("puts what a sweep reads after it (release lines, notes) on the cached board in place", async () => {
+    const { cache, functions } = await load();
+    const first = await cache.getStatusBoard();
+    const [{ onLate }] = collectBoard.mock.calls[0];
+
+    vi.advanceTimersByTime(10_000);
+    onLate((current: BoardSnapshot) => ({ ...current, services: [{ id: "gitlab" } as BoardSnapshot["services"][0]] }));
+
+    const patched = await functions.fetchStatusBoard();
+    expect(patched.generatedAt).toBe(first.generatedAt);
+    expect(patched.services).toEqual([{ id: "gitlab" }]);
+    expect(await cache.getStatusBoard()).toEqual(patched);
+    expect(collectBoard).toHaveBeenCalledTimes(1);
+  });
+
   it("logs one line per sweep, with why it ran", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { cache, functions } = await load();

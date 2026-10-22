@@ -352,3 +352,40 @@ describe("createTtlCache with a shared store", () => {
     await expect(cache.get()).resolves.toBe("load-1");
   });
 });
+
+describe("createTtlCache update", () => {
+  it("changes the value in hand in place, keeping when it was loaded, and shares the change", async () => {
+    const load = counter();
+    const store = { read: vi.fn(async () => undefined), write: vi.fn() };
+    const cache = createTtlCache(load, 45_000, { shared: () => store });
+    await cache.get();
+    vi.setSystemTime(10_000);
+
+    cache.update((value) => `${value} with feeds`);
+
+    expect(cache.peek()).toEqual({ at: 0, value: "load-1 with feeds" });
+    expect(store.write).toHaveBeenLastCalledWith({ at: 0, value: "load-1 with feeds" });
+    await expect(cache.get()).resolves.toBe("load-1 with feeds");
+    expect(load).toHaveBeenCalledOnce();
+    // The patch does not make the value younger: it still expires 45 s after its load.
+    vi.setSystemTime(45_000);
+    await expect(cache.get({ waitForFreshMs: 3_000 })).resolves.toBe("load-2");
+  });
+
+  it("does nothing when the patch returns the same value, or there is no value yet", async () => {
+    const store = { read: vi.fn(async () => undefined), write: vi.fn() };
+    const cache = createTtlCache(counter(), 45_000, { shared: () => store });
+    const patch = vi.fn((value: string) => value);
+
+    cache.update(patch);
+    expect(patch).not.toHaveBeenCalled();
+    expect(cache.peek()).toBeUndefined();
+
+    await cache.get();
+    store.write.mockClear();
+    cache.update(patch);
+    expect(patch).toHaveBeenCalledWith("load-1");
+    expect(store.write).not.toHaveBeenCalled();
+    expect(cache.peek()).toEqual({ at: 0, value: "load-1" });
+  });
+});

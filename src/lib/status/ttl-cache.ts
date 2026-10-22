@@ -141,10 +141,25 @@ export function createTtlCache<T>(
     });
   }
 
+  /**
+   * Changes the value in hand in place, for what arrives after its load (the
+   * release feeds and notes of a board). It keeps the entry's load time, so
+   * the value expires when it would have, and shares the change. A patch that
+   * returns the same value changes nothing; with no value yet there is nothing
+   * to patch.
+   */
+  function update(patch: (value: T) => T): void {
+    if (!cached) return;
+    const value = patch(cached.value);
+    if (value === cached.value) return;
+    cached = { at: cached.at, value };
+    writeShared(cached);
+  }
+
   /** The entry in hand, if any, without loading or reading anything. */
   function peek(): Entry<T> | undefined {
     return cached ?? undefined;
   }
 
-  return { get, peek };
+  return { get, update, peek };
 }

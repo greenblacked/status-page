@@ -15,9 +15,9 @@ import type { ReleaseNote, ServiceSnapshot } from "./types.ts";
 // flags important) for its row and its Details. They are advisory, like the release feeds
 // (release-feeds.server.ts), and follow the same rules: the MikroTik collector reads the version channels only,
 // which is all its health and versions need; the changelogs are read after the health sweep has settled
-// (collect-board.ts), in the background and never waited for, and cached for the next board. A changelog host that
-// is slow, failing or gone therefore cannot delay the sweep or change any result: the card keeps the "Latest
-// RouterOS ..." line and the versions without notes until a read succeeds.
+// (collect-board.ts), in the background and never waited for, cached, and put on the board in place once read. A
+// changelog host that is slow, failing or gone therefore cannot delay the sweep or change any result: the card keeps
+// the "Latest RouterOS ..." line and the versions without notes until a read succeeds.
 //
 // A released version's changelog does not change, so a read that parsed is kept for the isolate (at most
 // NOTES_REMEMBERED versions, oldest out first); one that failed or did not parse is left alone for
@@ -113,22 +113,29 @@ async function readNotes(version: string): Promise<MikrotikNotes | undefined> {
 /**
  * Starts reading the changelog of every version the MikroTik card lists that is not in the cache (or failed
  * long enough ago), all at once, and returns at once. The promise settles when every read has finished and been
- * cached for the next board; it never rejects. Call it only once the health sweep has settled.
+ * cached; it resolves to how many versions were read with notes (0 when nothing new arrived), so the board can be
+ * patched with them in place (collect-board.ts). It never rejects. Call it only once the health sweep has settled.
  */
-export function startMikrotikNotes(services: readonly ServiceSnapshot[]): Promise<void> {
+export function startMikrotikNotes(services: readonly ServiceSnapshot[]): Promise<number> {
   const versions = new Set(services.flatMap(versionsOf));
-  const reads: Promise<void>[] = [];
+  const reads: Promise<boolean>[] = [];
   for (const version of versions) {
     if (!isDue(version)) continue;
     reads.push(
       readNotes(version).then(
-        (read) => remember(version, read),
+        (read) => {
+          remember(version, read);
+          return read !== undefined;
+        },
         // readNotes does not throw; if it ever did, the version is simply left for a retry period.
-        () => remember(version, undefined),
+        () => {
+          remember(version, undefined);
+          return false;
+        },
       ),
     );
   }
-  return Promise.all(reads).then(() => undefined);
+  return Promise.all(reads).then((read) => read.filter(Boolean).length);
 }
 
 /**

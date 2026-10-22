@@ -26,6 +26,8 @@ import type { BoardSnapshot } from "./types";
 // an isolate whose snapshot has expired adopts a fresher one a peer wrote
 // instead of sweeping again. So only a data center with no snapshot at all
 // waits for a sweep. The Node server has no such level and keeps its own.
+// The release feeds and notes read after a sweep patch the cached snapshot in
+// place, at both levels, without making it any younger.
 const boardCache = createTtlCache(loadBoard, CACHE_TTL_MS, {
   minForceIntervalMs: MIN_FORCED_REFRESH_MS,
   onBackgroundRefresh: (promise) => findCloudflareContext()?.waitUntil(promise),
@@ -34,7 +36,9 @@ const boardCache = createTtlCache(loadBoard, CACHE_TTL_MS, {
 });
 
 async function loadBoard(trigger: LoadTrigger): Promise<BoardSnapshot> {
-  const board = await collectBoard();
+  // The release lines and notes a sweep reads after the board went out are put on the cached board in place
+  // (collect-board.ts), so they show on the next read rather than on the next sweep.
+  const board = await collectBoard({ onLate: (patch) => boardCache.update(patch) });
   console.log(
     JSON.stringify({
       event: "board_collected",
