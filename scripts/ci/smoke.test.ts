@@ -212,12 +212,22 @@ async function serveStatic(nosniff: string): Promise<string> {
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
+// Only a server that sets headers on static files is held to them: the Worker (public/_headers) and the Node server
+// do, CI's vite preview of the Node build serves public/ itself without them.
 describe("smoke.sh static file check", () => {
-  it("takes a static file with nosniff", async () => {
-    expect(await smoke(await serveStatic("nosniff"))).not.toContain("/favicon.svg:");
+  it("leaves a static file's headers alone without --require-asset-cache", async () => {
+    const output = await smoke(await serveStatic(""));
+    expect(output).not.toContain("/favicon.svg:");
+    expect(output).not.toContain("X-Content-Type-Options");
   }, 30_000);
 
-  it("fails a static file without it", async () => {
-    expect(await smoke(await serveStatic(""))).toContain('/favicon.svg: X-Content-Type-Options "", expected nosniff');
+  it("takes a static file with nosniff under --require-asset-cache", async () => {
+    expect(await smoke(await serveStatic("nosniff"), "--require-asset-cache")).not.toContain("/favicon.svg:");
+  }, 30_000);
+
+  it("fails a static file without it under --require-asset-cache", async () => {
+    expect(await smoke(await serveStatic(""), "--require-asset-cache")).toContain(
+      '/favicon.svg: X-Content-Type-Options "", expected nosniff',
+    );
   }, 30_000);
 });

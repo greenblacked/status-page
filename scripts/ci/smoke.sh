@@ -10,10 +10,10 @@
 #
 # Checks /healthz, the page (title, footer, security headers), the JSON API
 # (22 services, an ETag that a repeat turns into 304, a CORS preflight
-# answered with 204, a POST refused with 405), the Atom feed, /metrics, a
-# static file's nosniff header and /readyz. /readyz may answer 503
-# unless --require-ready: CI and sandboxes cannot always reach the vendors,
-# and an all-Unknown board is a correct answer there, not a broken build.
+# answered with 204, a POST refused with 405), the Atom feed, /metrics and
+# /readyz. /readyz may answer 503 unless --require-ready: CI and sandboxes
+# cannot always reach the vendors, and an all-Unknown board is a correct
+# answer there, not a broken build.
 #
 # --attempts retries the whole set of checks, 10 s apart. With
 # --require-ready, /readyz then has to answer 200, checked again every 10 s
@@ -30,11 +30,14 @@
 # somewhere, and a new version that never starts answering fails instead of
 # passing on the old one.
 #
-# --require-asset-cache also fetches the page's stylesheet, takes the first
-# /assets/*.woff2 it names and requires Cache-Control: max-age=31536000 and
-# immutable on it (public/_headers). Only Cloudflare reads that file, so the
-# deploy asks for this check on the Worker (in workerd and live) and CI's Node
-# preview does not.
+# --require-asset-cache also checks the headers a static file is served with:
+# X-Content-Type-Options: nosniff on /favicon.svg, and, through the page's
+# stylesheet, Cache-Control: max-age=31536000 and immutable on the first
+# /assets/*.woff2 it names (public/_headers). Cloudflare reads that file and
+# the Node server (src/node) sets the same headers, so the deploy asks for
+# these checks on the Worker (in workerd and live) and image-smoke.sh on the
+# image. CI's Node preview does not: vite preview serves public/ and /assets/
+# itself, without them.
 #
 # Needs curl and jq. Exits 1 on any failed check, 2 on bad usage.
 set -euo pipefail
@@ -136,6 +139,18 @@ wait_for_server() {
     fi
     sleep 2
   done
+}
+
+# check_static_headers: a static file carries the security headers too (on
+# Cloudflare from public/_headers). No version check: Cloudflare serves it
+# without invoking the Worker.
+check_static_headers() {
+  get /favicon.svg
+  if [ "$status" != 200 ]; then
+    fail "/favicon.svg: $status, expected 200"
+  elif [ "$(header X-Content-Type-Options)" != nosniff ]; then
+    fail "/favicon.svg: X-Content-Type-Options \"$(header X-Content-Type-Options)\", expected nosniff"
+  fi
 }
 
 # check_asset_cache: the hashed font under /assets/ has to be cacheable for a
@@ -263,17 +278,10 @@ run_checks() {
   check_version /metrics
   [ "$status" = 200 ] || fail "/metrics: $status, expected 200"
 
-  # A static file carries the security headers too (on Cloudflare from
-  # public/_headers). No version check: Cloudflare serves it without
-  # invoking the Worker.
-  get /favicon.svg
-  if [ "$status" != 200 ]; then
-    fail "/favicon.svg: $status, expected 200"
-  elif [ "$(header X-Content-Type-Options)" != nosniff ]; then
-    fail "/favicon.svg: X-Content-Type-Options \"$(header X-Content-Type-Options)\", expected nosniff"
+  if [ "$require_asset_cache" = true ]; then
+    check_static_headers
+    check_asset_cache
   fi
-
-  if [ "$require_asset_cache" = true ]; then check_asset_cache; fi
 
   get /readyz
   check_version /readyz
@@ -318,7 +326,7 @@ until run_checks; do
   sleep 10
 done
 echo "ok  /healthz, /, /api/status.json, /api/history.json, /feed.xml, /metrics and /readyz answer on $base"
-[ "$require_asset_cache" != true ] || echo "ok  the font under /assets/ is cached for a year on $base"
+[ "$require_asset_cache" != true ] || echo "ok  /favicon.svg carries nosniff and the font under /assets/ is cached for a year on $base"
 
 if [ "$require_ready" = true ]; then
   wait_for_ready || { echo "smoke: FAILED against $base" >&2; exit 1; }
