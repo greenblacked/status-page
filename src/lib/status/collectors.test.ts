@@ -1582,6 +1582,59 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(aws.health).toBe("operational");
     });
 
+    it("Google Cloud: a null entry is skipped and the card is read from the valid rows", async () => {
+      stubFetch({ [URLS.gcp]: json([null, googleIncident({ id: "open", status_impact: "SERVICE_OUTAGE" })]) });
+      const gcp = await collect("gcp");
+      expect(gcp.failure).toBeUndefined();
+      expect(gcp.health).toBe("outage");
+      expect(gcp.incidents.map((incident) => incident.id)).toEqual(["open"]);
+    });
+
+    it("AWS: a null event is skipped, so a list of only nulls is operational", async () => {
+      stubFetch({ [URLS.aws]: bytes(utf16("[null]")) });
+      const aws = await collect("aws");
+      expect(aws.failure).toBeUndefined();
+      expect(aws.health).toBe("operational");
+      expect(aws.incidents).toEqual([]);
+    });
+
+    it("Apple: a null service is skipped and the others are read", async () => {
+      stubFetch({
+        [URLS.apple]: json({
+          services: [
+            null,
+            { serviceName: "iCloud Mail", events: [null, { eventStatus: "ongoing", statusType: "outage" }] },
+          ],
+        }),
+      });
+      const apple = await collect("apple");
+      expect(apple.failure).toBeUndefined();
+      expect(apple.health).toBe("outage");
+      expect(apple.components.map((component) => component.name)).toEqual(["iCloud Mail"]);
+    });
+
+    it("CS2 Europe: a null pop is skipped and the others are read", async () => {
+      const pops = Object.fromEntries(
+        ["fra", "hel", "lhr"].map((code) => [code, { desc: code, geo: [10, 50], relays: [{ ipv4: "1.2.3.4" }] }]),
+      );
+      stubFetch({ [URLS.cs2Sdr]: json({ success: true, pops: { ams: null, ...pops } }) });
+      const cs2 = await collect("cs2-europe");
+      expect(cs2.failure).toBeUndefined();
+      expect(cs2.health).toBe("operational");
+      expect(cs2.meta).toMatchObject({ euPops: 3, euWithRelays: 3 });
+    });
+
+    it.each([
+      ["gcp", URLS.gcp, json({ incidents: [] }), "Google Cloud payload is not a list"],
+      ["android", URLS.android, json({ incidents: [] }), "Android / Play payload is not a list"],
+      ["aws", URLS.aws, bytes(utf16('{"events":[]}')), "AWS payload is not a list"],
+    ] as const)("%s: a top level that is not a list is a parser failure", async (id, url, handler, message) => {
+      stubFetch({ [url]: handler });
+      const snapshot = await collect(id);
+      expect(snapshot.health).toBe("unknown");
+      expect(snapshot.failure).toEqual({ kind: "parser", message });
+    });
+
     it("GitHub summary.json: a degraded and a partly-out component, an active incident and upcoming maintenance", async () => {
       stubFetch({ [URLS.github]: json(JSON.parse(fixture("github/summary.json"))) });
       const github = await collect("github");

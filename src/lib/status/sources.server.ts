@@ -528,6 +528,16 @@ export function records<T extends object>(value: unknown, limit = MAX_SCANNED_RO
     : [];
 }
 
+/**
+ * A payload whose top level must be a list, as it is. Anything else (an
+ * error object, a wrapper the vendor added) is a parser failure that names
+ * the vendor, not an empty list read as an all-clear.
+ */
+function expectArray(value: unknown, label: string): unknown[] {
+  if (!Array.isArray(value)) throw new PayloadError(`${label} payload is not a list`);
+  return value;
+}
+
 const MAX_UPCOMING_MAINTENANCE = 3;
 
 // A page's own pointer to itself ("Visit www.githubstatus.com for more
@@ -714,15 +724,16 @@ async function collectGoogle(id: "gcp" | "android", origin: string): Promise<Ser
   const started = Date.now();
   try {
     const [{ value, ms }, catalogue] = await Promise.all([
-      timed(() => fetchJson<GoogleIncident[]>(`${origin}/incidents.json`)),
+      timed(() => fetchJson<unknown>(`${origin}/incidents.json`)),
       fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
     ]);
-    const parsed = googleIncidents(value, id);
+    const incidents = records<GoogleIncident>(expectArray(value, CATALOG_BY_ID[id].name));
+    const parsed = googleIncidents(incidents, id);
     const products = parseGoogleProducts(catalogue);
     const components = products.length
       ? googleComponents(
           products,
-          value.filter((incident) => !incident.end),
+          incidents.filter((incident) => !incident.end),
         )
       : parsed.components;
     return {
@@ -980,11 +991,12 @@ async function collectAws(): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const { value, ms } = await timed(() =>
-      fetchJson<AwsEvent[]>("https://health.aws.amazon.com/public/currentevents", { binary: true }),
+      fetchJson<unknown>("https://health.aws.amazon.com/public/currentevents", { binary: true }),
     );
+    const events = records<AwsEvent>(expectArray(value, "AWS"));
     const now = Date.now();
-    requireDatedOpenItems(value.filter(awsEventOpen), "AWS", (event) => awsEventAt(event) || undefined);
-    const active = value.filter((event) => awsEventActive(event, now));
+    requireDatedOpenItems(events.filter(awsEventOpen), "AWS", (event) => awsEventAt(event) || undefined);
+    const active = events.filter((event) => awsEventActive(event, now));
     let health: Health = "operational";
     const { incidents, problems, incidentCount } = listIncidents(
       active.map((event) => {
@@ -1019,12 +1031,12 @@ async function collectAws(): Promise<ServiceSnapshot> {
       summary: overallSummary(
         health,
         problems,
-        incidents[0]?.title ?? `${value.length} public Health items, none currently active.`,
+        incidents[0]?.title ?? `${events.length} public Health items, none currently active.`,
       ),
       ...rankComponents(awsComponents(active)),
       incidents,
       ...(incidentCount ? { incidentCount } : {}),
-      meta: { publicEvents: value.length, active: active.length },
+      meta: { publicEvents: events.length, active: active.length },
     };
   } catch (error) {
     return failed("aws", started, error);
@@ -1151,7 +1163,8 @@ async function collectCs2Europe(): Promise<ServiceSnapshot> {
     const ms = Math.max(sdr.ms, players?.ms ?? 0);
     const pops = sdr.value.pops ?? {};
     const europe = Object.entries(pops)
-      .filter(([code, pop]) => isEuropePop(code, pop.desc ?? "", pop.geo))
+      // A null pop (or any other non-object) is skipped, not a crash.
+      .filter(([code, pop]) => typeof pop === "object" && pop !== null && isEuropePop(code, pop.desc ?? "", pop.geo))
       .map(([code, pop]) => ({
         code,
         desc: pop.desc ?? code,
@@ -1264,8 +1277,9 @@ async function collectApple(): Promise<ServiceSnapshot> {
     const incidents: Incident[] = [];
     const components: ComponentHealth[] = [];
     const upcoming: UpcomingMaintenance[] = [];
-    for (const service of value.services ?? []) {
-      const events = service.events ?? [];
+    const appleServices = records<NonNullable<AppleStatus["services"]>[number]>(value.services);
+    for (const service of appleServices) {
+      const events = records<NonNullable<(typeof service)["events"]>[number]>(service.events);
       for (const event of events.filter(appleEventUpcoming)) {
         upcoming.push({
           id: `${service.serviceName}-${event.epochStartDate ?? event.datePosted ?? event.message}`,
@@ -1304,7 +1318,7 @@ async function collectApple(): Promise<ServiceSnapshot> {
       incidents: sorted,
       ...(incidentCount ? { incidentCount } : {}),
       ...(upcoming.length ? { upcomingMaintenance: soonest(upcoming, MAX_UPCOMING_MAINTENANCE) } : {}),
-      meta: { services: value.services?.length ?? 0 },
+      meta: { services: appleServices.length },
     };
   } catch (error) {
     return failed("apple", started, error);
