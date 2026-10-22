@@ -2017,14 +2017,50 @@ async function collectAndroidOs(): Promise<ServiceSnapshot> {
   }
 }
 
+// Every collector, in catalog order, under the id of the card it builds. Each
+// takes the sweep it runs in, for what the sweep shares.
+export const COLLECTORS: ReadonlyArray<readonly [ServiceId, (sweep: Sweep) => Promise<ServiceSnapshot>]> = [
+  ["gcp", collectGcp],
+  ["aws", collectAws],
+  ["azure", collectAzure],
+  ["cloudflare", (sweep) => collectStatuspageCard("cloudflare", sweep)],
+  ["steam", collectSteam],
+  ["cs2-europe", collectCs2Europe],
+  ["epic", (sweep) => collectStatuspageCard("epic", sweep)],
+  ["fortnite", (sweep) => collectStatuspageCard("fortnite", sweep)],
+  ["spotify", (sweep) => collectStatuspageCard("spotify", sweep)],
+  ["apple", collectApple],
+  ["android", collectAndroid],
+  ["github", (sweep) => collectStatuspageCard("github", sweep)],
+  ["gitlab", collectGitlab],
+  ["confluence", (sweep) => collectStatuspageCard("confluence", sweep)],
+  ["twitch", (sweep) => collectStatuspageCard("twitch", sweep)],
+  ["grok", collectGrok],
+  ["chatgpt", (sweep) => collectStatuspageCard("chatgpt", sweep)],
+  ["claude", (sweep) => collectStatuspageCard("claude", sweep)],
+  ["mikrotik", collectMikrotik],
+  ["apple-os", collectAppleOs],
+  ["windows", collectWindows],
+  ["android-os", collectAndroidOs],
+];
+
 // Runs one collector with its own byte meter, and logs the success line
 // that pairs with failed()'s collector_failed, so the log shows every
 // source's latency and download size per sweep, not only the broken ones.
-function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
+// Whatever the collector throws, synchronously or not (each catches its
+// own vendor's errors, so this is a bug), becomes a failure of its own card
+// only: the other cards of the sweep still arrive.
+function metered(id: ServiceId, collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
   return meterBytes(async (meter) => {
-    // Every string a vendor sent is held to its limit here, once, whichever
-    // collector built the snapshot.
-    const snapshot = boundSnapshot(await collect());
+    const started = Date.now();
+    let snapshot: ServiceSnapshot;
+    try {
+      // Every string a vendor sent is held to its limit here, once, whichever
+      // collector built the snapshot.
+      snapshot = boundSnapshot(await collect());
+    } catch (error) {
+      return boundSnapshot(failed(id, started, error));
+    }
     if (!snapshot.failure) {
       console.log(
         JSON.stringify({
@@ -2042,30 +2078,5 @@ function metered(collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapsh
 
 export async function collectAllServices(): Promise<ServiceSnapshot[]> {
   const sweep = createSweep();
-  return Promise.all(
-    [
-      collectGcp,
-      collectAws,
-      collectAzure,
-      () => collectStatuspageCard("cloudflare", sweep),
-      collectSteam,
-      collectCs2Europe,
-      () => collectStatuspageCard("epic", sweep),
-      () => collectStatuspageCard("fortnite", sweep),
-      () => collectStatuspageCard("spotify", sweep),
-      collectApple,
-      collectAndroid,
-      () => collectStatuspageCard("github", sweep),
-      collectGitlab,
-      () => collectStatuspageCard("confluence", sweep),
-      () => collectStatuspageCard("twitch", sweep),
-      collectGrok,
-      () => collectStatuspageCard("chatgpt", sweep),
-      () => collectStatuspageCard("claude", sweep),
-      collectMikrotik,
-      collectAppleOs,
-      collectWindows,
-      collectAndroidOs,
-    ].map(metered),
-  );
+  return Promise.all(COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep))));
 }

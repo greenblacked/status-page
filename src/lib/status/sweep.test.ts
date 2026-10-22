@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CATALOG } from "./catalog";
 import { MAX_BODY_BYTES } from "./http";
-import { collectAllServices } from "./sources.server";
+import { COLLECTORS, collectAllServices } from "./sources.server";
 
 // Whole-sweep behaviour of collectAllServices(): what one call logs and
 // fetches. Payload parsing per vendor lives in collectors.test.ts.
@@ -65,6 +66,58 @@ describe("collectAllServices logging", () => {
     expect(failure).toMatchObject({ event: "collector_failed", kind: "parser" });
     // What it read before giving up: just past the cap.
     expect(Number(failure?.bytes)).toBeGreaterThan(MAX_BODY_BYTES);
+  });
+});
+
+describe("collectAllServices isolation", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("returns one card per catalog service, in catalog order", async () => {
+    stubFetch(() => new Response("not found", { status: 404, statusText: "Not Found" }));
+
+    const services = await collectAllServices();
+
+    expect(services.map((service) => service.id)).toEqual(CATALOG.map((service) => service.id));
+    expect(COLLECTORS.map(([id]) => id)).toEqual(CATALOG.map((service) => service.id));
+  });
+
+  it("contains a collector that throws synchronously to its own card", async () => {
+    stubFetch(() => new Response("not found", { status: 404, statusText: "Not Found" }));
+    const collectors = COLLECTORS as Array<(typeof COLLECTORS)[number]>;
+    const index = collectors.findIndex(([id]) => id === "spotify");
+    const original = collectors[index];
+    collectors[index] = [
+      "spotify",
+      () => {
+        throw new TypeError("collector bug");
+      },
+    ];
+    let services: Awaited<ReturnType<typeof collectAllServices>>;
+    try {
+      services = await collectAllServices();
+    } finally {
+      collectors[index] = original;
+    }
+
+    expect(services.map((service) => service.id)).toEqual(CATALOG.map((service) => service.id));
+    const spotify = services.find((service) => service.id === "spotify");
+    expect(spotify).toMatchObject({ id: "spotify", health: "unknown", failure: { kind: "parser" } });
+    // The other 21 cards are each their own vendor's answer (here a 404), not the bug.
+    const others = services.filter((service) => service.id !== "spotify");
+    expect(others).toHaveLength(21);
+    for (const service of others) expect(service.failure?.message).not.toContain("collector bug");
+    expect(logged(vi.mocked(console.warn)).find((line) => line.service === "spotify")).toMatchObject({
+      event: "collector_failed",
+      service: "spotify",
+    });
   });
 });
 
