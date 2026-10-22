@@ -1,24 +1,16 @@
 /// <reference types="@cloudflare/workers-types" />
 import { createStartHandler, defaultStreamHandler } from "@tanstack/react-start/server";
-import { isNoindex, withNoindex } from "@/lib/robots";
-import { type CloudflareEnv, runWithCloudflareContext } from "@/lib/status/cloudflare-context";
-import { withWorkerVersion } from "@/lib/worker-version";
+import type { CloudflareEnv } from "@/lib/status/cloudflare-context";
+import { createWorkerFetch } from "@/lib/worker-entry";
 
-// Cloudflare's module entry receives bindings directly. TanStack's handler
-// uses the request context for robots.txt; status collection is cached in
-// each isolate by the same board-cache.server.ts implementation as the Node build,
-// and shared within a data center through the Cache API, keyed by the origin.
-const handleRequest = createStartHandler(defaultStreamHandler);
-
+// Cloudflare's module entry receives bindings directly. createWorkerFetch
+// (src/lib/worker-entry.ts) runs TanStack's handler inside the request's
+// Cloudflare context (the bindings, waitUntil and the origin), and gives every
+// response, an unhandled error's 500 included, the Worker version, noindex
+// where the deployment asks for it and the security headers. Status collection
+// is cached in each isolate by the same board-cache.server.ts implementation
+// as the Node build, and shared within a data center through the Cache API,
+// keyed by the origin.
 export default {
-  async fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): Promise<Response> {
-    const response = withWorkerVersion(
-      await runWithCloudflareContext(
-        { env, waitUntil: ctx.waitUntil.bind(ctx), origin: new URL(request.url).origin },
-        () => handleRequest(request),
-      ),
-      env.CF_VERSION_METADATA?.id,
-    );
-    return isNoindex(env.ROBOTS) ? withNoindex(response) : response;
-  },
-};
+  fetch: createWorkerFetch(createStartHandler(defaultStreamHandler)),
+} satisfies ExportedHandler<CloudflareEnv>;
