@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readiness } from "./readiness";
 import { FRESH_WAIT_MS } from "./schedule";
 import type { BoardSnapshot } from "./types";
 
@@ -160,6 +161,27 @@ describe("the board cache", () => {
     const second = board(99);
     finish(second);
     expect(await probe).toEqual(second);
+  });
+
+  it("lets the readiness probe answer ready after a quiet spell, by waiting for the refresh of an old board", async () => {
+    const { cache } = await load();
+    const old = await cache.getStatusBoard();
+    // Twelve minutes without a reader: the board in hand is past READY_MAX_AGE_MS.
+    vi.advanceTimersByTime(12 * 60_000);
+    expect(readiness(old, Date.now()).status).toBe("stale");
+    let finish: (value: BoardSnapshot) => void = () => {};
+    collectBoard.mockImplementationOnce(() => new Promise<BoardSnapshot>((resolve) => (finish = resolve)));
+
+    const probe = cache.getStatusBoardForProbe();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const fresh = { ...board(2), services: [{ id: "claude", health: "operational" } as BoardSnapshot["services"][0]] };
+    finish(fresh);
+
+    const answered = await probe;
+    expect(answered).toEqual(fresh);
+    expect(readiness(answered, Date.now()).status).toBe("ready");
+    // One sweep for the old board, and the refresh the probe waited for.
+    expect(collectBoard).toHaveBeenCalledTimes(2);
   });
 
   it("puts what a sweep reads after it (release lines, notes) on the cached board in place", async () => {
