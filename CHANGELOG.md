@@ -6,6 +6,34 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Added
+
+- `/metrics` gives how long ago each source was read (`statusbar_service_check_age_seconds`), so a source answered from an older reading shows up in a scrape.
+- Self-hosters can set `PUBLIC_ORIGIN` to the board's public address, so the feed's links no longer follow whatever Host header a client sends.
+
+### Changed
+
+- The board opens at once whenever a recent reading exists, even after a quiet spell: it shows the last snapshot and fetches a new one behind it, and on Cloudflare the servers of one data center share the newest snapshot, so far fewer visits wait on the slowest vendor.
+- Release lines and RouterOS changelog notes appear as soon as they are read, instead of one refresh later.
+- A partial outage now reads Degraded on the Grok and Azure cards, as it already did on every Statuspage-based card.
+- Slow-moving sources (RouterOS channels, Apple, Windows and Android releases, product catalogues) are read on their own cadence, so each check asks the vendors less.
+- The Node server and the Docker image collect the first board as soon as they start, so the first visitor no longer waits for the vendors.
+
+### Fixed
+
+- A source that times out or drops a connection once keeps its last reading for a few minutes instead of turning No data; a source that keeps failing is asked less often and still says it could not be checked.
+- A slow vendor no longer makes healthy sources time out while they wait their turn for a connection.
+- The Grok card no longer shows "Nothing reported" for an ongoing incident whose date it cannot read, and it reads health from the incident's own Severity and Status lines.
+- Spotify, ChatGPT, Claude, Epic Games and Fortnite no longer list the vendor's "Visit …" link as a working component.
+- A vendor payload with an empty entry costs only that row, not the whole card. The Apple OS card shows the newest release of each family.
+- A release line no longer disappears for a while when a refresh of its feed fails.
+- A stalled connection no longer leaves the board saying "Checking…" forever or the Refresh button busy.
+- Typing in the search box no longer redraws every card on each key.
+- POST and other non-GET requests to the board's addresses answer 405, and the public API answers browser preflight requests.
+- The JSON API, the feed, the metrics and the badges send an ETag and answer 304 when nothing changed.
+- Static files on Cloudflare carry the same security headers as pages.
+- `/readyz` no longer answers "stale" after a quiet spell while a new board is on its way: it waits for that board.
+
 ## [0.8.1] - 2026-10-21
 
 ### Security
