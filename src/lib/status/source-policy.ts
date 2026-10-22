@@ -105,6 +105,14 @@ function isTransient(failure: SourceFailure): boolean {
   );
 }
 
+// A load that never reached the vendor: no connection came free before the
+// sweep's deadline (http.ts marks that error `asked: false`). It says nothing
+// about the source, so it is not remembered as a failure, and the next sweep
+// asks again.
+function reachedVendor(error: unknown): boolean {
+  return (error as { asked?: unknown } | null | undefined)?.asked !== false;
+}
+
 function retryAfterOf(error: unknown): number {
   const value = (error as { retryAfterMs?: unknown } | null | undefined)?.retryAfterMs;
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
@@ -211,7 +219,7 @@ export function createSourcePolicy({
             return { value, fetchedAt: at, fromCache: false };
           },
           (error: unknown) => {
-            cached.failedAt = now();
+            if (reachedVendor(error)) cached.failedAt = now();
             const fallback = kept();
             if (fallback) return fallback;
             throw error;
@@ -247,7 +255,8 @@ export function createSourcePolicy({
             cached.failedAt = undefined;
             return value;
           },
-          () => {
+          (error: unknown) => {
+            if (!reachedVendor(error)) return null;
             cached.value = undefined;
             cached.failedAt = now();
             return null;

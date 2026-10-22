@@ -74,6 +74,19 @@ export class TimeoutError extends SourceError {
   }
 }
 
+// No connection came free before the sweep's deadline, so the vendor was
+// never asked: this sweep ran out of time, which says nothing about the
+// source. `asked` is false so the source policy, which imports nothing from
+// here, does not remember it as the source's failure (see source-policy.ts).
+export class QueueTimeoutError extends TimeoutError {
+  readonly asked = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "QueueTimeoutError";
+  }
+}
+
 const REFUSAL_STATUSES: ReadonlySet<number> = new Set([401, 403, 407, 429]);
 
 /** Whether `error` is a vendor refusing the request, as opposed to the service failing. */
@@ -423,7 +436,7 @@ export async function fetchText(
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    if (budgetMs <= 0) throw new TimeoutError(`Timed out waiting for a connection to ${sourceHost(url)}`);
+    if (budgetMs <= 0) throw new QueueTimeoutError(`Timed out waiting for a connection to ${sourceHost(url)}`);
     const startedAt = Date.now();
     timer = setTimeout(() => controller.abort(), budgetMs);
     // Revalidation is for a plain full GET. A head read or a Range request

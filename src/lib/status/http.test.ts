@@ -8,6 +8,7 @@ import {
   MAX_BODY_BYTES,
   meterBytes,
   PayloadError,
+  QueueTimeoutError,
   RefusedError,
   readBodyCapped,
   SourceError,
@@ -509,6 +510,10 @@ describe("fetchText inside a connection gate", () => {
       expect(b.status === "rejected" && (b.reason as Error).message).toBe(
         "Timed out waiting for a connection to status.example.com",
       );
+      // Only the one that never got a connection is marked as never having asked the vendor.
+      expect(b.status === "rejected" && b.reason).toBeInstanceOf(QueueTimeoutError);
+      expect(b.status === "rejected" && (b.reason as QueueTimeoutError).asked).toBe(false);
+      expect(a.status === "rejected" && a.reason).not.toBeInstanceOf(QueueTimeoutError);
       expect(started.map((request) => request.url)).toEqual(["https://status.example.com/a"]);
       expect(currentGate()!.active).toBe(0);
     });

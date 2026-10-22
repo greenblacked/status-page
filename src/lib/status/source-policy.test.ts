@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { withConnectionGate } from "./connection-gate";
+import { fetchText, QueueTimeoutError } from "./http";
 import {
   BREAKER_BASE_MS,
   BREAKER_MAX_MS,
@@ -362,6 +364,74 @@ describe("SourcePolicy.side", () => {
     const load = async () => ++loads;
     await policy.side("s", { ttlMs: 0, failTtlMs: SIDE.failTtlMs }, load);
     expect(await policy.side("s", { ttlMs: 0, failTtlMs: SIDE.failTtlMs }, load)).toBe(2);
+  });
+});
+
+describe("SourcePolicy: a load that never reached the vendor", () => {
+  const SIDE = { ttlMs: 0, failTtlMs: 30 * MINUTE };
+  const unasked = () => new QueueTimeoutError("Timed out waiting for a connection to example.com");
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("is not remembered as a side read's failure: the next call asks again", async () => {
+    const { policy } = harness();
+    let loads = 0;
+    const load = async () => {
+      loads += 1;
+      if (loads === 1) throw unasked();
+      return "catalogue";
+    };
+    expect(await policy.side("s", SIDE, load)).toBeNull();
+    expect(await policy.side("s", SIDE, load)).toBe("catalogue");
+    expect(loads).toBe(2);
+  });
+
+  it("is not remembered as a read's failure: the kept value stands in, and the next read asks again", async () => {
+    const { clock, policy } = harness();
+    let loads = 0;
+    const load = async () => {
+      loads += 1;
+      if (loads === 2) throw unasked();
+      return `v${loads}`;
+    };
+    await policy.read("k", TIER, load);
+    clock.now += TIER.ttlMs;
+    expect(await policy.read("k", TIER, load)).toMatchObject({ value: "v1", fromCache: true });
+    expect(await policy.read("k", TIER, load)).toMatchObject({ value: "v3", fromCache: false });
+    expect(loads).toBe(3);
+  });
+
+  it("covers a side read queued past the sweep's deadline behind the reads that decide a card", async () => {
+    vi.useFakeTimers({ now: 0 });
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolve) => {
+            asked.push(url);
+            setTimeout(() => resolve(new Response('{"products":[]}')), 120);
+          }),
+      ),
+    );
+    const { policy } = harness();
+    const side = () =>
+      policy.side("products", SIDE, () => fetchText("https://status.example.com/products.json", { priority: "low" }));
+    await withConnectionGate({ limit: 1, deadlineMs: 100 }, async () => {
+      const sweep = Promise.all([fetchText("https://status.example.com/incidents.json").catch(() => null), side()]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const [, catalogue] = await sweep;
+      expect(catalogue).toBeNull();
+    });
+    expect(asked).toEqual(["https://status.example.com/incidents.json"]);
+    // Google was never asked for the catalogue, so the next sweep asks rather than answering null for half an hour.
+    const next = side();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await next).not.toBeNull();
+    expect(asked).toEqual(["https://status.example.com/incidents.json", "https://status.example.com/products.json"]);
   });
 });
 
