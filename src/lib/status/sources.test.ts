@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { PayloadError, SourceError } from "./http.ts";
+import { createSourcePolicy } from "./source-policy.ts";
 import {
   awsComponents,
   awsEventActive,
@@ -10,6 +12,7 @@ import {
   azureItemActive,
   azureItemHealth,
   classifyFailure,
+  collectAllServices,
   decodeXmlEntities,
   decodeXmlField,
   epochToIso,
@@ -1092,5 +1095,74 @@ describe("azure feed", () => {
     assert.equal(azureItemActive({ title: "Planned maintenance - Key Vault" }, NOW), false);
     assert.equal(azureItemActive(item("Service unavailable - maintenance overran"), NOW), true);
     assert.equal(azureItemActive(item("Maintenance in West US: outage"), NOW), true);
+  });
+});
+
+describe("collectAllServices request count", () => {
+  const fixture = (path: string) => readFileSync(new URL(`./__fixtures__/${path}`, import.meta.url), "utf8");
+  const MIKROTIK = "https://upgrade.mikrotik.com/routeros/";
+  // The slow-moving pages and side lists answer; every other vendor 404s.
+  const ROUTES: Record<string, () => string> = {
+    ...Object.fromEntries(
+      ["NEWESTa7.stable", "NEWESTa7.long-term", "NEWESTa7.testing", "NEWESTa7.development", "NEWESTa6.long-term"].map(
+        (file) => [`${MIKROTIK}${file}`, () => fixture(`mikrotik/${file}`)],
+      ),
+    ),
+    "https://developer.apple.com/news/releases/rss/releases.rss": () => fixture("apple-os/releases.rss"),
+    "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information": () =>
+      fixture("windows/windows11-release-information.html"),
+    "https://developer.android.com/about/versions": () => fixture("android-os/versions.html"),
+    "https://status.cloud.google.com/products.json": () => fixture("gcp/products.json"),
+    "https://status.play.google.com/products.json": () => fixture("play/products.json"),
+    "https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0": () =>
+      fixture("steam/cm-list.json"),
+    "https://status.x.ai/v2/components.json": () => fixture("grok/components.json"),
+  };
+  let calls: string[] = [];
+
+  beforeEach(() => {
+    calls = [];
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push(url);
+      const body = ROUTES[url];
+      return body ? new Response(body()) : new Response("not found", { status: 404, statusText: "Not Found" });
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("without a policy, fetches every source on every sweep", async () => {
+    await collectAllServices();
+    assert.equal(calls.length, 31);
+    await collectAllServices();
+    assert.equal(calls.length, 62);
+  });
+
+  it("with one policy, a second sweep within ten minutes reuses the slow pages and side lists", async () => {
+    const policy = createSourcePolicy();
+    const first = await collectAllServices({ policy });
+    assert.equal(calls.length, 31);
+    for (const id of ["mikrotik", "apple-os", "windows", "android-os"]) {
+      assert.equal(first.find((service) => service.id === id)?.failure, undefined, id);
+    }
+    calls = [];
+    const second = await collectAllServices({ policy });
+    // MikroTik's five channels, Apple OS, Windows, Android OS, both product lists and the Steam
+    // connection managers come from the policy; the Grok component list is read fresh.
+    assert.equal(calls.length, 20);
+    assert.ok(calls.includes("https://status.x.ai/v2/components.json"));
+    assert.ok(!calls.some((url) => url.startsWith(MIKROTIK)));
+    for (const id of ["mikrotik", "apple-os", "windows", "android-os"]) {
+      const before = first.find((service) => service.id === id);
+      const after = second.find((service) => service.id === id);
+      assert.equal(after?.checkedAt, before?.checkedAt, id);
+      assert.deepEqual(after?.components, before?.components, id);
+    }
   });
 });

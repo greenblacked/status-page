@@ -37,6 +37,7 @@ import {
   SourceError,
 } from "./http.ts";
 import { sortIncidents } from "./layout.ts";
+import { PASSTHROUGH_POLICY, SIDE_READS, SOURCE_TIERS, type SourcePolicy } from "./source-policy.ts";
 import type {
   ComponentHealth,
   Health,
@@ -296,6 +297,11 @@ export function classifyFailure(error: unknown): SourceFailure {
   return { kind: "parser", message };
 }
 
+// The raw error behind each failure snapshot failed() built, for the source
+// policy: a vendor's Retry-After rides on the error, not on the snapshot's
+// failure record. Weak, so a snapshot that is dropped takes its error along.
+const FAILURE_ERRORS = new WeakMap<ServiceSnapshot, unknown>();
+
 function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot {
   // A SourceError's message is written to be read, except a non-JSON hint: that
   // is for logs and the failure record, so the card gets the generic sentence.
@@ -321,7 +327,7 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
       bytes: meteredBytes(),
     }),
   );
-  return {
+  const snapshot: ServiceSnapshot = {
     ...base(id, new Date().toISOString(), latencyMs),
     health: "unknown",
     summary: message,
@@ -329,6 +335,8 @@ function failed(id: ServiceId, started: number, error: unknown): ServiceSnapshot
     incidents: [],
     failure,
   };
+  FAILURE_ERRORS.set(snapshot, error);
+  return snapshot;
 }
 
 function timed<T>(fn: () => Promise<T>): Promise<{ value: T; ms: number }> {
@@ -720,12 +728,14 @@ function fromStatuspage(
 // signal and `products.json` is the catalogue the component list is cut from.
 // The catalogue is a side request: it runs beside the incidents and, if it is
 // slow, missing or unreadable, the card keeps the per-incident components.
-async function collectGoogle(id: "gcp" | "android", origin: string): Promise<ServiceSnapshot> {
+async function collectGoogle(id: "gcp" | "android", origin: string, sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     const [{ value, ms }, catalogue] = await Promise.all([
       timed(() => fetchJson<unknown>(`${origin}/incidents.json`)),
-      fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
+      sweep.policy.side(`products:${origin}`, SIDE_READS.googleProducts, () =>
+        fetchJson<unknown>(`${origin}/products.json`, { timeoutMs: EXTRA_TIMEOUT_MS }),
+      ),
     ]);
     const incidents = records<GoogleIncident>(expectArray(value, CATALOG_BY_ID[id].name));
     const parsed = googleIncidents(incidents, id);
@@ -749,8 +759,8 @@ async function collectGoogle(id: "gcp" | "android", origin: string): Promise<Ser
   }
 }
 
-const collectGcp = () => collectGoogle("gcp", "https://status.cloud.google.com");
-const collectAndroid = () => collectGoogle("android", "https://status.play.google.com");
+const collectGcp = (sweep: Sweep) => collectGoogle("gcp", "https://status.cloud.google.com", sweep);
+const collectAndroid = (sweep: Sweep) => collectGoogle("android", "https://status.play.google.com", sweep);
 
 // `includes("resolved")` also matched "unresolved" and "not yet resolved",
 // which would read a live incident's own update as its resolution.
@@ -1060,7 +1070,7 @@ export function steamCmCount(payload: unknown): number {
   ).length;
 }
 
-async function collectSteam(): Promise<ServiceSnapshot> {
+async function collectSteam(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     // allSettled, not all: one endpoint being down should degrade the card,
@@ -1079,9 +1089,9 @@ async function collectSteam(): Promise<ServiceSnapshot> {
       ),
       timeMain(fetchJson<{ featured_win?: unknown } | null>("https://store.steampowered.com/api/featured/")),
       // Side signal: it never decides the card's health or whether it fails.
-      fetchJson<unknown>("https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0", {
-        timeoutMs: EXTRA_TIMEOUT_MS,
-      }),
+      sweep.policy.side(STEAM_CM_URL, SIDE_READS.steamManagers, () =>
+        fetchJson<unknown>(STEAM_CM_URL, { timeoutMs: EXTRA_TIMEOUT_MS }),
+      ),
     ]);
     const servertime = info.status === "fulfilled" ? info.value?.servertime : undefined;
     const apiOk = typeof servertime === "number";
@@ -1135,6 +1145,8 @@ async function collectSteam(): Promise<ServiceSnapshot> {
     return failed("steam", started, error);
   }
 }
+
+const STEAM_CM_URL = "https://api.steampowered.com/ISteamDirectory/GetCMListForConnect/v1/?cellid=0";
 
 function isEuropePop(code: string, desc: string, geo?: number[]): boolean {
   if (EU_POPS.has(code.toLowerCase())) return true;
@@ -1223,13 +1235,16 @@ async function collectCs2Europe(): Promise<ServiceSnapshot> {
 // only that call: the next sweep starts empty, so nothing here can serve a
 // stale payload.
 type Sweep = {
+  /** How sources are read across sweeps (PASSTHROUGH_POLICY: every one, every sweep). */
+  policy: SourcePolicy;
   /** A Statuspage summary, fetched at most once per URL in this sweep. */
   statuspageSummary: (url: string) => Promise<{ value: StatuspageSummary; ms: number }>;
 };
 
-function createSweep(): Sweep {
+function createSweep(policy: SourcePolicy): Sweep {
   const summaries = new Map<string, Promise<{ value: StatuspageSummary; ms: number }>>();
   return {
+    policy,
     // Epic and Fortnite are two cards cut from one Statuspage summary, so
     // one sweep fetches it once and both read the same answer (or the same
     // failure). The bytes count toward whichever collector asked first.
@@ -1435,7 +1450,9 @@ export function grokFeedComponents(
   return [...rows.values()].map(({ name, health, detail }) => ({ name, health, detail }));
 }
 
-async function collectGrok(): Promise<ServiceSnapshot> {
+const GROK_COMPONENTS_URL = "https://status.x.ai/v2/components.json";
+
+async function collectGrok(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
     // status.x.ai's JSON sits behind a Cloudflare challenge more often than
@@ -1443,7 +1460,9 @@ async function collectGrok(): Promise<ServiceSnapshot> {
     // runs beside the feed and is simply absent when it does not answer.
     const [{ value, ms }, instatus] = await Promise.all([
       timed(() => fetchText("https://status.x.ai/feed.xml")),
-      fetchJson<unknown>("https://status.x.ai/v2/components.json", { timeoutMs: EXTRA_TIMEOUT_MS }).catch(() => null),
+      sweep.policy.side(GROK_COMPONENTS_URL, SIDE_READS.grokComponents, () =>
+        fetchJson<unknown>(GROK_COMPONENTS_URL, { timeoutMs: EXTRA_TIMEOUT_MS }),
+      ),
     ]);
     const items = parseRssItems(value.body);
     // parseRssItems reads RSS 2.0 items and Atom entries. If x.ai moves to
@@ -1781,43 +1800,64 @@ async function collectAzure(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectMikrotik(): Promise<ServiceSnapshot> {
+// One raw page of a slow-moving source, read through the sweep's policy and
+// keyed by its URL: only the fetch is cached, and the page is parsed every
+// sweep. The body is kept with how long its request took and when it was
+// made, so a card built from a reused page says when, and how fast, the page
+// was really read.
+async function tierText(
+  sweep: Sweep,
+  id: keyof typeof SOURCE_TIERS,
+  url: string,
+  init?: Parameters<typeof fetchText>[1],
+): Promise<{ body: string; ms: number; fetchedAt: number }> {
+  const { value, fetchedAt } = await sweep.policy.read(url, SOURCE_TIERS[id], async () => {
+    const { value: response, ms } = await timed(() => fetchText(url, init));
+    return { body: response.body, ms };
+  });
+  return { ...value, fetchedAt };
+}
+
+async function collectMikrotik(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(async () => {
-      // Tell "nothing answered" apart from "something answered but did not
-      // parse": the second is a format change that needs a code fix.
-      let unparsed = 0;
-      const channels = (
-        await Promise.all(
-          MIKROTIK_CHANNELS.map(async (channel) => {
-            try {
-              const { body } = await fetchText(`https://upgrade.mikrotik.com/routeros/${channel.file}`);
-              const parsed = parseMikrotikNewest(body);
-              if (!parsed) {
-                unparsed += 1;
-                return null;
-              }
-              return { ...channel, ...parsed };
-            } catch {
+    // Tell "nothing answered" apart from "something answered but did not
+    // parse": the second is a format change that needs a code fix.
+    let unparsed = 0;
+    const reads = (
+      await Promise.all(
+        MIKROTIK_CHANNELS.map(async (channel) => {
+          try {
+            const read = await tierText(sweep, "mikrotik", `https://upgrade.mikrotik.com/routeros/${channel.file}`);
+            const parsed = parseMikrotikNewest(read.body);
+            if (!parsed) {
+              unparsed += 1;
               return null;
             }
-          }),
-        )
-      ).filter((channel): channel is NonNullable<typeof channel> => Boolean(channel));
-      if (!channels.length) {
-        if (unparsed > 0)
-          throw new PayloadError(`MikroTik answered ${unparsed} version channel(s) in an unrecognised format.`);
-        throw new SourceError("MikroTik version channels did not respond.");
-      }
-      const stable = channels.find((channel) => channel.file === "NEWESTa7.stable");
-      const newest = channels.reduce((current, channel) => {
-        const currentTime = Date.parse(current.releasedAt ?? "") || 0;
-        const nextTime = Date.parse(channel.releasedAt ?? "") || 0;
-        return nextTime > currentTime ? channel : current;
-      }, channels[0]);
-      return { channels, stable, newest };
-    });
+            return { channel: { ...channel, ...parsed }, ms: read.ms, fetchedAt: read.fetchedAt };
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter((read): read is NonNullable<typeof read> => Boolean(read));
+    if (!reads.length) {
+      if (unparsed > 0)
+        throw new PayloadError(`MikroTik answered ${unparsed} version channel(s) in an unrecognised format.`);
+      throw new SourceError("MikroTik version channels did not respond.");
+    }
+    const channels = reads.map((read) => read.channel);
+    const stable = channels.find((channel) => channel.file === "NEWESTa7.stable");
+    const newest = channels.reduce((current, channel) => {
+      const currentTime = Date.parse(current.releasedAt ?? "") || 0;
+      const nextTime = Date.parse(channel.releasedAt ?? "") || 0;
+      return nextTime > currentTime ? channel : current;
+    }, channels[0]);
+    const value = { channels, stable, newest };
+    // The channels are read side by side: the card took as long as the slowest,
+    // and is as old as the oldest.
+    const ms = Math.max(...reads.map((read) => read.ms));
+    const fetchedAt = Math.min(...reads.map((read) => read.fetchedAt));
 
     const components: ComponentHealth[] = value.channels.map((channel) => {
       const url = mikrotikChangelogUrl(channel.version);
@@ -1845,7 +1885,7 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
       : "RouterOS channels loaded.";
 
     return {
-      ...base("mikrotik", new Date().toISOString(), ms),
+      ...base("mikrotik", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary,
       components,
@@ -1860,11 +1900,15 @@ async function collectMikrotik(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectAppleOs(): Promise<ServiceSnapshot> {
+async function collectAppleOs(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() => fetchText("https://developer.apple.com/news/releases/rss/releases.rss"));
-    const items = parseRssItems(value.body);
+    const { body, ms, fetchedAt } = await tierText(
+      sweep,
+      "apple-os",
+      "https://developer.apple.com/news/releases/rss/releases.rss",
+    );
+    const items = parseRssItems(body);
     const latest = latestAppleOsByFamily(items);
     if (!latest.length) throw new PayloadError("Apple OS release feed had no OS items.");
 
@@ -1898,7 +1942,7 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
       : "Apple OS release feed loaded.";
 
     return {
-      ...base("apple-os", new Date().toISOString(), ms),
+      ...base("apple-os", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary,
       components,
@@ -1913,13 +1957,13 @@ async function collectAppleOs(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectWindows(): Promise<ServiceSnapshot> {
+async function collectWindows(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchText(CATALOG_BY_ID.windows.sourceUrl, { headers: { Accept: "text/html, */*" } }),
-    );
-    const tables = readHtmlCells(value.body);
+    const { body, ms, fetchedAt } = await tierText(sweep, "windows", CATALOG_BY_ID.windows.sourceUrl, {
+      headers: { Accept: "text/html, */*" },
+    });
+    const tables = readHtmlCells(body);
     const releases = windowsReleases(textOfTables(tables));
     if (!releases.length) throw new PayloadError("Windows release page had no readable version table.");
 
@@ -1955,7 +1999,7 @@ async function collectWindows(): Promise<ServiceSnapshot> {
     const title = `${WINDOWS_NAME} ${headline.version}${headline.build ? ` (build ${headline.build})` : ""}`;
 
     return {
-      ...base("windows", new Date().toISOString(), ms),
+      ...base("windows", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary: `Latest: ${title} · ${formatReleaseAge(windowsShippedAt(headline))}`,
       components,
@@ -1975,13 +2019,13 @@ async function collectWindows(): Promise<ServiceSnapshot> {
   }
 }
 
-async function collectAndroidOs(): Promise<ServiceSnapshot> {
+async function collectAndroidOs(sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() =>
-      fetchText(CATALOG_BY_ID["android-os"].sourceUrl, { headers: { Accept: "text/html, */*" } }),
-    );
-    const releases = androidReleases(readAndroidVersionLinks(value.body));
+    const { body, ms, fetchedAt } = await tierText(sweep, "android-os", CATALOG_BY_ID["android-os"].sourceUrl, {
+      headers: { Accept: "text/html, */*" },
+    });
+    const releases = androidReleases(readAndroidVersionLinks(body));
     if (!releases.length) throw new PayloadError("Android releases page had no readable version list.");
 
     // The page gives no dates, so a version is never marked fresh here: a
@@ -2002,7 +2046,7 @@ async function collectAndroidOs(): Promise<ServiceSnapshot> {
 
     const headline = releases[0];
     return {
-      ...base("android-os", new Date().toISOString(), ms),
+      ...base("android-os", new Date(fetchedAt).toISOString(), ms),
       health: "operational",
       summary: `Latest: ${headline.name}`,
       components,
@@ -2044,39 +2088,60 @@ export const COLLECTORS: ReadonlyArray<readonly [ServiceId, (sweep: Sweep) => Pr
   ["android-os", collectAndroidOs],
 ];
 
-// Runs one collector with its own byte meter, and logs the success line
-// that pairs with failed()'s collector_failed, so the log shows every
-// source's latency and download size per sweep, not only the broken ones.
-// Whatever the collector throws, synchronously or not (each catches its
-// own vendor's errors, so this is a bug), becomes a failure of its own card
-// only: the other cards of the sweep still arrive.
-function metered(id: ServiceId, collect: () => Promise<ServiceSnapshot>): Promise<ServiceSnapshot> {
-  return meterBytes(async (meter) => {
-    const started = Date.now();
-    let snapshot: ServiceSnapshot;
-    try {
-      // Every string a vendor sent is held to its limit here, once, whichever
-      // collector built the snapshot.
-      snapshot = boundSnapshot(await collect());
-    } catch (error) {
-      return boundSnapshot(failed(id, started, error));
-    }
-    if (!snapshot.failure) {
-      console.log(
-        JSON.stringify({
-          event: "collector_completed",
-          service: snapshot.id,
-          health: snapshot.health,
-          latencyMs: snapshot.latencyMs,
-          bytes: meter.bytes,
-        }),
-      );
-    }
-    return snapshot;
-  });
+// Runs one collector with its own byte meter, under the sweep's source
+// policy, and logs the success line that pairs with failed()'s
+// collector_failed, so the log shows every source's latency and download size
+// per sweep, not only the broken ones. Whatever the collector throws,
+// synchronously or not (each catches its own vendor's errors, so this is a
+// bug), becomes a failure of its own card only: the other cards of the sweep
+// still arrive. The raw error behind a failure goes to the policy alongside
+// the snapshot (see SourcePolicy.run).
+function metered(
+  id: ServiceId,
+  collect: () => Promise<ServiceSnapshot>,
+  policy: SourcePolicy,
+): Promise<ServiceSnapshot> {
+  return policy.run(id, (noteError) =>
+    meterBytes(async (meter) => {
+      const started = Date.now();
+      let snapshot: ServiceSnapshot;
+      try {
+        const raw = await collect();
+        if (FAILURE_ERRORS.has(raw)) noteError(FAILURE_ERRORS.get(raw));
+        // Every string a vendor sent is held to its limit here, once, whichever
+        // collector built the snapshot.
+        snapshot = boundSnapshot(raw);
+      } catch (error) {
+        noteError(error);
+        return boundSnapshot(failed(id, started, error));
+      }
+      if (!snapshot.failure) {
+        console.log(
+          JSON.stringify({
+            event: "collector_completed",
+            service: snapshot.id,
+            health: snapshot.health,
+            latencyMs: snapshot.latencyMs,
+            bytes: meter.bytes,
+          }),
+        );
+      }
+      return snapshot;
+    }),
+  );
 }
 
-export async function collectAllServices(): Promise<ServiceSnapshot[]> {
-  const sweep = createSweep();
-  return Promise.all(COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep))));
+/**
+ * Reads every source once, in catalog order. With no policy every source is
+ * fetched in this sweep, as it always was; a policy from createSourcePolicy()
+ * reuses slow-moving pages, holds back a source that keeps failing and shows
+ * a recent good reading over a transient failure (see source-policy.ts).
+ */
+export async function collectAllServices({
+  policy = PASSTHROUGH_POLICY,
+}: {
+  policy?: SourcePolicy;
+} = {}): Promise<ServiceSnapshot[]> {
+  const sweep = createSweep(policy);
+  return Promise.all(COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep), policy)));
 }
