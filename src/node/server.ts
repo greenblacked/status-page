@@ -42,6 +42,13 @@ export interface NodeServerOptions {
    * server that is reached directly would believe whatever a client sends.
    */
   trustProxy?: boolean;
+  /**
+   * The site's public origin ("https://status.example.com"). When set, every
+   * request URL the app sees is built on it, and Host and X-Forwarded-* are
+   * ignored, so no client can steer the links the app writes (the feed's
+   * self links) to another host. Only an http(s) origin is accepted.
+   */
+  publicOrigin?: string;
   /** One structured line per request, and per failure. */
   log?: (entry: Record<string, unknown>) => void;
   /** A request body larger than this is refused with 413. The board takes none, so the default is small. */
@@ -74,6 +81,34 @@ export function hstsFromEnv(value: string | undefined): string | false {
     default:
       throw new Error(`HSTS must be "on", "subdomains" or "off", got "${value}"`);
   }
+}
+
+/** `value` as an http(s) origin (scheme, host and port, nothing more), or an error naming PUBLIC_ORIGIN. */
+function parseOrigin(value: string): string {
+  const invalid = new Error(
+    `PUBLIC_ORIGIN must be an http(s) origin such as https://status.example.com, got "${value}"`,
+  );
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw invalid;
+  }
+  const plainOrigin =
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    url.username === "" &&
+    url.password === "" &&
+    url.pathname === "/" &&
+    !value.includes("?") &&
+    !value.includes("#");
+  if (!plainOrigin) throw invalid;
+  return url.origin;
+}
+
+/** The PUBLIC_ORIGIN environment variable: an http(s) origin, or undefined when it is unset or empty. */
+export function publicOriginFromEnv(value: string | undefined): string | undefined {
+  const trimmed = (value ?? "").trim();
+  return trimmed === "" ? undefined : parseOrigin(trimmed);
 }
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
@@ -257,10 +292,12 @@ export function createNodeServer(options: NodeServerOptions): Server {
     handler,
     staticFiles,
     trustProxy = false,
+    publicOrigin,
     log,
     maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
     hsts = DEFAULT_NODE_HSTS,
   } = options;
+  const origin = publicOrigin === undefined ? undefined : parseOrigin(publicOrigin);
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = req.method ?? "GET";
@@ -271,7 +308,7 @@ export function createNodeServer(options: NodeServerOptions): Server {
     let url: URL;
     let headers: Headers;
     try {
-      url = new URL(`${requestOrigin(req, trustProxy)}${rawUrl}`);
+      url = new URL(`${origin ?? requestOrigin(req, trustProxy)}${rawUrl}`);
       headers = toHeaders(req);
     } catch {
       return plain(res, 400, "Bad Request\n", head, hsts);

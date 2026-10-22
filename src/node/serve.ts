@@ -6,6 +6,10 @@
 //   HOST         address to bind (default 127.0.0.1; the image sets 0.0.0.0)
 //   TRUST_PROXY  1 when a reverse proxy in front sets X-Forwarded-Proto and
 //                X-Forwarded-Host, so the app sees its public https:// origin
+//   PUBLIC_ORIGIN  the site's own origin, such as https://status.example.com;
+//                when set, the app's request URLs (and the feed's self links)
+//                are built on it and Host and X-Forwarded-* are ignored. A
+//                value that is not an http(s) origin fails at start
 //   HSTS         Strict-Transport-Security: max-age=31536000 by default;
 //                "subdomains" adds includeSubDomains, "off" sends no header
 //   SHUTDOWN_TIMEOUT_MS  how long a SIGTERM waits for open requests (default
@@ -26,7 +30,7 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
-import { createNodeServer, hstsFromEnv } from "./server.ts";
+import { createNodeServer, hstsFromEnv, publicOriginFromEnv } from "./server.ts";
 import { indexStaticFiles } from "./static.ts";
 
 // React and the server entry pick their production code from NODE_ENV when
@@ -92,6 +96,12 @@ process.on("uncaughtException", (error: Error) => {
 });
 
 async function main(): Promise<void> {
+  // Settings first, so a bad value fails before the app loads.
+  const host = process.env.HOST || "127.0.0.1";
+  const listenPort = port(process.env.PORT);
+  const hsts = hstsFromEnv(process.env.HSTS);
+  const publicOrigin = publicOriginFromEnv(process.env.PUBLIC_ORIGIN);
+
   const root = new URL("../../dist/", import.meta.url);
   const entry = new URL("server/server.js", root);
   let app: { default: { fetch: (request: Request) => Promise<Response> | Response } };
@@ -102,13 +112,12 @@ async function main(): Promise<void> {
   }
   const staticFiles = await indexStaticFiles(fileURLToPath(new URL("client", root)));
 
-  const host = process.env.HOST || "127.0.0.1";
-  const listenPort = port(process.env.PORT);
   const created = createNodeServer({
     handler: (request) => app.default.fetch(request),
     staticFiles,
-    hsts: hstsFromEnv(process.env.HSTS),
+    hsts,
     trustProxy: ["1", "true"].includes((process.env.TRUST_PROXY ?? "").toLowerCase()),
+    publicOrigin,
     log,
   });
 
