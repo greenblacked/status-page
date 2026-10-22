@@ -2088,18 +2088,23 @@ export const COLLECTORS: ReadonlyArray<readonly [ServiceId, (sweep: Sweep) => Pr
   ["android-os", collectAndroidOs],
 ];
 
+// A card that took at least this long is logged as slow, one line each.
+const SLOW_COLLECTOR_MS = 3000;
+
 // Runs one collector with its own byte meter, under the sweep's source
-// policy, and logs the success line that pairs with failed()'s
-// collector_failed, so the log shows every source's latency and download size
-// per sweep, not only the broken ones. Whatever the collector throws,
-// synchronously or not (each catches its own vendor's errors, so this is a
-// bug), becomes a failure of its own card only: the other cards of the sweep
-// still arrive. The raw error behind a failure goes to the policy alongside
-// the snapshot (see SourcePolicy.run).
+// policy, and adds what it downloaded to the sweep's total. A slow card logs
+// collector_slow; a failed one has already logged collector_failed (with
+// what it read before failing); the sweep as a whole logs one summary line
+// (collectAllServices). Whatever the collector throws, synchronously or not
+// (each catches its own vendor's errors, so this is a bug), becomes a
+// failure of its own card only: the other cards of the sweep still arrive.
+// The raw error behind a failure goes to the policy alongside the snapshot
+// (see SourcePolicy.run).
 function metered(
   id: ServiceId,
   collect: () => Promise<ServiceSnapshot>,
   policy: SourcePolicy,
+  tally: { bytes: number },
 ): Promise<ServiceSnapshot> {
   return policy.run(id, (noteError) =>
     meterBytes(async (meter) => {
@@ -2113,12 +2118,13 @@ function metered(
         snapshot = boundSnapshot(raw);
       } catch (error) {
         noteError(error);
-        return boundSnapshot(failed(id, started, error));
+        snapshot = boundSnapshot(failed(id, started, error));
       }
-      if (!snapshot.failure) {
+      tally.bytes += meter.bytes;
+      if (!snapshot.failure && snapshot.latencyMs >= SLOW_COLLECTOR_MS) {
         console.log(
           JSON.stringify({
-            event: "collector_completed",
+            event: "collector_slow",
             service: snapshot.id,
             health: snapshot.health,
             latencyMs: snapshot.latencyMs,
@@ -2136,12 +2142,36 @@ function metered(
  * fetched in this sweep, as it always was; a policy from createSourcePolicy()
  * reuses slow-moving pages, holds back a source that keeps failing and shows
  * a recent good reading over a transient failure (see source-policy.ts).
+ * Logs one sweep_completed line: how many cards, how many read fine or are
+ * unknown, what the policy reused or held back, and the bytes and time the
+ * sweep took.
  */
 export async function collectAllServices({
   policy = PASSTHROUGH_POLICY,
 }: {
   policy?: SourcePolicy;
 } = {}): Promise<ServiceSnapshot[]> {
+  const started = Date.now();
   const sweep = createSweep(policy);
-  return Promise.all(COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep), policy)));
+  const tally = { bytes: 0 };
+  // The policy's counts from before this sweep are not this sweep's.
+  policy.stats();
+  const services = await Promise.all(
+    COLLECTORS.map(([id, collect]) => metered(id, () => collect(sweep), policy, tally)),
+  );
+  const { carried, skipped, cachedReads } = policy.stats();
+  console.log(
+    JSON.stringify({
+      event: "sweep_completed",
+      services: services.length,
+      ok: services.filter((service) => !service.failure).length,
+      unknown: services.filter((service) => service.health === "unknown").length,
+      carried,
+      skipped,
+      cachedReads,
+      bytes: tally.bytes,
+      durationMs: Date.now() - started,
+    }),
+  );
+  return services;
 }

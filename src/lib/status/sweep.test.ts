@@ -39,7 +39,7 @@ describe("collectAllServices logging", () => {
     vi.restoreAllMocks();
   });
 
-  it("logs each collector's downloaded bytes, on success and on failure", async () => {
+  it("logs a failed collector's bytes, and one sweep summary instead of a line per success", async () => {
     const summary = JSON.stringify({ status: { indicator: "none", description: "All Systems Operational" } });
     stubFetch((url) => {
       if (url === CLAUDE) return new Response(summary);
@@ -50,12 +50,23 @@ describe("collectAllServices logging", () => {
     const services = await collectAllServices();
 
     expect(services.find((service) => service.id === "claude")?.health).toBe("operational");
-    expect(logged(vi.mocked(console.log)).find((line) => line.service === "claude")).toMatchObject({
-      event: "collector_completed",
-      service: "claude",
-      health: "operational",
-      bytes: summary.length,
+    const lines = logged(vi.mocked(console.log));
+    expect(lines.filter((line) => line.event === "collector_completed")).toEqual([]);
+    const sweeps = lines.filter((line) => line.event === "sweep_completed");
+    expect(sweeps).toHaveLength(1);
+    const ok = services.filter((service) => !service.failure).length;
+    expect(sweeps[0]).toMatchObject({
+      services: services.length,
+      ok,
+      unknown: services.filter((service) => service.health === "unknown").length,
+      carried: 0,
+      skipped: 0,
+      cachedReads: 0,
     });
+    expect(ok).toBeGreaterThan(0);
+    // Every collector's bytes: Claude's summary and ChatGPT's oversized body among them.
+    expect(Number(sweeps[0].bytes)).toBeGreaterThan(MAX_BODY_BYTES + summary.length);
+    expect(Number(sweeps[0].durationMs)).toBeGreaterThanOrEqual(0);
 
     const chatgpt = services.find((service) => service.id === "chatgpt");
     expect(chatgpt?.failure).toMatchObject({
@@ -66,6 +77,51 @@ describe("collectAllServices logging", () => {
     expect(failure).toMatchObject({ event: "collector_failed", kind: "parser" });
     // What it read before giving up: just past the cap.
     expect(Number(failure?.bytes)).toBeGreaterThan(MAX_BODY_BYTES);
+  });
+});
+
+describe("collectAllServices slow collectors", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("logs collector_slow for a card that took three seconds or more, and not for a fast one", async () => {
+    stubFetch(() => new Response("not found", { status: 404, statusText: "Not Found" }));
+    const collectors = COLLECTORS as Array<(typeof COLLECTORS)[number]>;
+    const replaced = (["claude", "chatgpt"] as const).map((id) => {
+      const index = collectors.findIndex(([entry]) => entry === id);
+      return [index, collectors[index]] as const;
+    });
+    const card = (id: "claude" | "chatgpt", latencyMs: number) => {
+      const entry = CATALOG.find((service) => service.id === id)!;
+      return {
+        ...entry,
+        checkedAt: new Date().toISOString(),
+        latencyMs,
+        health: "operational" as const,
+        summary: "All good.",
+        components: [],
+        incidents: [],
+      };
+    };
+    collectors[replaced[0][0]] = ["claude", async () => card("claude", 3000)];
+    collectors[replaced[1][0]] = ["chatgpt", async () => card("chatgpt", 2999)];
+    try {
+      await collectAllServices();
+    } finally {
+      for (const [index, original] of replaced) collectors[index] = original;
+    }
+
+    const slow = logged(vi.mocked(console.log)).filter((line) => line.event === "collector_slow");
+    expect(slow).toEqual([
+      { event: "collector_slow", service: "claude", health: "operational", latencyMs: 3000, bytes: 0 },
+    ]);
   });
 });
 
