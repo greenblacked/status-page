@@ -530,6 +530,11 @@ export function records<T extends object>(value: unknown, limit = MAX_SCANNED_RO
 
 const MAX_UPCOMING_MAINTENANCE = 3;
 
+// A page's own pointer to itself ("Visit www.githubstatus.com for more
+// information") is listed by the vendor as a component. It is not a service,
+// and as a row it would read Operational and count as a working component.
+const NOT_A_SERVICE = /^Visit /;
+
 function fromStatuspage(
   id: ServiceId,
   data: StatuspageSummary,
@@ -561,6 +566,7 @@ function fromStatuspage(
     if (component.group && component.id) groupNames.set(component.id, component.name ?? "");
   }
   const matched = allComponents
+    .filter((component) => !(typeof component.name === "string" && NOT_A_SERVICE.test(component.name)))
     .filter((component) =>
       componentFilter
         ? componentFilter(component.name ?? "", component.group_id ? groupNames.get(component.group_id) : undefined)
@@ -1204,17 +1210,24 @@ async function collectCs2Europe(): Promise<ServiceSnapshot> {
 // only that call: the next sweep starts empty, so nothing here can serve a
 // stale payload.
 type Sweep = {
-  epicSummary: () => Promise<{ value: StatuspageSummary; ms: number }>;
+  /** A Statuspage summary, fetched at most once per URL in this sweep. */
+  statuspageSummary: (url: string) => Promise<{ value: StatuspageSummary; ms: number }>;
 };
 
 function createSweep(): Sweep {
-  let epic: Promise<{ value: StatuspageSummary; ms: number }> | undefined;
+  const summaries = new Map<string, Promise<{ value: StatuspageSummary; ms: number }>>();
   return {
     // Epic and Fortnite are two cards cut from one Statuspage summary, so
     // one sweep fetches it once and both read the same answer (or the same
     // failure). The bytes count toward whichever collector asked first.
-    epicSummary: () =>
-      (epic ??= timed(() => fetchJson<StatuspageSummary>("https://status.epicgames.com/api/v2/summary.json"))),
+    statuspageSummary: (url) => {
+      let summary = summaries.get(url);
+      if (!summary) {
+        summary = timed(() => fetchJson<StatuspageSummary>(url));
+        summaries.set(url, summary);
+      }
+      return summary;
+    },
   };
 }
 
@@ -1223,38 +1236,6 @@ function createSweep(): Sweep {
 // Matchmaking). Epic is everything else.
 function isFortnite(name: string, groupName?: string): boolean {
   return /fortnite/i.test(name) || (groupName !== undefined && /fortnite/i.test(groupName));
-}
-
-async function collectEpic(sweep: Sweep): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await sweep.epicSummary();
-    return fromStatuspage("epic", value, ms, (name, groupName) => !isFortnite(name, groupName));
-  } catch (error) {
-    return failed("epic", started, error);
-  }
-}
-
-async function collectFortnite(sweep: Sweep): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await sweep.epicSummary();
-    return fromStatuspage("fortnite", value, ms, isFortnite);
-  } catch (error) {
-    return failed("fortnite", started, error);
-  }
-}
-
-async function collectSpotify(): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://spotify.statuspage.io/api/v2/summary.json"),
-    );
-    return fromStatuspage("spotify", value, ms);
-  } catch (error) {
-    return failed("spotify", started, error);
-  }
 }
 
 // Only events that are happening now have a health. An "upcoming" one has
@@ -1501,45 +1482,59 @@ async function collectGrok(): Promise<ServiceSnapshot> {
   }
 }
 
-// GitHub, Confluence, Twitch and Cloudflare each publish a Statuspage of
-// their own, so they are the Spotify collector with a different address. Each
-// fetches the vendor's own host only (http.ts refuses a redirect off it).
-// GitLab is not here: its page runs on Status.io, which has no Statuspage API
-// (see collectGitlab).
-const STATUSPAGE_SUMMARIES = {
-  github: "https://www.githubstatus.com/api/v2/summary.json",
-  confluence: "https://confluence.status.atlassian.com/api/v2/summary.json",
-  twitch: "https://status.twitch.com/api/v2/summary.json",
-  cloudflare: "https://www.cloudflarestatus.com/api/v2/summary.json",
-} as const;
-
-// A page's own pointer to itself ("Visit www.githubstatus.com for more
-// information") is listed by the vendor as a component. It is not a service,
-// and as a row it would read Operational and count as a working component.
-const NOT_A_SERVICE = /^Visit /;
-
 // Cloudflare lists each data center as a component ("Frankfurt, Germany - (FRA)",
 // under a region group such as "Europe") and schedules maintenance one data
 // center at a time, its traffic re-routed meanwhile. Such a window is not
 // Cloudflare in maintenance (see fromStatuspage's localOnly); the data
 // center's own row still reads as Cloudflare sets it. Open incidents always count.
 export const CLOUDFLARE_DATA_CENTER = / - \([A-Z]{3}\)$/;
-const LOCAL_COMPONENTS: Partial<Record<keyof typeof STATUSPAGE_SUMMARIES, RegExp>> = {
-  cloudflare: CLOUDFLARE_DATA_CENTER,
+
+type StatuspageCardId =
+  | "cloudflare"
+  | "github"
+  | "confluence"
+  | "twitch"
+  | "spotify"
+  | "chatgpt"
+  | "claude"
+  | "epic"
+  | "fortnite";
+
+const EPIC_SUMMARY_URL = "https://status.epicgames.com/api/v2/summary.json";
+
+// Every card read from a Statuspage summary: the summary's address, and for a
+// page shared by two cards (Epic and Fortnite) which components are this
+// card's. Each fetches the vendor's own host only (http.ts refuses a redirect
+// off it). GitLab is not here: its page runs on Status.io, which has no
+// Statuspage API (see collectGitlab).
+const STATUSPAGE_SOURCES: Record<
+  StatuspageCardId,
+  {
+    url: string;
+    componentFilter?: (name: string, groupName?: string) => boolean;
+    isLocalComponent?: (name: string) => boolean;
+  }
+> = {
+  cloudflare: {
+    url: "https://www.cloudflarestatus.com/api/v2/summary.json",
+    isLocalComponent: (name) => CLOUDFLARE_DATA_CENTER.test(name),
+  },
+  github: { url: "https://www.githubstatus.com/api/v2/summary.json" },
+  confluence: { url: "https://confluence.status.atlassian.com/api/v2/summary.json" },
+  twitch: { url: "https://status.twitch.com/api/v2/summary.json" },
+  spotify: { url: "https://spotify.statuspage.io/api/v2/summary.json" },
+  chatgpt: { url: "https://status.openai.com/api/v2/summary.json" },
+  claude: { url: "https://status.claude.com/api/v2/summary.json" },
+  epic: { url: EPIC_SUMMARY_URL, componentFilter: (name, groupName) => !isFortnite(name, groupName) },
+  fortnite: { url: EPIC_SUMMARY_URL, componentFilter: isFortnite },
 };
 
-async function collectStatuspage(id: keyof typeof STATUSPAGE_SUMMARIES): Promise<ServiceSnapshot> {
+async function collectStatuspageCard(id: StatuspageCardId, sweep: Sweep): Promise<ServiceSnapshot> {
   const started = Date.now();
   try {
-    const { value, ms } = await timed(() => fetchJson<StatuspageSummary>(STATUSPAGE_SUMMARIES[id]));
-    if (value && Array.isArray(value.components)) {
-      // Cut before the filter, as records() does, so the pass is bounded too.
-      value.components = value.components
-        .slice(0, MAX_SCANNED_ROWS)
-        .filter((component) => !(typeof component?.name === "string" && NOT_A_SERVICE.test(component.name)));
-    }
-    const local = LOCAL_COMPONENTS[id];
-    return fromStatuspage(id, value, ms, undefined, local ? (name) => local.test(name) : undefined);
+    const { url, componentFilter, isLocalComponent } = STATUSPAGE_SOURCES[id];
+    const { value, ms } = await sweep.statuspageSummary(url);
+    return fromStatuspage(id, value, ms, componentFilter, isLocalComponent);
   } catch (error) {
     return failed(id, started, error);
   }
@@ -1769,30 +1764,6 @@ async function collectAzure(): Promise<ServiceSnapshot> {
     };
   } catch (error) {
     return failed("azure", started, error);
-  }
-}
-
-async function collectChatGpt(): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.openai.com/api/v2/summary.json"),
-    );
-    return fromStatuspage("chatgpt", value, ms);
-  } catch (error) {
-    return failed("chatgpt", started, error);
-  }
-}
-
-async function collectClaude(): Promise<ServiceSnapshot> {
-  const started = Date.now();
-  try {
-    const { value, ms } = await timed(() =>
-      fetchJson<StatuspageSummary>("https://status.claude.com/api/v2/summary.json"),
-    );
-    return fromStatuspage("claude", value, ms);
-  } catch (error) {
-    return failed("claude", started, error);
   }
 }
 
@@ -2062,21 +2033,21 @@ export async function collectAllServices(): Promise<ServiceSnapshot[]> {
       collectGcp,
       collectAws,
       collectAzure,
-      () => collectStatuspage("cloudflare"),
+      () => collectStatuspageCard("cloudflare", sweep),
       collectSteam,
       collectCs2Europe,
-      () => collectEpic(sweep),
-      () => collectFortnite(sweep),
-      collectSpotify,
+      () => collectStatuspageCard("epic", sweep),
+      () => collectStatuspageCard("fortnite", sweep),
+      () => collectStatuspageCard("spotify", sweep),
       collectApple,
       collectAndroid,
-      () => collectStatuspage("github"),
+      () => collectStatuspageCard("github", sweep),
       collectGitlab,
-      () => collectStatuspage("confluence"),
-      () => collectStatuspage("twitch"),
+      () => collectStatuspageCard("confluence", sweep),
+      () => collectStatuspageCard("twitch", sweep),
       collectGrok,
-      collectChatGpt,
-      collectClaude,
+      () => collectStatuspageCard("chatgpt", sweep),
+      () => collectStatuspageCard("claude", sweep),
       collectMikrotik,
       collectAppleOs,
       collectWindows,

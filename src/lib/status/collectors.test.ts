@@ -151,6 +151,25 @@ describe("collectAllServices against stubbed vendor payloads", () => {
     expect(fortnite.health).toBe("operational");
   });
 
+  it.each([
+    ["spotify", URLS.spotify],
+    ["chatgpt", URLS.chatgpt],
+    ["claude", URLS.claude],
+    ["epic", URLS.epicFortnite],
+  ] as const)("%s: a page's pointer to itself is not listed as a component", async (id, url) => {
+    const summary = statuspageSummary({
+      components: [
+        { id: "1", name: "Visit status.example.com for more information", status: "operational" },
+        { id: "2", name: "Web", status: "operational" },
+      ],
+    });
+    stubFetch({ [url]: json(summary) });
+    const services = await collectAllServices();
+    const service = services.find((s) => s.id === id)!;
+    expect(service.failure).toBeUndefined();
+    expect(service.components.map((component) => component.name)).toEqual(["Web"]);
+  });
+
   it("maps plain Statuspage indicators: none/minor/major", async () => {
     stubFetch({
       [URLS.spotify]: json(statuspageSummary({ indicator: "none" })),
