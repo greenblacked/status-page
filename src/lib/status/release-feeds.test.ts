@@ -15,6 +15,7 @@ import {
   parseFeedItems,
   probeReleaseFeeds,
   RELEASE_FEED_RETRY_MS,
+  RELEASE_FEED_STALE_MS,
   RELEASE_FEED_TTL_MS,
   RELEASE_SOURCES,
   readReleaseFeed,
@@ -906,6 +907,69 @@ describe("how often the feeds are read", () => {
     expect(later.has("aws")).toBe(true);
     // The others were not read again: they are inside their half hour.
     expect(later.get("gitlab")).toBe(first.get("gitlab"));
+  });
+
+  /** Every feed up, with AWS's failing while `down.aws` is set; AWS's requests are counted. */
+  function awsFlapping() {
+    const down = { aws: false };
+    const all = routes();
+    const calls = countingFetch({
+      ...all,
+      [URLS.aws]: () => (down.aws ? new Response("", { status: 503 }) : all[URLS.aws]()),
+    });
+    return { down, awsCalls: () => calls.filter((url) => url === URLS.aws).length };
+  }
+
+  it("keeps the last good feed through a failed refresh, and tries it again only after five minutes", async () => {
+    const { down, awsCalls } = awsFlapping();
+    const first = await releaseFeedsForBoard();
+    const good = first.get("aws");
+    expect(good).toBeDefined();
+
+    // Its half hour is up and the refresh fails: the board keeps the line it had.
+    down.aws = true;
+    vi.setSystemTime(T0 + RELEASE_FEED_TTL_MS);
+    expect((await releaseFeedsForBoard()).get("aws")).toBe(good);
+    expect(awsCalls()).toBe(2);
+
+    vi.setSystemTime(T0 + RELEASE_FEED_TTL_MS + RELEASE_FEED_RETRY_MS - 1);
+    expect((await releaseFeedsForBoard()).get("aws")).toBe(good);
+    expect(awsCalls()).toBe(2);
+
+    down.aws = false;
+    vi.setSystemTime(T0 + RELEASE_FEED_TTL_MS + RELEASE_FEED_RETRY_MS);
+    const later = await releaseFeedsForBoard();
+    expect(awsCalls()).toBe(3);
+    expect(later.get("aws")).not.toBe(good);
+    expect(later.get("aws")).toEqual(good);
+  });
+
+  it("has the last good feed in hand while it is read again", async () => {
+    awsFlapping();
+    const good = (await releaseFeedsForBoard()).get("aws");
+    vi.setSystemTime(T0 + RELEASE_FEED_TTL_MS);
+    const reading = startReleaseFeeds();
+    expect(reading.ready().get("aws")).toBe(good);
+    await reading.settled;
+    expect(reading.ready().get("aws")).toEqual(good);
+  });
+
+  it("drops the last good feed once it is six hours old and every retry since has failed", async () => {
+    const { down, awsCalls } = awsFlapping();
+    await releaseFeedsForBoard();
+    down.aws = true;
+
+    let retries = 0;
+    for (let at = T0 + RELEASE_FEED_TTL_MS; at < T0 + RELEASE_FEED_STALE_MS; at += RELEASE_FEED_RETRY_MS) {
+      vi.setSystemTime(at);
+      expect((await releaseFeedsForBoard()).has("aws"), new Date(at).toISOString()).toBe(true);
+      retries += 1;
+    }
+    expect(awsCalls()).toBe(1 + retries);
+
+    vi.setSystemTime(T0 + RELEASE_FEED_STALE_MS);
+    expect((await releaseFeedsForBoard()).has("aws")).toBe(false);
+    expect(startReleaseFeeds().ready().has("aws")).toBe(false);
   });
 
   it("never rejects, whatever the network does", async () => {

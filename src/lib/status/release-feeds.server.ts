@@ -35,12 +35,15 @@ import { vendorUrl } from "./vendor-url.ts";
 // Release feeds change slowly, so they are not part of every sweep. Each one is
 // read at most once per RELEASE_FEED_TTL_MS in an isolate (RELEASE_FEED_RETRY_MS
 // after a failure), which keeps the board's subrequests where they were: see
-// SECURITY.md#release-feeds.
+// SECURITY.md#release-feeds. A feed that fails to refresh keeps its last good
+// read on the board, for up to RELEASE_FEED_STALE_MS after that read.
 
 /** How long an isolate keeps a feed it read, before reading it again. */
 export const RELEASE_FEED_TTL_MS = 30 * 60_000;
 /** How long an isolate leaves a feed that failed alone before trying it again. */
 export const RELEASE_FEED_RETRY_MS = 5 * 60_000;
+/** How long a feed's last good read stays on the board while every refresh of it fails. */
+export const RELEASE_FEED_STALE_MS = 6 * 60 * 60_000;
 /** The deadline of one feed read: short, like every side request. The board never waits on it and it starts after the sweep (collect-board.ts). */
 const RELEASE_TIMEOUT_MS = 4000;
 /** Most of one entry's text looked at: only its first lines are ever shown. */
@@ -710,7 +713,22 @@ export function probeReleaseFeeds(): Promise<ReleaseFeedResult[]> {
 
 // Per isolate, like the board's own cache. Values, never promises: a promise
 // that holds a fetch may not be awaited from another request on Workers.
-const readings = new Map<ServiceId, { at: number; feed: ReleaseFeed | undefined }>();
+// `at` is when `feed`, the last good read, was read; `failedAt` is when the
+// last read failed, if it did.
+type Reading = { at: number; feed: ReleaseFeed | undefined; failedAt?: number };
+const readings = new Map<ServiceId, Reading>();
+
+/** Whether a feed is to be read now: never read, past its TTL, or a retry period after a failure. */
+function isDue(seen: Reading | undefined, now: number): boolean {
+  if (!seen) return true;
+  if (seen.failedAt !== undefined) return now - seen.failedAt >= RELEASE_FEED_RETRY_MS;
+  return now - seen.at >= RELEASE_FEED_TTL_MS;
+}
+
+/** The feed to show for a reading: its last good read, unless that is too old to keep showing. */
+function keptFeed(seen: Reading | undefined, now: number): ReleaseFeed | undefined {
+  return seen?.feed && now - seen.at < RELEASE_FEED_STALE_MS ? seen.feed : undefined;
+}
 
 /** Forgets what was read, so the next call reads every feed again. For tests. */
 export function clearReleaseFeedCache(): void {
@@ -719,7 +737,10 @@ export function clearReleaseFeedCache(): void {
 
 /** The release feeds a board build is waiting on, as they come in. */
 export type ReleaseFeedReading = {
-  /** The feeds in hand at this moment: fresh in the cache, or already read. A read still running is not in it. */
+  /**
+   * The feeds in hand at this moment: in the cache (fresh, or the last good read of one being read again or
+   * retried), or already read. A first read still running is not in it.
+   */
   ready: () => Map<ServiceId, ReleaseFeed>;
   /** Settles once every read has finished and been cached, so the board can be patched with it. It never rejects. */
   settled: Promise<void>;
@@ -731,8 +752,9 @@ export type ReleaseFeedReading = {
  * on its own short deadline) and joins `ready()` when it arrives. The caller
  * decides how long to wait, so a slow vendor can never hold a board back; a
  * feed that misses the board is cached when it arrives and put on that board
- * in place (collect-board.ts). A feed that failed is absent and not asked again for
- * RELEASE_FEED_RETRY_MS.
+ * in place (collect-board.ts). A feed that failed is not asked again for
+ * RELEASE_FEED_RETRY_MS; its last good read stays in hand meanwhile, and while
+ * it is read again, until RELEASE_FEED_STALE_MS after that read.
  *
  * Call it only once the health sweep has settled (collect-board.ts does): it
  * starts every due request at once, and on a Worker six connections are all
@@ -743,20 +765,27 @@ export function startReleaseFeeds(): ReleaseFeedReading {
   const reads: Promise<void>[] = [];
   for (const source of RELEASE_SOURCES) {
     const seen = readings.get(source.id);
-    if (seen && Date.now() - seen.at < (seen.feed ? RELEASE_FEED_TTL_MS : RELEASE_FEED_RETRY_MS)) {
-      if (seen.feed) feeds.set(source.id, seen.feed);
-      continue;
-    }
+    const now = Date.now();
+    const kept = keptFeed(seen, now);
+    if (kept) feeds.set(source.id, kept);
+    if (!isDue(seen, now)) continue;
+    // A failed read keeps the last good one (dropped once it is too old) and is retried a retry period later.
+    const failed = () => {
+      const previous = readings.get(source.id);
+      const failedAt = Date.now();
+      const reading: Reading = { at: previous?.at ?? failedAt, feed: previous?.feed, failedAt };
+      readings.set(source.id, reading);
+      if (!keptFeed(reading, failedAt)) feeds.delete(source.id);
+    };
     reads.push(
       readReleaseFeed(source).then(
         ({ feed }) => {
+          if (!feed) return failed();
           readings.set(source.id, { at: Date.now(), feed });
-          if (feed) feeds.set(source.id, feed);
+          feeds.set(source.id, feed);
         },
-        // readReleaseFeed does not throw; if it ever did, the feed is simply absent for a retry period.
-        () => {
-          readings.set(source.id, { at: Date.now(), feed: undefined });
-        },
+        // readReleaseFeed does not throw; if it ever did, it counts as a failed read.
+        failed,
       ),
     );
   }
