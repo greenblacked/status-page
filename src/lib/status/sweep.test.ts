@@ -470,6 +470,67 @@ describe("collectAllServices connections", () => {
     const gcp = services.find((service) => service.id === "gcp");
     expect(gcp?.failure).toBeUndefined();
   });
+
+  it("keeps MikroTik's breaker shut while its channel reads never get a connection", async () => {
+    // Six connections and every vendor hangs: the reads late in the catalog wait out the sweep's deadline
+    // without being asked. In the fourth sweep MikroTik answers and must be asked, not held back by a
+    // breaker that counted three sweeps in which it was never reached.
+    vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
+    const mikrotikAnswers = { on: false };
+    const asked: string[] = [];
+    let open = 0;
+    const queue: Array<() => void> = [];
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      return new Promise<Response>((resolve, reject) => {
+        let started = false;
+        const start = () => {
+          started = true;
+          open += 1;
+          asked.push(url);
+          if (mikrotikAnswers.on && url.startsWith("https://upgrade.mikrotik.com/")) {
+            open -= 1;
+            queue.shift()?.();
+            resolve(canned(url));
+          }
+        };
+        init?.signal?.addEventListener("abort", () => {
+          if (started) {
+            open -= 1;
+            queue.shift()?.();
+          } else {
+            queue.splice(queue.indexOf(start), 1);
+          }
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+        if (open < 6) start();
+        else queue.push(start);
+      });
+    });
+    const policy = createSourcePolicy();
+    const run = async () => {
+      let services: Awaited<ReturnType<typeof collectAllServices>> | undefined;
+      const pending = collectAllServices({ policy }).then((result) => {
+        services = result;
+      });
+      while (!services) await vi.advanceTimersByTimeAsync(250);
+      await pending;
+      return services;
+    };
+    const mikrotikAsked = () => asked.filter((url) => url.startsWith("https://upgrade.mikrotik.com/")).length;
+
+    for (let sweep = 0; sweep < 3; sweep += 1) {
+      const services = await run();
+      // Its reads waited for a connection the whole sweep: a timeout of this sweep, not a vendor failure.
+      expect(services.find((service) => service.id === "mikrotik")?.failure?.kind).toBe("timeout");
+    }
+    expect(mikrotikAsked()).toBe(0);
+
+    mikrotikAnswers.on = true;
+    const services = await run();
+    expect(mikrotikAsked()).toBeGreaterThan(0);
+    expect(services.find((service) => service.id === "mikrotik")?.failure).toBeUndefined();
+  });
 });
 
 describe("collectAllServices under a source policy", () => {

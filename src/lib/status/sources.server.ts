@@ -1826,6 +1826,7 @@ async function collectMikrotik(sweep: Sweep): Promise<ServiceSnapshot> {
     // Tell "nothing answered" apart from "something answered but did not
     // parse": the second is a format change that needs a code fix.
     let unparsed = 0;
+    const errors: unknown[] = [];
     const reads = (
       await Promise.all(
         MIKROTIK_CHANNELS.map(async (channel) => {
@@ -1837,7 +1838,8 @@ async function collectMikrotik(sweep: Sweep): Promise<ServiceSnapshot> {
               return null;
             }
             return { channel: { ...channel, ...parsed }, ms: read.ms, fetchedAt: read.fetchedAt };
-          } catch {
+          } catch (error) {
+            errors.push(error);
             return null;
           }
         }),
@@ -1846,6 +1848,12 @@ async function collectMikrotik(sweep: Sweep): Promise<ServiceSnapshot> {
     if (!reads.length) {
       if (unparsed > 0)
         throw new PayloadError(`MikroTik answered ${unparsed} version channel(s) in an unrecognised format.`);
+      // No channel was asked (none got a connection before the sweep's
+      // deadline): that error, `asked: false`, keeps this sweep's lack of time
+      // out of the source policy's breaker, as every other collector's does.
+      if (errors.length > 0 && errors.every((error) => (error as { asked?: unknown } | null)?.asked === false)) {
+        throw errors[0];
+      }
       throw new SourceError("MikroTik version channels did not respond.");
     }
     const channels = reads.map((read) => read.channel);
