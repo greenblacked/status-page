@@ -134,7 +134,7 @@ test("renders no card for a tick of the seconds clock, and still counts the seco
   expect(after.cards - before.cards, `cards rendered: ${after.ids.slice(before.ids.length).join(", ")}`).toBe(0);
 });
 
-test("renders at most the cards that change for one keystroke in the search", async ({ page }) => {
+test("renders no card for one keystroke in the search", async ({ page }) => {
   await countCardRenders(page);
   await openSteady(page);
   await page.waitForTimeout(800);
@@ -149,8 +149,9 @@ test("renders at most the cards that change for one keystroke in the search", as
   const ids = after.ids.slice(before.ids.length);
   console.log(`${after.commits - before.commits} commits and ${ids.length} card renders for one keystroke`);
   // A card the search keeps is the same card with the same props: it is not rendered again, twice over, for every
-  // key (once for the keystroke and once more when the address caught up).
-  expect(ids.length, `cards rendered: ${ids.join(", ")}`).toBeLessThanOrEqual(2);
+  // key (once for the keystroke and once more when the address caught up). The one prop a search can change is
+  // the highlight, when it hides a starred card ahead of the most urgent one, and nothing is starred here.
+  expect(ids.length, `cards rendered: ${ids.join(", ")}`).toBe(0);
 });
 
 test("renders no card for a scheduled refetch that brings the same board", async ({ page }) => {
