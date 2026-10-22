@@ -25,13 +25,13 @@ export default defineConfig({
     unstubEnvs: true,
     // `pnpm run test:coverage`. The thresholds sit just under the current
     // numbers, so coverage can only go up: raise them when it does. Measured
-    // 2026-10-21: 72.10 statements, 76.48 branches, 72.51 functions, 72.55 lines.
+    // 2026-10-22: 74.41 statements, 78.20 branches, 74.63 functions, 74.85 lines.
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,cjs}"],
       exclude: ["**/*.test.ts", "src/test/**", "**/__fixtures__/**", "src/routeTree.gen.ts"],
       reporter: ["text-summary", "json-summary", "html"],
-      thresholds: { statements: 71, branches: 75, functions: 71, lines: 71 },
+      thresholds: { statements: 73, branches: 77, functions: 73, lines: 73 },
     },
   },
 });
