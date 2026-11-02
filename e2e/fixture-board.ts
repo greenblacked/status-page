@@ -497,7 +497,9 @@ export async function serveBoard(page: Page, board: () => BoardSnapshot, pressed
   if (before) await page.unroute(SERVER_FN, before);
   const handler = async (route: Route) => {
     const answer = pressed && route.request().method() === "POST" ? pressed() : board();
-    const body = await toCrossJSONAsync({ result: answer, error: undefined, context: {} }, { refs: new Map() });
+    // A success carries no `error` key, as the server sends it: TanStack Start's client asks `"error" in result`
+    // (1.169 on), so an `error: undefined` would be thrown as a failure and the board never arrives.
+    const body = await toCrossJSONAsync({ result: answer, context: {} }, { refs: new Map() });
     await route.fulfill({
       status: 200,
       contentType: "application/json",
