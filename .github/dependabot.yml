@@ -18,6 +18,9 @@ updates:
     # keeps them out of the lockfile. Security updates are not delayed.
     cooldown:
       default-days: 7
+    # Group names are short on purpose: Dependabot titles a group pull request
+    # "build(deps-dev): bump the <group> group across 1 directory with N
+    # updates", and scripts/ci/commits.sh holds that title to 72 characters.
     groups:
       # Alone, and first (a dependency joins the first group that matches):
       # the WebKit shards run in Playwright's image, pinned in ci.yml, so a
@@ -28,9 +31,9 @@ updates:
           - "@playwright/*"
           - "playwright"
           - "playwright-core"
-      development-dependencies:
+      dev:
         dependency-type: development
-      production-dependencies:
+      prod:
         dependency-type: production
     ignore:
       # Node types must match the oldest supported runtime (engines and
@@ -48,7 +51,7 @@ updates:
     cooldown:
       default-days: 3
     groups:
-      github-actions:
+      actions:
         patterns:
           - "*"
   # The Dockerfile's Node base image: its tag and digest move together. A new
