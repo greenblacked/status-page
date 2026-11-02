@@ -6,6 +6,10 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ## [Unreleased]
 
+### Security
+
+- The build tooling's schema library `zod` is updated from 4.6.5 to 4.6.7 for a published HIGH advisory (CVE-2023-54404). It is a dependency of the router's build plugin only, so the running board, the Worker and the Docker image are unchanged.
+
 ### Added
 
 - `/metrics` gives how long ago each source was read (`statusbar_service_check_age_seconds`), so a source answered from an older reading shows up in a scrape.
