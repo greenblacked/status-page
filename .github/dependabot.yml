@@ -19,7 +19,7 @@ updates:
     cooldown:
       default-days: 7
     # Group names are short on purpose: Dependabot titles a group pull request
-    # "build(deps-dev): bump the <group> group across 1 directory with N
+    # "build(<scope>): bump the <group> group across 1 directory with N
     # updates", and scripts/ci/commits.sh holds that title to 72 characters.
     groups:
       # Alone, and first (a dependency joins the first group that matches):
@@ -50,6 +50,7 @@ updates:
     # retagged or compromised release still deserves a few days to surface.
     cooldown:
       default-days: 3
+    # Short for the same reason as the npm groups: the title limit is 72.
     groups:
       actions:
         patterns:

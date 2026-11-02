@@ -8,7 +8,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Security
 
-- The build tooling's schema library `zod` is updated from 4.6.5 to 4.6.7 for a published HIGH advisory (CVE-2023-54404). It is a dependency of the router's build plugin only, so the running board, the Worker and the Docker image are unchanged.
+- The schema library `zod` is updated from 4.6.5 to 4.6.7 for a published HIGH advisory (CVE-2023-54404). It comes in through TanStack Start's router tooling, which is a production dependency, so it also ships in the Docker image's `node_modules`; rebuild the image to pick up the fix.
 
 ### Added
 
