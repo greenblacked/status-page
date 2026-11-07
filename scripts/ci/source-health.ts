@@ -135,7 +135,7 @@ async function probe(): Promise<Result[]> {
   return [...results.values()];
 }
 
-function describe(result: Result): string {
+function describeFailure(result: Result): string {
   if (result.ok) return "";
   const failure = result.failure;
   if (!failure) return "unknown failure";
@@ -145,13 +145,16 @@ function describe(result: Result): string {
 function renderTable(results: Result[]): string {
   const width = Math.max(...results.map((r) => r.name.length));
   return results
-    .map((r) => `${r.name.padEnd(width)}  ${r.ok ? "OK  " : "FAIL"}  ${`${r.latencyMs}ms`.padStart(7)}  ${describe(r)}`)
+    .map(
+      (r) =>
+        `${r.name.padEnd(width)}  ${r.ok ? "OK  " : "FAIL"}  ${`${r.latencyMs}ms`.padStart(7)}  ${describeFailure(r)}`,
+    )
     .join("\n");
 }
 
 function renderSummary(results: Result[]): string {
   const rows = results.map((r) => {
-    const detail = r.ok ? "" : `${describe(r)}: ${inline(r.failure?.message ?? "")}`;
+    const detail = r.ok ? "" : `${describeFailure(r)}: ${inline(r.failure?.message ?? "")}`;
     return `| ${r.name} | ${r.ok ? "✅ OK" : "❌ FAIL"} | ${r.latencyMs}ms | ${r.attempts} | ${detail} |`;
   });
   return [

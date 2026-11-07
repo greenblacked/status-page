@@ -36,6 +36,10 @@ updates:
       prod:
         dependency-type: production
     ignore:
+      # WebKit 27.2 (revision 2370) in Playwright 1.64 stalls Glass/Full pages
+      # in the Linux CI container; 1.65 will be proposed automatically.
+      - dependency-name: "@playwright/test"
+        versions: ["1.64.x"]
       # Node types must match the oldest supported runtime (engines and
       # .nvmrc), or typecheck accepts APIs that fail at runtime on it. Move
       # this major by hand together with engines.

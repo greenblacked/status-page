@@ -45,22 +45,22 @@ name: Release
 on:
   push:
     branches: [main]
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
     inputs:
       bump:
-        description: 'patch, minor or major bumps the version and releases it; current releases the package.json version as it is'
+        description: "patch, minor or major bumps the version and releases it; current releases the package.json version as it is"
         type: choice
         options: [current, patch, minor, major]
         default: current
       version:
-        description: 'Backfill only: an older X.Y.Z that has a CHANGELOG.md section on main. Leave empty otherwise.'
+        description: "Backfill only: an older X.Y.Z that has a CHANGELOG.md section on main. Leave empty otherwise."
         type: string
-        default: ''
+        default: ""
       commit:
-        description: 'Backfill only: the commit on main to tag as that version.'
+        description: "Backfill only: the commit on main to tag as that version."
         type: string
-        default: ''
+        default: ""
 
 permissions:
   contents: read

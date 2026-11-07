@@ -7,7 +7,7 @@ on:
     branches: [main, stage, dev]
   schedule:
     # Weekly, so a newly published rule still finds this repository.
-    - cron: '17 4 * * 1'
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 permissions:

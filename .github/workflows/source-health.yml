@@ -21,7 +21,7 @@ name: Source health
 on:
   schedule:
     # Hourly, off the top of the hour when shared runners are busiest.
-    - cron: '23 * * * *'
+    - cron: "23 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -80,7 +80,7 @@ jobs:
       # exits 1 when a source fails; what the others answered is still kept.
       - name: Record vendor responses
         env:
-          SOURCE_HEALTH_ATTEMPTS: '1'
+          SOURCE_HEALTH_ATTEMPTS: "1"
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/ci/source-health.ts --record rec
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
