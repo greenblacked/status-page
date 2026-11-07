@@ -16,7 +16,7 @@ on:
   # Re-graded when branch protection changes, and weekly for new checks.
   branch_protection_rule:
   schedule:
-    - cron: '32 5 * * 2'
+    - cron: "32 5 * * 2"
   workflow_dispatch:
 
 permissions: read-all

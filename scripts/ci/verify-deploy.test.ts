@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 const SCRIPT = fileURLToPath(new URL("./verify-deploy.sh", import.meta.url));
 
@@ -271,7 +271,13 @@ esac
 // Every test runs the real script, which starts dozens of processes. On four
 // cores that takes well under a second idle, 1-3 s at load 30-40 and over 5 s
 // at load 43 (Playwright and Vite builds running), past vitest's 5 s default.
-describe("verify-deploy.sh", { timeout: 20_000 }, () => {
+// The timeout is set with vi.setConfig inside the callback, which vitest runs while it collects the tests, so every
+// test below (nested ones included) is created with it. The options-object form describe(name, { timeout }, fn) is
+// valid vitest, but Biome 2.6's usePlaywrightValidDescribeCallback reads a second argument that is not a function as
+// a missing callback.
+describe("verify-deploy.sh", () => {
+  vi.setConfig({ testTimeout: 20_000 });
+
   it("passes on a healthy production and stage", () => {
     const r = run([]);
     expect(r.status).toBe(0);

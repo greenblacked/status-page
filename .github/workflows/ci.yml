@@ -87,7 +87,7 @@ jobs:
         # package.json declares "^22.22.2 || ^24.15.0", the Node lines the
         # toolchain supports. The pinned leg is the exact toolchain in .nvmrc; the 24
         # leg covers the top of that range.
-        node: ['', '24']
+        node: ["", "24"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,7 +121,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['', '24']
+        node: ["", "24"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -265,7 +265,7 @@ jobs:
           - shard: macos
             browser: webkit
             projects: Desktop Safari
-            container: &playwright-image mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+            container: &playwright-image mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
           - shard: ios-1
             browser: webkit
             projects: iPhone 17 Pro
