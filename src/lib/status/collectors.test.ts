@@ -1976,6 +1976,48 @@ describe("collectAllServices against stubbed vendor payloads", () => {
       expect(cloudflare.incidents).toHaveLength(1);
     });
 
+    it("Cloudflare: active incident products lead regional rows and survive the component cap", async () => {
+      const summary = cloudflareSummary();
+      const workers = summary.components.find((c: { id: string }) => c.id === "cf-p-cloudflare-workers");
+      workers.status = "partial_outage";
+      const frankfurt = summary.components.find((c: { id: string }) => c.id === "cf-dc-fra");
+      frankfurt.status = "major_outage";
+      const queues = {
+        ...workers,
+        id: "cf-p-queues",
+        name: "Queues",
+        status: "partial_outage",
+        position: 21,
+      };
+      summary.components.push(queues);
+      for (let index = 0; index < 305; index++) {
+        summary.components.push({
+          id: `cf-dc-extra-${index}`,
+          name: `Extra Region ${index} - (X${String(index).padStart(2, "0")})`,
+          status: "major_outage",
+          group_id: "cf-eu",
+        });
+      }
+      summary.incidents.push({
+        id: "cf-inc-products",
+        name: "Elevated errors in Workers and Queues",
+        status: "investigating",
+        impact: "minor",
+        shortlink: "https://stspg.io/cf-products",
+        components: [workers, queues, frankfurt],
+      });
+      stubFetch({ [URLS.cloudflare]: json(summary) });
+      const cloudflare = await collect("cloudflare");
+      expect(cloudflare.health).toBe("degraded");
+      expect(cloudflare.componentCount).toBeGreaterThan(300);
+      expect(cloudflare.components).toHaveLength(300);
+      expect(cloudflare.components.slice(0, 2).map((component) => component.name)).toEqual([
+        "Cloudflare Workers",
+        "Queues",
+      ]);
+      expect(cloudflare.components.slice(2).every((component) => component.health !== "operational")).toBe(true);
+    });
+
     it("Twitch: a data-center-named window is still maintenance there (the rule is Cloudflare's)", async () => {
       const summary = JSON.parse(fixture("twitch/summary.json"));
       summary.scheduled_maintenances.push({

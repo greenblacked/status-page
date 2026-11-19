@@ -25,6 +25,7 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Fixed
 
+- The Cloudflare card puts products named by an active incident ahead of regional data centers and links a matching incident summary to the vendor report.
 - A source that times out or drops a connection once keeps its last reading for a few minutes instead of turning No data; a source that keeps failing is asked less often and still says it could not be checked.
 - A slow vendor no longer makes healthy sources time out while they wait their turn for a connection.
 - The Grok card no longer shows "Nothing reported" for an ongoing incident whose date it cannot read, and it reads health from the incident's own Severity and Status lines.

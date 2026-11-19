@@ -561,6 +561,25 @@ describe("service card incident labels and links", () => {
     expect(html).toContain('<span class="sr-only"> for chatgpt</span>');
   });
 
+  it("links a matching incident summary directly to its vendor report", () => {
+    const html = render("cloudflare", {
+      health: "degraded",
+      summary: "Elevated errors in Cloudflare Workers",
+      incidents: [
+        {
+          id: "workers-incident",
+          title: "Elevated errors in Cloudflare Workers",
+          health: "degraded",
+          url: "https://stspg.io/cf-workers",
+        },
+      ],
+    });
+    expect(html).toContain(
+      '<a href="https://stspg.io/cf-workers" target="_blank" rel="noreferrer" class="focus-ring inline-flex min-h-11 min-w-11 items-center rounded-md text-accent underline underline-offset-2">Elevated errors in Cloudflare Workers</a>',
+    );
+    expect(html).not.toContain('aria-label="Incidents"');
+  });
+
   it("does not call the vendor's generic dashboard an incident: it says the host", () => {
     const html = render("aws", {
       health: "degraded",
