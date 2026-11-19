@@ -5,6 +5,7 @@ import { STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { CATALOG } from "@/lib/status/catalog";
 import { quietScroll } from "@/lib/status/dock";
 import { healthLabel } from "@/lib/status/health";
+import { incidentDetailUrl } from "@/lib/status/layout";
 import { incidentStart, parseTimestamp } from "@/lib/status/schedule";
 import type { ComponentHealth, Health, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { cn } from "@/lib/utils";
@@ -395,28 +396,44 @@ export function ServiceExtras({
     <div className={cn("dynamic-text flex flex-col gap-3 text-caption", className)}>
       {incidents.length > 0 ? (
         <ul aria-label="Incidents" className="space-y-2">
-          {incidents.map((incident, incidentIndex) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
-            <li key={`${incident.id}-${incidentIndex}`} className="text-fg [overflow-wrap:anywhere]">
-              {/* A notice reports no impact, so it is not labelled with a health. */}
-              <span
-                className={
-                  incident.informational ? "font-[450] text-subtle" : cn("font-semibold", STATUS_TEXT[incident.health])
-                }
-              >
-                {incident.informational ? "Notice" : stateWord(incident.health)}
-              </span>
-              <span className="text-subtle"> · </span>
-              {incident.title}
-              <IncidentSince
-                startedAt={incident.startedAt}
-                reference={checkedAt}
-                now={now}
-                lineStart
-                className="block text-footnote"
-              />
-            </li>
-          ))}
+          {incidents.map((incident, incidentIndex) => {
+            const detailUrl = incidentDetailUrl(service, incident);
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: a vendor can repeat an incident id; the index only breaks that tie.
+              <li key={`${incident.id}-${incidentIndex}`} className="text-fg [overflow-wrap:anywhere]">
+                {/* A notice reports no impact, so it is not labelled with a health. */}
+                <span
+                  className={
+                    incident.informational
+                      ? "font-[450] text-subtle"
+                      : cn("font-semibold", STATUS_TEXT[incident.health])
+                  }
+                >
+                  {incident.informational ? "Notice" : stateWord(incident.health)}
+                </span>
+                <span className="text-subtle"> · </span>
+                {detailUrl ? (
+                  <a
+                    href={detailUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="focus-ring inline-flex min-h-11 min-w-11 items-center rounded-md underline underline-offset-2"
+                  >
+                    {incident.title}
+                  </a>
+                ) : (
+                  incident.title
+                )}
+                <IncidentSince
+                  startedAt={incident.startedAt}
+                  reference={checkedAt}
+                  now={now}
+                  lineStart
+                  className="block text-footnote"
+                />
+              </li>
+            );
+          })}
           {more > 0 ? (
             <li className="text-footnote text-subtle" data-more-incidents>
               <span aria-hidden>+{more} more</span>

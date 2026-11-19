@@ -514,14 +514,32 @@ export function googleComponents(products: GoogleProduct[], openIncidents: Googl
 
 // Non-operational first, in the board's urgency order (SEVERITY_ORDER: outage,
 // degraded, unknown, maintenance; equals keep source order), then operational
-// in source order, capped at MAX_COMPONENTS so the cap can never drop the worst rows. `componentCount` is
+// in source order. An optional vendor-specific set can promote selected broken
+// rows before other broken rows, without letting them displace broken rows
+// with healthy ones. The cap can therefore omit an unrelated broken row when
+// the selected rows fill it. `componentCount` is
 // the count read (at most MAX_SCANNED_ROWS where the reader cuts its arrays first, as the
 // Statuspage and Status.io readers do), set only when the cap dropped some, so a card
 // can say how many it is not showing.
-function rankComponents(components: ComponentHealth[]): Pick<ServiceSnapshot, "components" | "componentCount"> {
+function rankComponents(
+  components: ComponentHealth[],
+  priorityNames?: ReadonlySet<string>,
+): Pick<ServiceSnapshot, "components" | "componentCount"> {
   const isUp = (component: ComponentHealth) => component.health === "operational";
-  const broken = components.filter((c) => !isUp(c)).sort((a, b) => urgencyOf(a.health) - urgencyOf(b.health));
-  const ranked = [...broken, ...components.filter(isUp)].slice(0, MAX_COMPONENTS);
+  const priority = (component: ComponentHealth) =>
+    Number(
+      priorityNames !== undefined &&
+        typeof component.name === "string" &&
+        priorityNames.has(component.name.trim().toLowerCase()),
+    );
+  // Active incident components lead within the broken rows, so a large set of
+  // unrelated data centers cannot crowd the affected services out of the cap.
+  // Broken rows still precede every operational row.
+  const broken = components
+    .filter((component) => !isUp(component))
+    .sort((a, b) => priority(b) - priority(a) || urgencyOf(a.health) - urgencyOf(b.health));
+  const up = components.filter(isUp);
+  const ranked = [...broken, ...up].slice(0, MAX_COMPONENTS);
   return components.length > MAX_COMPONENTS
     ? { components: ranked, componentCount: components.length }
     : { components: ranked };
@@ -654,6 +672,24 @@ function fromStatuspage(
     },
   );
 
+  // The Cloudflare incident feed names the products it affects. Give those
+  // leaf components precedence over unrelated regional rows in the rendered
+  // card and the collector cap. Resolve only leaf IDs or explicit names, so
+  // an incident on one product does not pull in its whole parent group.
+  const incidentAffectedNames = new Set<string>();
+  if (id === "cloudflare") {
+    for (const incident of activeIncidents) {
+      if (statuspageIncidentImpact(incident.impact).informational) continue;
+      for (const ref of records<StatuspageRef>(incident.components, MAX_NESTED_ROWS)) {
+        const known = ref.id ? componentsById.get(ref.id) : undefined;
+        const leafName = known && !known.group ? known.name : ref.name;
+        if (typeof leafName === "string" && leafName.trim() && !CLOUDFLARE_DATA_CENTER.test(leafName)) {
+          incidentAffectedNames.add(leafName.trim().toLowerCase());
+        }
+      }
+    }
+  }
+
   const mapped: Incident[] = activeIncidents
     .filter((incident) => belongs(incident))
     .map((incident) => {
@@ -719,7 +755,7 @@ function fromStatuspage(
     ...base(id, checkedAt, latencyMs),
     health,
     summary: overallSummary(health, problems, hint),
-    ...rankComponents(components),
+    ...rankComponents(components, incidentAffectedNames.size > 0 ? incidentAffectedNames : undefined),
     incidents,
     ...(incidentCount ? { incidentCount } : {}),
     ...(upcoming.length ? { upcomingMaintenance: upcoming } : {}),

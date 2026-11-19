@@ -388,7 +388,7 @@ You can also use **Workers & Pages → status-page → Deployments** in the dash
 
 ## Dependencies
 
-Dependabot proposes npm-ecosystem updates (the project, whose lockfile is `pnpm-lock.yaml`: Dependabot's `npm` ecosystem covers pnpm), GitHub Actions updates and Docker base image updates weekly. npm updates are grouped into production dependencies, development dependencies and Playwright, Actions updates into one group, and Docker updates arrive on their own.
+Dependabot proposes npm-ecosystem updates (the project, whose lockfile is `pnpm-lock.yaml`: Dependabot's `npm` ecosystem covers pnpm), GitHub Actions updates and Docker base image updates weekly. npm updates are grouped into `prod` (production dependencies), `dev` (development dependencies) and `playwright`, Actions updates into one group (`actions`), and Docker updates arrive on their own.
 
 - Actions stay pinned to a full commit SHA with the version in a trailing comment
 - The Dockerfile's Node base image is pinned by tag **and** digest (`node:22.23.2-bookworm-slim@sha256:...`) in its two `FROM` lines, which Dependabot's `docker` ecosystem moves together after the same 7-day cooldown; its major versions are skipped, because a new Node line is chosen by hand together with `engines` and `.nvmrc`. What the image runs at run time is only what `pnpm install --prod --frozen-lockfile` locks: anything `dist/server/server.js` or `src/node/` imports must be in `dependencies`, not `devDependencies` (`seroval` moved for this reason)

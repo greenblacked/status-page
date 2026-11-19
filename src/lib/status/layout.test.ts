@@ -5,6 +5,7 @@ import {
   dockProgress,
   documentTitle,
   groupServices,
+  incidentDetailUrl,
   incidentLink,
   keyboardFocus,
   serviceAnchor,
@@ -380,6 +381,12 @@ describe("incidentLink", () => {
         withIncidents(`${dashboard}/`, [{ id: "1", title: "T", health: "degraded", url: `${dashboard}#x` }]),
       ),
     ).toBe(undefined);
+  });
+
+  it("does not treat the generic status page as an incident report", () => {
+    const dashboard = "https://status.example.com/";
+    const snapshot = withIncidents(dashboard, [{ id: "1", title: "Major incident", health: "outage", url: dashboard }]);
+    expect(incidentDetailUrl(snapshot, snapshot.incidents[0])).toBeUndefined();
   });
 
   it("treats runs of trailing slashes as the same page", () => {

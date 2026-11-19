@@ -17,7 +17,7 @@ on:
       - .github/workflows/base-images.yml
   schedule:
     # Weekly, Wednesday morning UTC, after the images' weekly rebuild.
-    - cron: '41 6 * * 3'
+    - cron: "41 6 * * 3"
   workflow_dispatch:
 
 permissions:

@@ -53,7 +53,7 @@ const PHONE_WIDTHS = [320, 375, 390, 412] as const;
 //   - no status word is cut by an ellipsis
 // A failing check attaches a screenshot of the page as it was.
 
-test.describe("mobile layout", { tag: "@layout" }, () => {
+test.describe("mobile layout @layout", () => {
   // The audit has to be able to fail: each of these breaks the page on purpose and expects the audit to say so, so a
   // change to it that stops seeing sideways overflow (the page clips it, so scrollWidth never shows it) or an overlap
   // fails here and not silently everywhere else.

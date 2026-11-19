@@ -9,6 +9,7 @@
     "formatter": { "quoteStyle": "double", "semicolons": "always", "trailingCommas": "all" }
   },
   "css": { "parser": { "tailwindDirectives": true }, "formatter": { "enabled": false } },
+  "markdown": { "formatter": { "enabled": false } },
   "linter": {
     "enabled": true,
     "rules": {
@@ -20,6 +21,10 @@
   },
   "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
   "overrides": [
+    {
+      "includes": ["pnpm-lock.yaml"],
+      "formatter": { "enabled": false }
+    },
     {
       "includes": ["**/*.test.ts", "e2e/**"],
       "linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }

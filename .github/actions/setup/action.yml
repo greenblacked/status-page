@@ -10,11 +10,11 @@ inputs:
   node-version:
     description: A Node version such as 24. Empty means the exact version in .nvmrc.
     required: false
-    default: ''
+    default: ""
   install:
     description: Run `pnpm install --frozen-lockfile` and the registry signature check. `false` sets up the toolchain only.
     required: false
-    default: 'true'
+    default: "true"
 
 runs:
   using: composite

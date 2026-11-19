@@ -20,7 +20,7 @@ import {
 } from "@/components/status/service-card-shared";
 import { CHANGED_BAR, STATUS_TEXT, StatusGlyph } from "@/components/status/status-glyph";
 import { Tag } from "@/components/ui/tag";
-import { incidentLink, serviceAnchor } from "@/lib/status/layout";
+import { incidentDetailUrl, incidentLink, serviceAnchor } from "@/lib/status/layout";
 import { hasReleaseDetails } from "@/lib/status/release-details";
 import { parseTimestamp } from "@/lib/status/schedule";
 import type { ServiceSnapshot } from "@/lib/status/types";
@@ -68,6 +68,12 @@ export function AttentionCard({
   const details = changelog && hasReleaseDetails(service);
   const summary = norm(service.summary);
   const outage = service.health === "outage";
+  // Statuspage often repeats the incident title as the card summary. Keep the
+  // report one tap away there, rather than hiding the duplicate title below.
+  const summaryIncident = changelog
+    ? undefined
+    : service.incidents.find((incident) => norm(incident.title) === summary && incidentDetailUrl(service, incident));
+  const summaryIncidentUrl = summaryIncident ? incidentDetailUrl(service, summaryIncident) : undefined;
 
   // Release channels and CS2 relays are the content of their cards, up or not;
   // for everything else only broken components earn a row.
@@ -166,7 +172,18 @@ export function AttentionCard({
       </div>
 
       <p className="dynamic-text mt-2 ml-[34px] max-w-[72ch] text-body text-fg [overflow-wrap:anywhere]">
-        {service.summary}
+        {summaryIncidentUrl ? (
+          <a
+            href={summaryIncidentUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="focus-ring inline-flex min-h-11 min-w-11 items-center rounded-md text-accent underline underline-offset-2"
+          >
+            {service.summary}
+          </a>
+        ) : (
+          service.summary
+        )}
       </p>
 
       {rows.length > 0 ? (

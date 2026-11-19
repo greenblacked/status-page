@@ -2018,14 +2018,14 @@ test("search reveal: the revealed field keeps still when the bar's lead text cha
     tracked.__boxes = boxes;
     tracked.__watching = true;
     const bar = document.querySelector('section[aria-label="Board controls"]') as HTMLElement;
-    const describe = (element: Element) =>
+    const describeElement = (element: Element) =>
       `${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).split(" ")[0]}` : ""}`;
     document.addEventListener(
       "transitionrun",
       (event) => {
         const target = event.target as Element;
         if (!bar.contains(target)) return;
-        log.push(`${stamp()} transitionrun ${event.propertyName} on ${describe(target)}`);
+        log.push(`${stamp()} transitionrun ${event.propertyName} on ${describeElement(target)}`);
         if (target.closest(".bar-search")) runs.push(event.propertyName);
       },
       true,
@@ -2034,7 +2034,7 @@ test("search reveal: the revealed field keeps still when the bar's lead text cha
       for (const record of records) {
         const target = record.target as Element;
         log.push(
-          `${stamp()} ${record.attributeName}=${JSON.stringify(target.getAttribute(record.attributeName as string))} on ${describe(target)}`,
+          `${stamp()} ${record.attributeName}=${JSON.stringify(target.getAttribute(record.attributeName as string))} on ${describeElement(target)}`,
         );
       }
     }).observe(bar, {

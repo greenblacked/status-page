@@ -117,7 +117,7 @@ async function bringBarUp(page: Page): Promise<void> {
   await barSettled(page);
 }
 
-test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
+test.describe("the floating bar on a phone @layout", () => {
   test("goes away on a scroll down past the hero and comes back on a scroll up of more than 8px", async ({ page }) => {
     test.slow();
     await openBoard(page, "quiet", { steady: true });
@@ -787,7 +787,7 @@ test.describe("the floating bar on a phone", { tag: "@layout" }, () => {
   });
 });
 
-test.describe("the floating bar from 640px", { tag: "@layout" }, () => {
+test.describe("the floating bar from 640px @layout", () => {
   test("stays up once it has come up, whichever way the page is scrolled", async ({ page }) => {
     test.slow();
     await openBoard(page, "quiet", { steady: true });

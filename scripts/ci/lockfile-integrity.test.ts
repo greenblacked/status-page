@@ -173,7 +173,7 @@ describe("parseLockfile", () => {
   it("reads this repository's lockfile: every package, nothing malformed or skipped", () => {
     const { entries, skipped, malformed } = parseLockfile(readFileSync(join(ROOT, "pnpm-lock.yaml"), "utf8"));
     const names = entries.map((e) => `${e.name}@${e.version}`);
-    expect(names).toContain("react@19.3.0");
+    expect(names).toContain("react@19.3.1");
     expect(names).toContain("@typescript/typescript6@6.0.2");
     expect(names).toContain("typescript@6.0.3");
     expect(entries.length).toBeGreaterThan(300);

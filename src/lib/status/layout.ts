@@ -92,8 +92,12 @@ function samePage(a: string, b: string): boolean {
  * the card's source link, so it is not offered as "View incident".
  */
 export function incidentLink(service: ServiceSnapshot): string | undefined {
-  return sortIncidents(service.incidents).find((incident) => incident.url && !samePage(incident.url, service.sourceUrl))
-    ?.url;
+  return sortIncidents(service.incidents).find((incident) => incidentDetailUrl(service, incident))?.url;
+}
+
+/** The report URL for one incident, excluding the vendor's generic dashboard. */
+export function incidentDetailUrl(service: ServiceSnapshot, incident: Incident): string | undefined {
+  return incident.url && !samePage(incident.url, service.sourceUrl) ? incident.url : undefined;
 }
 
 export type BoardGroups = {
