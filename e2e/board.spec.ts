@@ -325,7 +325,7 @@ test("renders every service with no console errors or hydration warnings", async
     expect(releaseLineIds(html).filter((id) => !EXPECTED_RELEASE_LINES.includes(id))).toEqual([]);
   }
   // After hydration the title leads with how many services need attention: "(2) Status".
-  await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
+  await expect(page).toHaveTitle(/^(\(\d+\) )?Live Service Status Dashboard \| Cloud, AI & Gaming$/);
   await expect(cards(page)).toHaveCount(SERVICES);
   // Hydration runs after the first paint; give React time to complain.
   await page.waitForLoadState("networkidle");
@@ -5432,7 +5432,7 @@ test("writes all quiet by hand, and says so in words, when all twenty-two are up
   expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
   await expect(page.getByText("All twenty-two services are running normally.")).toHaveClass(/sr-only/);
   // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
-  await expect(page).toHaveTitle("Status");
+  await expect(page).toHaveTitle("Live Service Status Dashboard | Cloud, AI & Gaming");
   await expect(group(page, "attention")).toHaveCount(0);
   await expect(page.locator("[data-highlight]")).toHaveCount(0);
 });

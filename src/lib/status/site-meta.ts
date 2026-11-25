@@ -1,6 +1,9 @@
 import { APP_NAME, CATALOG, SITE_ORIGIN } from "./catalog.ts";
 import { countWord } from "./verdict.ts";
 
+export const SITE_TITLE = "Live Service Status Dashboard | Cloud, AI & Gaming";
+export const BOARD_INTRO = "Check official outages and maintenance for ChatGPT, AWS, Steam, GitHub, and more in one place.";
+
 /** The five services the description names; the count of the rest is spelled out from the catalog. */
 const NAMED = ["Google Cloud", "AWS", "Steam", "ChatGPT", "Claude"];
 

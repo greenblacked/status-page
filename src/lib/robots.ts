@@ -4,6 +4,8 @@
 // build competes with the real board in search results. Platform-neutral: the
 // caller says which deployment it is.
 
+import { CANONICAL_URL } from "./status/site-meta";
+
 export const NOINDEX_HEADER_VALUE = "noindex, nofollow";
 
 /** True only for the exact value wrangler.jsonc sets; anything else indexes. */
@@ -13,7 +15,9 @@ export function isNoindex(robots: string | undefined): boolean {
 
 /** The /robots.txt body for a deployment. */
 export function robotsTxt(noindex: boolean): string {
-  return noindex ? "User-agent: *\nDisallow: /\n" : "User-agent: *\nAllow: /\n";
+  return noindex
+    ? "User-agent: *\nDisallow: /\n"
+    : `User-agent: *\nAllow: /\nSitemap: ${CANONICAL_URL}sitemap.xml\n`;
 }
 
 /** A copy of `response` carrying X-Robots-Tag, for deployments that must not be indexed. */
