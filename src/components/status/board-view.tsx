@@ -34,9 +34,9 @@ import {
   resultsAnnouncement,
 } from "@/lib/status/filters";
 import { documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
-import { SITE_TITLE } from "@/lib/status/site-meta";
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import { CACHE_TTL_MS, lastPulseAt, nextRefetchAt, parseTimestamp, pickRefetchJitter } from "@/lib/status/schedule";
+import { SITE_TITLE } from "@/lib/status/site-meta";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { verdict as verdictOf } from "@/lib/status/verdict";

@@ -15,9 +15,8 @@ export function isNoindex(robots: string | undefined): boolean {
 
 /** The /robots.txt body for a deployment. */
 export function robotsTxt(noindex: boolean): string {
-  return noindex
-    ? "User-agent: *\nDisallow: /\n"
-    : `User-agent: *\nAllow: /\nSitemap: ${CANONICAL_URL}sitemap.xml\n`;
+  if (noindex) return "User-agent: *\nDisallow: /\n";
+  return `User-agent: *\nAllow: /\nSitemap: ${CANONICAL_URL}sitemap.xml\n`;
 }
 
 /** A copy of `response` carrying X-Robots-Tag, for deployments that must not be indexed. */
