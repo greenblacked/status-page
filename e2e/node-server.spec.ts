@@ -20,7 +20,7 @@ const SECURITY_HEADERS = [
 test.describe("@node-server the board behind the production server", () => {
   test("renders the board and hydrates it", async ({ page }) => {
     await page.goto("/");
-    await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
+    await expect(page).toHaveTitle(/^(\(\d+\) )?Live Service Status Dashboard \| Cloud, AI & Gaming$/);
     await expect(page.locator("html")).toHaveAttribute("data-hydrated", "");
     await expect(page.locator('article[id^="service-"]').first()).toBeVisible();
     await expect(page.locator('article[id^="service-"]')).toHaveCount(22);
