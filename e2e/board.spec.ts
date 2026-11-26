@@ -2090,6 +2090,7 @@ test("search reveal: the revealed field keeps still when the bar's lead text cha
 });
 
 test("search reveal: a reorder above the reader that keeps the board's height does not flip the field", async ({
+  browserName,
   page,
 }) => {
   test.slow();
@@ -2159,10 +2160,11 @@ test("search reveal: a reorder above the reader that keeps the board's height do
       ),
   );
   expect(shifted.heightAfter, "the board's height is unchanged").toBe(shifted.heightBefore);
-  // Chromium and Firefox anchor, so the page really moved by the shift; where the browser does not, there is no
-  // adjustment to read and the field must still be where it was.
-  if (shifted.anchors)
+  // WebKit can support overflow-anchor without adjusting scroll for this layout shift.
+  // Keep checking the field state on every browser, including when no adjustment happens.
+  if (shifted.anchors && browserName !== "webkit") {
     expect(Math.abs(shifted.after - shifted.before), "the page was moved by the browser").toBeGreaterThan(20);
+  }
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
   expect(await isRevealed(page), "the revealed field stayed").toBe(true);
   expect(
