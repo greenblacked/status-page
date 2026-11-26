@@ -24,7 +24,6 @@ import { useTiltLighting } from "@/components/status/use-tilt-lighting";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchStatusBoard, refreshStatusBoard } from "@/lib/status/board";
 import { BOARD_FETCH_TIMEOUT_MS, BOARD_REFRESH_TIMEOUT_MS, withTimeout } from "@/lib/status/board-fetch";
-import { APP_NAME } from "@/lib/status/catalog";
 import { createDockStore, quietScroll } from "@/lib/status/dock";
 import {
   type BoardFilters,
@@ -37,6 +36,7 @@ import {
 import { documentTitle, groupServices, serviceAnchor } from "@/lib/status/layout";
 import { emptyPulseStore, loadPulseStore, type PulseStore, savePulseStore, syncPulse } from "@/lib/status/pulse";
 import { CACHE_TTL_MS, lastPulseAt, nextRefetchAt, parseTimestamp, pickRefetchJitter } from "@/lib/status/schedule";
+import { SITE_TITLE } from "@/lib/status/site-meta";
 import { starredFirst } from "@/lib/status/starred";
 import type { BoardSnapshot, CategoryId, ServiceId, ServiceSnapshot } from "@/lib/status/types";
 import { verdict as verdictOf } from "@/lib/status/verdict";
@@ -183,9 +183,9 @@ export const BoardView = memo(function BoardView({
   }, [filters, onFiltersChange]);
 
   // The tab shows the attention count, so a background tab still says
-  // something broke. The server-rendered <title> stays the plain name.
+  // something broke. The server-rendered title has no incident count.
   useEffect(() => {
-    document.title = documentTitle(latestBoard, APP_NAME);
+    document.title = documentTitle(latestBoard, SITE_TITLE);
   }, [latestBoard]);
 
   const visible = useMemo(

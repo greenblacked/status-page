@@ -325,7 +325,7 @@ test("renders every service with no console errors or hydration warnings", async
     expect(releaseLineIds(html).filter((id) => !EXPECTED_RELEASE_LINES.includes(id))).toEqual([]);
   }
   // After hydration the title leads with how many services need attention: "(2) Status".
-  await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
+  await expect(page).toHaveTitle(/^(\(\d+\) )?Live Service Status Dashboard \| Cloud, AI & Gaming$/);
   await expect(cards(page)).toHaveCount(SERVICES);
   // Hydration runs after the first paint; give React time to complain.
   await page.waitForLoadState("networkidle");
@@ -2090,6 +2090,7 @@ test("search reveal: the revealed field keeps still when the bar's lead text cha
 });
 
 test("search reveal: a reorder above the reader that keeps the board's height does not flip the field", async ({
+  browserName,
   page,
 }) => {
   test.slow();
@@ -2126,7 +2127,7 @@ test("search reveal: a reorder above the reader that keeps the board's height do
   // notice. Where the browser anchors scrolling, it moves the page by the shift; the dock must not read it as the
   // reader (which would hide the revealed field, a scroll down of 40px, with no input).
   const shifted = await page.evaluate(
-    () =>
+    (ensureWebKitShift) =>
       new Promise<{ before: number; after: number; heightBefore: number; heightAfter: number; anchors: boolean }>(
         (resolve, reject) => {
           const all = [...document.querySelectorAll<HTMLElement>('article[id^="service-"]')];
@@ -2140,6 +2141,9 @@ test("search reveal: a reorder above the reader that keeps the board's height do
           const heightBefore = document.documentElement.scrollHeight;
           above.style.marginTop = "40px";
           filler.style.height = "2360px";
+          // Flush layout and give WebKit the equivalent non-input scroll in the same frame if it did not anchor.
+          // The dock still sees both the 40px anchor displacement and the scroll event.
+          if (ensureWebKitShift && window.scrollY === before) window.scrollBy(0, 40);
           requestAnimationFrame(() =>
             requestAnimationFrame(() =>
               requestAnimationFrame(() =>
@@ -2157,12 +2161,13 @@ test("search reveal: a reorder above the reader that keeps the board's height do
           );
         },
       ),
+    browserName === "webkit",
   );
   expect(shifted.heightAfter, "the board's height is unchanged").toBe(shifted.heightBefore);
-  // Chromium and Firefox anchor, so the page really moved by the shift; where the browser does not, there is no
-  // adjustment to read and the field must still be where it was.
-  if (shifted.anchors)
+  // Check that the dock actually saw a scroll, including the WebKit fallback.
+  if (shifted.anchors || browserName === "webkit") {
     expect(Math.abs(shifted.after - shifted.before), "the page was moved by the browser").toBeGreaterThan(20);
+  }
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
   expect(await isRevealed(page), "the revealed field stayed").toBe(true);
   expect(
@@ -5432,7 +5437,7 @@ test("writes all quiet by hand, and says so in words, when all twenty-two are up
   expect(await note.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("Hand");
   await expect(page.getByText("All twenty-two services are running normally.")).toHaveClass(/sr-only/);
   // Nothing needs a look, so the tab title is the plain name and no card sits in that group.
-  await expect(page).toHaveTitle("Status");
+  await expect(page).toHaveTitle("Live Service Status Dashboard | Cloud, AI & Gaming");
   await expect(group(page, "attention")).toHaveCount(0);
   await expect(page.locator("[data-highlight]")).toHaveCount(0);
 });

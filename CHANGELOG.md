@@ -12,11 +12,13 @@ Each release's section becomes its GitHub Release notes, so write entries for so
 
 ### Added
 
+- The production board publishes a sitemap for its homepage.
 - `/metrics` gives how long ago each source was read (`statusbar_service_check_age_seconds`), so a source answered from an older reading shows up in a scrape.
 - Self-hosters can set `PUBLIC_ORIGIN` to the board's public address, so the feed's links no longer follow whatever Host header a client sends.
 
 ### Changed
 
+- The homepage title and summary describe the services and official status updates the board covers.
 - The board opens at once whenever a recent reading exists, even after a quiet spell: it shows the last snapshot and fetches a new one behind it, and on Cloudflare the servers of one data center share the newest snapshot, so far fewer visits wait on the slowest vendor.
 - Release lines and RouterOS changelog notes appear as soon as they are read, instead of one refresh later.
 - A partial outage now reads Degraded on the Grok and Azure cards, as it already did on every Statuspage-based card.

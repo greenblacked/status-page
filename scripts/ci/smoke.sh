@@ -8,7 +8,7 @@
 #   ./scripts/ci/smoke.sh https://status.example.com --require-ready --ready-wait 300
 #   ./scripts/ci/smoke.sh http://127.0.0.1:4181 --require-asset-cache
 #
-# Checks /healthz, the page (title, footer, security headers), the JSON API
+# Checks /healthz, the page (SEO, footer, security headers), the JSON API
 # (22 services, an ETag that a repeat turns into 304, a CORS preflight
 # answered with 204, a POST refused with 405), the Atom feed, /metrics and
 # /readyz. /readyz may answer 503 unless --require-ready: CI and sandboxes
@@ -43,7 +43,9 @@
 set -euo pipefail
 
 SERVICES=22
-TITLE='<title>Status</title>'
+TITLE='<title>Live Service Status Dashboard | Cloud, AI &amp; Gaming</title>'
+CANONICAL='https://status.szolotov.com/'
+INTRO='Check official outages and maintenance for ChatGPT, AWS, Steam, GitHub, and more in one place.'
 FOOTER='Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.'
 usage() {
   echo "usage: $0 <base-url> [--require-ready] [--ready-wait <seconds>] [--attempts <n>] [--wait <seconds>] [--expect-version <id>] [--require-asset-cache]"
@@ -196,6 +198,9 @@ run_checks() {
     fail "/: $status, expected 200"
   else
     grep -aqF "$TITLE" "$work/body" || fail "/: no $TITLE"
+    grep -aqF "<link rel=\"canonical\" href=\"$CANONICAL\"" "$work/body" || fail "/: wrong or missing canonical URL"
+    grep -aqE '<meta name="description" content="[^"]+"' "$work/body" || fail "/: no meta description"
+    grep -aqF "$INTRO" "$work/body" || fail "/: no board summary in the HTML"
     # React's server renderer separates adjacent text nodes with <!-- -->; the
     # sentence is still one sentence to a reader, so match it without them.
     # No -q: grep -q exits at the footer and sed, still writing the rest of the
@@ -219,6 +224,29 @@ run_checks() {
       *unsafe-inline*) fail "/: script-src allows 'unsafe-inline'" ;;
     esac
     [ -n "$(header X-Frame-Options)" ] || fail "/: no X-Frame-Options header"
+  fi
+
+  local robots
+  robots="$(header X-Robots-Tag)"
+  get /robots.txt
+  check_version /robots.txt
+  if [ "$status" != 200 ]; then
+    fail "/robots.txt: $status, expected 200"
+  elif [[ "$robots" == *noindex* ]]; then
+    grep -qxF 'Disallow: /' "$work/body" || fail "/robots.txt: preview must disallow crawling"
+  else
+    grep -qxF 'Allow: /' "$work/body" || fail "/robots.txt: board must allow crawling"
+    grep -qxF "Sitemap: ${CANONICAL}sitemap.xml" "$work/body" || fail "/robots.txt: missing sitemap reference"
+  fi
+
+  # The sitemap is a static asset and does not carry the Worker version.
+  get /sitemap.xml
+  if [ "$status" != 200 ]; then
+    fail "/sitemap.xml: $status, expected 200"
+  elif [[ "$(header Content-Type)" != *xml* ]]; then
+    fail "/sitemap.xml: expected an XML Content-Type"
+  elif ! grep -aqF "<loc>$CANONICAL</loc>" "$work/body"; then
+    fail "/sitemap.xml: missing canonical homepage URL"
   fi
 
   get /api/status.json

@@ -23,7 +23,7 @@ test.describe("a URL that is not on the board", () => {
     await expect(back).toHaveAttribute("href", "/");
     await back.click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page).toHaveTitle(/^(\(\d+\) )?Status$/);
+    await expect(page).toHaveTitle(/^(\(\d+\) )?Live Service Status Dashboard \| Cloud, AI & Gaming$/);
   });
 
   test("names the page Status Page, centred over the content width", async ({ page }) => {

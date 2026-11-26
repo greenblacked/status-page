@@ -5,7 +5,7 @@ import { ThemeSync } from "@/components/status/use-theme";
 import { ALERTS_BOOT_SCRIPT } from "@/lib/status/alerts-support";
 import { APPEARANCE_BOOT_SCRIPT } from "@/lib/status/background";
 import { APP_NAME } from "@/lib/status/catalog";
-import { CANONICAL_URL, OG_IMAGE, SITE_DESCRIPTION } from "@/lib/status/site-meta";
+import { CANONICAL_URL, OG_IMAGE, SITE_DESCRIPTION, SITE_TITLE } from "@/lib/status/site-meta";
 import { THEME_BOOT_SCRIPT, THEME_COLORS } from "@/lib/theme";
 import appleCss from "../apple.css?url";
 import appCss from "../styles.css?url";
@@ -90,7 +90,7 @@ export const Route = createRootRoute({
       // A URL that is not on the board says so in the tab too (NotFoundPage draws the page). The router
       // marks the root match `_notFound` for an unmatched URL, on the server and in the browser; its
       // `error` is not set yet when head runs. e2e/not-found.spec.ts holds this to account.
-      { title: matches.some((match) => match._notFound) ? `Not found · ${APP_NAME}` : APP_NAME },
+      { title: matches.some((match) => match._notFound) ? `Not found · ${APP_NAME}` : SITE_TITLE },
       { name: "description", content: SITE_DESCRIPTION },
       { name: "color-scheme", content: "light dark" },
       // Safari turns anything shaped like a phone number, date, address or
@@ -104,7 +104,7 @@ export const Route = createRootRoute({
       { name: "mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "default" },
       { property: "og:type", content: "website" },
-      { property: "og:title", content: APP_NAME },
+      { property: "og:title", content: SITE_TITLE },
       { property: "og:site_name", content: APP_NAME },
       { property: "og:description", content: SITE_DESCRIPTION },
       { property: "og:url", content: CANONICAL_URL },

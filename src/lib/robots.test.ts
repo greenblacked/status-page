@@ -11,7 +11,7 @@ describe("robots", () => {
 
   it("robots.txt disallows everything for a noindex deployment and allows everything otherwise", () => {
     expect(robotsTxt(true)).toBe("User-agent: *\nDisallow: /\n");
-    expect(robotsTxt(false)).toBe("User-agent: *\nAllow: /\n");
+    expect(robotsTxt(false)).toBe("User-agent: *\nAllow: /\nSitemap: https://status.szolotov.com/sitemap.xml\n");
   });
 
   it("adds X-Robots-Tag without dropping the response's status, headers or body", async () => {
