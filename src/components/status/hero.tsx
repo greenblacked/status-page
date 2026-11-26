@@ -4,7 +4,6 @@ import { Dateline } from "@/components/status/local-time";
 import { PenUnderline } from "@/components/status/pen";
 import { WORDMARK } from "@/lib/status/catalog";
 import { serviceAnchor } from "@/lib/status/layout";
-import { BOARD_INTRO } from "@/lib/status/site-meta";
 import type { ServiceId } from "@/lib/status/types";
 import type { Verdict } from "@/lib/status/verdict";
 import { cn } from "@/lib/utils";
@@ -104,7 +103,6 @@ export function Hero({
         </div>
         <div className="mt-4 md:col-start-1 md:row-start-1 md:mt-3">{live}</div>
       </div>
-      <p className="mt-4 text-caption text-muted">{BOARD_INTRO}</p>
       {children}
     </header>
   );

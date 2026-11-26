@@ -1,10 +1,11 @@
 import { ArrowUpRight } from "lucide-react";
 import type { ReactNode } from "react";
+import { BOARD_INTRO } from "@/lib/status/site-meta";
 import { cn } from "@/lib/utils";
 
 /**
  * The page's colophon: a real <footer> (the contentinfo landmark), a sibling
- * after <main>, never inside it. Two lines of words and one of credit.
+ * after <main>, never inside it. It describes the board and groups the links.
  * Nothing here explains how the machinery works.
  *
  *   Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from their official public status pages and feeds.
@@ -51,6 +52,7 @@ export function SiteFooter({
 }) {
   return (
     <footer className={cn("flex flex-col gap-y-1 text-caption text-subtle", className)}>
+      <p>{BOARD_INTRO}</p>
       <div className="flex flex-col gap-x-8 gap-y-1 md:flex-row md:flex-wrap md:items-baseline md:justify-between">
         <p>
           Independent project, not affiliated with or endorsed by any of the vendors listed. Status data comes from
