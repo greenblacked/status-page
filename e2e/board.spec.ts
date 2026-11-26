@@ -2127,7 +2127,7 @@ test("search reveal: a reorder above the reader that keeps the board's height do
   // notice. Where the browser anchors scrolling, it moves the page by the shift; the dock must not read it as the
   // reader (which would hide the revealed field, a scroll down of 40px, with no input).
   const shifted = await page.evaluate(
-    () =>
+    (ensureWebKitShift) =>
       new Promise<{ before: number; after: number; heightBefore: number; heightAfter: number; anchors: boolean }>(
         (resolve, reject) => {
           const all = [...document.querySelectorAll<HTMLElement>('article[id^="service-"]')];
@@ -2141,6 +2141,9 @@ test("search reveal: a reorder above the reader that keeps the board's height do
           const heightBefore = document.documentElement.scrollHeight;
           above.style.marginTop = "40px";
           filler.style.height = "2360px";
+          // Flush layout and give WebKit the equivalent non-input scroll in the same frame if it did not anchor.
+          // The dock still sees both the 40px anchor displacement and the scroll event.
+          if (ensureWebKitShift && window.scrollY === before) window.scrollBy(0, 40);
           requestAnimationFrame(() =>
             requestAnimationFrame(() =>
               requestAnimationFrame(() =>
@@ -2158,11 +2161,11 @@ test("search reveal: a reorder above the reader that keeps the board's height do
           );
         },
       ),
+    browserName === "webkit",
   );
   expect(shifted.heightAfter, "the board's height is unchanged").toBe(shifted.heightBefore);
-  // WebKit can support overflow-anchor without adjusting scroll for this layout shift.
-  // Keep checking the field state on every browser, including when no adjustment happens.
-  if (shifted.anchors && browserName !== "webkit") {
+  // Check that the dock actually saw a scroll, including the WebKit fallback.
+  if (shifted.anchors || browserName === "webkit") {
     expect(Math.abs(shifted.after - shifted.before), "the page was moved by the browser").toBeGreaterThan(20);
   }
   await scrollAndSettle(page, await page.evaluate(() => window.scrollY));
